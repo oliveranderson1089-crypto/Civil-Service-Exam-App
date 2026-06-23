@@ -13,6 +13,7 @@ const api = (u, o) => fetch(u, o).then(async r => {
 });
 
 const PAGE_SIZE = 5;
+const IN_APP = navigator.userAgent.includes('GongkaoApp');  // 安卓 APP 内打开
 let state = { filter: 'all', q: '', items: [], page: 1, pages: 1 };
 let preview = null;
 
@@ -199,6 +200,21 @@ async function doExport() {
   // scope==='all' 时跟随当前筛选
   else if (state.filter === '成语' || state.filter === '词语') body.category = state.filter;
   else if (state.filter === 'star') body.starred = true;
+
+  // 安卓 APP 内：用 GET 链接触发系统下载器（WebView 无法处理 blob 下载）
+  if (IN_APP) {
+    const p = new URLSearchParams();
+    p.set('mode', body.mode);
+    p.set('der', body.derivation ? 1 : 0);
+    p.set('exa', body.example ? 1 : 0);
+    p.set('note', body.note ? 1 : 0);
+    if (body.category) p.set('category', body.category);
+    if (body.starred) p.set('starred', 1);
+    closeExport();
+    toast('正在导出 PDF…');
+    window.location.href = '/api/export?' + p.toString();
+    return;
+  }
 
   try {
     const r = await fetch('/api/export', {

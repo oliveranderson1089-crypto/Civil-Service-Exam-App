@@ -479,9 +479,29 @@ def build_pdf(entries, opts):
     return buf
 
 
-@app.post("/api/export")
+def _truthy(v, default=True):
+    if v is None:
+        return default
+    return str(v).lower() not in ("0", "false", "no", "")
+
+
+@app.route("/api/export", methods=["GET", "POST"])
 def api_export():
-    data = request.get_json(force=True, silent=True) or {}
+    if request.method == "GET":
+        a = request.args
+        data = {
+            "mode": a.get("mode", "study"),
+            "category": a.get("category", ""),
+            "starred": _truthy(a.get("starred"), False),
+            "derivation": _truthy(a.get("der")),
+            "example": _truthy(a.get("exa")),
+            "note": _truthy(a.get("note")),
+        }
+        ids_s = a.get("ids", "")
+        if ids_s:
+            data["ids"] = [int(x) for x in ids_s.split(",") if x.strip().isdigit()]
+    else:
+        data = request.get_json(force=True, silent=True) or {}
     db = get_db()
     ids = data.get("ids")
     if ids:
