@@ -278,6 +278,61 @@ $('#ex-mode').addEventListener('change', e => {
   $('#ex-fields').style.pointerEvents = recite ? 'none' : 'auto';
 });
 
+/* 账号设置 */
+const settingsModal = $('#settings-modal');
+function collectSmtp() {
+  const body = {
+    email: $('#set-email').value.trim(),
+    smtp_host: $('#set-smtphost').value.trim(),
+    smtp_port: $('#set-smtpport').value.trim() || 465,
+  };
+  if ($('#set-smtppass').value) body.smtp_pass = $('#set-smtppass').value;
+  return body;
+}
+$('#settings-btn').onclick = async () => {
+  try {
+    const d = await api('/api/account');
+    $('#set-email').value = d.email || '';
+    $('#set-smtphost').value = d.smtp_host || '';
+    $('#set-smtpport').value = d.smtp_port || 465;
+    $('#set-smtppass').value = '';
+    $('#set-smtppass').placeholder = d.has_smtp_pass ? '邮箱授权码（已设置，留空不改）' : '邮箱授权码';
+    $('#set-oldpw').value = '';
+    $('#set-newpw').value = '';
+    settingsModal.classList.remove('hidden');
+  } catch (e) { toast(e.message, true); }
+};
+$('#set-cancel').onclick = () => settingsModal.classList.add('hidden');
+settingsModal.addEventListener('click', e => {
+  if (e.target.id === 'settings-modal') settingsModal.classList.add('hidden');
+});
+$('#set-save').onclick = async () => {
+  const body = collectSmtp();
+  if ($('#set-newpw').value) {
+    body.new_password = $('#set-newpw').value;
+    body.old_password = $('#set-oldpw').value;
+  }
+  try {
+    await api('/api/account', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    toast('已保存');
+    settingsModal.classList.add('hidden');
+  } catch (e) { toast(e.message, true); }
+};
+$('#set-test').onclick = async () => {
+  try {
+    await api('/api/account', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collectSmtp()),
+    });
+    toast('正在发送测试邮件…');
+    const d = await api('/api/account/test_email', { method: 'POST' });
+    toast('测试邮件已发送至 ' + d.email);
+  } catch (e) { toast('发送失败：' + e.message, true); }
+};
+
 load();
 $('#word-input').focus();
 

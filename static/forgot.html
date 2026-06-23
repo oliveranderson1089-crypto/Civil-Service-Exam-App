@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a6fb5">
+<title>找回密码 · 公考积累</title>
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:grid;place-items:center;min-height:100vh;
+    background:linear-gradient(135deg,#1a6fb5,#2c8fd6);}
+  .auth-box{background:#fff;border-radius:18px;padding:28px 24px;width:100%;
+    max-width:350px;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:16px;}
+  .auth-logo{width:54px;height:54px;border-radius:14px;
+    background:linear-gradient(135deg,#1a6fb5,#2c8fd6);color:#fff;display:grid;
+    place-items:center;font-size:29px;font-weight:700;margin:0 auto 12px;}
+  .auth-box h1{font-size:18px;text-align:center;margin:0 0 18px;}
+  .auth-box label{display:block;font-size:13px;color:#555;margin:10px 0 5px;}
+  .auth-box input{width:100%;padding:10px 12px;border:1.5px solid #e6e9ef;
+    border-radius:9px;font-size:15px;outline:none;}
+  .auth-box input:focus{border-color:#1a6fb5;}
+  .code-row{display:flex;gap:8px;}
+  .code-row input{flex:1;}
+  .code-row button{white-space:nowrap;padding:0 12px;border:1.5px solid #1a6fb5;
+    background:#fff;color:#1a6fb5;border-radius:9px;font-size:13px;cursor:pointer;}
+  .code-row button:disabled{opacity:.5;cursor:not-allowed;border-color:#ccc;color:#999;}
+  .primary-btn{width:100%;padding:12px;background:#1a6fb5;color:#fff;border:none;
+    border-radius:10px;font-size:16px;cursor:pointer;margin-top:18px;}
+  .primary-btn:hover{background:#155a93;}
+  .msg{font-size:13px;text-align:center;min-height:18px;margin:10px 0 0;}
+  .msg.err{color:#c0392b;} .msg.ok{color:#1a8a4a;}
+  .back{display:block;text-align:center;margin-top:14px;font-size:13px;color:#1a6fb5;
+    text-decoration:none;}
+</style>
+</head>
+<body>
+<form class="auth-box" id="form">
+  <div class="auth-logo">积</div>
+  <h1>找回密码</h1>
+
+  <label>用户名</label>
+  <input id="u" type="text" autocomplete="username" placeholder="你的用户名">
+
+  <label>邮箱验证码</label>
+  <div class="code-row">
+    <input id="code" type="text" inputmode="numeric" placeholder="6 位验证码">
+    <button type="button" id="send">发送验证码</button>
+  </div>
+
+  <label>新密码</label>
+  <input id="p" type="password" autocomplete="new-password" placeholder="至少 6 位">
+
+  <button type="submit" class="primary-btn">重置密码</button>
+  <p class="msg" id="msg"></p>
+  <a class="back" href="/login">← 返回登录</a>
+</form>
+<script>
+const $ = (id) => document.getElementById(id);
+function show(t, ok) { const m = $('msg'); m.textContent = t; m.className = 'msg ' + (ok ? 'ok' : 'err'); }
+let timer = 0;
+$('send').addEventListener('click', async () => {
+  const u = $('u').value.trim();
+  if (!u) { show('请先填用户名'); return; }
+  $('send').disabled = true;
+  try {
+    const r = await fetch('/api/forgot/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      show('验证码已发送至 ' + d.email + '，请查收', true);
+      let s = 60;
+      timer = setInterval(() => {
+        s--; $('send').textContent = s + ' 秒后重发';
+        if (s <= 0) { clearInterval(timer); $('send').disabled = false; $('send').textContent = '发送验证码'; }
+      }, 1000);
+    } else { show(d.error || '发送失败'); $('send').disabled = false; }
+  } catch (_) { show('网络错误'); $('send').disabled = false; }
+});
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const r = await fetch('/api/forgot/reset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: $('u').value.trim(), code: $('code').value.trim(), password: $('p').value,
+      }),
+    });
+    const d = await r.json();
+    if (r.ok) { show('密码已重置，正在跳转登录…', true); setTimeout(() => location.href = '/login', 1200); }
+    else { show(d.error || '重置失败'); }
+  } catch (_) { show('网络错误'); }
+});
+</script>
+</body>
+</html>

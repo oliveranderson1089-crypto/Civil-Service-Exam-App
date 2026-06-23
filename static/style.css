@@ -20,10 +20,21 @@ main{max-width:860px;margin:0 auto;padding:16px 14px 60px;}
   padding-top:max(18px,env(safe-area-inset-top));
 }
 .topbar{position:relative;}
-.logout{position:absolute;top:max(14px,env(safe-area-inset-top));right:14px;
-  background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;
+.topbar-actions{position:absolute;top:max(14px,env(safe-area-inset-top));right:14px;
+  display:flex;gap:8px;}
+.logout{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;
   font-size:13px;padding:5px 12px;border-radius:20px;cursor:pointer;}
 .logout:hover{background:rgba(255,255,255,.3);}
+
+/* 账号设置 */
+.set-sec{margin-bottom:16px;}
+.set-title{font-size:13px;color:var(--muted);margin-bottom:7px;font-weight:600;}
+.set-sec input{width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;
+  font-size:14px;outline:none;margin-bottom:8px;}
+.set-sec input:focus{border-color:var(--blue);}
+.set-sec .row2{display:flex;gap:8px;}
+.set-sec .row2 input{flex:1;}
+#set-test{font-size:13px;padding:7px 12px;}
 .brand{display:flex;align-items:center;gap:12px;max-width:860px;margin:0 auto;}
 .logo{
   width:46px;height:46px;border-radius:12px;background:rgba(255,255,255,.18);

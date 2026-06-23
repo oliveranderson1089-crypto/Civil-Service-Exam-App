@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a6fb5">
+<title>注册 · 公考积累</title>
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:grid;place-items:center;min-height:100vh;
+    background:linear-gradient(135deg,#1a6fb5,#2c8fd6);padding:16px 0;}
+  .auth-box{background:#fff;border-radius:18px;padding:28px 24px;width:100%;
+    max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:16px;}
+  .auth-logo{width:54px;height:54px;border-radius:14px;
+    background:linear-gradient(135deg,#1a6fb5,#2c8fd6);color:#fff;display:grid;
+    place-items:center;font-size:29px;font-weight:700;margin:0 auto 12px;}
+  .auth-box h1{font-size:18px;text-align:center;margin:0 0 2px;}
+  .auth-box p.sub{text-align:center;color:#8a93a3;font-size:12.5px;margin:0 0 18px;}
+  .auth-box label{display:block;font-size:13px;color:#555;margin:10px 0 5px;}
+  .auth-box input{width:100%;padding:10px 12px;border:1.5px solid #e6e9ef;
+    border-radius:9px;font-size:15px;outline:none;}
+  .auth-box input:focus{border-color:#1a6fb5;}
+  .tip{font-size:11.5px;color:#9aa3b2;margin:4px 0 0;line-height:1.5;}
+  .tip a{color:#1a6fb5;}
+  .adv-toggle{font-size:13px;color:#1a6fb5;cursor:pointer;margin:14px 0 0;
+    user-select:none;display:inline-block;}
+  .adv{display:none;}
+  .adv.show{display:block;}
+  .row2{display:flex;gap:10px;}
+  .row2>div{flex:1;}
+  .primary-btn{width:100%;padding:12px;background:#1a6fb5;color:#fff;border:none;
+    border-radius:10px;font-size:16px;cursor:pointer;margin-top:18px;}
+  .primary-btn:hover{background:#155a93;}
+  .primary-btn:disabled{opacity:.6;cursor:not-allowed;}
+  .err{color:#c0392b;font-size:13px;text-align:center;min-height:18px;margin:10px 0 0;}
+</style>
+</head>
+<body>
+<form class="auth-box" id="form">
+  <div class="auth-logo">积</div>
+  <h1>创建你的账号</h1>
+  <p class="sub">首次使用 · 设置自己的账号与找回邮箱</p>
+
+  <label>用户名</label>
+  <input id="u" type="text" autocomplete="username" placeholder="2 个字符以上">
+
+  <div class="row2">
+    <div>
+      <label>密码</label>
+      <input id="p" type="password" autocomplete="new-password" placeholder="至少 6 位">
+    </div>
+    <div>
+      <label>确认密码</label>
+      <input id="p2" type="password" autocomplete="new-password" placeholder="再输一次">
+    </div>
+  </div>
+
+  <label>邮箱（用于找回密码）</label>
+  <input id="email" type="email" autocomplete="email" placeholder="例如 123456@qq.com">
+
+  <label>邮箱授权码</label>
+  <input id="smtppass" type="password" placeholder="SMTP 授权码，不是邮箱登录密码">
+  <p class="tip">QQ/163 邮箱需开启「SMTP 服务」并生成<b>授权码</b>。
+    <a href="https://service.mail.qq.com/detail/0/75" target="_blank">QQ获取方法</a> ·
+    <a href="https://help.mail.163.com/faqDetail.do?code=d7a5dc8471cd0c0e8b4b8f4f8e49998b374173cfe9171305fa1ce630d7f67ac21b87735d7227c217" target="_blank">163获取方法</a>
+  </p>
+
+  <span class="adv-toggle" id="advToggle">▸ 高级（SMTP 服务器，一般自动识别）</span>
+  <div class="adv" id="adv">
+    <div class="row2">
+      <div>
+        <label>SMTP 服务器</label>
+        <input id="smtphost" type="text" placeholder="smtp.qq.com">
+      </div>
+      <div>
+        <label>端口</label>
+        <input id="smtpport" type="number" placeholder="465">
+      </div>
+    </div>
+  </div>
+
+  <button type="submit" class="primary-btn" id="btn">注 册 并 进 入</button>
+  <p class="err" id="err"></p>
+</form>
+<script>
+const SMTP = {
+  'qq.com': ['smtp.qq.com', 465], 'vip.qq.com': ['smtp.qq.com', 465],
+  'foxmail.com': ['smtp.qq.com', 465],
+  '163.com': ['smtp.163.com', 465], '126.com': ['smtp.126.com', 465],
+  'yeah.net': ['smtp.yeah.net', 465], 'sina.com': ['smtp.sina.com', 465],
+  '139.com': ['smtp.139.com', 465], 'aliyun.com': ['smtp.aliyun.com', 465],
+  'gmail.com': ['smtp.gmail.com', 465],
+  'outlook.com': ['smtp.office365.com', 587], 'hotmail.com': ['smtp.office365.com', 587],
+};
+const $ = (id) => document.getElementById(id);
+$('advToggle').onclick = () => $('adv').classList.toggle('show');
+$('email').addEventListener('blur', () => {
+  const m = $('email').value.trim().toLowerCase().split('@')[1];
+  if (m && SMTP[m]) {
+    if (!$('smtphost').value) $('smtphost').value = SMTP[m][0];
+    if (!$('smtpport').value) $('smtpport').value = SMTP[m][1];
+  }
+});
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = $('err'); err.textContent = '';
+  if ($('p').value !== $('p2').value) { err.textContent = '两次密码不一致'; return; }
+  const m = $('email').value.trim().toLowerCase().split('@')[1];
+  let host = $('smtphost').value.trim(), port = $('smtpport').value.trim();
+  if (!host && m && SMTP[m]) { host = SMTP[m][0]; port = SMTP[m][1]; }
+  $('btn').disabled = true; $('btn').textContent = '注册中…';
+  try {
+    const r = await fetch('/api/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: $('u').value.trim(), password: $('p').value,
+        email: $('email').value.trim(), smtp_pass: $('smtppass').value,
+        smtp_host: host, smtp_port: port || 465,
+      }),
+    });
+    const d = await r.json();
+    if (r.ok) { if (d.warn) alert(d.warn); location.href = '/'; }
+    else { err.textContent = d.error || '注册失败'; }
+  } catch (_) { err.textContent = '网络错误'; }
+  $('btn').disabled = false; $('btn').textContent = '注 册 并 进 入';
+});
+</script>
+</body>
+</html>

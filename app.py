@@ -11,8 +11,12 @@ import json
 import os
 import re
 import secrets
+import smtplib
 import sqlite3
+import time
 from datetime import datetime
+from email.header import Header
+from email.mime.text import MIMEText
 
 from flask import (Flask, g, jsonify, redirect, request, session,
                    send_file, send_from_directory)
@@ -34,17 +38,24 @@ from reportlab.lib.enums import TA_LEFT
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(BASE, "app.db")
 STATIC = os.path.join(BASE, "static")
-CONFIG = os.path.join(BASE, "config.json")
+CONFIG = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 
 app = Flask(__name__, static_folder=None)
 
 
-# ---------------------------------------------------------------- 配置 / 登录
-def load_config():
-    """读取 config.json；不存在则创建默认配置（含随机密钥）。
+# ---------------------------------------------------------------- 配置 / 账号
+def save_config(cfg):
+    try:
+        with open(CONFIG, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
-    默认账号 admin / 密码 gongkao（请尽快用环境变量或改 config.json 修改）。
-    可用环境变量覆盖：GONGKAO_USER、GONGKAO_PASSWORD。
+
+def load_config():
+    """读取 config.json；只保证有随机密钥。账号由用户首次注册时设置。
+
+    也支持用环境变量直接设定账号（设置后即视为已注册）：GONGKAO_USER、GONGKAO_PASSWORD。
     """
     cfg = {}
     if os.path.exists(CONFIG):
@@ -53,26 +64,15 @@ def load_config():
                 cfg = json.load(f)
         except Exception:
             cfg = {}
-    changed = False
     if not cfg.get("secret_key"):
         cfg["secret_key"] = secrets.token_hex(32)
-        changed = True
-    if not cfg.get("username"):
-        cfg["username"] = os.environ.get("GONGKAO_USER", "admin")
-        changed = True
+    env_user = os.environ.get("GONGKAO_USER")
     env_pw = os.environ.get("GONGKAO_PASSWORD")
-    if env_pw:
+    if env_user and env_pw:
+        cfg["username"] = env_user
         cfg["password_hash"] = generate_password_hash(env_pw)
-        changed = True
-    if not cfg.get("password_hash"):
-        cfg["password_hash"] = generate_password_hash("gongkao")
-        changed = True
-    if changed:
-        try:
-            with open(CONFIG, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        cfg["registered"] = True
+    save_config(cfg)
     return cfg
 
 
@@ -84,9 +84,54 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,  # 记住登录 30 天
 )
 
-# 无需登录即可访问的路径（登录页本身、登录页要用的样式、PWA 资源）
-_PUBLIC_EXACT = {"/login", "/api/login", "/style.css",
-                 "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
+
+def is_registered():
+    return bool(CFG.get("registered") and CFG.get("username") and CFG.get("password_hash"))
+
+
+def mask_email(e):
+    try:
+        name, dom = e.split("@", 1)
+        masked = (name[0] + "***" + name[-1]) if len(name) > 1 else (name + "***")
+        return masked + "@" + dom
+    except Exception:
+        return e
+
+
+def try_send_email(to_addr, subject, body):
+    """用 config 里的 SMTP 配置发一封邮件。返回 (ok, err)。"""
+    try:
+        host = CFG.get("smtp_host")
+        port = int(CFG.get("smtp_port") or 465)
+        user = CFG.get("smtp_user") or CFG.get("email")
+        pw = CFG.get("smtp_pass")
+        if not (host and user and pw):
+            return False, "未配置发信邮箱"
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = Header(subject, "utf-8")
+        msg["From"] = user
+        msg["To"] = to_addr
+        if port == 465:
+            s = smtplib.SMTP_SSL(host, port, timeout=20)
+        else:
+            s = smtplib.SMTP(host, port, timeout=20)
+            s.ehlo()
+            s.starttls()
+        s.login(user, pw)
+        s.sendmail(user, [to_addr], msg.as_string())
+        s.quit()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+# 找回密码验证码（内存，重启失效）：username -> {code, expires, attempts, last_sent}
+_reset_codes = {}
+
+# 无需登录即可访问的路径
+_PUBLIC_EXACT = {"/login", "/api/login", "/register", "/api/register",
+                 "/forgot", "/api/forgot/send", "/api/forgot/reset",
+                 "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
 
 def _is_public(path):
@@ -94,8 +139,14 @@ def _is_public(path):
 
 
 @app.before_request
-def require_login():
-    if _is_public(request.path) or session.get("auth"):
+def guard():
+    if _is_public(request.path):
+        return None
+    if not is_registered():
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "未注册", "register": True}), 401
+        return redirect("/register")
+    if session.get("auth"):
         return None
     if request.path.startswith("/api/"):
         return jsonify({"error": "未登录", "login": True}), 401
@@ -240,9 +291,54 @@ def row_to_dict(row):
     return d
 
 
-# ---------------------------------------------------------------- 登录
+# ---------------------------------------------------------------- 注册 / 登录 / 找回
+@app.get("/register")
+def register_page():
+    if is_registered():
+        return redirect("/login")
+    return send_from_directory(STATIC, "register.html")
+
+
+@app.post("/api/register")
+def api_register():
+    if is_registered():
+        return jsonify({"error": "已注册，请直接登录"}), 400
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    pw = data.get("password") or ""
+    email = (data.get("email") or "").strip()
+    if len(username) < 2:
+        return jsonify({"error": "用户名至少 2 个字符"}), 400
+    if len(pw) < 6:
+        return jsonify({"error": "密码至少 6 位"}), 400
+    if "@" not in email:
+        return jsonify({"error": "请填写正确的邮箱"}), 400
+    CFG["username"] = username
+    CFG["password_hash"] = generate_password_hash(pw)
+    CFG["email"] = email
+    CFG["smtp_host"] = (data.get("smtp_host") or "").strip()
+    CFG["smtp_port"] = int(data.get("smtp_port") or 465)
+    CFG["smtp_user"] = (data.get("smtp_user") or email).strip()
+    CFG["smtp_pass"] = data.get("smtp_pass") or ""  # 邮箱授权码
+    CFG["registered"] = True
+    save_config(CFG)
+    session.permanent = True
+    session["auth"] = True
+    session["user"] = username
+    warn = ""
+    if CFG["smtp_host"] and CFG["smtp_pass"]:
+        ok, err = try_send_email(
+            email, "公考积累 · 注册成功",
+            "你已成功注册「公考积累」，今后找回密码的验证码会发到此邮箱。")
+        if not ok:
+            warn = "账号已创建，但测试邮件发送失败，找回密码可能不可用：" + err
+    return jsonify({"ok": True, "warn": warn})
+
+
 @app.get("/login")
 def login_page():
+    if not is_registered():
+        return redirect("/register")
     if session.get("auth"):
         return redirect("/")
     return send_from_directory(STATIC, "login.html")
@@ -254,7 +350,7 @@ def login_submit():
     data = request.get_json(silent=True) or request.form
     user = (data.get("username") or "").strip()
     pw = data.get("password") or ""
-    if user == CFG["username"] and check_password_hash(CFG["password_hash"], pw):
+    if user == CFG.get("username") and check_password_hash(CFG.get("password_hash", ""), pw):
         session.permanent = True
         session["auth"] = True
         session["user"] = user
@@ -267,6 +363,109 @@ def login_submit():
 def logout():
     session.clear()
     return jsonify({"ok": True})
+
+
+@app.get("/forgot")
+def forgot_page():
+    if not is_registered():
+        return redirect("/register")
+    return send_from_directory(STATIC, "forgot.html")
+
+
+@app.post("/api/forgot/send")
+def api_forgot_send():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    if username != CFG.get("username"):
+        return jsonify({"error": "用户名不存在"}), 400
+    email = CFG.get("email")
+    if not (email and CFG.get("smtp_host") and CFG.get("smtp_pass")):
+        return jsonify({"error": "未配置邮箱，无法邮件找回；请在电脑上重置密码"}), 400
+    now = time.time()
+    rec = _reset_codes.get(username)
+    if rec and now - rec.get("last_sent", 0) < 60:
+        return jsonify({"error": "发送过于频繁，请 1 分钟后再试"}), 429
+    code = "%06d" % secrets.randbelow(1000000)
+    _reset_codes[username] = {"code": code, "expires": now + 600,
+                              "attempts": 0, "last_sent": now}
+    ok, err = try_send_email(
+        email, "公考积累 · 找回密码验证码",
+        f"你的验证码是：{code}\n10 分钟内有效。若非本人操作请忽略本邮件。")
+    if not ok:
+        return jsonify({"error": "邮件发送失败：" + err}), 500
+    return jsonify({"ok": True, "email": mask_email(email)})
+
+
+@app.post("/api/forgot/reset")
+def api_forgot_reset():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    code = (data.get("code") or "").strip()
+    new_pw = data.get("password") or ""
+    rec = _reset_codes.get(username)
+    if not rec:
+        return jsonify({"error": "请先获取验证码"}), 400
+    if time.time() > rec["expires"]:
+        _reset_codes.pop(username, None)
+        return jsonify({"error": "验证码已过期，请重新获取"}), 400
+    if rec["attempts"] >= 5:
+        _reset_codes.pop(username, None)
+        return jsonify({"error": "尝试次数过多，请重新获取验证码"}), 400
+    rec["attempts"] += 1
+    if code != rec["code"]:
+        return jsonify({"error": "验证码错误"}), 400
+    if len(new_pw) < 6:
+        return jsonify({"error": "新密码至少 6 位"}), 400
+    CFG["password_hash"] = generate_password_hash(new_pw)
+    save_config(CFG)
+    _reset_codes.pop(username, None)
+    return jsonify({"ok": True})
+
+
+@app.get("/api/account")
+def api_account_get():
+    return jsonify({
+        "username": CFG.get("username", ""),
+        "email": CFG.get("email", ""),
+        "smtp_host": CFG.get("smtp_host", ""),
+        "smtp_port": CFG.get("smtp_port", 465),
+        "smtp_user": CFG.get("smtp_user", ""),
+        "has_smtp_pass": bool(CFG.get("smtp_pass")),
+    })
+
+
+@app.post("/api/account")
+def api_account_update():
+    data = request.get_json(silent=True) or {}
+    # 改密码需校验旧密码
+    new_pw = data.get("new_password")
+    if new_pw:
+        if not check_password_hash(CFG.get("password_hash", ""), data.get("old_password") or ""):
+            return jsonify({"error": "原密码不正确"}), 400
+        if len(new_pw) < 6:
+            return jsonify({"error": "新密码至少 6 位"}), 400
+        CFG["password_hash"] = generate_password_hash(new_pw)
+    if "email" in data and data.get("email"):
+        CFG["email"] = data["email"].strip()
+    for k in ("smtp_host", "smtp_user"):
+        if k in data:
+            CFG[k] = (data.get(k) or "").strip()
+    if "smtp_port" in data and data.get("smtp_port"):
+        CFG["smtp_port"] = int(data["smtp_port"])
+    if data.get("smtp_pass"):  # 留空表示不修改
+        CFG["smtp_pass"] = data["smtp_pass"]
+    save_config(CFG)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/account/test_email")
+def api_test_email():
+    to = CFG.get("email")
+    if not to:
+        return jsonify({"error": "未设置邮箱"}), 400
+    ok, err = try_send_email(to, "公考积累 · 测试邮件", "这是一封测试邮件，收到说明邮箱配置正确。")
+    return (jsonify({"ok": True, "email": mask_email(to)}) if ok
+            else (jsonify({"error": err}), 500))
 
 
 # ---------------------------------------------------------------- 静态前端
