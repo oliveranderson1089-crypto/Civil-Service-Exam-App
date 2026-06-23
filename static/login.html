@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a6fb5">
+<title>登录 · 公考积累</title>
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<style>
+  body{display:grid;place-items:center;min-height:100vh;
+    background:linear-gradient(135deg,#1a6fb5,#2c8fd6);}
+  .login-box{background:#fff;border-radius:18px;padding:30px 26px;width:100%;
+    max-width:340px;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:16px;}
+  .login-logo{width:56px;height:56px;border-radius:14px;
+    background:linear-gradient(135deg,#1a6fb5,#2c8fd6);color:#fff;display:grid;
+    place-items:center;font-size:30px;font-weight:700;margin:0 auto 14px;}
+  .login-box h1{font-size:19px;text-align:center;margin:0 0 4px;}
+  .login-box p.sub{text-align:center;color:#8a93a3;font-size:13px;margin:0 0 22px;}
+  .login-box label{display:block;font-size:13px;color:#666;margin:0 0 5px;}
+  .login-box input{width:100%;padding:11px 13px;border:1.5px solid #e6e9ef;
+    border-radius:10px;font-size:15px;outline:none;margin-bottom:15px;}
+  .login-box input:focus{border-color:#1a6fb5;}
+  .login-box button{width:100%;padding:12px;background:#1a6fb5;color:#fff;border:none;
+    border-radius:10px;font-size:16px;cursor:pointer;}
+  .login-box button:hover{background:#155a93;}
+  .err{color:#c0392b;font-size:13px;text-align:center;min-height:18px;margin:4px 0 0;}
+</style>
+</head>
+<body>
+<form class="login-box" id="form">
+  <div class="login-logo">积</div>
+  <h1>公考 · 选词填空积累</h1>
+  <p class="sub">请登录后使用</p>
+  <label>用户名</label>
+  <input id="u" type="text" autocomplete="username" placeholder="用户名" autofocus>
+  <label>密码</label>
+  <input id="p" type="password" autocomplete="current-password" placeholder="密码">
+  <button type="submit">登 录</button>
+  <p class="err" id="err"></p>
+</form>
+<script>
+const form = document.getElementById('form');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err');
+  err.textContent = '';
+  try {
+    const r = await fetch('/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('u').value,
+        password: document.getElementById('p').value,
+      }),
+    });
+    const d = await r.json();
+    if (r.ok) { location.href = '/'; }
+    else { err.textContent = d.error || '登录失败'; }
+  } catch (_) { err.textContent = '网络错误'; }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# Python 虚拟环境与缓存
+.venv/
+__pycache__/
+*.pyc
+
+# 运行时生成（含个人数据 / 密码，切勿上传）
+app.db
+config.json
+
+# 导出/临时文件
+*.pdf
+*.log
+.DS_Store
+
+# 安卓构建产物（体积大，可重新生成）
+android/build/
+android/.gradle/
+android/local.properties
+*.keystore

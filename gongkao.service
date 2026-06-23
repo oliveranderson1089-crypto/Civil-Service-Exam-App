@@ -1,0 +1,14 @@
+[Unit]
+Description=公考·选词填空 成语词语积累 Web 服务
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pei-gen-li/gongkao-app
+Environment=NO_PROXY=*
+ExecStart=/home/pei-gen-li/gongkao-app/.venv/bin/python3 /home/pei-gen-li/gongkao-app/app.py --host 0.0.0.0 --port 8011
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

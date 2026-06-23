@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a6fb5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>公考·成语词语积累</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button id="logout-btn" class="logout" title="退出登录">退出</button>
+  <div class="brand">
+    <span class="logo">积</span>
+    <div>
+      <h1>公考 · 选词填空积累</h1>
+      <p class="subtitle">成语 / 词语 · 拼音释义 · 一键导出 PDF</p>
+    </div>
+  </div>
+  <div class="stats" id="stats">
+    <div><b id="st-total">0</b><span>总数</span></div>
+    <div><b id="st-idiom">0</b><span>成语</span></div>
+    <div><b id="st-ci">0</b><span>词语</span></div>
+    <div><b id="st-star">0</b><span>收藏</span></div>
+  </div>
+</header>
+
+<main>
+  <!-- 录入区 -->
+  <section class="card add-card">
+    <div class="add-row">
+      <input id="word-input" type="text" placeholder="输入成语或词语，回车查询…" autocomplete="off">
+      <button id="lookup-btn" class="btn">查询</button>
+    </div>
+    <div id="preview" class="preview hidden">
+      <div class="pv-head">
+        <span class="pv-word" id="pv-word"></span>
+        <span class="pv-py" id="pv-py"></span>
+        <span class="pv-tag" id="pv-cat"></span>
+        <span class="pv-found" id="pv-found"></span>
+      </div>
+      <div class="pv-field"><label>释义</label><textarea id="pv-exp" rows="2"></textarea></div>
+      <div class="pv-field" id="pv-der-wrap"><label>出处</label><textarea id="pv-der" rows="1"></textarea></div>
+      <div class="pv-field" id="pv-exa-wrap"><label>例句</label><textarea id="pv-exa" rows="1"></textarea></div>
+      <div class="pv-field"><label>笔记</label><input id="pv-note" type="text" placeholder="可写自己的辨析、易混词、真题出处…"></div>
+      <div class="pv-actions">
+        <label class="catpick">类别：
+          <select id="pv-catsel"><option>成语</option><option>词语</option></select>
+        </label>
+        <button id="save-btn" class="btn primary">收录</button>
+      </div>
+    </div>
+    <p class="hint" id="add-hint"></p>
+  </section>
+
+  <!-- 工具条 -->
+  <section class="toolbar">
+    <div class="filters" id="filters">
+      <button class="chip active" data-f="all">全部</button>
+      <button class="chip" data-f="成语">成语</button>
+      <button class="chip" data-f="词语">词语</button>
+      <button class="chip" data-f="star">收藏</button>
+    </div>
+    <input id="search" type="search" placeholder="搜索已收录…">
+    <button id="export-btn" class="btn">导出 PDF</button>
+  </section>
+
+  <!-- 列表 -->
+  <section id="list" class="list"></section>
+  <p id="empty" class="empty hidden">还没有收录内容，先在上面输入一个成语试试～</p>
+
+  <!-- 翻页 -->
+  <nav id="pager" class="pager hidden">
+    <button id="pg-prev" class="btn">上一页</button>
+    <span id="pg-info" class="pg-info"></span>
+    <button id="pg-next" class="btn">下一页</button>
+  </nav>
+</main>
+
+<!-- 导出弹窗 -->
+<div id="export-modal" class="modal hidden">
+  <div class="modal-box">
+    <h3>导出 PDF</h3>
+    <div class="opt"><span>范围</span>
+      <select id="ex-scope">
+        <option value="all">当前筛选的全部</option>
+        <option value="成语">仅成语</option>
+        <option value="词语">仅词语</option>
+        <option value="star">仅收藏</option>
+      </select>
+    </div>
+    <div class="opt"><span>版式</span>
+      <select id="ex-mode">
+        <option value="study">学习版（含释义）</option>
+        <option value="recite">默写版（释义留空）</option>
+      </select>
+    </div>
+    <div class="opt checks" id="ex-fields">
+      <label><input type="checkbox" id="ex-der" checked> 出处</label>
+      <label><input type="checkbox" id="ex-exa" checked> 例句</label>
+      <label><input type="checkbox" id="ex-note" checked> 笔记</label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="ex-cancel">取消</button>
+      <button class="btn primary" id="ex-go">下载 PDF</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

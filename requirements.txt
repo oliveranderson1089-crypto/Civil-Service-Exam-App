@@ -1,0 +1,8 @@
+# 运行所需
+flask
+waitress
+pypinyin
+reportlab
+# 仅构建时用到（生成图标 / 校验字体覆盖），运行可不装
+pillow
+fonttools
