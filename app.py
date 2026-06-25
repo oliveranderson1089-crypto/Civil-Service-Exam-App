@@ -201,6 +201,7 @@ def is_admin():
 # ---------------------------------------------------------------- 访问控制
 _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
                  "/forgot", "/api/forgot/question", "/api/forgot/reset",
+                 "/api/sec_questions",
                  "/apk", "/download/gongkao.apk",
                  "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
