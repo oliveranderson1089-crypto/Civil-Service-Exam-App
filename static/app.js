@@ -119,7 +119,7 @@ async function loadMaterials() {
     }
     $('#mat-empty').classList.add('hidden');
     box.innerHTML = d.items.map(m => `
-      <div class="mat-item" data-id="${m.id}" data-view="${m.viewable ? 1 : 0}">
+      <div class="mat-item" data-id="${m.id}" data-view="${m.viewable ? 1 : 0}" data-ext="${esc(m.ext || '')}">
         <span class="mat-icon">${iconFor(m.ext)}</span>
         <div class="mat-info">
           <div class="mat-name">${esc(m.title || m.orig_name)}</div>
@@ -151,12 +151,19 @@ $('#mat-list').addEventListener('click', async e => {
     return;
   }
   if (item.dataset.view !== '1') { toast('该格式不支持预览，请下载查看', true); return; }
-  openViewer(id, item.querySelector('.mat-name').textContent);
+  openViewer(id, item.querySelector('.mat-name').textContent, item.dataset.ext);
 });
 
-function openViewer(id, name) {
+const OFFICE_EXT = ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.rtf'];
+function openViewer(id, name, ext) {
+  ext = ext || '';
+  const fileUrl = '/api/materials/' + id + '/view';
+  // PDF 和 Office(后端转 PDF) 用 pdf.js 渲染，确保安卓 WebView 里也能看
+  const src = (ext === '.pdf' || OFFICE_EXT.includes(ext))
+    ? '/pdfjs/web/viewer.html?file=' + encodeURIComponent(fileUrl)
+    : fileUrl;
   $('#viewer-name').textContent = name;
-  $('#viewer-frame').src = '/api/materials/' + id + '/view';
+  $('#viewer-frame').src = src;
   $('#viewer-dl').href = '/api/materials/' + id + '/download';
   push({ view: 'viewer', title: name });
 }
