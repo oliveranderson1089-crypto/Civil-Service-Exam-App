@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a6fb5">
+<title>管理后台 · 公考助手</title>
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<style>
+  .admin-main{max-width:900px;margin:0 auto;padding:16px 14px 50px;}
+  .utable{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;
+    box-shadow:var(--shadow);font-size:14px;}
+  .utable th,.utable td{padding:11px 10px;text-align:left;border-bottom:1px solid var(--line);}
+  .utable th{background:#f0f4f9;color:#555;font-weight:600;font-size:13px;}
+  .utable tr:last-child td{border-bottom:none;}
+  .role-badge{font-size:11px;padding:2px 8px;border-radius:20px;}
+  .role-admin{background:#fde8c8;color:#a86a00;}
+  .role-user{background:#e8eef6;color:#5a6b85;}
+  .ubtn{border:1.5px solid var(--line);background:#fff;border-radius:7px;padding:5px 9px;
+    font-size:12.5px;cursor:pointer;margin:2px;white-space:nowrap;}
+  .ubtn:hover{border-color:var(--blue);color:var(--blue);}
+  .ubtn.danger:hover{border-color:#c0392b;color:#c0392b;}
+  .uadd{color:#999;font-size:12px;}
+  .admin-cards{display:none;}
+  @media(max-width:640px){
+    .utable{display:none;}
+    .admin-cards{display:grid;gap:10px;}
+    .ucard{background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:13px 14px;}
+    .ucard h3{margin:0 0 4px;font-size:16px;display:flex;align-items:center;gap:8px;}
+    .ucard .meta{font-size:12.5px;color:var(--muted);margin-bottom:8px;}
+    .ucard .acts{display:flex;flex-wrap:wrap;gap:4px;}
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button class="navbtn" onclick="location.href='/'">‹ 返回应用</button>
+  <div class="brand-min"><span class="logo-min">管</span><span>管理后台</span></div>
+  <div class="topbar-actions"></div>
+</header>
+<main class="admin-main">
+  <h2 class="view-title">用户管理 <span class="uadd" id="ucount"></span></h2>
+  <table class="utable" id="utable">
+    <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>密保</th><th>收录</th><th>资料</th><th>注册时间</th><th>操作</th></tr></thead>
+    <tbody id="utbody"></tbody>
+  </table>
+  <div class="admin-cards" id="ucards"></div>
+</main>
+<div id="toast" class="toast hidden"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+let ME_ID = null;
+function toast(m, err) { const t = $('#toast'); t.textContent = m; t.className = 'toast' + (err ? ' err' : ''); clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), 2200); }
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  let me; try { me = await (await fetch('/api/me')).json(); } catch (_) {}
+  const r = await fetch('/api/admin/users');
+  if (r.status === 403) { document.body.innerHTML = '<p style="text-align:center;margin-top:60px;color:#888">需要管理员权限。<a href="/">返回</a></p>'; return; }
+  if (r.status === 401) { location.href = '/login'; return; }
+  const d = await r.json();
+  $('#ucount').textContent = '共 ' + d.users.length + ' 人';
+  $('#utbody').innerHTML = d.users.map(u => `
+    <tr>
+      <td>${u.id}</td><td><b>${esc(u.username)}</b></td>
+      <td><span class="role-badge role-${u.role}">${u.role === 'admin' ? '管理员' : '普通'}</span></td>
+      <td>${u.sec_question ? '已设' : '—'}</td>
+      <td>${u.entry_cnt}</td><td>${u.mat_cnt}</td>
+      <td style="font-size:12px;color:#999">${esc((u.created_at || '').slice(0, 16))}</td>
+      <td>${actions(u)}</td>
+    </tr>`).join('');
+  $('#ucards').innerHTML = d.users.map(u => `
+    <div class="ucard">
+      <h3>${esc(u.username)} <span class="role-badge role-${u.role}">${u.role === 'admin' ? '管理员' : '普通'}</span></h3>
+      <div class="meta">ID ${u.id} · 收录 ${u.entry_cnt} · 资料 ${u.mat_cnt} · 密保${u.sec_question ? '已设' : '未设'}</div>
+      <div class="acts">${actions(u)}</div>
+    </div>`).join('');
+}
+let MY_NAME = null;
+function actions(u) {
+  const self = (u.username === MY_NAME);
+  let s = `<button class="ubtn" onclick="resetPw(${u.id},'${esc(u.username)}')">重置密码</button>`;
+  s += `<button class="ubtn" onclick="toggleRole(${u.id},${u.role === 'admin'})">${u.role === 'admin' ? '设为普通' : '设为管理员'}</button>`;
+  if (!self) s += `<button class="ubtn danger" onclick="delUser(${u.id},'${esc(u.username)}')">删除</button>`;
+  return s;
+}
+async function resetPw(id, name) {
+  if (!confirm('把「' + name + '」的密码重置为初始密码 123456？')) return;
+  const r = await fetch('/api/admin/users/' + id + '/reset', { method: 'POST' });
+  const d = await r.json();
+  if (r.ok) toast('已重置为 ' + d.password); else toast(d.error || '失败', true);
+}
+async function toggleRole(id, isAdmin) {
+  const r = await fetch('/api/admin/users/' + id + '/role', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin: !isAdmin }) });
+  const d = await r.json();
+  if (r.ok) { toast('已更新'); load(); } else toast(d.error || '失败', true);
+}
+async function delUser(id, name) {
+  if (!confirm('删除用户「' + name + '」？其收录和资料将一并删除，不可恢复！')) return;
+  const r = await fetch('/api/admin/users/' + id, { method: 'DELETE' });
+  const d = await r.json();
+  if (r.ok) { toast('已删除'); load(); } else toast(d.error || '失败', true);
+}
+(async () => {
+  try { const me = await (await fetch('/api/me')).json(); MY_NAME = me.username; } catch (_) {}
+  await load();
+})();
+</script>
+</body>
+</html>

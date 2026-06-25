@@ -18,3 +18,8 @@ android/.gradle/
 android/local.properties
 *.keystore
 *.idsig
+
+# 用户上传 / 备份
+uploads/
+*.bak
+*.bak.*

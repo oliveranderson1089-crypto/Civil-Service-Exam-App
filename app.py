@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""公考·选词填空 成语/词语积累 —— 后端服务
+"""公考助手 —— 后端服务（多用户）
 
-功能：
-  - 输入成语/词语，自动标注拼音 + 给出释义（出处、例句）
-  - 收录、查看、编辑笔记、收藏、删除
-  - 按条件导出 PDF（学习版 / 默写版），方便复习打印
+- 行测 / 申论 两大板块，下设若干小板块
+- 言语理解与表达：成语/词语积累（拼音+释义+PDF 导出）
+- 每个板块：资料库（上传图片/文档/网页，应用内直接查看，Office 自动转 PDF）
+- 多用户 + 密保问题找回密码 + 管理员后台
 """
 import io
 import json
 import os
 import re
 import secrets
-import smtplib
 import sqlite3
+import subprocess
+import tempfile
 import time
+import uuid
 from datetime import datetime
-from email.header import Header
-from email.mime.text import MIMEText
 
 from flask import (Flask, g, jsonify, redirect, request, session,
-                   send_file, send_from_directory)
+                   send_file, send_from_directory, Response)
 from werkzeug.security import check_password_hash, generate_password_hash
 from pypinyin import Style, pinyin as _pinyin
 
@@ -33,30 +33,46 @@ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
                                 TableStyle, HRFlowable)
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_LEFT
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(BASE, "app.db")
+DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 STATIC = os.path.join(BASE, "static")
+UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
 CONFIG = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 
 app = Flask(__name__, static_folder=None)
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 单文件最大 64MB
+
+# ---------------------------------------------------------------- 板块结构
+SECTIONS = [
+    {"key": "xingce", "name": "行测", "icon": "测", "desc": "行政职业能力测验",
+     "boards": ["常识判断", "资料分析", "判断推理", "数量关系", "政治理论", "言语理解与表达"]},
+    {"key": "shenlun", "name": "申论", "icon": "申", "desc": "申论写作",
+     "boards": ["应用文", "议论文"]},
+]
+ALL_BOARDS = {b for s in SECTIONS for b in s["boards"]}
+IDIOM_BOARD = "言语理解与表达"  # 带成语/词语工具的板块
+
+# 密保问题选项
+SEC_QUESTIONS = [
+    "你的出生城市是？",
+    "你母亲的名字是？",
+    "你小学的名字是？",
+    "你最好朋友的名字是？",
+    "你最喜欢的一本书是？",
+    "你的幸运数字是？",
+]
+
+# 文件查看
+INLINE_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+              ".bmp", ".txt", ".md", ".html", ".htm", ".csv", ".json"}
+OFFICE_EXT = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+              ".odt", ".ods", ".odp", ".rtf"}
+TEXT_EXT = {".txt", ".md", ".csv", ".json"}
 
 
-# ---------------------------------------------------------------- 配置 / 账号
-def save_config(cfg):
-    try:
-        with open(CONFIG, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-
-def load_config():
-    """读取 config.json；只保证有随机密钥。账号由用户首次注册时设置。
-
-    也支持用环境变量直接设定账号（设置后即视为已注册）：GONGKAO_USER、GONGKAO_PASSWORD。
-    """
+# ---------------------------------------------------------------- 配置（仅密钥）
+def load_secret():
     cfg = {}
     if os.path.exists(CONFIG):
         try:
@@ -66,73 +82,125 @@ def load_config():
             cfg = {}
     if not cfg.get("secret_key"):
         cfg["secret_key"] = secrets.token_hex(32)
-    env_user = os.environ.get("GONGKAO_USER")
-    env_pw = os.environ.get("GONGKAO_PASSWORD")
-    if env_user and env_pw:
-        cfg["username"] = env_user
-        cfg["password_hash"] = generate_password_hash(env_pw)
-        cfg["registered"] = True
-    save_config(cfg)
+        try:
+            with open(CONFIG, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
     return cfg
 
 
-CFG = load_config()
+CFG = load_secret()
 app.secret_key = CFG["secret_key"]
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,  # 记住登录 30 天
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
 )
 
-
-def is_registered():
-    return bool(CFG.get("registered") and CFG.get("username") and CFG.get("password_hash"))
+_login_fails = {}  # username -> {count, locked_until}
 
 
-def mask_email(e):
-    try:
-        name, dom = e.split("@", 1)
-        masked = (name[0] + "***" + name[-1]) if len(name) > 1 else (name + "***")
-        return masked + "@" + dom
-    except Exception:
-        return e
+# ---------------------------------------------------------------- 数据库
+def get_db():
+    db = getattr(g, "_db", None)
+    if db is None:
+        db = g._db = sqlite3.connect(DB)
+        db.row_factory = sqlite3.Row
+    return db
 
 
-def try_send_email(to_addr, subject, body):
-    """用 config 里的 SMTP 配置发一封邮件。返回 (ok, err)。"""
-    try:
-        host = CFG.get("smtp_host")
-        port = int(CFG.get("smtp_port") or 465)
-        user = CFG.get("smtp_user") or CFG.get("email")
-        pw = CFG.get("smtp_pass")
-        if not (host and user and pw):
-            return False, "未配置发信邮箱"
-        msg = MIMEText(body, "plain", "utf-8")
-        msg["Subject"] = Header(subject, "utf-8")
-        msg["From"] = user
-        msg["To"] = to_addr
-        if port == 465:
-            s = smtplib.SMTP_SSL(host, port, timeout=20)
-        else:
-            s = smtplib.SMTP(host, port, timeout=20)
-            s.ehlo()
-            s.starttls()
-        s.login(user, pw)
-        s.sendmail(user, [to_addr], msg.as_string())
-        s.quit()
-        return True, ""
-    except Exception as e:
-        return False, str(e)
+@app.teardown_appcontext
+def close_db(exc):
+    db = getattr(g, "_db", None)
+    if db is not None:
+        db.close()
 
 
-# 找回密码验证码（内存，重启失效）：username -> {code, expires, attempts, last_sent}
-_reset_codes = {}
-# 登录失败计数（防爆破，公网暴露时重要）：username -> {count, locked_until}
-_login_fails = {}
+def _cols(con, table):
+    return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
 
-# 无需登录即可访问的路径
-_PUBLIC_EXACT = {"/login", "/api/login", "/register", "/api/register",
-                 "/forgot", "/api/forgot/send", "/api/forgot/reset",
+
+def init_db():
+    con = sqlite3.connect(DB)
+    con.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'user',
+            sec_question TEXT,
+            sec_answer_hash TEXT,
+            email TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS entries(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            word TEXT NOT NULL, pinyin TEXT, category TEXT,
+            explanation TEXT, derivation TEXT, example TEXT,
+            note TEXT, source TEXT, starred INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS materials(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            section TEXT, board TEXT,
+            title TEXT, orig_name TEXT, stored_name TEXT,
+            ext TEXT, mime TEXT, size INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_mat_user ON materials(user_id, board);
+        """
+    )
+    # entries 老表可能缺 user_id 列（先补列，再建索引）
+    if "user_id" not in _cols(con, "entries"):
+        con.execute("ALTER TABLE entries ADD COLUMN user_id INTEGER")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)")
+
+    # 迁移：把旧的单账号(config.json)迁入 users 表，并把无主收录归给它
+    if con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+        old = {}
+        if os.path.exists(CONFIG):
+            try:
+                old = json.load(open(CONFIG, encoding="utf-8"))
+            except Exception:
+                old = {}
+        if old.get("registered") and old.get("username") and old.get("password_hash"):
+            con.execute(
+                "INSERT INTO users(username,password_hash,role,email) VALUES(?,?,?,?)",
+                (old["username"], old["password_hash"], "admin", old.get("email", "")),
+            )
+            uid = con.execute("SELECT id FROM users WHERE username=?",
+                              (old["username"],)).fetchone()[0]
+            con.execute("UPDATE entries SET user_id=? WHERE user_id IS NULL", (uid,))
+    con.commit()
+    con.close()
+
+
+def users_count():
+    return get_db().execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+
+
+def current_user():
+    uid = session.get("user_id")
+    if not uid:
+        return None
+    return get_db().execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+
+
+def uid():
+    return session.get("user_id")
+
+
+def is_admin():
+    return session.get("role") == "admin"
+
+
+# ---------------------------------------------------------------- 访问控制
+_PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
+                 "/forgot", "/api/forgot/question", "/api/forgot/reset",
                  "/apk", "/download/gongkao.apk",
                  "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
@@ -143,26 +211,32 @@ def _is_public(path):
 
 @app.before_request
 def guard():
-    if _is_public(request.path):
+    p = request.path
+    if _is_public(p):
         return None
-    if not is_registered():
-        if request.path.startswith("/api/"):
-            return jsonify({"error": "未注册", "register": True}), 401
-        return redirect("/register")
-    if session.get("auth"):
+    # 后台仅管理员
+    if p == "/admin" or p.startswith("/api/admin"):
+        if not session.get("user_id"):
+            return (jsonify({"error": "未登录", "login": True}), 401) if p.startswith("/api/") else redirect("/login")
+        if session.get("role") != "admin":
+            return (jsonify({"error": "需要管理员权限"}), 403) if p.startswith("/api/") else redirect("/")
         return None
-    if request.path.startswith("/api/"):
-        return jsonify({"error": "未登录", "login": True}), 401
-    return redirect("/login")
+    if not session.get("user_id"):
+        # 一个用户都没有 → 引导去注册
+        if users_count() == 0 and not p.startswith("/api/"):
+            return redirect("/register")
+        if p.startswith("/api/"):
+            return jsonify({"error": "未登录", "login": True}), 401
+        return redirect("/login")
+    return None
 
-# ---------------------------------------------------------------- 字体
-# 必须字形完整且含拼音声调符号(ǎ ě ǐ ǒ ǔ ǚ…)的 TrueType 字体。
-# AR PL UMing/UKai CN 经 fontTools 校验为全覆盖；放在最前。
+
+# ---------------------------------------------------------------- 字体（PDF）
 EMBED_FONT_CANDIDATES = [
-    ("CN", "/usr/share/fonts/truetype/arphic/uming.ttc", 0),  # 文鼎宋体 CN
-    ("CN", "/usr/share/fonts/truetype/arphic/ukai.ttc", 0),   # 文鼎楷体 CN
+    ("CN", "/usr/share/fonts/truetype/arphic/uming.ttc", 0),
+    ("CN", "/usr/share/fonts/truetype/arphic/ukai.ttc", 0),
 ]
-PDF_FONT = "STSong-Light"  # 兜底（reportlab 内置 CID 简体）
+PDF_FONT = "STSong-Light"
 _font_ready = False
 
 
@@ -190,48 +264,7 @@ def ensure_pdf_font():
     return PDF_FONT
 
 
-# ---------------------------------------------------------------- 数据库
-def get_db():
-    db = getattr(g, "_db", None)
-    if db is None:
-        db = g._db = sqlite3.connect(DB)
-        db.row_factory = sqlite3.Row
-    return db
-
-
-@app.teardown_appcontext
-def close_db(exc):
-    db = getattr(g, "_db", None)
-    if db is not None:
-        db.close()
-
-
-def init_entries_table():
-    con = sqlite3.connect(DB)
-    con.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS entries(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            word TEXT NOT NULL,
-            pinyin TEXT,
-            category TEXT,
-            explanation TEXT,
-            derivation TEXT,
-            example TEXT,
-            note TEXT,
-            source TEXT,
-            starred INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now','localtime'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_entries_word ON entries(word);
-        CREATE INDEX IF NOT EXISTS idx_entries_cat ON entries(category);
-        """
-    )
-    con.commit()
-    con.close()
-
-
-# ---------------------------------------------------------------- 工具
+# ---------------------------------------------------------------- 成语/词语工具
 CJK_RE = re.compile(r"^[一-鿿]+$")
 
 
@@ -244,44 +277,23 @@ def to_pinyin(word):
 
 
 def lookup(word):
-    """在参考词典中查 word，返回收录所需的字段。"""
     word = (word or "").strip()
     db = get_db()
-    info = {
-        "word": word,
-        "pinyin": "",
-        "category": "词语",
-        "explanation": "",
-        "derivation": "",
-        "example": "",
-        "source": "manual",
-        "found": False,
-    }
+    info = {"word": word, "pinyin": "", "category": "词语", "explanation": "",
+            "derivation": "", "example": "", "source": "manual", "found": False}
     if not word:
         return info
     row = db.execute("SELECT * FROM ref_idiom WHERE word=?", (word,)).fetchone()
     if row:
-        info.update(
-            pinyin=row["pinyin"] or to_pinyin(word),
-            category="成语",
-            explanation=row["explanation"] or "",
-            derivation=row["derivation"] or "",
-            example=row["example"] or "",
-            source="idiom",
-            found=True,
-        )
+        info.update(pinyin=row["pinyin"] or to_pinyin(word), category="成语",
+                    explanation=row["explanation"] or "", derivation=row["derivation"] or "",
+                    example=row["example"] or "", source="idiom", found=True)
         return info
     row = db.execute("SELECT * FROM ref_ci WHERE word=?", (word,)).fetchone()
     if row:
-        info.update(
-            pinyin=to_pinyin(word),
-            category="词语",
-            explanation=row["explanation"] or "",
-            source="ci",
-            found=True,
-        )
+        info.update(pinyin=to_pinyin(word), category="词语",
+                    explanation=row["explanation"] or "", source="ci", found=True)
         return info
-    # 未收录：自动拼音，按长度猜测类别
     info["pinyin"] = to_pinyin(word)
     if len(word) == 4 and CJK_RE.match(word):
         info["category"] = "成语"
@@ -290,60 +302,51 @@ def lookup(word):
 
 def row_to_dict(row):
     d = dict(row)
-    d["starred"] = bool(d.get("starred"))
+    if "starred" in d:
+        d["starred"] = bool(d.get("starred"))
     return d
 
 
-# ---------------------------------------------------------------- 注册 / 登录 / 找回
+# ---------------------------------------------------------------- 注册/登录/找回
 @app.get("/register")
 def register_page():
-    if is_registered():
-        return redirect("/login")
     return send_from_directory(STATIC, "register.html")
 
 
 @app.post("/api/register")
 def api_register():
-    if is_registered():
-        return jsonify({"error": "已注册，请直接登录"}), 400
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     pw = data.get("password") or ""
+    sec_q = (data.get("sec_question") or "").strip()
+    sec_a = (data.get("sec_answer") or "").strip()
     email = (data.get("email") or "").strip()
     if len(username) < 2:
         return jsonify({"error": "用户名至少 2 个字符"}), 400
     if len(pw) < 6:
         return jsonify({"error": "密码至少 6 位"}), 400
-    if "@" not in email:
-        return jsonify({"error": "请填写正确的邮箱"}), 400
-    CFG["username"] = username
-    CFG["password_hash"] = generate_password_hash(pw)
-    CFG["email"] = email
-    CFG["smtp_host"] = (data.get("smtp_host") or "").strip()
-    CFG["smtp_port"] = int(data.get("smtp_port") or 465)
-    CFG["smtp_user"] = (data.get("smtp_user") or email).strip()
-    CFG["smtp_pass"] = data.get("smtp_pass") or ""  # 邮箱授权码
-    CFG["registered"] = True
-    save_config(CFG)
+    if not sec_q or len(sec_a) < 1:
+        return jsonify({"error": "请设置密保问题与答案"}), 400
+    db = get_db()
+    if db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+        return jsonify({"error": "用户名已存在"}), 400
+    role = "admin" if users_count() == 0 else "user"  # 第一个用户=管理员
+    cur = db.execute(
+        "INSERT INTO users(username,password_hash,role,sec_question,sec_answer_hash,email) VALUES(?,?,?,?,?,?)",
+        (username, generate_password_hash(pw), role, sec_q,
+         generate_password_hash(sec_a.lower()), email))
+    db.commit()
     session.permanent = True
-    session["auth"] = True
-    session["user"] = username
-    warn = ""
-    if CFG["smtp_host"] and CFG["smtp_pass"]:
-        ok, err = try_send_email(
-            email, "公考积累 · 注册成功",
-            "你已成功注册「公考积累」，今后找回密码的验证码会发到此邮箱。")
-        if not ok:
-            warn = "账号已创建，但测试邮件发送失败，找回密码可能不可用：" + err
-    return jsonify({"ok": True, "warn": warn})
+    session["user_id"] = cur.lastrowid
+    session["username"] = username
+    session["role"] = role
+    return jsonify({"ok": True, "role": role})
 
 
 @app.get("/login")
 def login_page():
-    if not is_registered():
+    if users_count() == 0:
         return redirect("/register")
-    if session.get("auth"):
-        return redirect("/")
     return send_from_directory(STATIC, "login.html")
 
 
@@ -351,22 +354,24 @@ def login_page():
 @app.post("/api/login")
 def login_submit():
     data = request.get_json(silent=True) or request.form
-    user = (data.get("username") or "").strip()
+    username = (data.get("username") or "").strip()
     pw = data.get("password") or ""
     now = time.time()
-    rec = _login_fails.get(user)
+    rec = _login_fails.get(username)
     if rec and rec.get("locked_until", 0) > now:
         left = int((rec["locked_until"] - now) / 60) + 1
         return jsonify({"error": f"登录失败次数过多，请 {left} 分钟后再试"}), 429
-    if user == CFG.get("username") and check_password_hash(CFG.get("password_hash", ""), pw):
-        _login_fails.pop(user, None)
+    u = get_db().execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if u and check_password_hash(u["password_hash"], pw):
+        _login_fails.pop(username, None)
         session.permanent = True
-        session["auth"] = True
-        session["user"] = user
-        return jsonify({"ok": True})
-    rec = _login_fails.setdefault(user, {"count": 0, "locked_until": 0})
+        session["user_id"] = u["id"]
+        session["username"] = u["username"]
+        session["role"] = u["role"]
+        return jsonify({"ok": True, "role": u["role"]})
+    rec = _login_fails.setdefault(username, {"count": 0, "locked_until": 0})
     rec["count"] += 1
-    if rec["count"] >= 8:  # 连续 8 次失败锁定 10 分钟
+    if rec["count"] >= 8:
         rec["locked_until"] = now + 600
         rec["count"] = 0
     return jsonify({"error": "用户名或密码错误"}), 401
@@ -381,105 +386,277 @@ def logout():
 
 @app.get("/forgot")
 def forgot_page():
-    if not is_registered():
+    if users_count() == 0:
         return redirect("/register")
     return send_from_directory(STATIC, "forgot.html")
 
 
-@app.post("/api/forgot/send")
-def api_forgot_send():
+@app.post("/api/forgot/question")
+def api_forgot_question():
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
-    if username != CFG.get("username"):
-        return jsonify({"error": "用户名不存在"}), 400
-    email = CFG.get("email")
-    if not (email and CFG.get("smtp_host") and CFG.get("smtp_pass")):
-        return jsonify({"error": "未配置邮箱，无法邮件找回；请在电脑上重置密码"}), 400
-    now = time.time()
-    rec = _reset_codes.get(username)
-    if rec and now - rec.get("last_sent", 0) < 60:
-        return jsonify({"error": "发送过于频繁，请 1 分钟后再试"}), 429
-    code = "%06d" % secrets.randbelow(1000000)
-    _reset_codes[username] = {"code": code, "expires": now + 600,
-                              "attempts": 0, "last_sent": now}
-    ok, err = try_send_email(
-        email, "公考积累 · 找回密码验证码",
-        f"你的验证码是：{code}\n10 分钟内有效。若非本人操作请忽略本邮件。")
-    if not ok:
-        return jsonify({"error": "邮件发送失败：" + err}), 500
-    return jsonify({"ok": True, "email": mask_email(email)})
+    u = get_db().execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if not u or not u["sec_question"]:
+        return jsonify({"error": "用户名不存在或未设置密保问题"}), 400
+    return jsonify({"ok": True, "question": u["sec_question"]})
 
 
 @app.post("/api/forgot/reset")
 def api_forgot_reset():
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
-    code = (data.get("code") or "").strip()
+    answer = (data.get("answer") or "").strip().lower()
     new_pw = data.get("password") or ""
-    rec = _reset_codes.get(username)
-    if not rec:
-        return jsonify({"error": "请先获取验证码"}), 400
-    if time.time() > rec["expires"]:
-        _reset_codes.pop(username, None)
-        return jsonify({"error": "验证码已过期，请重新获取"}), 400
-    if rec["attempts"] >= 5:
-        _reset_codes.pop(username, None)
-        return jsonify({"error": "尝试次数过多，请重新获取验证码"}), 400
-    rec["attempts"] += 1
-    if code != rec["code"]:
-        return jsonify({"error": "验证码错误"}), 400
+    db = get_db()
+    u = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if not u or not u["sec_answer_hash"]:
+        return jsonify({"error": "用户名不存在或未设置密保"}), 400
+    if not check_password_hash(u["sec_answer_hash"], answer):
+        return jsonify({"error": "密保答案不正确"}), 400
     if len(new_pw) < 6:
         return jsonify({"error": "新密码至少 6 位"}), 400
-    CFG["password_hash"] = generate_password_hash(new_pw)
-    save_config(CFG)
-    _reset_codes.pop(username, None)
+    db.execute("UPDATE users SET password_hash=? WHERE id=?",
+               (generate_password_hash(new_pw), u["id"]))
+    db.commit()
     return jsonify({"ok": True})
+
+
+@app.get("/api/sec_questions")
+def api_sec_questions():
+    return jsonify({"questions": SEC_QUESTIONS})
+
+
+# ---------------------------------------------------------------- 当前用户/板块
+@app.get("/api/me")
+def api_me():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "未登录"}), 401
+    return jsonify({"username": u["username"], "role": u["role"],
+                    "is_admin": u["role"] == "admin", "email": u["email"] or ""})
+
+
+@app.get("/api/sections")
+def api_sections():
+    return jsonify({"sections": SECTIONS, "idiom_board": IDIOM_BOARD})
 
 
 @app.get("/api/account")
 def api_account_get():
-    return jsonify({
-        "username": CFG.get("username", ""),
-        "email": CFG.get("email", ""),
-        "smtp_host": CFG.get("smtp_host", ""),
-        "smtp_port": CFG.get("smtp_port", 465),
-        "smtp_user": CFG.get("smtp_user", ""),
-        "has_smtp_pass": bool(CFG.get("smtp_pass")),
-    })
+    u = current_user()
+    return jsonify({"username": u["username"], "email": u["email"] or "",
+                    "sec_question": u["sec_question"] or ""})
 
 
 @app.post("/api/account")
 def api_account_update():
     data = request.get_json(silent=True) or {}
-    # 改密码需校验旧密码
+    db = get_db()
+    u = current_user()
     new_pw = data.get("new_password")
     if new_pw:
-        if not check_password_hash(CFG.get("password_hash", ""), data.get("old_password") or ""):
+        if not check_password_hash(u["password_hash"], data.get("old_password") or ""):
             return jsonify({"error": "原密码不正确"}), 400
         if len(new_pw) < 6:
             return jsonify({"error": "新密码至少 6 位"}), 400
-        CFG["password_hash"] = generate_password_hash(new_pw)
-    if "email" in data and data.get("email"):
-        CFG["email"] = data["email"].strip()
-    for k in ("smtp_host", "smtp_user"):
-        if k in data:
-            CFG[k] = (data.get(k) or "").strip()
-    if "smtp_port" in data and data.get("smtp_port"):
-        CFG["smtp_port"] = int(data["smtp_port"])
-    if data.get("smtp_pass"):  # 留空表示不修改
-        CFG["smtp_pass"] = data["smtp_pass"]
-    save_config(CFG)
+        db.execute("UPDATE users SET password_hash=? WHERE id=?",
+                   (generate_password_hash(new_pw), u["id"]))
+    if data.get("email") is not None:
+        db.execute("UPDATE users SET email=? WHERE id=?", (data["email"].strip(), u["id"]))
+    if data.get("sec_question") and data.get("sec_answer"):
+        db.execute("UPDATE users SET sec_question=?, sec_answer_hash=? WHERE id=?",
+                   (data["sec_question"].strip(),
+                    generate_password_hash(data["sec_answer"].strip().lower()), u["id"]))
+    db.commit()
     return jsonify({"ok": True})
 
 
-@app.post("/api/account/test_email")
-def api_test_email():
-    to = CFG.get("email")
-    if not to:
-        return jsonify({"error": "未设置邮箱"}), 400
-    ok, err = try_send_email(to, "公考积累 · 测试邮件", "这是一封测试邮件，收到说明邮箱配置正确。")
-    return (jsonify({"ok": True, "email": mask_email(to)}) if ok
-            else (jsonify({"error": err}), 500))
+# ---------------------------------------------------------------- 管理后台
+@app.get("/admin")
+def admin_page():
+    return send_from_directory(STATIC, "admin.html")
+
+
+@app.get("/api/admin/users")
+def admin_users():
+    rows = get_db().execute(
+        "SELECT id,username,role,email,sec_question,created_at,"
+        "(SELECT COUNT(*) FROM entries e WHERE e.user_id=users.id) entry_cnt,"
+        "(SELECT COUNT(*) FROM materials m WHERE m.user_id=users.id) mat_cnt "
+        "FROM users ORDER BY id").fetchall()
+    return jsonify({"users": [dict(r) for r in rows]})
+
+
+@app.post("/api/admin/users/<int:user_id>/reset")
+def admin_reset_pw(user_id):
+    db = get_db()
+    if not db.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
+        return jsonify({"error": "用户不存在"}), 404
+    db.execute("UPDATE users SET password_hash=? WHERE id=?",
+               (generate_password_hash("123456"), user_id))
+    db.commit()
+    return jsonify({"ok": True, "password": "123456"})
+
+
+@app.post("/api/admin/users/<int:user_id>/role")
+def admin_set_role(user_id):
+    data = request.get_json(silent=True) or {}
+    role = "admin" if data.get("admin") else "user"
+    db = get_db()
+    if role == "user":  # 不能取消最后一个管理员
+        admins = db.execute("SELECT COUNT(*) c FROM users WHERE role='admin'").fetchone()["c"]
+        cur = db.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
+        if cur and cur["role"] == "admin" and admins <= 1:
+            return jsonify({"error": "至少保留一个管理员"}), 400
+    db.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+    db.commit()
+    return jsonify({"ok": True, "role": role})
+
+
+@app.delete("/api/admin/users/<int:user_id>")
+def admin_delete_user(user_id):
+    if user_id == uid():
+        return jsonify({"error": "不能删除自己"}), 400
+    db = get_db()
+    # 删除其资料文件
+    for m in db.execute("SELECT stored_name FROM materials WHERE user_id=?", (user_id,)).fetchall():
+        _remove_file(user_id, m["stored_name"])
+    db.execute("DELETE FROM materials WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM entries WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM users WHERE id=?", (user_id,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 资料库
+def _user_dir(user_id):
+    d = os.path.join(UPLOADS, str(user_id))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _remove_file(user_id, stored_name):
+    try:
+        p = os.path.join(UPLOADS, str(user_id), stored_name)
+        if os.path.exists(p):
+            os.remove(p)
+        base = os.path.splitext(p)[0]
+        if os.path.exists(base + ".pdf"):  # 缓存的转换结果
+            os.remove(base + ".pdf")
+    except Exception:
+        pass
+
+
+@app.post("/api/materials")
+def material_upload():
+    section = (request.form.get("section") or "").strip()
+    board = (request.form.get("board") or "").strip()
+    title = (request.form.get("title") or "").strip()
+    if board not in ALL_BOARDS:
+        return jsonify({"error": "板块无效"}), 400
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "请选择文件"}), 400
+    orig = f.filename
+    ext = os.path.splitext(orig)[1].lower()
+    stored = uuid.uuid4().hex + ext
+    path = os.path.join(_user_dir(uid()), stored)
+    f.save(path)
+    size = os.path.getsize(path)
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO materials(user_id,section,board,title,orig_name,stored_name,ext,mime,size) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (uid(), section, board, title or orig, orig, stored, ext, f.mimetype or "", size))
+    db.commit()
+    row = db.execute("SELECT * FROM materials WHERE id=?", (cur.lastrowid,)).fetchone()
+    return jsonify(dict(row)), 201
+
+
+@app.get("/api/materials")
+def material_list():
+    board = (request.args.get("board") or "").strip()
+    db = get_db()
+    sql = "SELECT * FROM materials WHERE user_id=?"
+    args = [uid()]
+    if board:
+        sql += " AND board=?"
+        args.append(board)
+    sql += " ORDER BY id DESC"
+    rows = db.execute(sql, args).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["viewable"] = (r["ext"] in INLINE_EXT) or (r["ext"] in OFFICE_EXT)
+        out.append(d)
+    return jsonify({"items": out})
+
+
+def _get_material(mid):
+    return get_db().execute(
+        "SELECT * FROM materials WHERE id=? AND user_id=?", (mid, uid())).fetchone()
+
+
+def _office_to_pdf(src):
+    pdf = os.path.splitext(src)[0] + ".pdf"
+    if os.path.exists(pdf) and os.path.getmtime(pdf) >= os.path.getmtime(src):
+        return pdf
+    prof = "file://" + os.path.join(tempfile.gettempdir(), "lo_profile")
+    try:
+        subprocess.run(
+            ["soffice", "--headless", "-env:UserInstallation=" + prof,
+             "--convert-to", "pdf", "--outdir", os.path.dirname(src), src],
+            timeout=120, check=True, capture_output=True)
+    except Exception:
+        return None
+    return pdf if os.path.exists(pdf) else None
+
+
+@app.get("/api/materials/<int:mid>/view")
+def material_view(mid):
+    m = _get_material(mid)
+    if not m:
+        return "未找到", 404
+    path = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    if not os.path.exists(path):
+        return "文件丢失", 404
+    ext = m["ext"]
+    if ext in OFFICE_EXT:
+        pdf = _office_to_pdf(path)
+        if not pdf:
+            return "文档转换失败，请下载查看", 500
+        return send_file(pdf, mimetype="application/pdf", as_attachment=False)
+    if ext in (".html", ".htm"):
+        with open(path, "rb") as fp:
+            return Response(fp.read(), mimetype="text/html; charset=utf-8")
+    if ext in TEXT_EXT:
+        with open(path, "rb") as fp:
+            return Response(fp.read(), mimetype="text/plain; charset=utf-8")
+    # pdf / 图片等：浏览器内联打开
+    return send_file(path, as_attachment=False,
+                     download_name=m["orig_name"])
+
+
+@app.get("/api/materials/<int:mid>/download")
+def material_download(mid):
+    m = _get_material(mid)
+    if not m:
+        return "未找到", 404
+    path = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    if not os.path.exists(path):
+        return "文件丢失", 404
+    return send_file(path, as_attachment=True, download_name=m["orig_name"])
+
+
+@app.delete("/api/materials/<int:mid>")
+def material_delete(mid):
+    m = _get_material(mid)
+    if not m:
+        return jsonify({"error": "未找到"}), 404
+    _remove_file(uid(), m["stored_name"])
+    get_db().execute("DELETE FROM materials WHERE id=?", (mid,))
+    get_db().commit()
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------- 安卓包下载
@@ -488,7 +665,7 @@ def api_test_email():
 def download_apk():
     apk = os.path.join(BASE, "dist", "gongkao.apk")
     if not os.path.exists(apk):
-        return "APK 尚未构建，请先运行 android/build_apk.sh", 404
+        return "APK 尚未构建", 404
     return send_file(apk, mimetype="application/vnd.android.package-archive",
                      as_attachment=True, download_name="gongkao.apk")
 
@@ -504,10 +681,9 @@ def static_files(fname):
     return send_from_directory(STATIC, fname)
 
 
-# ---------------------------------------------------------------- API
+# ---------------------------------------------------------------- 成语/词语 API（按用户隔离）
 @app.get("/api/lookup")
 def api_lookup():
-    """实时预览：查询但不收录。"""
     return jsonify(lookup(request.args.get("word", "")))
 
 
@@ -518,18 +694,16 @@ def api_add():
     if not word:
         return jsonify({"error": "请输入成语或词语"}), 400
     info = lookup(word)
-    # 允许前端覆盖（用户手动改了拼音/释义/类别/笔记）
     for k in ("pinyin", "category", "explanation", "derivation", "example"):
         if data.get(k) is not None and str(data.get(k)).strip() != "":
             info[k] = data[k]
     note = (data.get("note") or "").strip()
     db = get_db()
     cur = db.execute(
-        """INSERT INTO entries(word,pinyin,category,explanation,derivation,example,note,source)
-           VALUES(?,?,?,?,?,?,?,?)""",
-        (word, info["pinyin"], info["category"], info["explanation"],
-         info["derivation"], info["example"], note, info["source"]),
-    )
+        "INSERT INTO entries(user_id,word,pinyin,category,explanation,derivation,example,note,source) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (uid(), word, info["pinyin"], info["category"], info["explanation"],
+         info["derivation"], info["example"], note, info["source"]))
     db.commit()
     row = db.execute("SELECT * FROM entries WHERE id=?", (cur.lastrowid,)).fetchone()
     return jsonify(row_to_dict(row)), 201
@@ -551,8 +725,8 @@ def api_list():
         page_size = 5
     page_size = max(1, min(page_size, 100))
 
-    where = "WHERE 1=1"
-    args = []
+    where = "WHERE user_id=?"
+    args = [uid()]
     if q:
         where += " AND (word LIKE ? OR pinyin LIKE ? OR explanation LIKE ? OR note LIKE ?)"
         like = f"%{q}%"
@@ -563,34 +737,21 @@ def api_list():
     if starred == "1":
         where += " AND starred=1"
 
-    total = db.execute(
-        f"SELECT COUNT(*) c FROM entries {where}", args).fetchone()["c"]
+    total = db.execute(f"SELECT COUNT(*) c FROM entries {where}", args).fetchone()["c"]
     pages = max(1, (total + page_size - 1) // page_size)
     page = min(page, pages)
     offset = (page - 1) * page_size
     rows = db.execute(
         f"SELECT * FROM entries {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-        args + [page_size, offset],
-    ).fetchall()
+        args + [page_size, offset]).fetchall()
     items = [row_to_dict(r) for r in rows]
     stats = db.execute(
-        "SELECT COUNT(*) total,"
-        " SUM(category='成语') idiom,"
-        " SUM(category='词语') ci,"
-        " SUM(starred=1) starred FROM entries"
-    ).fetchone()
+        "SELECT COUNT(*) total, SUM(category='成语') idiom, SUM(category='词语') ci,"
+        " SUM(starred=1) starred FROM entries WHERE user_id=?", (uid(),)).fetchone()
     return jsonify({
-        "items": items,
-        "page": page,
-        "page_size": page_size,
-        "pages": pages,
-        "total": total,
-        "stats": {
-            "total": stats["total"] or 0,
-            "idiom": stats["idiom"] or 0,
-            "ci": stats["ci"] or 0,
-            "starred": stats["starred"] or 0,
-        },
+        "items": items, "page": page, "page_size": page_size, "pages": pages, "total": total,
+        "stats": {"total": stats["total"] or 0, "idiom": stats["idiom"] or 0,
+                  "ci": stats["ci"] or 0, "starred": stats["starred"] or 0},
     })
 
 
@@ -598,7 +759,7 @@ def api_list():
 def api_update(eid):
     data = request.get_json(force=True, silent=True) or {}
     db = get_db()
-    row = db.execute("SELECT * FROM entries WHERE id=?", (eid,)).fetchone()
+    row = db.execute("SELECT * FROM entries WHERE id=? AND user_id=?", (eid, uid())).fetchone()
     if not row:
         return jsonify({"error": "not found"}), 404
     fields = ["word", "pinyin", "category", "explanation", "derivation",
@@ -607,11 +768,10 @@ def api_update(eid):
     for f in fields:
         if f in data:
             updates.append(f"{f}=?")
-            val = int(bool(data[f])) if f == "starred" else data[f]
-            args.append(val)
+            args.append(int(bool(data[f])) if f == "starred" else data[f])
     if updates:
-        args.append(eid)
-        db.execute(f"UPDATE entries SET {', '.join(updates)} WHERE id=?", args)
+        args += [eid, uid()]
+        db.execute(f"UPDATE entries SET {', '.join(updates)} WHERE id=? AND user_id=?", args)
         db.commit()
     row = db.execute("SELECT * FROM entries WHERE id=?", (eid,)).fetchone()
     return jsonify(row_to_dict(row))
@@ -620,7 +780,7 @@ def api_update(eid):
 @app.delete("/api/entries/<int:eid>")
 def api_delete(eid):
     db = get_db()
-    db.execute("DELETE FROM entries WHERE id=?", (eid,))
+    db.execute("DELETE FROM entries WHERE id=? AND user_id=?", (eid, uid()))
     db.commit()
     return jsonify({"ok": True})
 
@@ -629,17 +789,13 @@ def api_delete(eid):
 def build_pdf(entries, opts):
     ensure_pdf_font()
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=18 * mm, rightMargin=18 * mm,
-        topMargin=16 * mm, bottomMargin=16 * mm,
-        title="公考选词填空·成语词语积累",
-    )
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
+                            topMargin=16 * mm, bottomMargin=16 * mm,
+                            title="公考·成语词语积累")
     f = PDF_FONT
-    st_title = ParagraphStyle("t", fontName=f, fontSize=20, leading=26,
-                              alignment=1, spaceAfter=2)
-    st_sub = ParagraphStyle("s", fontName=f, fontSize=10, leading=14,
-                            alignment=1, textColor=colors.grey, spaceAfter=10)
+    st_title = ParagraphStyle("t", fontName=f, fontSize=20, leading=26, alignment=1, spaceAfter=2)
+    st_sub = ParagraphStyle("s", fontName=f, fontSize=10, leading=14, alignment=1,
+                            textColor=colors.grey, spaceAfter=10)
     st_word = ParagraphStyle("w", fontName=f, fontSize=15, leading=20)
     st_py = ParagraphStyle("py", fontName=f, fontSize=11, leading=20,
                            textColor=colors.HexColor("#1a6fb5"), alignment=2)
@@ -647,41 +803,26 @@ def build_pdf(entries, opts):
                               textColor=colors.HexColor("#444444"))
     st_blank = ParagraphStyle("bk", fontName=f, fontSize=10.5, leading=22,
                               textColor=colors.HexColor("#bbbbbb"))
-
-    story = []
-    story.append(Paragraph("公考·选词填空　成语 / 词语积累", st_title))
-    story.append(Paragraph(
-        datetime.now().strftime("导出于 %Y-%m-%d %H:%M") +
-        f"　共 {len(entries)} 条" +
-        ("　【默写版】" if opts.get("mode") == "recite" else ""), st_sub))
-
+    story = [Paragraph("公考·选词填空　成语 / 词语积累", st_title),
+             Paragraph(datetime.now().strftime("导出于 %Y-%m-%d %H:%M") +
+                       f"　共 {len(entries)} 条" +
+                       ("　【默写版】" if opts.get("mode") == "recite" else ""), st_sub)]
     recite = opts.get("mode") == "recite"
-    inc_der = opts.get("derivation", True)
-    inc_exa = opts.get("example", True)
-    inc_note = opts.get("note", True)
-
+    inc_der, inc_exa, inc_note = opts.get("derivation", True), opts.get("example", True), opts.get("note", True)
     for i, e in enumerate(entries, 1):
         word = (e.get("word") or "").replace("\n", " ")
-        py = (e.get("pinyin") or "")
-        head = Table(
-            [[Paragraph(f'<b>{i}. {word}</b>', st_word),
-              Paragraph(py, st_py)]],
-            colWidths=[None, 55 * mm])
-        head.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
+        head = Table([[Paragraph(f'<b>{i}. {word}</b>', st_word),
+                       Paragraph(e.get("pinyin") or "", st_py)]], colWidths=[None, 55 * mm])
+        head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                                  ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                  ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                                  ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
         story.append(head)
 
         def field(label, value):
             value = (value or "").strip().replace("\n", " ")
-            if not value:
-                return
-            story.append(Paragraph(
-                f'<font color="#888888">{label}</font>　{value}', st_label))
-
+            if value:
+                story.append(Paragraph(f'<font color="#888888">{label}</font>　{value}', st_label))
         if recite:
             story.append(Paragraph("释义：______________________________________________", st_blank))
         else:
@@ -692,12 +833,9 @@ def build_pdf(entries, opts):
                 field("例句", e.get("example"))
         if inc_note and e.get("note"):
             field("笔记", e.get("note"))
-
         story.append(Spacer(1, 4))
-        story.append(HRFlowable(width="100%", thickness=0.4,
-                                color=colors.HexColor("#dddddd")))
+        story.append(HRFlowable(width="100%", thickness=0.4, color=colors.HexColor("#dddddd")))
         story.append(Spacer(1, 6))
-
     doc.build(story)
     buf.seek(0)
     return buf
@@ -713,14 +851,9 @@ def _truthy(v, default=True):
 def api_export():
     if request.method == "GET":
         a = request.args
-        data = {
-            "mode": a.get("mode", "study"),
-            "category": a.get("category", ""),
-            "starred": _truthy(a.get("starred"), False),
-            "derivation": _truthy(a.get("der")),
-            "example": _truthy(a.get("exa")),
-            "note": _truthy(a.get("note")),
-        }
+        data = {"mode": a.get("mode", "study"), "category": a.get("category", ""),
+                "starred": _truthy(a.get("starred"), False), "derivation": _truthy(a.get("der")),
+                "example": _truthy(a.get("exa")), "note": _truthy(a.get("note"))}
         ids_s = a.get("ids", "")
         if ids_s:
             data["ids"] = [int(x) for x in ids_s.split(",") if x.strip().isdigit()]
@@ -731,11 +864,11 @@ def api_export():
     if ids:
         qmarks = ",".join("?" * len(ids))
         rows = db.execute(
-            f"SELECT * FROM entries WHERE id IN ({qmarks}) ORDER BY id DESC", ids
-        ).fetchall()
+            f"SELECT * FROM entries WHERE id IN ({qmarks}) AND user_id=? ORDER BY id DESC",
+            ids + [uid()]).fetchall()
     else:
-        sql = "SELECT * FROM entries WHERE 1=1"
-        args = []
+        sql = "SELECT * FROM entries WHERE user_id=?"
+        args = [uid()]
         cat = (data.get("category") or "").strip()
         if cat in ("成语", "词语"):
             sql += " AND category=?"
@@ -747,26 +880,22 @@ def api_export():
     entries = [dict(r) for r in rows]
     if not entries:
         return jsonify({"error": "没有可导出的内容"}), 400
-    opts = {
-        "mode": data.get("mode", "study"),
-        "derivation": data.get("derivation", True),
-        "example": data.get("example", True),
-        "note": data.get("note", True),
-    }
+    opts = {"mode": data.get("mode", "study"), "derivation": data.get("derivation", True),
+            "example": data.get("example", True), "note": data.get("note", True)}
     pdf = build_pdf(entries, opts)
-    fname = "公考积累_%s%s.pdf" % (
-        datetime.now().strftime("%Y%m%d_%H%M"),
-        "_默写版" if opts["mode"] == "recite" else "",
-    )
-    return send_file(pdf, mimetype="application/pdf",
-                     as_attachment=True, download_name=fname)
+    fname = "公考积累_%s%s.pdf" % (datetime.now().strftime("%Y%m%d_%H%M"),
+                                 "_默写版" if opts["mode"] == "recite" else "")
+    return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=fname)
+
+
+# 启动时初始化
+init_db()
+ensure_pdf_font()
+os.makedirs(UPLOADS, exist_ok=True)
 
 
 if __name__ == "__main__":
-    init_entries_table()
-    ensure_pdf_font()
     import argparse
-
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8011)
@@ -776,5 +905,5 @@ if __name__ == "__main__":
         app.run(host=a.host, port=a.port, debug=True)
     else:
         from waitress import serve
-        print(f" * 公考积累服务已启动： http://{a.host}:{a.port}")
+        print(f" * 公考助手已启动： http://{a.host}:{a.port}")
         serve(app, host=a.host, port=a.port, threads=8)

@@ -5,8 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#1a6fb5">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<title>公考·成语词语积累</title>
+<title>公考助手</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -14,76 +13,116 @@
 </head>
 <body>
 <header class="topbar">
+  <button id="nav-back" class="navbtn hidden">‹ 返回</button>
+  <div class="brand-min">
+    <span class="logo-min">公</span>
+    <span id="top-title">公考助手</span>
+  </div>
   <div class="topbar-actions">
+    <button id="admin-btn" class="logout hidden" title="管理后台">后台</button>
     <button id="settings-btn" class="logout" title="账号设置">设置</button>
     <button id="logout-btn" class="logout" title="退出登录">退出</button>
-  </div>
-  <div class="brand">
-    <span class="logo">积</span>
-    <div>
-      <h1>公考 · 选词填空积累</h1>
-      <p class="subtitle">成语 / 词语 · 拼音释义 · 一键导出 PDF</p>
-    </div>
-  </div>
-  <div class="stats" id="stats">
-    <div><b id="st-total">0</b><span>总数</span></div>
-    <div><b id="st-idiom">0</b><span>成语</span></div>
-    <div><b id="st-ci">0</b><span>词语</span></div>
-    <div><b id="st-star">0</b><span>收藏</span></div>
   </div>
 </header>
 
 <main>
-  <!-- 录入区 -->
-  <section class="card add-card">
-    <div class="add-row">
-      <input id="word-input" type="text" placeholder="输入成语或词语，回车查询…" autocomplete="off">
-      <button id="lookup-btn" class="btn">查询</button>
-    </div>
-    <div id="preview" class="preview hidden">
-      <div class="pv-head">
-        <span class="pv-word" id="pv-word"></span>
-        <span class="pv-py" id="pv-py"></span>
-        <span class="pv-tag" id="pv-cat"></span>
-        <span class="pv-found" id="pv-found"></span>
-      </div>
-      <div class="pv-field"><label>释义</label><textarea id="pv-exp" rows="2"></textarea></div>
-      <div class="pv-field" id="pv-der-wrap"><label>出处</label><textarea id="pv-der" rows="1"></textarea></div>
-      <div class="pv-field" id="pv-exa-wrap"><label>例句</label><textarea id="pv-exa" rows="1"></textarea></div>
-      <div class="pv-field"><label>笔记</label><input id="pv-note" type="text" placeholder="可写自己的辨析、易混词、真题出处…"></div>
-      <div class="pv-actions">
-        <label class="catpick">类别：
-          <select id="pv-catsel"><option>成语</option><option>词语</option></select>
-        </label>
-        <button id="save-btn" class="btn primary">收录</button>
-      </div>
-    </div>
-    <p class="hint" id="add-hint"></p>
+  <!-- ===== 首页：两大板块 ===== -->
+  <section id="view-home" class="view">
+    <p class="welcome">欢迎，<b id="me-name"></b> 👋 选择一个板块开始</p>
+    <div class="home-cards" id="home-cards"></div>
   </section>
 
-  <!-- 工具条 -->
-  <section class="toolbar">
-    <div class="filters" id="filters">
-      <button class="chip active" data-f="all">全部</button>
-      <button class="chip" data-f="成语">成语</button>
-      <button class="chip" data-f="词语">词语</button>
-      <button class="chip" data-f="star">收藏</button>
-    </div>
-    <input id="search" type="search" placeholder="搜索已收录…">
-    <button id="export-btn" class="btn">导出 PDF</button>
+  <!-- ===== 板块下的小板块列表 ===== -->
+  <section id="view-section" class="view hidden">
+    <h2 class="view-title" id="section-title"></h2>
+    <div class="board-grid" id="board-grid"></div>
   </section>
 
-  <!-- 列表 -->
-  <section id="list" class="list"></section>
-  <p id="empty" class="empty hidden">还没有收录内容，先在上面输入一个成语试试～</p>
+  <!-- ===== 板块详情 ===== -->
+  <section id="view-board" class="view hidden">
+    <h2 class="view-title" id="board-title"></h2>
 
-  <!-- 翻页 -->
-  <nav id="pager" class="pager hidden">
-    <button id="pg-prev" class="btn">上一页</button>
-    <span id="pg-info" class="pg-info"></span>
-    <button id="pg-next" class="btn">下一页</button>
-  </nav>
+    <!-- 成语/词语工具（仅「言语理解与表达」显示） -->
+    <div id="idiom-tool" class="hidden">
+      <div class="tool-banner">📖 成语 / 词语积累</div>
+      <section class="card add-card">
+        <div class="add-row">
+          <input id="word-input" type="text" placeholder="输入成语或词语，回车查询…" autocomplete="off">
+          <button id="lookup-btn" class="btn">查询</button>
+        </div>
+        <div id="preview" class="preview hidden">
+          <div class="pv-head">
+            <span class="pv-word" id="pv-word"></span>
+            <span class="pv-py" id="pv-py"></span>
+            <span class="pv-tag" id="pv-cat"></span>
+            <span class="pv-found" id="pv-found"></span>
+          </div>
+          <div class="pv-field"><label>释义</label><textarea id="pv-exp" rows="2"></textarea></div>
+          <div class="pv-field" id="pv-der-wrap"><label>出处</label><textarea id="pv-der" rows="1"></textarea></div>
+          <div class="pv-field" id="pv-exa-wrap"><label>例句</label><textarea id="pv-exa" rows="1"></textarea></div>
+          <div class="pv-field"><label>笔记</label><input id="pv-note" type="text" placeholder="辨析、易混词、真题出处…"></div>
+          <div class="pv-actions">
+            <label class="catpick">类别：
+              <select id="pv-catsel"><option>成语</option><option>词语</option></select>
+            </label>
+            <button id="save-btn" class="btn primary">收录</button>
+          </div>
+        </div>
+        <p class="hint" id="add-hint"></p>
+      </section>
+      <div class="toolbar">
+        <div class="filters" id="filters">
+          <button class="chip active" data-f="all">全部</button>
+          <button class="chip" data-f="成语">成语</button>
+          <button class="chip" data-f="词语">词语</button>
+          <button class="chip" data-f="star">收藏</button>
+        </div>
+        <input id="search" type="search" placeholder="搜索已收录…">
+        <button id="export-btn" class="btn">导出 PDF</button>
+      </div>
+      <section id="list" class="list"></section>
+      <p id="empty" class="empty hidden"></p>
+      <nav id="pager" class="pager hidden">
+        <button id="pg-prev" class="btn">上一页</button>
+        <span id="pg-info" class="pg-info"></span>
+        <button id="pg-next" class="btn">下一页</button>
+      </nav>
+    </div>
+
+    <!-- 资料库（所有板块） -->
+    <div id="materials">
+      <div class="mat-head">
+        <h3>📁 资料库</h3>
+        <button id="upload-btn" class="btn primary">+ 上传资料</button>
+      </div>
+      <p class="mat-tip">上传图片、PDF、Word/Excel/PPT、网页(HTML)等，点击可在应用内直接查看。</p>
+      <div id="mat-list" class="mat-list"></div>
+      <p id="mat-empty" class="empty hidden">这个板块还没有资料，点「上传资料」添加。</p>
+    </div>
+  </section>
+
+  <!-- ===== 文件查看器 ===== -->
+  <section id="view-viewer" class="view hidden">
+    <div class="viewer-bar">
+      <span id="viewer-name"></span>
+      <a id="viewer-dl" class="btn" download>下载</a>
+    </div>
+    <iframe id="viewer-frame" title="文件预览"></iframe>
+  </section>
 </main>
+
+<!-- 上传弹窗 -->
+<div id="upload-modal" class="modal hidden">
+  <div class="modal-box">
+    <h3>上传资料</h3>
+    <div class="opt"><span>名称</span><input id="up-title" type="text" placeholder="选填，默认用文件名"></div>
+    <input id="up-file" type="file" style="margin:8px 0 14px;width:100%;">
+    <div class="modal-actions">
+      <button class="btn" id="up-cancel">取消</button>
+      <button class="btn primary" id="up-go">上传</button>
+    </div>
+  </div>
+</div>
 
 <!-- 导出弹窗 -->
 <div id="export-modal" class="modal hidden">
@@ -125,14 +164,9 @@
       <input id="set-newpw" type="password" placeholder="新密码（至少 6 位，留空不改）">
     </div>
     <div class="set-sec">
-      <div class="set-title">找回邮箱</div>
-      <input id="set-email" type="email" placeholder="邮箱">
-      <div class="row2">
-        <input id="set-smtphost" type="text" placeholder="SMTP 服务器">
-        <input id="set-smtpport" type="number" placeholder="端口" style="max-width:90px;">
-      </div>
-      <input id="set-smtppass" type="password" placeholder="邮箱授权码（留空不改）">
-      <button class="btn" id="set-test" type="button">发送测试邮件</button>
+      <div class="set-title">密保问题（用于找回密码）</div>
+      <select id="set-secq"></select>
+      <input id="set-seca" type="text" placeholder="新答案（留空不改）">
     </div>
     <div class="modal-actions">
       <button class="btn" id="set-cancel">取消</button>
