@@ -3,7 +3,9 @@ package com.gongkao.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
@@ -14,6 +16,7 @@ import android.view.MenuItem;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -31,6 +34,8 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private SharedPreferences prefs;
+    private ValueCallback<Uri[]> filePathCallback;   // 网页文件选择回调
+    private static final int FILE_REQ = 1001;
     private static final String KEY = "server_url";
     // 默认地址：你电脑当前局域网 IP，可在 APP 内随时修改
     private static final String DEF = "http://192.168.3.136:8011";
@@ -55,7 +60,33 @@ public class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
-        web.setWebChromeClient(new WebChromeClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            // 关键：让网页里的「选择文件」能唤起系统文件选择器
+            @Override
+            public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb,
+                                             FileChooserParams params) {
+                if (filePathCallback != null) {
+                    filePathCallback.onReceiveValue(null);
+                }
+                filePathCallback = cb;
+                Intent intent;
+                try {
+                    intent = params.createIntent();
+                } catch (Exception e) {
+                    intent = new Intent(Intent.ACTION_GET_CONTENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                }
+                try {
+                    startActivityForResult(intent, FILE_REQ);
+                } catch (ActivityNotFoundException e) {
+                    filePathCallback = null;
+                    Toast.makeText(MainActivity.this, "没有可用的文件选择器", Toast.LENGTH_LONG).show();
+                    return false;
+                }
+                return true;
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedError(WebView v, int code, String desc, String url) {
@@ -136,6 +167,19 @@ public class MainActivity extends Activity {
             return true;
         }
         return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == FILE_REQ) {
+            if (filePathCallback != null) {
+                Uri[] results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                filePathCallback.onReceiveValue(results);
+                filePathCallback = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
