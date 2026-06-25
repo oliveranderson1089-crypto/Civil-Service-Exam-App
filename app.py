@@ -131,6 +131,7 @@ _reset_codes = {}
 # 无需登录即可访问的路径
 _PUBLIC_EXACT = {"/login", "/api/login", "/register", "/api/register",
                  "/forgot", "/api/forgot/send", "/api/forgot/reset",
+                 "/apk", "/download/gongkao.apk",
                  "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
 
@@ -466,6 +467,17 @@ def api_test_email():
     ok, err = try_send_email(to, "公考积累 · 测试邮件", "这是一封测试邮件，收到说明邮箱配置正确。")
     return (jsonify({"ok": True, "email": mask_email(to)}) if ok
             else (jsonify({"error": err}), 500))
+
+
+# ---------------------------------------------------------------- 安卓包下载
+@app.get("/apk")
+@app.get("/download/gongkao.apk")
+def download_apk():
+    apk = os.path.join(BASE, "dist", "gongkao.apk")
+    if not os.path.exists(apk):
+        return "APK 尚未构建，请先运行 android/build_apk.sh", 404
+    return send_file(apk, mimetype="application/vnd.android.package-archive",
+                     as_attachment=True, download_name="gongkao.apk")
 
 
 # ---------------------------------------------------------------- 静态前端
