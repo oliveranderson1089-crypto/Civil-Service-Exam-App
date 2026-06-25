@@ -141,9 +141,33 @@ git push -u origin main
 
 ## 六、维护 & 进阶
 
+### 公网访问（出门用流量也能用）—— Cloudflare 隧道
+
+已用 **cloudflared**（免 root，单文件在 `~/.local/bin/cloudflared`）把本地服务暴露成公网 https 网址，
+无需公网 IP / 不用改路由器。两个 systemd 用户服务已装好并开机自启：
+
+```bash
+# 查看状态 / 日志
+systemctl --user status gongkao.service gongkao-tunnel.service
+# 取当前公网网址（填进手机 APP「设置服务器地址」）
+~/gongkao-app/tunnel_url.sh
+# 重启隧道（会换一个新网址）
+systemctl --user restart gongkao-tunnel.service
+```
+
+**用法**：手机用流量打开 APP → 菜单「设置服务器地址」→ 填 `tunnel_url.sh` 显示的网址。
+
+> ⚠️ **免费快速隧道的网址在隧道重启 / 电脑重启后会变**。日常不关机时网址稳定；变了就重新跑
+> `tunnel_url.sh` 取新址、在 APP 里更新一次即可。
+>
+> **想要永久固定网址**：注册免费 Cloudflare 账号 + 绑一个你自己的域名，做「命名隧道」即可固定。
+> 有域名了告诉我，我帮你配。
+>
+> **安全**：程序有登录鉴权，且登录已加防爆破（连续失败 8 次锁 10 分钟）；网址是随机长串不易被猜到。
+> 但公网暴露期间请用**强密码**。不想对公网开放时：`systemctl --user stop gongkao-tunnel.service`。
+
+### 其它维护
+
 - **备份数据**：你的收录都在 `app.db`，复制走即可。
 - **更新词典**：替换 `data/` 下 JSON 后运行 `.venv/bin/python3 build_db.py`（不动你的收录）。
 - **重装依赖**：`uv venv .venv && uv pip install --python .venv/bin/python3 -r requirements.txt`
-- **公网访问**（出门也能用）：推荐 **tailscale**（零配置加密私网，手机和电脑组同一虚拟局域网，
-  APK 里把服务器地址填成 tailscale 分配的 IP 即可）；或 cloudflared / frp 内网穿透。
-  程序已有登录鉴权，但公网暴露前请务必设置强密码。

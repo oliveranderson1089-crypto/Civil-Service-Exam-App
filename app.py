@@ -127,6 +127,8 @@ def try_send_email(to_addr, subject, body):
 
 # 找回密码验证码（内存，重启失效）：username -> {code, expires, attempts, last_sent}
 _reset_codes = {}
+# 登录失败计数（防爆破，公网暴露时重要）：username -> {count, locked_until}
+_login_fails = {}
 
 # 无需登录即可访问的路径
 _PUBLIC_EXACT = {"/login", "/api/login", "/register", "/api/register",
@@ -351,11 +353,22 @@ def login_submit():
     data = request.get_json(silent=True) or request.form
     user = (data.get("username") or "").strip()
     pw = data.get("password") or ""
+    now = time.time()
+    rec = _login_fails.get(user)
+    if rec and rec.get("locked_until", 0) > now:
+        left = int((rec["locked_until"] - now) / 60) + 1
+        return jsonify({"error": f"登录失败次数过多，请 {left} 分钟后再试"}), 429
     if user == CFG.get("username") and check_password_hash(CFG.get("password_hash", ""), pw):
+        _login_fails.pop(user, None)
         session.permanent = True
         session["auth"] = True
         session["user"] = user
         return jsonify({"ok": True})
+    rec = _login_fails.setdefault(user, {"count": 0, "locked_until": 0})
+    rec["count"] += 1
+    if rec["count"] >= 8:  # 连续 8 次失败锁定 10 分钟
+        rec["locked_until"] = now + 600
+        rec["count"] = 0
     return jsonify({"error": "用户名或密码错误"}), 401
 
 

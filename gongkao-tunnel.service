@@ -1,0 +1,16 @@
+[Unit]
+Description=公考积累 Cloudflare 隧道（公网访问）
+After=network-online.target gongkao.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=NO_PROXY=*
+# 每次启动清空旧日志，便于 tunnel_url.sh 读到当前网址
+ExecStartPre=/bin/sh -c 'rm -f %h/gongkao-app/cloudflared.log'
+ExecStart=/home/pei-gen-li/.local/bin/cloudflared tunnel --no-autoupdate --logfile %h/gongkao-app/cloudflared.log --url http://localhost:8011
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
