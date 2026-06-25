@@ -1,7 +1,7 @@
 {
-  "name": "公考·成语词语积累",
-  "short_name": "公考积累",
-  "description": "选词填空成语/词语积累，自动拼音释义，导出 PDF 复习打印",
+  "name": "公考助手",
+  "short_name": "公考助手",
+  "description": "公务员考试备考助手：行测/申论板块、资料库、成语词语积累、PDF 导出",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

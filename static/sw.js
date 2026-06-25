@@ -1,5 +1,5 @@
 // 简单离线缓存：应用外壳走缓存优先，API 走网络
-const CACHE = 'gongkao-v4';
+const CACHE = 'gongkao-v5';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js',
   'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
