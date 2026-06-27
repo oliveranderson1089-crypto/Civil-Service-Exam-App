@@ -96,6 +96,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
+    SEND_FILE_MAX_AGE_DEFAULT=0,  # 静态文件不长期缓存，浏览器每次校验，避免旧样式
 )
 
 _login_fails = {}  # username -> {count, locked_until}
@@ -222,6 +223,19 @@ _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
 
 def _is_public(path):
     return path in _PUBLIC_EXACT or path.startswith("/icon-")
+
+
+# 外壳文件不缓存（让 Cloudflare 与浏览器都不要缓存，避免旧样式/旧脚本）
+_SHELL_NOSTORE = {"/", "/index.html", "/style.css", "/app.js", "/sw.js",
+                  "/manifest.webmanifest", "/login", "/register", "/forgot", "/admin"}
+
+
+@app.after_request
+def _shell_no_store(resp):
+    if request.path in _SHELL_NOSTORE:
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+        resp.headers.pop("Expires", None)
+    return resp
 
 
 @app.before_request
