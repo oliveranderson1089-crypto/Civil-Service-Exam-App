@@ -366,3 +366,29 @@ main{max-width:860px;margin:0 auto;padding:16px 14px 60px;}
 .fc-time{font-size:11.5px;}
 .feed{gap:14px;}
 .notes-sidebar{background:#fbfcfe;}
+
+/* ============ 小记桌面版：大气布局（参照语雀图一） ============ */
+@media(min-width:780px){
+  /* 侧边栏更宽、更舒展 */
+  .notes-sidebar{flex-basis:194px;padding-top:8px;}
+  .ns-group{padding:15px 18px 5px;font-size:12px;}
+  .ns-item{padding:11px 18px;font-size:14.5px;}
+  /* 主区：左编辑器 + 右动态流，铺满高度 */
+  .notes-content{display:flex;gap:22px;align-items:stretch;height:100%;overflow:hidden;padding:20px 22px;}
+  /* 编辑器：占左侧约 40%、铺满高度，输入框撑满 */
+  .composer{flex:0 0 40%;max-width:560px;display:flex;flex-direction:column;height:100%;
+    margin-bottom:0;position:static;padding:18px 20px;}
+  .cp-bar{padding-bottom:12px;margin-bottom:12px;}
+  .cp-tool{font-size:16px;padding:6px 10px;}
+  #cp-content{flex:1;min-height:200px;resize:none;font-size:15.5px;line-height:1.8;}
+  .cp-foot{margin-top:14px;padding-top:12px;border-top:1px solid #f0f2f5;}
+  .cp-foot .btn{padding:9px 26px;font-size:15px;}
+  /* 动态流：右侧，独立滚动，单列宽卡片 */
+  .feed-wrap{flex:1;min-width:0;height:100%;overflow-y:auto;padding-right:4px;}
+  .feed{grid-template-columns:1fr;gap:14px;}
+  .feed-card{padding:16px 18px;}
+  .feed-wrap .empty{margin-top:80px;}
+}
+@media(min-width:1280px){
+  .composer{flex-basis:38%;}   /* 超宽屏让动态流更宽 */
+}
