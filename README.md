@@ -149,30 +149,28 @@ git push -u origin main
 
 ## 六、维护 & 进阶
 
-### 公网访问（出门用流量也能用）—— Cloudflare 隧道
+### 公网访问 —— Cloudflare 命名隧道（固定网址）
 
-已用 **cloudflared**（免 root，单文件在 `~/.local/bin/cloudflared`）把本地服务暴露成公网 https 网址，
-无需公网 IP / 不用改路由器。两个 systemd 用户服务已装好并开机自启：
+固定公网网址：**https://gk.gongkaopei2026.click**（**重启不变**，出门用流量直接访问）。
+
+- 域名 `gongkaopei2026.click`（NameSilo 注册，`.click` 无实名）→ nameserver 指向 Cloudflare（免费账号）。
+- 用 **cloudflared 命名隧道**（免 root，`~/.local/bin/cloudflared`）：隧道名 `gongkao`，
+  配置 `~/.cloudflared/config.yml`（http2），凭证 `~/.cloudflared/`。
+- 两个 systemd 用户服务开机自启：`gongkao.service`（应用，:8011）+ `gongkao-tunnel.service`
+  （`cloudflared tunnel run gongkao`）。
 
 ```bash
-# 查看状态 / 日志
-systemctl --user status gongkao.service gongkao-tunnel.service
-# 取当前公网网址（填进手机 APP「设置服务器地址」）
-~/gongkao-app/tunnel_url.sh
-# 重启隧道（会换一个新网址）
-systemctl --user restart gongkao-tunnel.service
+systemctl --user status gongkao.service gongkao-tunnel.service   # 状态
+~/gongkao-app/tunnel_url.sh                                       # 打印固定网址
+systemctl --user restart gongkao-tunnel.service                  # 重启隧道(网址不变)
 ```
 
-**用法**：手机用流量打开 APP → 菜单「设置服务器地址」→ 填 `tunnel_url.sh` 显示的网址。
+**用法**：手机/电脑打开 `https://gk.gongkaopei2026.click` 即可；在家想更快可改用局域网 `192.168.3.136:8011`。
+APK 默认地址已是这个固定网址（v1.3 起）。
 
-> ⚠️ **免费快速隧道的网址在隧道重启 / 电脑重启后会变**。日常不关机时网址稳定；变了就重新跑
-> `tunnel_url.sh` 取新址、在 APP 里更新一次即可。
->
-> **想要永久固定网址**：注册免费 Cloudflare 账号 + 绑一个你自己的域名，做「命名隧道」即可固定。
-> 有域名了告诉我，我帮你配。
->
-> **安全**：程序有登录鉴权，且登录已加防爆破（连续失败 8 次锁 10 分钟）；网址是随机长串不易被猜到。
-> 但公网暴露期间请用**强密码**。不想对公网开放时：`systemctl --user stop gongkao-tunnel.service`。
+> 安全：登录鉴权 + 防爆破（连续失败 8 次锁 10 分钟）；HTTPS 由 Cloudflare 提供。
+> 不想对公网开放时：`systemctl --user stop gongkao-tunnel.service`。
+> 重配/换域名：`cloudflared tunnel route dns gongkao <子域名>` + 改 `config.yml` 的 hostname。
 
 ### 其它维护
 

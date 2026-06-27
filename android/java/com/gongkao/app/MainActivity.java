@@ -37,8 +37,8 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> filePathCallback;   // 网页文件选择回调
     private static final int FILE_REQ = 1001;
     private static final String KEY = "server_url";
-    // 默认地址：你电脑当前局域网 IP，可在 APP 内随时修改
-    private static final String DEF = "http://192.168.3.136:8011";
+    // 默认地址：固定公网网址（命名隧道，重启不变）；在家也可在 APP 内改成局域网 IP 提速
+    private static final String DEF = "https://gk.gongkaopei2026.click";
 
     @Override
     protected void onCreate(Bundle saved) {

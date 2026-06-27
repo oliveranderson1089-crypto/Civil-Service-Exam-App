@@ -1,14 +1,12 @@
 [Unit]
-Description=公考积累 Cloudflare 隧道（公网访问）
+Description=公考助手 Cloudflare 命名隧道（固定网址 gk.gongkaopei2026.click）
 After=network-online.target gongkao.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 Environment=NO_PROXY=*
-# 每次启动清空旧日志，便于 tunnel_url.sh 读到当前网址
-ExecStartPre=/bin/sh -c 'rm -f %h/gongkao-app/cloudflared.log'
-ExecStart=/home/pei-gen-li/.local/bin/cloudflared tunnel --no-autoupdate --protocol http2 --edge-ip-version 4 --logfile %h/gongkao-app/cloudflared.log --url http://localhost:8011
+ExecStart=/home/pei-gen-li/.local/bin/cloudflared tunnel run gongkao
 Restart=on-failure
 RestartSec=5
 
