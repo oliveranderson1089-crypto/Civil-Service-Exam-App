@@ -463,3 +463,6 @@ body{background:#f5f7fb;}
 .mat-head-btns{display:flex;gap:8px;align-items:center;}
 .cam-btn{display:inline-flex;align-items:center;gap:5px;cursor:pointer;}
 .cam-btn svg{width:16px;height:16px;}
+
+/* 首页/功能图标：两两并排（2列，网页+手机一致） */
+.home-cards{grid-template-columns:repeat(2,minmax(0,1fr));justify-content:start;max-width:440px;gap:14px;}

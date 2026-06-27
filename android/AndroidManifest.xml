@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.gongkao.app"
-    android:versionCode="6"
-    android:versionName="1.5">
+    android:versionCode="7"
+    android:versionName="1.6">
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
 
@@ -21,7 +21,7 @@
         android:icon="@drawable/ic_launcher"
         android:allowBackup="true"
         android:usesCleartextTraffic="true"
-        android:theme="@android:style/Theme.Material.Light.DarkActionBar">
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"

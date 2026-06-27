@@ -65,6 +65,9 @@ public class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
+        // 原生桥接：网页「设置」里可调用，改服务器地址 / 刷新
+        web.addJavascriptInterface(new Bridge(), "GongkaoNative");
+
         web.setWebChromeClient(new WebChromeClient() {
             // 关键：让网页里的「选择文件」能唤起系统文件选择器
             @Override
@@ -160,24 +163,13 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(0, 1, 0, "刷新");
-        menu.add(0, 2, 0, "设置服务器地址");
-        return true;
-    }
+    /** 暴露给网页的原生方法（网页「设置」里调用）。 */
+    public class Bridge {
+        @android.webkit.JavascriptInterface
+        public void changeServer() { runOnUiThread(() -> promptUrl(false)); }
 
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == 1) {
-            web.reload();
-            return true;
-        }
-        if (item.getItemId() == 2) {
-            promptUrl(false);
-            return true;
-        }
-        return super.onOptionsItemSelected(item);
+        @android.webkit.JavascriptInterface
+        public void reload() { runOnUiThread(() -> web.reload()); }
     }
 
     private boolean acceptsImage(String[] types) {

@@ -598,8 +598,13 @@ $('#settings-btn').onclick = async () => {
     const qs = (await api('/api/sec_questions')).questions;
     $('#set-secq').innerHTML = qs.map(q => `<option ${q === d.sec_question ? 'selected' : ''}>${esc(q)}</option>`).join('');
     $('#set-oldpw').value = ''; $('#set-newpw').value = ''; $('#set-seca').value = '';
+    $('#set-app').classList.toggle('hidden', !(IN_APP && window.GongkaoNative));
     $('#settings-modal').classList.remove('hidden');
   } catch (e) { toast(e.message, true); }
+};
+$('#set-server').onclick = () => {
+  $('#settings-modal').classList.add('hidden');
+  try { window.GongkaoNative && window.GongkaoNative.changeServer(); } catch (_) {}
 };
 $('#set-cancel').onclick = () => $('#settings-modal').classList.add('hidden');
 $('#settings-modal').addEventListener('click', e => { if (e.target.id === 'settings-modal') $('#settings-modal').classList.add('hidden'); });
