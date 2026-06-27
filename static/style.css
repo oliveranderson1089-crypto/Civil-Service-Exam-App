@@ -396,3 +396,62 @@ main{max-width:none;margin:0;padding:0;}
 @media(min-width:1280px){
   .composer{flex-basis:38%;}   /* 超宽屏让动态流更宽 */
 }
+
+/* ============ UI 精修：更精致的视觉 ============ */
+:root{
+  --shadow:0 1px 2px rgba(16,24,40,.04),0 6px 16px rgba(16,24,40,.06);
+  --shadow-lg:0 12px 32px rgba(16,24,40,.13);
+  --ring:0 0 0 3px rgba(26,111,181,.16);
+}
+body{background:#f5f7fb;}
+/* 顶栏 */
+.topbar{background:linear-gradient(120deg,#1a6fb5,#2a8ad6);box-shadow:0 2px 14px rgba(26,111,181,.22);}
+.logo-min{background:rgba(255,255,255,.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);}
+.logout,.navbtn{transition:.15s;backdrop-filter:blur(3px);}
+.logout:active,.navbtn:active{transform:scale(.96);}
+/* 按钮 */
+.btn{transition:transform .14s,box-shadow .14s,border-color .14s,background .14s;}
+.btn:hover{transform:translateY(-1px);}
+.btn:active{transform:translateY(0);}
+.btn.primary{box-shadow:0 3px 10px rgba(26,111,181,.28);}
+.btn.primary:hover{box-shadow:0 6px 18px rgba(26,111,181,.4);}
+/* 输入聚焦光环 */
+#word-input:focus,#cp-content:focus,#search:focus,.set-sec input:focus,.opt input:focus,.pv-field input:focus,.pv-field textarea:focus{box-shadow:var(--ring);}
+.composer:focus-within{border-color:#cdddf0;box-shadow:0 6px 22px rgba(26,111,181,.09);}
+/* 首页卡片 */
+.home-card{border:1px solid #edf0f4;box-shadow:var(--shadow);transition:transform .18s,box-shadow .18s,border-color .18s;}
+.home-card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg);border-color:transparent;}
+.hc-logo{box-shadow:0 6px 16px rgba(26,111,181,.32);}
+.hc-logo svg{width:30px;height:30px;color:#fff;}
+/* 板块卡片 */
+.board-card{transition:transform .14s,box-shadow .14s;border:1px solid #eef1f5;}
+.board-card:hover{transform:translateX(2px);box-shadow:var(--shadow);}
+/* 小记侧边栏 */
+.notes-sidebar{background:#fbfcfe;}
+.ns-item{transition:background .12s,color .12s;}
+.ns-item.active{background:linear-gradient(90deg,#e7f0fb,#eef5fc);}
+/* 动态流卡片 */
+.feed-card{transition:box-shadow .15s,transform .15s;}
+.feed-card:hover{box-shadow:var(--shadow-lg);}
+.fc-edit svg,.fc-del svg{width:15px;height:15px;}
+.fc-del:hover{color:#e0524d;}
+.fc-file svg{width:14px;height:14px;vertical-align:-2px;margin-right:3px;}
+/* 编辑器工具栏图标 */
+.cp-tool svg{width:18px;height:18px;vertical-align:-3px;}
+.cp-tool{display:inline-flex;align-items:center;gap:4px;color:#5b6b85;}
+.cp-tool.tag-tool{font-size:13px;}
+/* 复选框配色 */
+.fc-todo input[type=checkbox],.cp-todo input[type=checkbox]{accent-color:var(--blue);width:16px;height:16px;cursor:pointer;}
+/* 标签/分类 chip 更柔 */
+.fc-tag{background:#eef3f9;color:#5a6b88;}
+.cp-tag{background:#eaf2fb;}
+.tagchip{transition:.12s;}
+.cp-board{background:#eaf2fb;}
+/* 列表条目悬浮 */
+.item{transition:box-shadow .15s;}
+.item:hover{box-shadow:var(--shadow-lg);}
+.mat-item{transition:background .12s,box-shadow .12s;border:1px solid #eef1f5;}
+.mat-item:hover{box-shadow:var(--shadow);}
+/* 滚动条更细 */
+.feed-wrap::-webkit-scrollbar,.notes-sidebar::-webkit-scrollbar{width:7px;}
+.feed-wrap::-webkit-scrollbar-thumb,.notes-sidebar::-webkit-scrollbar-thumb{background:#d6dde6;border-radius:6px;}

@@ -28,6 +28,16 @@ function fmtSize(n) {
   return (n / 1048576).toFixed(1) + ' MB';
 }
 function fmtTime(s) { return (s || '').slice(5, 16); }
+// 线性 SVG 图标
+const _svg = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const IC = {
+  feather: _svg('<path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/>'),
+  folder: _svg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+  book: _svg('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>'),
+  edit: _svg('<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>'),
+  del: _svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
+  clip: _svg('<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
+};
 
 let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
@@ -70,8 +80,8 @@ async function init() {
         <div class="hc-name">${esc(s.name)}</div>
         <div class="hc-desc">${esc(s.desc)}</div>
       </div>`).join('') + `
-    <div class="home-card" data-go="notes"><div class="hc-logo">📝</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 按板块归类</div></div>
-    <div class="home-card" data-go="materials"><div class="hc-logo">📁</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>`;
+    <div class="home-card" data-go="notes"><div class="hc-logo">${IC.feather}</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 按板块归类</div></div>
+    <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>`;
   goHome();
 }
 $('#home-cards').addEventListener('click', e => {
@@ -262,11 +272,11 @@ function feedCard(n) {
     `<label class="fc-todo${t.done ? ' done' : ''}"><input type="checkbox" data-tg="${n.id}" data-ti="${i}" ${t.done ? 'checked' : ''}><span>${esc(t.text)}</span></label>`).join('')}</div>` : '';
   const imgs = n.images.length ? `<div class="fc-imgs">${n.images.map(u => `<img src="${u}" loading="lazy" data-img="${u}">`).join('')}</div>` : '';
   const files = n.attachments.length ? `<div class="fc-files">${n.attachments.map((a, i) =>
-    `<button class="fc-file" data-file="${n.id}" data-fi="${i}" data-ext="${esc(a.ext)}" data-fview="${a.viewable ? 1 : 0}" data-fname="${esc(a.name)}">📎 ${esc(a.name)}</button>`).join('')}</div>` : '';
+    `<button class="fc-file" data-file="${n.id}" data-fi="${i}" data-ext="${esc(a.ext)}" data-fview="${a.viewable ? 1 : 0}" data-fname="${esc(a.name)}">${IC.clip}${esc(a.name)}</button>`).join('')}</div>` : '';
   const tags = n.tags.length ? `<div class="fc-tags">${n.tags.map(t => `<span class="fc-tag"># ${esc(t)}</span>`).join('')}</div>` : '';
   return `<div class="feed-card" data-id="${n.id}">
     <div class="fc-time">更新于 ${fmtTime(n.updated_at)}
-      <span class="fc-acts"><button class="fc-edit" data-edit="${n.id}" title="编辑">✎</button><button class="fc-del" data-del="${n.id}" title="删除">🗑</button></span>
+      <span class="fc-acts"><button class="fc-edit" data-edit="${n.id}" title="编辑">${IC.edit}</button><button class="fc-del" data-del="${n.id}" title="删除">${IC.del}</button></span>
     </div>
     ${n.content ? `<div class="fc-text">${esc(n.content)}</div>` : ''}
     ${todos}${imgs}${files}${tags}
