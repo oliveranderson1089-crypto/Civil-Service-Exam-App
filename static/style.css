@@ -289,3 +289,9 @@ main{max-width:860px;margin:0 auto;padding:16px 14px 60px;}
   .ns-item{font-size:14px;padding:10px 12px;}
   .notes-list{grid-template-columns:repeat(auto-fill,minmax(200px,1fr));}
 }
+
+/* 板块占位（建设中） */
+.placeholder-box{text-align:center;padding:60px 24px;color:var(--muted);}
+.placeholder-box .ph-icon{font-size:56px;}
+.placeholder-box h2{font-size:20px;color:var(--text);margin:14px 0 8px;}
+.placeholder-box p{font-size:14px;line-height:1.8;}

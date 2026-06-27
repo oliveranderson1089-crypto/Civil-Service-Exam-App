@@ -33,8 +33,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'notes', 'materials', 'idiom', 'viewer'];
-const TITLES = { home: '公考助手', section: '', notes: '小记', materials: '资料库', idiom: '成语词语', viewer: '查看' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'materials', 'idiom', 'viewer'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', materials: '资料库', idiom: '成语词语', viewer: '查看' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -71,8 +71,7 @@ async function init() {
         <div class="hc-desc">${esc(s.desc)}</div>
       </div>`).join('') + `
     <div class="home-card" data-go="notes"><div class="hc-logo">📝</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 按板块归类</div></div>
-    <div class="home-card" data-go="materials"><div class="hc-logo">📁</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
-    <div class="home-card" data-go="idiom"><div class="hc-logo">📖</div><div class="hc-name">成语词语</div><div class="hc-desc">选词填空 · 拼音释义 · 导PDF</div></div>`;
+    <div class="home-card" data-go="materials"><div class="hc-logo">📁</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>`;
   goHome();
 }
 $('#home-cards').addEventListener('click', e => {
@@ -96,8 +95,14 @@ function openSection(key) {
 }
 $('#board-grid').addEventListener('click', e => {
   const c = e.target.closest('[data-board]'); if (!c) return;
-  openNotes(c.dataset.board);
+  const b = c.dataset.board;
+  if (b === IDIOM_BOARD) openIdiom();   // 言语理解与表达 → 成语词语工具
+  else openBoard(b);                    // 其余板块 → 占位（建设中）
 });
+function openBoard(board) {
+  $('#board-ph-title').textContent = board;
+  push({ view: 'board', title: board });
+}
 $('#nav-back').onclick = back;
 
 /* ================= 小记 ================= */
