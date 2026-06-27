@@ -536,7 +536,7 @@ def admin_set_role(user_id):
         admins = db.execute("SELECT COUNT(*) c FROM users WHERE role='admin'").fetchone()["c"]
         cur = db.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
         if cur and cur["role"] == "admin" and admins <= 1:
-            return jsonify({"error": "至少保留一个管理员"}), 400
+            return jsonify({"error": "至少保留一个管理员，请先把另一位用户设为管理员，再撤销当前管理员"}), 400
     db.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
     db.commit()
     return jsonify({"ok": True, "role": role})
