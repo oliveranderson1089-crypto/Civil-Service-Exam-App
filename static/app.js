@@ -33,8 +33,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'notes', 'materials', 'idiom', 'viewer'];
-const TITLES = { home: '公考助手', notes: '小记', materials: '资料库', idiom: '成语词语', viewer: '查看' };
+const VIEWS = ['home', 'section', 'notes', 'materials', 'idiom', 'viewer'];
+const TITLES = { home: '公考助手', section: '', notes: '小记', materials: '资料库', idiom: '成语词语', viewer: '查看' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -63,14 +63,40 @@ async function init() {
   } catch (e) { return; }
   $('#me-name').textContent = ME.username;
   $('#admin-btn').classList.toggle('hidden', !ME.is_admin);
+  $('#home-cards').innerHTML =
+    SECTIONS.map(s => `
+      <div class="home-card" data-go="sec:${esc(s.key)}">
+        <div class="hc-logo hc-sec">${esc(s.icon)}</div>
+        <div class="hc-name">${esc(s.name)}</div>
+        <div class="hc-desc">${esc(s.desc)}</div>
+      </div>`).join('') + `
+    <div class="home-card" data-go="notes"><div class="hc-logo">📝</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 按板块归类</div></div>
+    <div class="home-card" data-go="materials"><div class="hc-logo">📁</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
+    <div class="home-card" data-go="idiom"><div class="hc-logo">📖</div><div class="hc-name">成语词语</div><div class="hc-desc">选词填空 · 拼音释义 · 导PDF</div></div>`;
   goHome();
 }
 $('#home-cards').addEventListener('click', e => {
   const c = e.target.closest('[data-go]'); if (!c) return;
   const g = c.dataset.go;
-  if (g === 'notes') openNotes();
+  if (g.startsWith('sec:')) openSection(g.slice(4));
+  else if (g === 'notes') openNotes();
   else if (g === 'materials') openMaterials();
   else if (g === 'idiom') openIdiom();
+});
+function openSection(key) {
+  const sec = SECTIONS.find(s => s.key === key); if (!sec) return;
+  $('#section-title').textContent = sec.name;
+  $('#board-grid').innerHTML = sec.boards.map(b => `
+    <div class="board-card" data-board="${esc(b)}">
+      <span class="bc-name">${esc(b)}</span>
+      ${b === IDIOM_BOARD ? '<span class="bc-badge">成语词语</span>' : ''}
+      <span class="bc-arrow">›</span>
+    </div>`).join('');
+  push({ view: 'section', title: sec.name });
+}
+$('#board-grid').addEventListener('click', e => {
+  const c = e.target.closest('[data-board]'); if (!c) return;
+  openNotes(c.dataset.board);
 });
 $('#nav-back').onclick = back;
 
@@ -95,8 +121,8 @@ async function refreshNoteCounts() {
     });
   } catch (_) {}
 }
-function openNotes() {
-  if (!curNoteBoard) curNoteBoard = ALL_BOARDS[0];
+function openNotes(board) {
+  curNoteBoard = board || curNoteBoard || ALL_BOARDS[0];
   buildNotesSidebar();
   push({ view: 'notes' });
   loadNotes(); refreshNoteCounts();

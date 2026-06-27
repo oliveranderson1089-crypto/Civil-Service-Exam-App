@@ -29,20 +29,13 @@
   <!-- ===== 首页 ===== -->
   <section id="view-home" class="view">
     <p class="welcome">欢迎，<b id="me-name"></b> 👋</p>
-    <div class="home-cards" id="home-cards">
-      <div class="home-card" data-go="notes">
-        <div class="hc-logo">📝</div><div class="hc-name">小记</div>
-        <div class="hc-desc">随手记 · 按板块归类</div>
-      </div>
-      <div class="home-card" data-go="materials">
-        <div class="hc-logo">📁</div><div class="hc-name">资料库</div>
-        <div class="hc-desc">图片/文档/网页 应用内查看</div>
-      </div>
-      <div class="home-card" data-go="idiom">
-        <div class="hc-logo">📖</div><div class="hc-name">成语词语</div>
-        <div class="hc-desc">选词填空 · 拼音释义 · 导PDF</div>
-      </div>
-    </div>
+    <div class="home-cards" id="home-cards"></div>
+  </section>
+
+  <!-- ===== 板块列表（行测/申论 下的小板块） ===== -->
+  <section id="view-section" class="view hidden">
+    <h2 class="view-title" id="section-title"></h2>
+    <div class="board-grid" id="board-grid"></div>
   </section>
 
   <!-- ===== 小记 ===== -->
