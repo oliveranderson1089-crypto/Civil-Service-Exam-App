@@ -215,6 +215,7 @@ document.querySelector('.cp-bar').addEventListener('click', e => {
   const b = e.target.closest('[data-cp]'); if (!b) return;
   const t = b.dataset.cp;
   if (t === 'img') $('#cp-imgfile').click();
+  else if (t === 'cam') $('#cp-camfile').click();
   else if (t === 'file') $('#cp-attfile').click();
   else if (t === 'todo') {
     draft.todos.push({ text: '', done: false }); renderComposer();
@@ -223,7 +224,9 @@ document.querySelector('.cp-bar').addEventListener('click', e => {
     const tg = prompt('添加标签：'); if (tg && tg.trim()) { const v = tg.trim(); if (!draft.tags.includes(v)) draft.tags.push(v); renderComposer(); }
   }
 });
-$('#cp-imgfile').addEventListener('change', e => { [...e.target.files].forEach(f => draft.images.push({ kind: 'new', fileObj: f, url: URL.createObjectURL(f) })); e.target.value = ''; renderComposer(); });
+function addDraftImages(files) { [...files].forEach(f => draft.images.push({ kind: 'new', fileObj: f, url: URL.createObjectURL(f) })); renderComposer(); }
+$('#cp-imgfile').addEventListener('change', e => { addDraftImages(e.target.files); e.target.value = ''; });
+$('#cp-camfile').addEventListener('change', e => { addDraftImages(e.target.files); e.target.value = ''; });
 $('#cp-attfile').addEventListener('change', e => { [...e.target.files].forEach(f => draft.files.push({ kind: 'new', fileObj: f, name: f.name })); e.target.value = ''; renderComposer(); });
 $('#cp-todos').addEventListener('click', e => { const r = e.target.closest('[data-tdr]'); if (r) { draft.todos.splice(+r.dataset.tdr, 1); renderComposer(); } });
 $('#cp-todos').addEventListener('change', e => { const c = e.target.closest('[data-tdo]'); if (c) draft.todos[+c.dataset.tdo].done = c.checked; });
@@ -428,6 +431,19 @@ $('#up-go').onclick = async () => {
   catch (e) { toast(e.message, true); }
   $('#up-go').disabled = false; $('#up-go').textContent = '上传';
 };
+/* 资料库拍照直接上传 */
+$('#mat-camfile').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('board', matBoard);
+  fd.append('section', '');
+  fd.append('title', '拍照 ' + new Date().toLocaleString('zh-CN', { hour12: false }).slice(5, 16));
+  toast('上传中…');
+  try { await api('/api/materials', { method: 'POST', body: fd }); toast('已上传'); loadMaterials(); }
+  catch (err) { toast(err.message, true); }
+});
 
 /* ================= 成语 / 词语 ================= */
 let state = { filter: 'all', q: '', items: [], page: 1, pages: 1 };

@@ -66,6 +66,9 @@
             <button class="cp-tool" data-cp="file" title="附件">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
             </button>
+            <button class="cp-tool" data-cp="cam" title="拍照">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </button>
             <button class="cp-tool tag-tool" data-cp="tag" title="标签">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>标签
             </button>
@@ -86,6 +89,7 @@
           </div>
           <input id="cp-imgfile" type="file" accept="image/*" multiple hidden>
           <input id="cp-attfile" type="file" multiple hidden>
+          <input id="cp-camfile" type="file" accept="image/*" capture="environment" hidden>
         </div>
         <!-- 动态流 -->
         <div class="feed-wrap">
@@ -101,7 +105,13 @@
   <section id="view-materials" class="view hidden">
     <div class="mat-head">
       <h2 class="view-title" style="margin:0;">📁 资料库</h2>
-      <button id="upload-btn" class="btn primary">+ 上传资料</button>
+      <div class="mat-head-btns">
+        <label class="btn cam-btn" title="拍照上传">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>拍照
+          <input id="mat-camfile" type="file" accept="image/*" capture="environment" hidden>
+        </label>
+        <button id="upload-btn" class="btn primary">+ 上传资料</button>
+      </div>
     </div>
     <div class="mat-filter" id="mat-filter"></div>
     <div id="mat-list" class="mat-list"></div>

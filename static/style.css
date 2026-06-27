@@ -458,3 +458,8 @@ body{background:#f5f7fb;}
 
 /* 功能卡片：统一宽度、左对齐（避免单卡被拉满） */
 .home-cards{grid-template-columns:repeat(auto-fill,minmax(170px,196px));justify-content:start;}
+
+/* 拍照按钮 */
+.mat-head-btns{display:flex;gap:8px;align-items:center;}
+.cam-btn{display:inline-flex;align-items:center;gap:5px;cursor:pointer;}
+.cam-btn svg{width:16px;height:16px;}

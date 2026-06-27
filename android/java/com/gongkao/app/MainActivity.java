@@ -10,6 +10,7 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.text.InputType;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -24,6 +25,8 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.Toast;
 
+import java.io.File;
+
 /**
  * 公考积累 安卓壳：一个全屏 WebView，加载电脑上运行的服务地址。
  * - 首次启动 / 连接失败时弹窗让用户填服务器地址（默认局域网 IP）。
@@ -35,7 +38,9 @@ public class MainActivity extends Activity {
     private WebView web;
     private SharedPreferences prefs;
     private ValueCallback<Uri[]> filePathCallback;   // 网页文件选择回调
+    private Uri cameraUri;                            // 拍照输出 URI
     private static final int FILE_REQ = 1001;
+    private static final int CAMERA_REQ = 1002;
     private static final String KEY = "server_url";
     // 默认地址：固定公网网址（命名隧道，重启不变）；在家也可在 APP 内改成局域网 IP 提速
     private static final String DEF = "https://gk.gongkaopei2026.click";
@@ -69,6 +74,12 @@ public class MainActivity extends Activity {
                     filePathCallback.onReceiveValue(null);
                 }
                 filePathCallback = cb;
+                // 网页 input 带 capture 且接受图片 → 直接唤起相机
+                boolean wantCam = false;
+                try { wantCam = params.isCaptureEnabled(); } catch (Exception ignore) {}
+                if (wantCam && acceptsImage(params.getAcceptTypes()) && launchCamera()) {
+                    return true;
+                }
                 Intent intent;
                 try {
                     intent = params.createIntent();
@@ -169,8 +180,48 @@ public class MainActivity extends Activity {
         return super.onOptionsItemSelected(item);
     }
 
+    private boolean acceptsImage(String[] types) {
+        if (types == null) return false;
+        for (String t : types) {
+            if (t != null && (t.contains("image") || t.equals("*/*") || t.isEmpty())) return true;
+        }
+        return false;
+    }
+
+    private boolean launchCamera() {
+        try {
+            File dir = new File(getCacheDir(), "camera");
+            dir.mkdirs();
+            File photo = new File(dir, "cam_" + System.currentTimeMillis() + ".jpg");
+            cameraUri = Uri.parse("content://" + CamProvider.AUTH + "/" + photo.getName());
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (intent.resolveActivity(getPackageManager()) == null) {
+                cameraUri = null;
+                return false;
+            }
+            startActivityForResult(intent, CAMERA_REQ);
+            return true;
+        } catch (Exception e) {
+            cameraUri = null;
+            return false;
+        }
+    }
+
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == CAMERA_REQ) {
+            if (filePathCallback != null) {
+                Uri[] r = (resultCode == RESULT_OK && cameraUri != null)
+                        ? new Uri[]{cameraUri} : null;
+                filePathCallback.onReceiveValue(r);
+                filePathCallback = null;
+            }
+            cameraUri = null;
+            return;
+        }
         if (requestCode == FILE_REQ) {
             if (filePathCallback != null) {
                 Uri[] results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
