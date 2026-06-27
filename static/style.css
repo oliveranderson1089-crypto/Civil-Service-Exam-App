@@ -455,3 +455,6 @@ body{background:#f5f7fb;}
 /* 滚动条更细 */
 .feed-wrap::-webkit-scrollbar,.notes-sidebar::-webkit-scrollbar{width:7px;}
 .feed-wrap::-webkit-scrollbar-thumb,.notes-sidebar::-webkit-scrollbar-thumb{background:#d6dde6;border-radius:6px;}
+
+/* 功能卡片：统一宽度、左对齐（避免单卡被拉满） */
+.home-cards{grid-template-columns:repeat(auto-fill,minmax(170px,196px));justify-content:start;}

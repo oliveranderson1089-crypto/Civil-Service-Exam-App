@@ -38,6 +38,12 @@ const IC = {
   del: _svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
   clip: _svg('<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
 };
+// 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
+const BOARD_FEATURES = {
+  '言语理解与表达': [
+    { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
+  ],
+};
 
 let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
@@ -105,14 +111,31 @@ function openSection(key) {
 }
 $('#board-grid').addEventListener('click', e => {
   const c = e.target.closest('[data-board]'); if (!c) return;
-  const b = c.dataset.board;
-  if (b === IDIOM_BOARD) openIdiom();   // 言语理解与表达 → 成语词语工具
-  else openBoard(b);                    // 其余板块 → 占位（建设中）
+  openBoard(c.dataset.board);
 });
 function openBoard(board) {
-  $('#board-ph-title').textContent = board;
+  const feats = BOARD_FEATURES[board] || [];
+  $('#board-title').textContent = board;
+  if (feats.length) {
+    $('#board-features').innerHTML = feats.map(f =>
+      `<div class="home-card" data-feat="${esc(f.key)}">
+        <div class="hc-logo">${IC[f.icon] || ''}</div>
+        <div class="hc-name">${esc(f.name)}</div>
+        <div class="hc-desc">${esc(f.desc)}</div>
+      </div>`).join('');
+    $('#board-features').classList.remove('hidden');
+    $('#board-ph').classList.add('hidden');
+  } else {
+    $('#board-features').classList.add('hidden');
+    $('#board-ph').classList.remove('hidden');
+    $('#board-ph-title').textContent = board;
+  }
   push({ view: 'board', title: board });
 }
+$('#board-features').addEventListener('click', e => {
+  const c = e.target.closest('[data-feat]'); if (!c) return;
+  if (c.dataset.feat === 'idiom') openIdiom();
+});
 $('#nav-back').onclick = back;
 
 /* ================= 小记（仿语雀） ================= */
