@@ -542,6 +542,22 @@ def admin_set_role(user_id):
     return jsonify({"ok": True, "role": role})
 
 
+@app.post("/api/admin/users/<int:user_id>/secq")
+def admin_set_secq(user_id):
+    data = request.get_json(silent=True) or {}
+    q = (data.get("question") or "").strip()
+    a = (data.get("answer") or "").strip()
+    if not q or not a:
+        return jsonify({"error": "请填写密保问题与答案"}), 400
+    db = get_db()
+    if not db.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
+        return jsonify({"error": "用户不存在"}), 404
+    db.execute("UPDATE users SET sec_question=?, sec_answer_hash=? WHERE id=?",
+               (q, generate_password_hash(a.lower()), user_id))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 @app.delete("/api/admin/users/<int:user_id>")
 def admin_delete_user(user_id):
     if user_id == uid():

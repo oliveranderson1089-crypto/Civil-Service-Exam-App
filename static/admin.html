@@ -47,6 +47,20 @@
   </table>
   <div class="admin-cards" id="ucards"></div>
 </main>
+<div id="secq-modal" class="modal hidden">
+  <div class="modal-box">
+    <h3>设置密保 · <span id="sq-user"></span></h3>
+    <div class="set-title" style="margin-bottom:5px;color:#888;font-size:13px;">密保问题</div>
+    <select id="sq-question" style="width:100%;padding:9px 11px;border:1.5px solid #e6e9ef;border-radius:8px;font-size:14px;margin-bottom:12px;"></select>
+    <div class="set-title" style="margin-bottom:5px;color:#888;font-size:13px;">密保答案</div>
+    <input id="sq-answer" type="text" placeholder="设置后用户可用它找回密码" style="width:100%;padding:9px 11px;border:1.5px solid #e6e9ef;border-radius:8px;font-size:14px;">
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn" onclick="closeSecq()">取消</button>
+      <button class="btn primary" onclick="saveSecq()">保存</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -81,9 +95,29 @@ let MY_NAME = null;
 function actions(u) {
   const self = (u.username === MY_NAME);
   let s = `<button class="ubtn" onclick="resetPw(${u.id},'${esc(u.username)}')">重置密码</button>`;
+  s += `<button class="ubtn" onclick="setSecq(${u.id},'${esc(u.username)}')">设置密保</button>`;
   s += `<button class="ubtn" onclick="toggleRole(${u.id},${u.role === 'admin'})">${u.role === 'admin' ? '设为普通' : '设为管理员'}</button>`;
   if (!self) s += `<button class="ubtn danger" onclick="delUser(${u.id},'${esc(u.username)}')">删除</button>`;
   return s;
+}
+let sqUid = null;
+async function setSecq(id, name) {
+  sqUid = id;
+  $('#sq-user').textContent = name;
+  try {
+    const qs = (await (await fetch('/api/sec_questions')).json()).questions;
+    $('#sq-question').innerHTML = qs.map(q => `<option>${esc(q)}</option>`).join('');
+  } catch (_) {}
+  $('#sq-answer').value = '';
+  $('#secq-modal').classList.remove('hidden');
+}
+function closeSecq() { $('#secq-modal').classList.add('hidden'); }
+async function saveSecq() {
+  const q = $('#sq-question').value, a = $('#sq-answer').value.trim();
+  if (!a) { toast('请填写密保答案', true); return; }
+  const r = await fetch('/api/admin/users/' + sqUid + '/secq', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q, answer: a }) });
+  const d = await r.json();
+  if (r.ok) { toast('已设置密保'); closeSecq(); load(); } else toast(d.error || '失败', true);
 }
 async function resetPw(id, name) {
   if (!confirm('把「' + name + '」的密码重置为初始密码 123456？')) return;
