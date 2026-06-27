@@ -152,6 +152,16 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_mat_user ON materials(user_id, board);
+        CREATE TABLE IF NOT EXISTS notes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            board TEXT,
+            content TEXT,
+            images TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id, board);
         """
     )
     # entries 老表可能缺 user_id 列（先补列，再建索引）
@@ -553,7 +563,7 @@ def material_upload():
     section = (request.form.get("section") or "").strip()
     board = (request.form.get("board") or "").strip()
     title = (request.form.get("title") or "").strip()
-    if board not in ALL_BOARDS:
+    if board and board not in ALL_BOARDS:
         return jsonify({"error": "板块无效"}), 400
     f = request.files.get("file")
     if not f or not f.filename:
@@ -657,6 +667,138 @@ def material_delete(mid):
     _remove_file(uid(), m["stored_name"])
     get_db().execute("DELETE FROM materials WHERE id=?", (mid,))
     get_db().commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 小记
+NOTE_IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+
+
+def _note_dict(row):
+    try:
+        imgs = json.loads(row["images"] or "[]")
+    except Exception:
+        imgs = []
+    return {
+        "id": row["id"], "board": row["board"] or "", "content": row["content"] or "",
+        "images": ["/api/notes/%d/img/%d" % (row["id"], i) for i in range(len(imgs))],
+        "img_files": imgs,
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+    }
+
+
+def _save_note_images(files):
+    names = []
+    for f in files:
+        if not f or not f.filename:
+            continue
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in NOTE_IMG_EXT:
+            continue
+        stored = "note_" + uuid.uuid4().hex + ext
+        f.save(os.path.join(_user_dir(uid()), stored))
+        names.append(stored)
+    return names
+
+
+def _get_note(nid):
+    return get_db().execute("SELECT * FROM notes WHERE id=? AND user_id=?", (nid, uid())).fetchone()
+
+
+@app.post("/api/notes")
+def note_create():
+    board = (request.form.get("board") or "").strip()
+    content = (request.form.get("content") or "").strip()
+    imgs = _save_note_images(request.files.getlist("images"))
+    if not content and not imgs:
+        return jsonify({"error": "内容不能为空"}), 400
+    db = get_db()
+    cur = db.execute("INSERT INTO notes(user_id,board,content,images) VALUES(?,?,?,?)",
+                     (uid(), board, content, json.dumps(imgs)))
+    db.commit()
+    return jsonify(_note_dict(db.execute("SELECT * FROM notes WHERE id=?", (cur.lastrowid,)).fetchone())), 201
+
+
+@app.get("/api/notes")
+def note_list():
+    board = (request.args.get("board") or "").strip()
+    db = get_db()
+    sql = "SELECT * FROM notes WHERE user_id=?"
+    args = [uid()]
+    if board:
+        sql += " AND board=?"
+        args.append(board)
+    sql += " ORDER BY id DESC"
+    rows = db.execute(sql, args).fetchall()
+    return jsonify({"items": [_note_dict(r) for r in rows]})
+
+
+@app.get("/api/notes/counts")
+def note_counts():
+    rows = get_db().execute(
+        "SELECT board, COUNT(*) c FROM notes WHERE user_id=? GROUP BY board", (uid(),)).fetchall()
+    return jsonify({"counts": {(r["board"] or ""): r["c"] for r in rows},
+                    "total": sum(r["c"] for r in rows)})
+
+
+@app.get("/api/notes/<int:nid>/img/<int:idx>")
+def note_img(nid, idx):
+    n = _get_note(nid)
+    if not n:
+        return "未找到", 404
+    try:
+        imgs = json.loads(n["images"] or "[]")
+    except Exception:
+        imgs = []
+    if idx < 0 or idx >= len(imgs):
+        return "未找到", 404
+    path = os.path.join(UPLOADS, str(uid()), imgs[idx])
+    if not os.path.exists(path):
+        return "文件丢失", 404
+    return send_file(path, as_attachment=False)
+
+
+@app.put("/api/notes/<int:nid>")
+def note_update(nid):
+    n = _get_note(nid)
+    if not n:
+        return jsonify({"error": "未找到"}), 404
+    content = (request.form.get("content") or "").strip()
+    try:
+        old = json.loads(n["images"] or "[]")
+    except Exception:
+        old = []
+    try:
+        keep = json.loads(request.form.get("keep") or "null")
+    except Exception:
+        keep = None
+    keep = old if keep is None else [x for x in old if x in keep]
+    for fn in old:
+        if fn not in keep:
+            _remove_file(uid(), fn)
+    final = keep + _save_note_images(request.files.getlist("images"))
+    if not content and not final:
+        return jsonify({"error": "内容不能为空"}), 400
+    db = get_db()
+    db.execute("UPDATE notes SET content=?, images=?, updated_at=datetime('now','localtime') "
+               "WHERE id=? AND user_id=?", (content, json.dumps(final), nid, uid()))
+    db.commit()
+    return jsonify(_note_dict(db.execute("SELECT * FROM notes WHERE id=?", (nid,)).fetchone()))
+
+
+@app.delete("/api/notes/<int:nid>")
+def note_delete(nid):
+    n = _get_note(nid)
+    if not n:
+        return jsonify({"error": "未找到"}), 404
+    try:
+        for fn in json.loads(n["images"] or "[]"):
+            _remove_file(uid(), fn)
+    except Exception:
+        pass
+    db = get_db()
+    db.execute("DELETE FROM notes WHERE id=? AND user_id=?", (nid, uid()))
+    db.commit()
     return jsonify({"ok": True})
 
 

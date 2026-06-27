@@ -184,10 +184,13 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (web != null && web.canGoBack()) {
-            web.goBack();
-        } else {
-            super.onBackPressed();
-        }
+        // 边缘侧滑 / 返回键：先交给网页 SPA 退上一级；网页已在首页才退到后台
+        if (web == null) { super.onBackPressed(); return; }
+        web.evaluateJavascript("(window.appBack && window.appBack()) ? true : false",
+            value -> {
+                if (!"true".equals(value)) {
+                    moveTaskToBack(true);   // 不杀进程，避免回来要重新登录
+                }
+            });
     }
 }
