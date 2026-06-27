@@ -47,16 +47,44 @@
     </div>
   </section>
 
-  <!-- ===== 小记 ===== -->
+  <!-- ===== 小记（仿语雀：板块栏 + 编辑器 + 动态流） ===== -->
   <section id="view-notes" class="view hidden">
-    <div class="notes-layout">
+    <div class="notes2">
       <aside class="notes-sidebar" id="notes-sidebar"></aside>
-      <div class="notes-main">
-        <div class="notes-list" id="notes-list"></div>
-        <p id="notes-empty" class="empty hidden">这个板块还没有小记，点右下角 ＋ 新建。</p>
+      <div class="notes-content">
+        <!-- 编辑器 -->
+        <div class="composer">
+          <div class="cp-bar">
+            <button class="cp-tool" data-cp="img" title="图片">🖼️</button>
+            <button class="cp-tool" data-cp="todo" title="清单">☑️</button>
+            <button class="cp-tool" data-cp="file" title="附件">📎</button>
+            <button class="cp-tool" data-cp="tag" title="标签"># 标签</button>
+            <span class="cp-board" id="cp-board"></span>
+          </div>
+          <textarea id="cp-content" placeholder="记你想记…"></textarea>
+          <div id="cp-todos" class="cp-todos"></div>
+          <div id="cp-imgs" class="cp-thumbs"></div>
+          <div id="cp-files" class="cp-files"></div>
+          <div id="cp-tags" class="cp-tagedit"></div>
+          <div class="cp-foot">
+            <span class="cp-hint" id="cp-hint"></span>
+            <span class="cp-btns">
+              <button id="cp-del" class="btn hidden">删除</button>
+              <button id="cp-cancel" class="btn hidden">取消</button>
+              <button id="cp-submit" class="btn primary">发布</button>
+            </span>
+          </div>
+          <input id="cp-imgfile" type="file" accept="image/*" multiple hidden>
+          <input id="cp-attfile" type="file" multiple hidden>
+        </div>
+        <!-- 动态流 -->
+        <div class="feed-wrap">
+          <div class="feed-filter" id="feed-tags"></div>
+          <div class="feed" id="feed"></div>
+          <p id="feed-empty" class="empty hidden">这个板块还没有小记，上面写一条吧～</p>
+        </div>
       </div>
     </div>
-    <button id="note-fab" class="fab" title="新建小记">＋</button>
   </section>
 
   <!-- ===== 资料库 ===== -->
@@ -125,25 +153,6 @@
     <iframe id="viewer-frame" title="文件预览"></iframe>
   </section>
 </main>
-
-<!-- 小记编辑器 -->
-<div id="note-modal" class="modal hidden">
-  <div class="note-editor">
-    <div class="ne-head">
-      <select id="ne-board" title="板块"></select>
-      <button id="ne-del" class="ne-del hidden" title="删除">🗑</button>
-      <button id="ne-cancel" class="ne-close" title="关闭">×</button>
-    </div>
-    <textarea id="ne-content" placeholder="记你想记…"></textarea>
-    <div id="ne-imgs" class="ne-imgs"></div>
-    <div class="ne-foot">
-      <label class="ne-imgbtn">🖼️ 图片
-        <input id="ne-file" type="file" accept="image/*" multiple hidden>
-      </label>
-      <button id="ne-save" class="btn primary">保存</button>
-    </div>
-  </div>
-</div>
 
 <!-- 上传资料 -->
 <div id="upload-modal" class="modal hidden">

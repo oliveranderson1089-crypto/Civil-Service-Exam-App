@@ -105,8 +105,9 @@ function openBoard(board) {
 }
 $('#nav-back').onclick = back;
 
-/* ================= 小记 ================= */
+/* ================= 小记（仿语雀） ================= */
 let curNoteBoard = '';
+let curTag = '';
 function buildNotesSidebar() {
   $('#notes-sidebar').innerHTML = SECTIONS.map(s => `
     <div class="ns-group">${esc(s.name)}</div>
@@ -128,92 +129,177 @@ async function refreshNoteCounts() {
 }
 function openNotes(board) {
   curNoteBoard = board || curNoteBoard || ALL_BOARDS[0];
+  curTag = '';
   buildNotesSidebar();
   push({ view: 'notes' });
-  loadNotes(); refreshNoteCounts();
+  newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts();
 }
 $('#notes-sidebar').addEventListener('click', e => {
   const it = e.target.closest('[data-board]'); if (!it) return;
-  curNoteBoard = it.dataset.board;
+  curNoteBoard = it.dataset.board; curTag = '';
   document.querySelectorAll('.ns-item').forEach(x => x.classList.toggle('active', x.dataset.board === curNoteBoard));
-  loadNotes();
+  newDraft(); loadFeed(); loadFeedTags();
 });
-async function loadNotes() {
-  try {
-    const d = await api('/api/notes?board=' + encodeURIComponent(curNoteBoard));
-    const box = $('#notes-list');
-    if (!d.items.length) { box.innerHTML = ''; $('#notes-empty').classList.remove('hidden'); return; }
-    $('#notes-empty').classList.add('hidden');
-    box.innerHTML = d.items.map(n => `
-      <div class="note-card" data-id="${n.id}">
-        ${n.content ? `<div class="nc-text">${esc(n.content)}</div>` : ''}
-        ${n.images.length ? `<div class="nc-imgs">${n.images.map(u => `<img src="${u}" loading="lazy">`).join('')}</div>` : ''}
-        <div class="nc-time">${fmtTime(n.updated_at)}</div>
-      </div>`).join('');
-    box._items = d.items;
-  } catch (e) { toast(e.message, true); }
-}
-$('#notes-list').addEventListener('click', e => {
-  const card = e.target.closest('.note-card'); if (!card) return;
-  const it = ($('#notes-list')._items || []).find(x => x.id == card.dataset.id);
-  if (it) openEditor(it);
-});
-$('#note-fab').onclick = () => openEditor(null);
 
-/* 小记编辑器 */
-let editing = null;      // 正在编辑的 note（null=新建）
-let editorImgs = [];     // [{kind:'existing',file,url} | {kind:'new',fileObj,url}]
-function openEditor(note) {
-  editing = note;
-  editorImgs = [];
-  $('#ne-board').innerHTML = ALL_BOARDS.map(b => `<option ${b === (note ? note.board : curNoteBoard) ? 'selected' : ''}>${esc(b)}</option>`).join('');
-  $('#ne-content').value = note ? note.content : '';
-  $('#ne-del').classList.toggle('hidden', !note);
-  if (note) note.img_files.forEach((f, i) => editorImgs.push({ kind: 'existing', file: f, url: note.images[i] }));
-  renderEditorImgs();
-  $('#note-modal').classList.remove('hidden');
-  setTimeout(() => $('#ne-content').focus(), 50);
+/* ---- 编辑器（草稿） ---- */
+let draft = { id: null, content: '', images: [], files: [], todos: [], tags: [] };
+function newDraft() {
+  draft = { id: null, content: '', images: [], files: [], todos: [], tags: [] };
+  $('#cp-content').value = ''; renderComposer();
 }
-function renderEditorImgs() {
-  $('#ne-imgs').innerHTML = editorImgs.map((im, i) =>
-    `<div class="ne-thumb"><img src="${im.url}"><button data-rm="${i}">×</button></div>`).join('');
+function loadDraft(n) {
+  draft = {
+    id: n.id, content: n.content,
+    images: n.img_files.map((f, i) => ({ kind: 'old', file: f, url: n.images[i] })),
+    files: n.att_files.map((a, i) => ({ kind: 'old', file: a.file, name: a.name, ext: a.ext, url: n.attachments[i].url })),
+    todos: n.todos.map(t => ({ text: t.text, done: !!t.done })),
+    tags: [...n.tags],
+  };
+  $('#cp-content').value = n.content;
+  renderComposer();
+  $('#view-notes').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#cp-content').focus();
 }
-$('#ne-imgs').addEventListener('click', e => {
-  const b = e.target.closest('[data-rm]'); if (!b) return;
-  editorImgs.splice(+b.dataset.rm, 1); renderEditorImgs();
+function renderComposer() {
+  $('#cp-board').textContent = '# ' + curNoteBoard;
+  $('#cp-todos').innerHTML = draft.todos.map((t, i) =>
+    `<div class="cp-todo"><input type="checkbox" data-tdo="${i}" ${t.done ? 'checked' : ''}>
+     <input class="cp-todo-text" data-tdt="${i}" value="${esc(t.text)}" placeholder="待办事项…">
+     <button class="cp-x" data-tdr="${i}">×</button></div>`).join('');
+  $('#cp-imgs').innerHTML = draft.images.map((im, i) =>
+    `<div class="cp-thumb"><img src="${im.url}"><button class="cp-x" data-imr="${i}">×</button></div>`).join('');
+  $('#cp-files').innerHTML = draft.files.map((f, i) =>
+    `<div class="cp-file">📎 <span>${esc(f.name)}</span><button class="cp-x" data-flr="${i}">×</button></div>`).join('');
+  $('#cp-tags').innerHTML = draft.tags.map((t, i) =>
+    `<span class="cp-tag"># ${esc(t)}<button class="cp-x" data-tgr="${i}">×</button></span>`).join('');
+  const editing = !!draft.id;
+  $('#cp-submit').textContent = editing ? '保存' : '发布';
+  $('#cp-del').classList.toggle('hidden', !editing);
+  $('#cp-cancel').classList.toggle('hidden', !editing);
+  $('#cp-hint').textContent = editing ? '编辑中…' : '';
+}
+document.querySelector('.cp-bar').addEventListener('click', e => {
+  const b = e.target.closest('[data-cp]'); if (!b) return;
+  const t = b.dataset.cp;
+  if (t === 'img') $('#cp-imgfile').click();
+  else if (t === 'file') $('#cp-attfile').click();
+  else if (t === 'todo') {
+    draft.todos.push({ text: '', done: false }); renderComposer();
+    const ins = document.querySelectorAll('.cp-todo-text'); if (ins.length) ins[ins.length - 1].focus();
+  } else if (t === 'tag') {
+    const tg = prompt('添加标签：'); if (tg && tg.trim()) { const v = tg.trim(); if (!draft.tags.includes(v)) draft.tags.push(v); renderComposer(); }
+  }
 });
-$('#ne-file').addEventListener('change', e => {
-  [...e.target.files].forEach(f => editorImgs.push({ kind: 'new', fileObj: f, url: URL.createObjectURL(f) }));
-  e.target.value = ''; renderEditorImgs();
-});
-$('#ne-cancel').onclick = () => $('#note-modal').classList.add('hidden');
-$('#note-modal').addEventListener('click', e => { if (e.target.id === 'note-modal') $('#note-modal').classList.add('hidden'); });
-$('#ne-save').onclick = async () => {
-  const content = $('#ne-content').value.trim();
-  if (!content && !editorImgs.length) { toast('写点什么吧', true); return; }
+$('#cp-imgfile').addEventListener('change', e => { [...e.target.files].forEach(f => draft.images.push({ kind: 'new', fileObj: f, url: URL.createObjectURL(f) })); e.target.value = ''; renderComposer(); });
+$('#cp-attfile').addEventListener('change', e => { [...e.target.files].forEach(f => draft.files.push({ kind: 'new', fileObj: f, name: f.name })); e.target.value = ''; renderComposer(); });
+$('#cp-todos').addEventListener('click', e => { const r = e.target.closest('[data-tdr]'); if (r) { draft.todos.splice(+r.dataset.tdr, 1); renderComposer(); } });
+$('#cp-todos').addEventListener('change', e => { const c = e.target.closest('[data-tdo]'); if (c) draft.todos[+c.dataset.tdo].done = c.checked; });
+$('#cp-todos').addEventListener('input', e => { const t = e.target.closest('[data-tdt]'); if (t) draft.todos[+t.dataset.tdt].text = t.value; });
+$('#cp-imgs').addEventListener('click', e => { const r = e.target.closest('[data-imr]'); if (r) { draft.images.splice(+r.dataset.imr, 1); renderComposer(); } });
+$('#cp-files').addEventListener('click', e => { const r = e.target.closest('[data-flr]'); if (r) { draft.files.splice(+r.dataset.flr, 1); renderComposer(); } });
+$('#cp-tags').addEventListener('click', e => { const r = e.target.closest('[data-tgr]'); if (r) { draft.tags.splice(+r.dataset.tgr, 1); renderComposer(); } });
+$('#cp-cancel').onclick = () => newDraft();
+$('#cp-del').onclick = async () => {
+  if (!draft.id || !confirm('删除这条小记？')) return;
+  try { await api('/api/notes/' + draft.id, { method: 'DELETE' }); toast('已删除'); newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
+  catch (e) { toast(e.message, true); }
+};
+$('#cp-submit').onclick = async () => {
+  const content = $('#cp-content').value.trim();
+  draft.todos = draft.todos.filter(t => (t.text || '').trim() !== '');
+  if (!content && !draft.images.length && !draft.files.length && !draft.todos.length) { toast('写点什么吧', true); return; }
   const fd = new FormData();
-  fd.append('board', $('#ne-board').value);
+  fd.append('board', curNoteBoard);
   fd.append('content', content);
-  editorImgs.filter(i => i.kind === 'new').forEach(i => fd.append('images', i.fileObj));
+  fd.append('todos', JSON.stringify(draft.todos));
+  fd.append('tags', JSON.stringify(draft.tags));
+  draft.images.filter(i => i.kind === 'new').forEach(i => fd.append('images', i.fileObj));
+  draft.files.filter(i => i.kind === 'new').forEach(i => fd.append('attachments', i.fileObj));
+  $('#cp-submit').disabled = true;
   try {
-    if (editing) {
-      fd.append('keep', JSON.stringify(editorImgs.filter(i => i.kind === 'existing').map(i => i.file)));
-      await api('/api/notes/' + editing.id, { method: 'PUT', body: fd });
+    if (draft.id) {
+      fd.append('keep_imgs', JSON.stringify(draft.images.filter(i => i.kind === 'old').map(i => i.file)));
+      fd.append('keep_atts', JSON.stringify(draft.files.filter(i => i.kind === 'old').map(i => i.file)));
+      await api('/api/notes/' + draft.id, { method: 'PUT', body: fd });
     } else {
       await api('/api/notes', { method: 'POST', body: fd });
     }
-    $('#note-modal').classList.add('hidden');
-    toast('已保存');
-    curNoteBoard = $('#ne-board').value;
-    document.querySelectorAll('.ns-item').forEach(x => x.classList.toggle('active', x.dataset.board === curNoteBoard));
-    loadNotes(); refreshNoteCounts();
+    toast('已保存'); newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts();
   } catch (e) { toast(e.message, true); }
+  $('#cp-submit').disabled = false;
 };
-$('#ne-del').onclick = async () => {
-  if (!editing || !confirm('删除这条小记？')) return;
-  try { await api('/api/notes/' + editing.id, { method: 'DELETE' }); $('#note-modal').classList.add('hidden'); toast('已删除'); loadNotes(); refreshNoteCounts(); }
-  catch (e) { toast(e.message, true); }
-};
+
+/* ---- 动态流 ---- */
+async function loadFeedTags() {
+  try {
+    const d = await api('/api/notes/tags?board=' + encodeURIComponent(curNoteBoard));
+    $('#feed-tags').innerHTML = d.tags.length
+      ? `<button class="tagchip${curTag === '' ? ' active' : ''}" data-tag="">全部</button>` +
+        d.tags.map(t => `<button class="tagchip${curTag === t ? ' active' : ''}" data-tag="${esc(t)}"># ${esc(t)}</button>`).join('')
+      : '';
+  } catch (_) {}
+}
+$('#feed-tags').addEventListener('click', e => {
+  const c = e.target.closest('[data-tag]'); if (!c) return;
+  curTag = c.dataset.tag;
+  document.querySelectorAll('#feed-tags .tagchip').forEach(x => x.classList.toggle('active', x.dataset.tag === curTag));
+  loadFeed();
+});
+async function loadFeed() {
+  try {
+    let url = '/api/notes?board=' + encodeURIComponent(curNoteBoard);
+    if (curTag) url += '&tag=' + encodeURIComponent(curTag);
+    const d = await api(url);
+    const box = $('#feed');
+    if (!d.items.length) { box.innerHTML = ''; $('#feed-empty').classList.remove('hidden'); return; }
+    $('#feed-empty').classList.add('hidden');
+    box.innerHTML = d.items.map(feedCard).join('');
+    box._items = d.items;
+  } catch (e) { toast(e.message, true); }
+}
+function feedCard(n) {
+  const todos = n.todos.length ? `<div class="fc-todos">${n.todos.map((t, i) =>
+    `<label class="fc-todo${t.done ? ' done' : ''}"><input type="checkbox" data-tg="${n.id}" data-ti="${i}" ${t.done ? 'checked' : ''}><span>${esc(t.text)}</span></label>`).join('')}</div>` : '';
+  const imgs = n.images.length ? `<div class="fc-imgs">${n.images.map(u => `<img src="${u}" loading="lazy" data-img="${u}">`).join('')}</div>` : '';
+  const files = n.attachments.length ? `<div class="fc-files">${n.attachments.map((a, i) =>
+    `<button class="fc-file" data-file="${n.id}" data-fi="${i}" data-ext="${esc(a.ext)}" data-fview="${a.viewable ? 1 : 0}" data-fname="${esc(a.name)}">📎 ${esc(a.name)}</button>`).join('')}</div>` : '';
+  const tags = n.tags.length ? `<div class="fc-tags">${n.tags.map(t => `<span class="fc-tag"># ${esc(t)}</span>`).join('')}</div>` : '';
+  return `<div class="feed-card" data-id="${n.id}">
+    <div class="fc-time">更新于 ${fmtTime(n.updated_at)}
+      <span class="fc-acts"><button class="fc-edit" data-edit="${n.id}" title="编辑">✎</button><button class="fc-del" data-del="${n.id}" title="删除">🗑</button></span>
+    </div>
+    ${n.content ? `<div class="fc-text">${esc(n.content)}</div>` : ''}
+    ${todos}${imgs}${files}${tags}
+  </div>`;
+}
+$('#feed').addEventListener('click', async e => {
+  const box = $('#feed');
+  const tg = e.target.closest('[data-tg]');
+  if (tg) {
+    try {
+      await api('/api/notes/' + tg.dataset.tg + '/todo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idx: +tg.dataset.ti, done: tg.checked }) });
+      tg.closest('.fc-todo').classList.toggle('done', tg.checked);
+      const it = (box._items || []).find(x => x.id == tg.dataset.tg); if (it) it.todos[+tg.dataset.ti].done = tg.checked;
+    } catch (err) { tg.checked = !tg.checked; toast(err.message, true); }
+    return;
+  }
+  const ed = e.target.closest('[data-edit]');
+  if (ed) { const it = (box._items || []).find(x => x.id == ed.dataset.edit); if (it) loadDraft(it); return; }
+  const dl = e.target.closest('[data-del]');
+  if (dl) {
+    if (!confirm('删除这条小记？')) return;
+    try { await api('/api/notes/' + dl.dataset.del, { method: 'DELETE' }); toast('已删除'); if (draft.id == dl.dataset.del) newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
+    catch (err) { toast(err.message, true); } return;
+  }
+  const fl = e.target.closest('[data-file]');
+  if (fl) {
+    const base = '/api/notes/' + fl.dataset.file + '/file/' + fl.dataset.fi;
+    if (fl.dataset.fview !== '1') { const a = document.createElement('a'); a.href = base + '?dl=1'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); return; }
+    openViewerUrl(base, fl.dataset.fname, fl.dataset.ext, base + '?dl=1'); return;
+  }
+  const im = e.target.closest('[data-img]');
+  if (im) { openViewerUrl(im.dataset.img, '图片', '.png'); return; }
+});
 
 /* ================= 资料库 ================= */
 const EXT_ICON = {
@@ -276,15 +362,17 @@ $('#mat-list').addEventListener('click', async e => {
   if (item.dataset.view !== '1') { toast('该格式不支持预览，请下载查看', true); return; }
   openViewer(id, item.querySelector('.mat-name').textContent, item.dataset.ext);
 });
-function openViewer(id, name, ext) {
+function openViewerUrl(fileUrl, name, ext, dlUrl) {
   ext = ext || '';
-  const fileUrl = '/api/materials/' + id + '/view';
   const src = (ext === '.pdf' || OFFICE_EXT.includes(ext))
     ? '/pdfjs/web/viewer.html?file=' + encodeURIComponent(fileUrl) : fileUrl;
   $('#viewer-name').textContent = name;
   $('#viewer-frame').src = src;
-  $('#viewer-dl').href = '/api/materials/' + id + '/download';
+  $('#viewer-dl').href = dlUrl || fileUrl;
   push({ view: 'viewer', title: name });
+}
+function openViewer(id, name, ext) {
+  openViewerUrl('/api/materials/' + id + '/view', name, ext, '/api/materials/' + id + '/download');
 }
 /* 上传资料 */
 $('#upload-btn').onclick = () => {

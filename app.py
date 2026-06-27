@@ -168,6 +168,10 @@ def init_db():
     if "user_id" not in _cols(con, "entries"):
         con.execute("ALTER TABLE entries ADD COLUMN user_id INTEGER")
     con.execute("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)")
+    # notes 表补充字段：标签 / 附件 / 待办清单
+    for col in ("tags", "attachments", "todos"):
+        if col not in _cols(con, "notes"):
+            con.execute(f"ALTER TABLE notes ADD COLUMN {col} TEXT")
 
     # 迁移：把旧的单账号(config.json)迁入 users 表，并把无主收录归给它
     if con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
@@ -670,19 +674,31 @@ def material_delete(mid):
     return jsonify({"ok": True})
 
 
-# ---------------------------------------------------------------- 小记
+# ---------------------------------------------------------------- 小记（仿语雀）
 NOTE_IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 
 
-def _note_dict(row):
+def _jl(row, key):
     try:
-        imgs = json.loads(row["images"] or "[]")
+        return json.loads(row[key] or "[]")
     except Exception:
-        imgs = []
+        return []
+
+
+def _note_dict(row):
+    imgs = _jl(row, "images")
+    atts = _jl(row, "attachments")
     return {
         "id": row["id"], "board": row["board"] or "", "content": row["content"] or "",
         "images": ["/api/notes/%d/img/%d" % (row["id"], i) for i in range(len(imgs))],
         "img_files": imgs,
+        "attachments": [{"name": a.get("name"), "ext": a.get("ext", ""),
+                         "viewable": (a.get("ext") in INLINE_EXT) or (a.get("ext") in OFFICE_EXT),
+                         "url": "/api/notes/%d/file/%d" % (row["id"], i)}
+                        for i, a in enumerate(atts)],
+        "att_files": atts,
+        "todos": _jl(row, "todos"),
+        "tags": _jl(row, "tags"),
         "created_at": row["created_at"], "updated_at": row["updated_at"],
     }
 
@@ -701,6 +717,27 @@ def _save_note_images(files):
     return names
 
 
+def _save_note_atts(files):
+    out = []
+    for f in files:
+        if not f or not f.filename:
+            continue
+        ext = os.path.splitext(f.filename)[1].lower()
+        stored = "natt_" + uuid.uuid4().hex + ext
+        f.save(os.path.join(_user_dir(uid()), stored))
+        out.append({"file": stored, "name": f.filename, "ext": ext,
+                    "size": os.path.getsize(os.path.join(_user_dir(uid()), stored))})
+    return out
+
+
+def _parse_json(s, default):
+    try:
+        v = json.loads(s)
+        return v if v is not None else default
+    except Exception:
+        return default
+
+
 def _get_note(nid):
     return get_db().execute("SELECT * FROM notes WHERE id=? AND user_id=?", (nid, uid())).fetchone()
 
@@ -709,12 +746,17 @@ def _get_note(nid):
 def note_create():
     board = (request.form.get("board") or "").strip()
     content = (request.form.get("content") or "").strip()
+    todos = _parse_json(request.form.get("todos"), [])
+    tags = _parse_json(request.form.get("tags"), [])
     imgs = _save_note_images(request.files.getlist("images"))
-    if not content and not imgs:
+    atts = _save_note_atts(request.files.getlist("attachments"))
+    if not (content or imgs or atts or todos):
         return jsonify({"error": "内容不能为空"}), 400
     db = get_db()
-    cur = db.execute("INSERT INTO notes(user_id,board,content,images) VALUES(?,?,?,?)",
-                     (uid(), board, content, json.dumps(imgs)))
+    cur = db.execute(
+        "INSERT INTO notes(user_id,board,content,images,attachments,todos,tags) VALUES(?,?,?,?,?,?,?)",
+        (uid(), board, content, json.dumps(imgs), json.dumps(atts),
+         json.dumps(todos), json.dumps(tags)))
     db.commit()
     return jsonify(_note_dict(db.execute("SELECT * FROM notes WHERE id=?", (cur.lastrowid,)).fetchone())), 201
 
@@ -722,6 +764,7 @@ def note_create():
 @app.get("/api/notes")
 def note_list():
     board = (request.args.get("board") or "").strip()
+    tag = (request.args.get("tag") or "").strip()
     db = get_db()
     sql = "SELECT * FROM notes WHERE user_id=?"
     args = [uid()]
@@ -730,7 +773,10 @@ def note_list():
         args.append(board)
     sql += " ORDER BY id DESC"
     rows = db.execute(sql, args).fetchall()
-    return jsonify({"items": [_note_dict(r) for r in rows]})
+    items = [_note_dict(r) for r in rows]
+    if tag:
+        items = [n for n in items if tag in n["tags"]]
+    return jsonify({"items": items})
 
 
 @app.get("/api/notes/counts")
@@ -741,15 +787,29 @@ def note_counts():
                     "total": sum(r["c"] for r in rows)})
 
 
+@app.get("/api/notes/tags")
+def note_tags():
+    board = (request.args.get("board") or "").strip()
+    sql = "SELECT tags FROM notes WHERE user_id=?"
+    args = [uid()]
+    if board:
+        sql += " AND board=?"
+        args.append(board)
+    seen, out = set(), []
+    for r in get_db().execute(sql, args).fetchall():
+        for t in _jl(r, "tags"):
+            if t not in seen:
+                seen.add(t)
+                out.append(t)
+    return jsonify({"tags": out})
+
+
 @app.get("/api/notes/<int:nid>/img/<int:idx>")
 def note_img(nid, idx):
     n = _get_note(nid)
     if not n:
         return "未找到", 404
-    try:
-        imgs = json.loads(n["images"] or "[]")
-    except Exception:
-        imgs = []
+    imgs = _jl(n, "images")
     if idx < 0 or idx >= len(imgs):
         return "未找到", 404
     path = os.path.join(UPLOADS, str(uid()), imgs[idx])
@@ -758,32 +818,84 @@ def note_img(nid, idx):
     return send_file(path, as_attachment=False)
 
 
+@app.get("/api/notes/<int:nid>/file/<int:idx>")
+def note_file(nid, idx):
+    n = _get_note(nid)
+    if not n:
+        return "未找到", 404
+    atts = _jl(n, "attachments")
+    if idx < 0 or idx >= len(atts):
+        return "未找到", 404
+    a = atts[idx]
+    path = os.path.join(UPLOADS, str(uid()), a["file"])
+    if not os.path.exists(path):
+        return "文件丢失", 404
+    ext = a.get("ext", "")
+    dl = request.args.get("dl") == "1"
+    if not dl and ext in OFFICE_EXT:
+        pdf = _office_to_pdf(path)
+        if pdf:
+            return send_file(pdf, mimetype="application/pdf", as_attachment=False)
+    if not dl and ext in (".html", ".htm"):
+        with open(path, "rb") as fp:
+            return Response(fp.read(), mimetype="text/html; charset=utf-8")
+    if not dl and ext in TEXT_EXT:
+        with open(path, "rb") as fp:
+            return Response(fp.read(), mimetype="text/plain; charset=utf-8")
+    if not dl and ext in INLINE_EXT:
+        return send_file(path, as_attachment=False, download_name=a.get("name"))
+    return send_file(path, as_attachment=True, download_name=a.get("name") or a["file"])
+
+
 @app.put("/api/notes/<int:nid>")
 def note_update(nid):
     n = _get_note(nid)
     if not n:
         return jsonify({"error": "未找到"}), 404
     content = (request.form.get("content") or "").strip()
-    try:
-        old = json.loads(n["images"] or "[]")
-    except Exception:
-        old = []
-    try:
-        keep = json.loads(request.form.get("keep") or "null")
-    except Exception:
-        keep = None
-    keep = old if keep is None else [x for x in old if x in keep]
-    for fn in old:
-        if fn not in keep:
+    todos = _parse_json(request.form.get("todos"), [])
+    tags = _parse_json(request.form.get("tags"), [])
+    # 图片：保留 keep_imgs 中的，删其余，加新上传
+    old_i = _jl(n, "images")
+    keep_i = _parse_json(request.form.get("keep_imgs"), old_i)
+    keep_i = [x for x in old_i if x in keep_i]
+    for fn in old_i:
+        if fn not in keep_i:
             _remove_file(uid(), fn)
-    final = keep + _save_note_images(request.files.getlist("images"))
-    if not content and not final:
+    final_i = keep_i + _save_note_images(request.files.getlist("images"))
+    # 附件：同理
+    old_a = _jl(n, "attachments")
+    keep_af = _parse_json(request.form.get("keep_atts"), [a["file"] for a in old_a])
+    keep_a = [a for a in old_a if a["file"] in keep_af]
+    for a in old_a:
+        if a["file"] not in keep_af:
+            _remove_file(uid(), a["file"])
+    final_a = keep_a + _save_note_atts(request.files.getlist("attachments"))
+    if not (content or final_i or final_a or todos):
         return jsonify({"error": "内容不能为空"}), 400
     db = get_db()
-    db.execute("UPDATE notes SET content=?, images=?, updated_at=datetime('now','localtime') "
-               "WHERE id=? AND user_id=?", (content, json.dumps(final), nid, uid()))
+    db.execute("UPDATE notes SET content=?,images=?,attachments=?,todos=?,tags=?,"
+               "updated_at=datetime('now','localtime') WHERE id=? AND user_id=?",
+               (content, json.dumps(final_i), json.dumps(final_a),
+                json.dumps(todos), json.dumps(tags), nid, uid()))
     db.commit()
     return jsonify(_note_dict(db.execute("SELECT * FROM notes WHERE id=?", (nid,)).fetchone()))
+
+
+@app.post("/api/notes/<int:nid>/todo")
+def note_toggle_todo(nid):
+    n = _get_note(nid)
+    if not n:
+        return jsonify({"error": "未找到"}), 404
+    data = request.get_json(silent=True) or {}
+    idx = data.get("idx")
+    todos = _jl(n, "todos")
+    if isinstance(idx, int) and 0 <= idx < len(todos):
+        todos[idx]["done"] = bool(data.get("done"))
+        get_db().execute("UPDATE notes SET todos=? WHERE id=? AND user_id=?",
+                         (json.dumps(todos), nid, uid()))
+        get_db().commit()
+    return jsonify({"ok": True})
 
 
 @app.delete("/api/notes/<int:nid>")
@@ -791,11 +903,10 @@ def note_delete(nid):
     n = _get_note(nid)
     if not n:
         return jsonify({"error": "未找到"}), 404
-    try:
-        for fn in json.loads(n["images"] or "[]"):
-            _remove_file(uid(), fn)
-    except Exception:
-        pass
+    for fn in _jl(n, "images"):
+        _remove_file(uid(), fn)
+    for a in _jl(n, "attachments"):
+        _remove_file(uid(), a.get("file", ""))
     db = get_db()
     db.execute("DELETE FROM notes WHERE id=? AND user_id=?", (nid, uid()))
     db.commit()

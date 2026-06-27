@@ -295,3 +295,61 @@ main{max-width:860px;margin:0 auto;padding:16px 14px 60px;}
 .placeholder-box .ph-icon{font-size:56px;}
 .placeholder-box h2{font-size:20px;color:var(--text);margin:14px 0 8px;}
 .placeholder-box p{font-size:14px;line-height:1.8;}
+
+/* ============ v4：小记仿语雀（编辑器 + 动态流） ============ */
+.notes2{display:flex;height:calc(100vh - 116px);}
+.notes-content{flex:1;min-width:0;overflow-y:auto;padding:12px;}
+/* 编辑器 */
+.composer{background:#fff;border-radius:14px;box-shadow:var(--shadow);padding:12px;margin-bottom:14px;}
+.cp-bar{display:flex;gap:6px;align-items:center;margin-bottom:9px;}
+.cp-tool{border:none;background:#f0f4f9;border-radius:8px;padding:6px 11px;font-size:14px;cursor:pointer;white-space:nowrap;}
+.cp-tool:hover{background:#e3eaf3;}
+.cp-board{margin-left:auto;font-size:12px;color:var(--blue);background:#eef4fb;padding:3px 11px;border-radius:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:45%;}
+#cp-content{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:11px;font-size:15px;
+  font-family:inherit;resize:vertical;min-height:118px;outline:none;line-height:1.6;}
+#cp-content:focus{border-color:var(--blue);}
+.cp-todo{display:flex;align-items:center;gap:8px;margin:6px 0;}
+.cp-todo-text{flex:1;border:none;border-bottom:1px solid var(--line);padding:4px 2px;font-size:14px;outline:none;font-family:inherit;}
+.cp-todo-text:focus{border-color:var(--blue);}
+.cp-x{border:none;background:transparent;color:#c5cad3;font-size:16px;cursor:pointer;padding:0 4px;line-height:1;}
+.cp-x:hover{color:#c0392b;}
+.cp-thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+.cp-thumb{position:relative;width:62px;height:62px;}
+.cp-thumb img{width:100%;height:100%;object-fit:cover;border-radius:8px;}
+.cp-thumb .cp-x{position:absolute;top:-7px;right:-7px;width:20px;height:20px;border-radius:50%;background:#c0392b;color:#fff;font-size:13px;line-height:20px;}
+.cp-files{margin-top:9px;display:flex;flex-direction:column;gap:5px;}
+.cp-file{display:flex;align-items:center;gap:6px;font-size:13px;background:#f5f7fa;border-radius:8px;padding:6px 9px;}
+.cp-file span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cp-tagedit{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.cp-tag{background:#eef4fb;color:var(--blue);font-size:12.5px;padding:3px 4px 3px 10px;border-radius:20px;display:inline-flex;align-items:center;}
+.cp-foot{display:flex;align-items:center;justify-content:space-between;margin-top:12px;}
+.cp-hint{font-size:12px;color:var(--muted);}
+.cp-btns{display:flex;gap:8px;}
+.cp-foot .btn{padding:8px 20px;}
+/* 动态流 */
+.feed-filter{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+.tagchip{border:1.5px solid var(--line);background:#fff;color:var(--muted);padding:5px 12px;border-radius:20px;font-size:13px;cursor:pointer;}
+.tagchip.active{background:var(--blue);border-color:var(--blue);color:#fff;}
+.feed{display:grid;gap:12px;}
+.feed-card{background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:13px 15px;}
+.fc-time{font-size:12px;color:var(--muted);display:flex;align-items:center;}
+.fc-acts{margin-left:auto;display:flex;gap:2px;}
+.fc-edit,.fc-del{border:none;background:transparent;cursor:pointer;font-size:14px;opacity:.5;padding:2px 6px;border-radius:6px;}
+.fc-edit:hover,.fc-del:hover{opacity:1;background:#f0f2f6;}
+.fc-text{font-size:14.5px;color:#333;white-space:pre-wrap;word-break:break-word;margin-top:7px;line-height:1.6;}
+.fc-todos{margin-top:8px;}
+.fc-todo{display:flex;align-items:center;gap:7px;font-size:14px;margin:5px 0;cursor:pointer;}
+.fc-todo.done span{text-decoration:line-through;color:#aaa;}
+.fc-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}
+.fc-imgs img{width:82px;height:82px;object-fit:cover;border-radius:8px;cursor:pointer;}
+.fc-files{margin-top:9px;display:flex;flex-direction:column;gap:5px;align-items:flex-start;}
+.fc-file{border:1px solid var(--line);background:#f7f9fc;border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer;color:#445;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.fc-file:hover{border-color:var(--blue);color:var(--blue);}
+.fc-tags{margin-top:9px;display:flex;flex-wrap:wrap;gap:6px;}
+.fc-tag{background:#f0f4f9;color:#5a6b85;font-size:12px;padding:2px 9px;border-radius:20px;}
+/* 桌面：编辑器在左、动态流在右 */
+@media(min-width:780px){
+  .notes-content{display:flex;gap:18px;align-items:flex-start;}
+  .composer{flex:0 0 400px;position:sticky;top:0;margin-bottom:0;}
+  .feed-wrap{flex:1;min-width:0;}
+}
