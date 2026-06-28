@@ -12,6 +12,9 @@ const api = (u, o) => fetch(u, o).then(async r => {
   return r;
 });
 const IN_APP = navigator.userAgent.includes('GongkaoApp');
+// 手机端：安卓壳内 或 窄屏。手机端与网页端使用不同的「小记」界面
+const IS_MOBILE = IN_APP || window.matchMedia('(max-width:760px)').matches;
+document.body.classList.toggle('mobile-ui', IS_MOBILE);
 const PAGE_SIZE = 5;
 
 function toast(msg, err) {
@@ -62,9 +65,18 @@ function back() { if (stack.length > 1) { stack.pop(); render(); } }
 function goHome() { stack = [{ view: 'home' }]; render(); }
 // 供安卓原生「返回/侧滑」调用：能退则退并返回 true，已在首页返回 false
 window.appBack = function () {
-  // 有弹窗先关弹窗
+  // 1) 新建小记面板
+  const sheet = $('#note-sheet');
+  if (sheet && !sheet.classList.contains('hidden')) { sheet.classList.add('hidden'); return true; }
+  // 2) 全屏编辑器
+  const cp = document.querySelector('.composer.cp-open');
+  if (cp) { newDraft(); return true; }
+  // 3) 普通弹窗
   const m = document.querySelector('.modal:not(.hidden)');
   if (m) { m.classList.add('hidden'); return true; }
+  // 4) 手机端搜索框展开时先收起
+  const ms = $('#notes-msearch');
+  if (IS_MOBILE && ms && !ms.classList.contains('hidden')) { toggleNoteSearch(); return true; }
   if (stack.length > 1) { back(); return true; }
   return false;
 };
@@ -86,7 +98,7 @@ async function init() {
         <div class="hc-name">${esc(s.name)}</div>
         <div class="hc-desc">${esc(s.desc)}</div>
       </div>`).join('') + `
-    <div class="home-card" data-go="notes"><div class="hc-logo">${IC.feather}</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 按板块归类</div></div>
+    <div class="home-card" data-go="notes"><div class="hc-logo">${IC.feather}</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 标签归类</div></div>
     <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>`;
   goHome();
 }
@@ -141,8 +153,14 @@ $('#nav-back').onclick = back;
 /* ================= 小记（仿语雀） ================= */
 let curNoteBoard = '';
 let curTag = '';
+let noteSearchQ = '';
 function buildNotesSidebar() {
-  $('#notes-sidebar').innerHTML = SECTIONS.map(s => `
+  $('#notes-sidebar').innerHTML =
+    `<div class="ns-item${curNoteBoard === '' ? ' active' : ''}" data-board="">
+        <span class="ns-name">全部</span>
+        <span class="ns-count" data-cnt=""></span>
+      </div>` +
+    SECTIONS.map(s => `
     <div class="ns-group">${esc(s.name)}</div>
     ${s.boards.map(b => `
       <div class="ns-item${b === curNoteBoard ? ' active' : ''}" data-board="${esc(b)}">
@@ -155,14 +173,24 @@ async function refreshNoteCounts() {
   try {
     const d = await api('/api/notes/counts');
     document.querySelectorAll('[data-cnt]').forEach(el => {
-      const n = d.counts[el.dataset.cnt] || 0;
+      const n = el.dataset.cnt === '' ? (d.total || 0) : (d.counts[el.dataset.cnt] || 0);
       el.textContent = n ? n : '';
     });
   } catch (_) {}
 }
 function openNotes(board) {
-  curNoteBoard = board || curNoteBoard || ALL_BOARDS[0];
   curTag = '';
+  if (IS_MOBILE) {
+    // 手机端：统一信息流（不分板块，用标签区分）
+    curNoteBoard = '';
+    noteSearchQ = '';
+    $('#notes-msearch').classList.add('hidden');
+    $('#notes-msearch-input').value = '';
+    push({ view: 'notes' });
+    newDraft(); loadFeed(); loadFeedTags();
+    return;
+  }
+  curNoteBoard = board != null ? board : (curNoteBoard || '');
   buildNotesSidebar();
   push({ view: 'notes' });
   newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts();
@@ -179,6 +207,18 @@ let draft = { id: null, content: '', images: [], files: [], todos: [], tags: [] 
 function newDraft() {
   draft = { id: null, content: '', images: [], files: [], todos: [], tags: [] };
   $('#cp-content').value = ''; renderComposer();
+  closeComposerM();
+}
+// 手机端：把内嵌编辑器变成全屏弹出 / 收起
+function openComposerM() {
+  if (!IS_MOBILE) return;
+  document.querySelector('.composer').classList.add('cp-open');
+  document.body.classList.add('cp-open-lock');
+  setTimeout(() => $('#cp-content').focus(), 60);
+}
+function closeComposerM() {
+  document.querySelector('.composer').classList.remove('cp-open');
+  document.body.classList.remove('cp-open-lock');
 }
 function loadDraft(n) {
   draft = {
@@ -190,6 +230,7 @@ function loadDraft(n) {
   };
   $('#cp-content').value = n.content;
   renderComposer();
+  if (IS_MOBILE) { openComposerM(); return; }
   $('#view-notes').scrollIntoView({ behavior: 'smooth', block: 'start' });
   $('#cp-content').focus();
 }
@@ -210,6 +251,9 @@ function renderComposer() {
   $('#cp-del').classList.toggle('hidden', !editing);
   $('#cp-cancel').classList.toggle('hidden', !editing);
   $('#cp-hint').textContent = editing ? '编辑中…' : '';
+  // 手机端全屏编辑器顶栏
+  $('#cp-mtitle').textContent = editing ? '编辑小记' : '写小记';
+  $('#cp-mdel').classList.toggle('hidden', !editing);
 }
 document.querySelector('.cp-bar').addEventListener('click', e => {
   const b = e.target.closest('[data-cp]'); if (!b) return;
@@ -265,6 +309,52 @@ $('#cp-submit').onclick = async () => {
   $('#cp-submit').disabled = false;
 };
 
+/* ---- 手机端：底部悬浮条 / 新建面板 / 全屏编辑器 ---- */
+// 全屏编辑器顶栏：取消 / 删除 / 完成
+$('#cp-mclose').onclick = () => newDraft();
+$('#cp-msave').onclick = () => $('#cp-submit').click();
+$('#cp-mdel').onclick = () => $('#cp-del').click();
+// 底部悬浮条
+$('#notes-pill').addEventListener('click', e => {
+  const b = e.target.closest('[data-pill]'); if (!b) return;
+  const p = b.dataset.pill;
+  if (p === 'add') $('#note-sheet').classList.remove('hidden');
+  else if (p === 'search') toggleNoteSearch();
+  else if (p === 'ai') toast('AI 助手开发中，敬请期待');
+});
+// 新建小记面板
+$('#note-sheet').addEventListener('click', e => {
+  if (e.target.closest('[data-sheet-close]')) { $('#note-sheet').classList.add('hidden'); return; }
+  const b = e.target.closest('[data-new]'); if (!b) return;
+  $('#note-sheet').classList.add('hidden');
+  const m = b.dataset.new;
+  if (m === 'ocr') { toast('OCR 识图开发中，敬请期待'); return; }
+  newNoteM(m);
+});
+function newNoteM(mode) {
+  newDraft();
+  openComposerM();
+  if (mode === 'img') $('#cp-imgfile').click();
+  else if (mode === 'cam') $('#cp-camfile').click();
+  else if (mode === 'file') $('#cp-attfile').click();
+  else if (mode === 'todo') { draft.todos.push({ text: '', done: false }); renderComposer(); }
+}
+// 手机端搜索
+function toggleNoteSearch() {
+  const box = $('#notes-msearch');
+  box.classList.toggle('hidden');
+  if (box.classList.contains('hidden')) {
+    if (noteSearchQ) { noteSearchQ = ''; $('#notes-msearch-input').value = ''; loadFeed(); }
+  } else {
+    setTimeout(() => $('#notes-msearch-input').focus(), 50);
+  }
+}
+let noteSearchTimer;
+$('#notes-msearch-input').addEventListener('input', e => {
+  clearTimeout(noteSearchTimer);
+  noteSearchTimer = setTimeout(() => { noteSearchQ = e.target.value.trim(); loadFeed(); }, 200);
+});
+
 /* ---- 动态流 ---- */
 async function loadFeedTags() {
   try {
@@ -287,10 +377,23 @@ async function loadFeed() {
     if (curTag) url += '&tag=' + encodeURIComponent(curTag);
     const d = await api(url);
     const box = $('#feed');
-    if (!d.items.length) { box.innerHTML = ''; $('#feed-empty').classList.remove('hidden'); return; }
+    let items = d.items;
+    if (noteSearchQ) {
+      const q = noteSearchQ;
+      items = items.filter(n => (n.content || '').includes(q)
+        || (n.tags || []).some(t => t.includes(q))
+        || (n.todos || []).some(t => (t.text || '').includes(q)));
+    }
+    if (!items.length) {
+      box.innerHTML = ''; box._items = [];
+      $('#feed-empty').classList.remove('hidden');
+      $('#feed-empty').textContent = noteSearchQ ? '没有匹配「' + noteSearchQ + '」的小记'
+        : (IS_MOBILE ? '还没有小记，点下面的 ＋ 写一条吧～' : '还没有小记，在左侧写一条吧～');
+      return;
+    }
     $('#feed-empty').classList.add('hidden');
-    box.innerHTML = d.items.map(feedCard).join('');
-    box._items = d.items;
+    box.innerHTML = items.map(feedCard).join('');
+    box._items = items;
   } catch (e) { toast(e.message, true); }
 }
 function feedCard(n) {
