@@ -550,6 +550,7 @@ async function loadMaterials() {
         </div>
         <div class="mat-actions">
           <button class="iconbtn" data-act="rename" title="重命名">✎</button>
+          <button class="iconbtn" data-act="dup" title="复制一份">⧉</button>
           <button class="iconbtn" data-act="dl" title="下载">⬇</button>
           <button class="iconbtn" data-act="del" title="删除">🗑</button>
         </div>
@@ -572,6 +573,9 @@ $('#mat-list').addEventListener('click', async e => {
         try { await api('/api/materials/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) }); toast('已重命名'); loadMaterials(); }
         catch (err) { toast(err.message, true); }
       }
+    } else if (act.dataset.act === 'dup') {
+      try { await api('/api/materials/' + id + '/duplicate', { method: 'POST' }); toast('已复制一份'); loadMaterials(); }
+      catch (err) { toast(err.message, true); }
     } else if (act.dataset.act === 'del') {
       if (!confirm('删除这个资料？')) return;
       try { await api('/api/materials/' + id, { method: 'DELETE' }); toast('已删除'); loadMaterials(); }
@@ -622,6 +626,15 @@ $('#rd-fontplus').onclick = () => { readerFont = Math.min(28, readerFont + 1); a
 $('#rd-fontminus').onclick = () => { readerFont = Math.max(13, readerFont - 1); applyReaderStyle(); };
 $('#rd-theme').onclick = () => { readerSepia = !readerSepia; applyReaderStyle(); };
 $('#rd-serif').onclick = () => { readerSerif = !readerSerif; $('#rd-serif').textContent = readerSerif ? '黑体' : '宋体'; applyReaderStyle(); };
+$('#rd-copy').onclick = async () => {
+  const text = $('#viewer-reader').innerText || '';
+  if (!text) { toast('没有可复制的内容', true); return; }
+  try { await navigator.clipboard.writeText(text); toast('已复制全文'); return; } catch (_) { }
+  const ta = document.createElement('textarea'); ta.value = text;
+  ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); toast('已复制全文'); } catch (e) { toast('复制失败，请长按选择', true); }
+  ta.remove();
+};
 
 /* 轻量 Markdown → HTML（标题/加粗/斜体/代码/引用/列表/分割线/链接/表格） */
 function mdToHtml(src) {

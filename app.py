@@ -750,6 +750,30 @@ def material_update(mid):
     return jsonify({"ok": True})
 
 
+@app.post("/api/materials/<int:mid>/duplicate")
+def material_duplicate(mid):
+    import shutil
+    m = _get_material(mid)
+    if not m:
+        return jsonify({"error": "未找到"}), 404
+    src = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    if not os.path.exists(src):
+        return jsonify({"error": "源文件丢失"}), 404
+    ext = m["ext"] or ""
+    stored = uuid.uuid4().hex + ext
+    dst = os.path.join(_user_dir(uid()), stored)
+    shutil.copy2(src, dst)
+    title = (m["title"] or m["orig_name"] or "文档") + " 副本"
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO materials(user_id,section,board,title,orig_name,stored_name,ext,mime,size) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (uid(), m["section"], m["board"], title, m["orig_name"], stored, ext,
+         m["mime"], os.path.getsize(dst)))
+    db.commit()
+    return jsonify(dict(db.execute("SELECT * FROM materials WHERE id=?", (cur.lastrowid,)).fetchone())), 201
+
+
 @app.delete("/api/materials/<int:mid>")
 def material_delete(mid):
     m = _get_material(mid)
