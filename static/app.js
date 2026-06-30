@@ -47,13 +47,19 @@ const BOARD_FEATURES = {
     { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
   ],
 };
+// 大板块（行测/申论）下的功能模块
+const SECTION_FEATURES = {
+  '申论': [
+    { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
+  ],
+};
 
 let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -120,6 +126,13 @@ $('#home-cards').addEventListener('click', e => {
 function openSection(key) {
   const sec = SECTIONS.find(s => s.key === key); if (!sec) return;
   $('#section-title').textContent = sec.name;
+  const feats = SECTION_FEATURES[sec.name] || [];
+  $('#section-feats').innerHTML = feats.map(f =>
+    `<div class="home-card" data-secfeat="${esc(f.key)}">
+      <div class="hc-logo">${IC[f.icon] || ''}</div>
+      <div class="hc-name">${esc(f.name)}</div>
+      <div class="hc-desc">${esc(f.desc)}</div>
+    </div>`).join('');
   $('#board-grid').innerHTML = sec.boards.map(b => `
     <div class="board-card" data-board="${esc(b)}">
       <span class="bc-name">${esc(b)}</span>
@@ -131,6 +144,10 @@ function openSection(key) {
 $('#board-grid').addEventListener('click', e => {
   const c = e.target.closest('[data-board]'); if (!c) return;
   openBoard(c.dataset.board);
+});
+$('#section-feats').addEventListener('click', e => {
+  const c = e.target.closest('[data-secfeat]'); if (!c) return;
+  if (c.dataset.secfeat === 'classics') openClassics();
 });
 function openBoard(board) {
   const feats = BOARD_FEATURES[board] || [];
@@ -1356,6 +1373,97 @@ function openDocFile(b) {
   if (!d.viewable) { const a = document.createElement('a'); a.href = d.url + '?dl=1'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); return; }
   openViewerUrl(d.url, d.name, d.ext, d.url + '?dl=1');
 }
+
+/* ================= 古诗文速查（唐诗宋词·四书五经） ================= */
+const CLS_BADGE = { '唐诗': '#c0392b', '宋词': '#7b5ea7', '诗经': '#2f8060', '论语': '#1a6fb5', '孟子': '#1a6fb5', '大学': '#b08a1e', '中庸': '#b08a1e' };
+let clsState = { cat: '', q: '', star: false, page: 1, pages: 1 };
+function openClassics() {
+  clsState = { cat: '', q: '', star: false, page: 1, pages: 1 };
+  $('#cls-input').value = '';
+  push({ view: 'classics' });
+  loadClsCats(); loadClassics();
+}
+async function loadClsCats() {
+  try {
+    const d = await api('/api/classics/categories');
+    $('#cls-cats').innerHTML =
+      `<button class="chip active" data-cc="">全部</button>` +
+      `<button class="chip" data-cc="__star">★ 收藏${d.star_count ? ' ' + d.star_count : ''}</button>` +
+      d.categories.map(c => `<button class="chip" data-cc="${esc(c.name)}">${esc(c.name)} ${c.count}</button>`).join('');
+  } catch (e) { toast(e.message, true); }
+}
+$('#cls-cats').addEventListener('click', e => {
+  const c = e.target.closest('[data-cc]'); if (!c) return;
+  const v = c.dataset.cc;
+  clsState.star = (v === '__star');
+  clsState.cat = clsState.star ? '' : v;
+  clsState.page = 1;
+  document.querySelectorAll('#cls-cats .chip').forEach(x => x.classList.toggle('active', x.dataset.cc === v));
+  loadClassics();
+});
+let clsTimer;
+$('#cls-input').addEventListener('input', e => {
+  clearTimeout(clsTimer);
+  clsTimer = setTimeout(() => { clsState.q = e.target.value.trim(); clsState.page = 1; loadClassics(); }, 280);
+});
+async function loadClassics() {
+  let url = '/api/classics?page=' + clsState.page;
+  if (clsState.cat) url += '&category=' + encodeURIComponent(clsState.cat);
+  if (clsState.q) url += '&q=' + encodeURIComponent(clsState.q);
+  if (clsState.star) url += '&star=1';
+  try {
+    const d = await api(url);
+    clsState.pages = d.pages;
+    renderClassics(d.items, d.total);
+  } catch (e) { toast(e.message, true); }
+}
+function renderClassics(items, total) {
+  const box = $('#cls-list');
+  if (!items.length) {
+    box.innerHTML = '';
+    $('#cls-empty').classList.remove('hidden');
+    $('#cls-empty').textContent = clsState.star ? '还没有收藏，点诗文右上角 ☆ 收藏'
+      : (clsState.q ? '没有匹配「' + clsState.q + '」的诗文' : '暂无内容');
+    $('#cls-pager').classList.add('hidden');
+    return;
+  }
+  $('#cls-empty').classList.add('hidden');
+  box.innerHTML = items.map(it => {
+    const lines = (it.content || '').split('\n').map(l => `<div class="cls-line">${esc(l)}</div>`).join('');
+    const meta = [it.author, it.dynasty, it.sub].filter(Boolean).join(' · ');
+    return `<div class="cls-item" data-id="${it.id}">
+      <div class="cls-head">
+        <span class="cls-badge" style="background:${CLS_BADGE[it.category] || '#888'}">${esc(it.category)}</span>
+        <span class="cls-title">${esc(it.title || '')}</span>
+        <button class="cls-star ${it.starred ? 'on' : ''}" data-star="${it.id}" title="收藏">${it.starred ? '★' : '☆'}</button>
+      </div>
+      <div class="cls-body">${lines}</div>
+      ${meta ? `<div class="cls-meta">${esc(meta)}</div>` : ''}
+    </div>`;
+  }).join('');
+  box._items = items;
+  const pager = $('#cls-pager');
+  if (clsState.pages <= 1) { pager.classList.add('hidden'); }
+  else {
+    pager.classList.remove('hidden');
+    $('#cls-info').textContent = '第 ' + clsState.page + ' / ' + clsState.pages + ' 页 · 共 ' + total + ' 条';
+    $('#cls-prev').disabled = clsState.page <= 1;
+    $('#cls-next').disabled = clsState.page >= clsState.pages;
+  }
+}
+$('#cls-list').addEventListener('click', async e => {
+  const s = e.target.closest('[data-star]'); if (!s) return;
+  const id = s.dataset.star;
+  const on = !s.classList.contains('on');
+  try {
+    await api('/api/classics/' + id + '/star', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) });
+    s.classList.toggle('on', on); s.textContent = on ? '★' : '☆';
+    const it = ($('#cls-list')._items || []).find(x => x.id == id); if (it) it.starred = on;
+    if (clsState.star && !on) loadClassics();   // 收藏页里取消收藏即移除
+  } catch (err) { toast(err.message, true); }
+});
+$('#cls-prev').onclick = () => { if (clsState.page > 1) { clsState.page--; loadClassics(); window.scrollTo({ top: 0 }); } };
+$('#cls-next').onclick = () => { if (clsState.page < clsState.pages) { clsState.page++; loadClassics(); window.scrollTo({ top: 0 }); } };
 
 /* ================= 全文搜索 ================= */
 let searchData = { q: '', filter: 'all', results: [] };

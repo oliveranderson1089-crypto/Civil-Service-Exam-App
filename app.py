@@ -187,6 +187,17 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_kbn_book ON kb_nodes(user_id, notebook_id, parent_id);
+        CREATE TABLE IF NOT EXISTS classics(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT, title TEXT, author TEXT, dynasty TEXT, content TEXT, sub TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_classics_cat ON classics(category);
+        CREATE TABLE IF NOT EXISTS classic_stars(
+            user_id INTEGER NOT NULL,
+            classic_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, classic_id)
+        );
         """
     )
     # entries 老表可能缺 user_id 列（先补列，再建索引）
@@ -1339,6 +1350,67 @@ def api_search():
                             "notebook": nb_names.get(r["notebook_id"], ""),
                             "title": title or "无标题文档", "snippet": _snippet(body, q)})
     return jsonify({"results": results, "q": q})
+
+
+# ================================================================ 古诗文速查（唐诗宋词·四书五经）
+CLASSIC_ORDER = ["唐诗", "宋词", "诗经", "论语", "孟子", "大学", "中庸"]
+
+
+@app.get("/api/classics/categories")
+def classics_categories():
+    rows = get_db().execute("SELECT category, COUNT(*) c FROM classics GROUP BY category").fetchall()
+    cats = [{"name": r["category"], "count": r["c"]} for r in rows]
+    cats.sort(key=lambda x: CLASSIC_ORDER.index(x["name"]) if x["name"] in CLASSIC_ORDER else 99)
+    star_cnt = get_db().execute("SELECT COUNT(*) c FROM classic_stars WHERE user_id=?", (uid(),)).fetchone()["c"]
+    return jsonify({"categories": cats, "star_count": star_cnt})
+
+
+@app.get("/api/classics")
+def classics_list():
+    cat = (request.args.get("category") or "").strip()
+    q = (request.args.get("q") or "").strip()
+    star = request.args.get("star") == "1"
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except Exception:
+        page = 1
+    size = 10
+    db = get_db()
+    where, args = [], []
+    join = ""
+    if star:
+        join = "JOIN classic_stars s ON s.classic_id=c.id AND s.user_id=?"
+        args.append(uid())
+    if cat:
+        where.append("c.category=?"); args.append(cat)
+    if q:
+        where.append("(c.content LIKE ? OR c.title LIKE ? OR c.author LIKE ?)")
+        like = "%" + q + "%"; args += [like, like, like]
+    wsql = (" WHERE " + " AND ".join(where)) if where else ""
+    total = db.execute("SELECT COUNT(*) n FROM classics c %s%s" % (join, wsql), args).fetchone()["n"]
+    rows = db.execute("SELECT c.* FROM classics c %s%s ORDER BY c.id LIMIT ? OFFSET ?" % (join, wsql),
+                      args + [size, (page - 1) * size]).fetchall()
+    starred = set(r["classic_id"] for r in
+                  db.execute("SELECT classic_id FROM classic_stars WHERE user_id=?", (uid(),)).fetchall())
+    items = [{"id": r["id"], "category": r["category"], "title": r["title"], "author": r["author"],
+              "dynasty": r["dynasty"], "content": r["content"], "sub": r["sub"],
+              "starred": r["id"] in starred} for r in rows]
+    return jsonify({"items": items, "total": total, "page": page,
+                    "pages": max(1, (total + size - 1) // size)})
+
+
+@app.post("/api/classics/<int:cid>/star")
+def classics_star(cid):
+    if not get_db().execute("SELECT 1 FROM classics WHERE id=?", (cid,)).fetchone():
+        return jsonify({"error": "未找到"}), 404
+    starred = bool((request.get_json(silent=True) or {}).get("starred"))
+    db = get_db()
+    if starred:
+        db.execute("INSERT OR IGNORE INTO classic_stars(user_id,classic_id) VALUES(?,?)", (uid(), cid))
+    else:
+        db.execute("DELETE FROM classic_stars WHERE user_id=? AND classic_id=?", (uid(), cid))
+    db.commit()
+    return jsonify({"ok": True, "starred": starred})
 
 
 # ================================================================ OCR 识图（tesseract）

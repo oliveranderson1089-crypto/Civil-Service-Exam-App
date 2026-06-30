@@ -39,6 +39,7 @@
   <!-- ===== 板块列表（行测/申论 下的小板块） ===== -->
   <section id="view-section" class="view hidden">
     <h2 class="view-title" id="section-title"></h2>
+    <div class="home-cards" id="section-feats"></div>
     <div class="board-grid" id="board-grid"></div>
   </section>
 
@@ -304,6 +305,22 @@
     </div>
     <div id="search-results" class="search-results"></div>
     <p id="search-empty" class="empty hidden"></p>
+  </section>
+
+  <!-- ===== 古诗文速查（唐诗宋词·四书五经） ===== -->
+  <section id="view-classics" class="view hidden">
+    <div class="cls-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="cls-input" type="search" placeholder="搜诗文 / 作者 / 名句…" autocomplete="off">
+    </div>
+    <div class="cls-cats" id="cls-cats"></div>
+    <div id="cls-list" class="cls-list"></div>
+    <p id="cls-empty" class="empty hidden"></p>
+    <nav id="cls-pager" class="pager hidden">
+      <button id="cls-prev" class="btn">上一页</button>
+      <span id="cls-info" class="pg-info"></span>
+      <button id="cls-next" class="btn">下一页</button>
+    </nav>
   </section>
 </main>
 
