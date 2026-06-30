@@ -46,13 +46,12 @@ const BOARD_FEATURES = {
   '言语理解与表达': [
     { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
   ],
-};
-// 大板块（行测/申论）下的功能模块
-const SECTION_FEATURES = {
-  '申论': [
+  '议论文': [
     { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
   ],
 };
+// 大板块（行测/申论）下的功能模块（预留，可扩展）
+const SECTION_FEATURES = {};
 
 let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
@@ -171,6 +170,7 @@ function openBoard(board) {
 $('#board-features').addEventListener('click', e => {
   const c = e.target.closest('[data-feat]'); if (!c) return;
   if (c.dataset.feat === 'idiom') openIdiom();
+  else if (c.dataset.feat === 'classics') openClassics();
 });
 $('#nav-back').onclick = back;
 

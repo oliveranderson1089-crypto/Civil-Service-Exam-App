@@ -808,8 +808,9 @@ body.mobile-ui #view-notes .fc-time{font-size:11.5px;color:#9aa3b2;}
    原生化：禁缩放、防横向溢出、去双击缩放白闪
    ============================================================ */
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
-html,body{overflow-x:hidden;max-width:100%;}
-body{touch-action:manipulation;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none;}
+/* 用 clip 防横向溢出：不像 hidden 那样把 overflow-y 强制成 auto，纵向照常滚动 */
+html,body{overflow-x:clip;}
+body{touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
 img,svg,video{max-width:100%;}
 .topbar{overflow:hidden;}
 .brand-min{flex:1 1 auto;min-width:0;}
