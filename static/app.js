@@ -52,8 +52,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -364,8 +364,21 @@ $('#note-sheet').addEventListener('click', e => {
   const b = e.target.closest('[data-new]'); if (!b) return;
   $('#note-sheet').classList.add('hidden');
   const m = b.dataset.new;
-  if (m === 'ocr') { toast('OCR 识图开发中，敬请期待'); return; }
+  if (m === 'ocr') { $('#ocr-file').click(); return; }
   newNoteM(m);
+});
+$('#ocr-file').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  toast('正在识别文字…');
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const d = await api('/api/ocr', { method: 'POST', body: fd });
+    newDraft();
+    $('#cp-content').value = d.text || '';
+    draft.content = d.text || '';
+    openComposerM();
+    toast(d.text ? '识别完成，可编辑后发布' : '没识别到文字，可手动输入', !d.text);
+  } catch (err) { toast(err.message, true); }
 });
 function newNoteM(mode) {
   newDraft();
@@ -1343,6 +1356,89 @@ function openDocFile(b) {
   if (!d.viewable) { const a = document.createElement('a'); a.href = d.url + '?dl=1'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); return; }
   openViewerUrl(d.url, d.name, d.ext, d.url + '?dl=1');
 }
+
+/* ================= 全文搜索 ================= */
+let searchData = { q: '', filter: 'all', results: [] };
+function openSearch() {
+  searchData = { q: '', filter: 'all', results: [] };
+  $('#search-input').value = '';
+  $('#search-results').innerHTML = '';
+  $('#search-empty').classList.add('hidden');
+  document.querySelectorAll('#search-filter .chip').forEach(x => x.classList.toggle('active', x.dataset.sf === 'all'));
+  push({ view: 'search' });
+  setTimeout(() => $('#search-input').focus(), 80);
+}
+$('#home-search').onclick = openSearch;
+let searchTimer2;
+$('#search-input').addEventListener('input', e => {
+  clearTimeout(searchTimer2);
+  const q = e.target.value.trim();
+  searchTimer2 = setTimeout(() => runSearch(q), 250);
+});
+$('#search-filter').addEventListener('click', e => {
+  const c = e.target.closest('[data-sf]'); if (!c) return;
+  searchData.filter = c.dataset.sf;
+  document.querySelectorAll('#search-filter .chip').forEach(x => x.classList.toggle('active', x.dataset.sf === searchData.filter));
+  renderSearch();
+});
+async function runSearch(q) {
+  searchData.q = q;
+  if (!q) { searchData.results = []; renderSearch(); return; }
+  try {
+    const d = await api('/api/search?q=' + encodeURIComponent(q));
+    searchData.results = d.results;
+    renderSearch();
+  } catch (e) { toast(e.message, true); }
+}
+function hl(text, q) {
+  const t = esc(text || '');
+  if (!q) return t;
+  try { return t.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); }
+  catch (_) { return t; }
+}
+const SR_TYPE = { note: '小记', material: '资料', doc: '知识库' };
+function renderSearch() {
+  const box = $('#search-results');
+  if (!searchData.q) { box.innerHTML = ''; $('#search-empty').classList.add('hidden'); return; }
+  let items = searchData.results;
+  if (searchData.filter !== 'all') items = items.filter(r => r.type === searchData.filter);
+  if (!items.length) {
+    box.innerHTML = '';
+    $('#search-empty').classList.remove('hidden');
+    $('#search-empty').textContent = '没有匹配「' + searchData.q + '」的内容';
+    return;
+  }
+  $('#search-empty').classList.add('hidden');
+  box.innerHTML = items.map((r, i) => {
+    const meta = r.type === 'doc' ? ('知识库：' + esc(r.notebook || ''))
+      : r.type === 'material' ? ((r.ext || '').replace('.', '').toUpperCase() + (r.board ? ' · ' + esc(r.board) : ''))
+        : (r.tags && r.tags.length ? r.tags.map(t => '#' + esc(t)).join(' ') : (r.board ? esc(r.board) : ''));
+    return `<div class="sr-item" data-sri="${i}">
+      <div class="sr-head"><span class="sr-type ${r.type}">${SR_TYPE[r.type]}</span>
+        <span class="sr-title">${hl(r.title, searchData.q)}</span></div>
+      ${r.snippet ? `<div class="sr-snip">${hl(r.snippet, searchData.q)}</div>` : ''}
+      ${meta ? `<div class="sr-meta">${meta}</div>` : ''}
+    </div>`;
+  }).join('');
+  box._items = items;
+}
+$('#search-results').addEventListener('click', async e => {
+  const it = e.target.closest('[data-sri]'); if (!it) return;
+  const r = ($('#search-results')._items || [])[+it.dataset.sri]; if (!r) return;
+  if (r.type === 'material') {
+    if (r.viewable) openViewer(r.id, r.title, r.ext);
+    else { const a = document.createElement('a'); a.href = '/api/materials/' + r.id + '/download'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); }
+  } else if (r.type === 'doc') {
+    await openNotebook(r.notebook_id);
+    openDoc(r.id);
+  } else if (r.type === 'note') {
+    try {
+      const note = await api('/api/notes/' + r.id);
+      openNotes();
+      setTimeout(() => loadDraft(note), 120);
+    } catch (e) { toast(e.message, true); }
+  }
+});
 
 /* ================= 顶栏 ================= */
 $('#admin-btn').onclick = () => { location.href = '/admin'; };

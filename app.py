@@ -1259,6 +1259,118 @@ def kb_asset(stored):
     return send_file(path, as_attachment=True)
 
 
+# ================================================================ 全文搜索
+def _snippet(text, q, span=42):
+    if not text:
+        return ""
+    low = text.lower()
+    i = low.find(q.lower())
+    if i < 0:
+        return (text[:90].replace("\n", " ")).strip()
+    start = max(0, i - span)
+    end = min(len(text), i + len(q) + span)
+    s = text[start:end].replace("\n", " ").strip()
+    return ("…" if start > 0 else "") + s + ("…" if end < len(text) else "")
+
+
+def _block_text(b):
+    t = re.sub(r"<[^>]+>", "", b.get("text", "") or "")
+    data = b.get("data") or {}
+    if b.get("type") == "table":
+        for row in (data.get("rows") or []):
+            t += " " + " ".join(str(c) for c in row)
+    return t
+
+
+@app.get("/api/notes/<int:nid>")
+def note_get(nid):
+    n = _get_note(nid)
+    if not n:
+        return jsonify({"error": "未找到"}), 404
+    return jsonify(_note_dict(n))
+
+
+@app.get("/api/search")
+def api_search():
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"results": []})
+    ql = q.lower()
+    db = get_db()
+    results = []
+    # 小记
+    for r in db.execute("SELECT * FROM notes WHERE user_id=? ORDER BY id DESC", (uid(),)).fetchall():
+        content = r["content"] or ""
+        tags = _jl(r, "tags")
+        todos = " ".join(t.get("text", "") for t in _jl(r, "todos"))
+        hay = content + " " + " ".join(tags) + " " + todos
+        if ql in hay.lower():
+            results.append({"type": "note", "id": r["id"],
+                            "title": (content[:24].strip() or "（图片/附件小记）"),
+                            "snippet": _snippet(content or todos, q),
+                            "tags": tags, "board": r["board"] or ""})
+    # 资料库（文本类读内容搜，其它搜文件名/标题）
+    for r in db.execute("SELECT * FROM materials WHERE user_id=? ORDER BY id DESC", (uid(),)).fetchall():
+        name = (r["title"] or "") + " " + (r["orig_name"] or "")
+        body = ""
+        if r["ext"] in TEXT_EXT or r["ext"] in (".html", ".htm"):
+            try:
+                p = os.path.join(UPLOADS, str(uid()), r["stored_name"])
+                with open(p, encoding="utf-8", errors="ignore") as fp:
+                    body = fp.read()
+            except Exception:
+                body = ""
+        hit_body = body and ql in body.lower()
+        if ql in name.lower() or hit_body:
+            results.append({"type": "material", "id": r["id"],
+                            "title": r["title"] or r["orig_name"], "ext": r["ext"],
+                            "viewable": (r["ext"] in INLINE_EXT) or (r["ext"] in OFFICE_EXT) or (r["ext"] in TEXT_EXT),
+                            "board": r["board"] or "",
+                            "snippet": _snippet(body, q) if hit_body else ""})
+    # 知识库文档
+    nb_names = {row["id"]: row["name"] for row in
+                db.execute("SELECT id,name FROM notebooks WHERE user_id=?", (uid(),)).fetchall()}
+    for r in db.execute("SELECT * FROM kb_nodes WHERE user_id=? AND type='doc'", (uid(),)).fetchall():
+        title = r["title"] or ""
+        body = " ".join(_block_text(b) for b in _jl(r, "content"))
+        hay = title + " " + body
+        if ql in hay.lower():
+            results.append({"type": "doc", "id": r["id"], "notebook_id": r["notebook_id"],
+                            "notebook": nb_names.get(r["notebook_id"], ""),
+                            "title": title or "无标题文档", "snippet": _snippet(body, q)})
+    return jsonify({"results": results, "q": q})
+
+
+# ================================================================ OCR 识图（tesseract）
+@app.post("/api/ocr")
+def api_ocr():
+    f = request.files.get("file") or request.files.get("image")
+    if not f or not f.filename:
+        return jsonify({"error": "没有图片"}), 400
+    ext = os.path.splitext(f.filename)[1].lower() or ".jpg"
+    tmp = os.path.join(tempfile.gettempdir(), "ocr_" + uuid.uuid4().hex + ext)
+    f.save(tmp)
+    text = ""
+    try:
+        out = subprocess.run(["tesseract", tmp, "stdout", "-l", "chi_sim+eng", "--psm", "6"],
+                             capture_output=True, timeout=90)
+        text = out.stdout.decode("utf-8", "ignore")
+    except Exception as e:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        return jsonify({"error": "识别失败：" + str(e)}), 500
+    try:
+        os.remove(tmp)
+    except Exception:
+        pass
+    # tesseract 中文常在汉字间插空格，去掉相邻汉字间的空白
+    text = re.sub(r"(?<=[一-鿿，。！？；：、（）《》“”])[ \t]+(?=[一-鿿，。！？；：、（）《》“”])", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return jsonify({"text": text})
+
+
 # ---------------------------------------------------------------- 安卓包下载
 @app.get("/apk")
 @app.get("/download/gongkao.apk")
