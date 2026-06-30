@@ -552,14 +552,95 @@ $('#mat-list').addEventListener('click', async e => {
   if (item.dataset.view !== '1') { toast('该格式不支持预览，请下载查看', true); return; }
   openViewer(id, item.querySelector('.mat-name').textContent, item.dataset.ext);
 });
+const READER_EXT = ['.md', '.markdown', '.txt'];
 function openViewerUrl(fileUrl, name, ext, dlUrl) {
-  ext = ext || '';
-  const src = (ext === '.pdf' || OFFICE_EXT.includes(ext))
-    ? '/pdfjs/web/viewer.html?file=' + encodeURIComponent(fileUrl) : fileUrl;
+  ext = (ext || '').toLowerCase();
   $('#viewer-name').textContent = name;
-  $('#viewer-frame').src = src;
   $('#viewer-dl').href = dlUrl || fileUrl;
   push({ view: 'viewer', title: name });
+  if (READER_EXT.includes(ext)) { openReader(fileUrl, ext); return; }
+  $('#viewer-reader').classList.add('hidden');
+  $('#reader-tools').classList.add('hidden');
+  $('#viewer-frame').classList.remove('hidden');
+  const src = (ext === '.pdf' || OFFICE_EXT.includes(ext))
+    ? '/pdfjs/web/viewer.html?file=' + encodeURIComponent(fileUrl) : fileUrl;
+  $('#viewer-frame').src = src;
+}
+/* ---- 阅读模式（md 渲染 / txt） ---- */
+let readerFont = 17, readerSepia = false, readerSerif = false;
+function applyReaderStyle() {
+  const r = $('#viewer-reader');
+  r.style.fontSize = readerFont + 'px';
+  r.classList.toggle('sepia', readerSepia);
+  r.classList.toggle('serif', readerSerif);
+}
+async function openReader(fileUrl, ext) {
+  $('#viewer-frame').classList.add('hidden'); $('#viewer-frame').src = 'about:blank';
+  $('#viewer-reader').classList.remove('hidden');
+  $('#reader-tools').classList.remove('hidden');
+  $('#viewer-reader').innerHTML = '<p class="reader-tip">加载中…</p>';
+  applyReaderStyle();
+  try {
+    const r = await fetch(fileUrl);
+    const txt = await r.text();
+    $('#viewer-reader').innerHTML = (ext === '.txt')
+      ? '<pre class="reader-pre">' + esc(txt) + '</pre>' : mdToHtml(txt);
+    $('#viewer-reader').scrollTop = 0;
+  } catch (e) { $('#viewer-reader').innerHTML = '<p class="reader-tip">加载失败，请下载查看</p>'; }
+}
+$('#rd-fontplus').onclick = () => { readerFont = Math.min(28, readerFont + 1); applyReaderStyle(); };
+$('#rd-fontminus').onclick = () => { readerFont = Math.max(13, readerFont - 1); applyReaderStyle(); };
+$('#rd-theme').onclick = () => { readerSepia = !readerSepia; applyReaderStyle(); };
+$('#rd-serif').onclick = () => { readerSerif = !readerSerif; $('#rd-serif').textContent = readerSerif ? '黑体' : '宋体'; applyReaderStyle(); };
+
+/* 轻量 Markdown → HTML（标题/加粗/斜体/代码/引用/列表/分割线/链接/表格） */
+function mdToHtml(src) {
+  const E = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const inline = s => {
+    s = E(s);
+    s = s.replace(/`([^`]+)`/g, (m, c) => '<code>' + c + '</code>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    return s;
+  };
+  const lines = src.replace(/\r\n/g, '\n').split('\n');
+  let html = '', inCode = false, codeBuf = [], listType = null, para = [], i = 0;
+  const flushPara = () => { if (para.length) { html += '<p>' + inline(para.join(' ')) + '</p>'; para = []; } };
+  const closeList = () => { if (listType) { html += '</' + listType + '>'; listType = null; } };
+  for (i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = line.match(/^```(.*)$/);
+    if (fence) {
+      if (inCode) { html += '<pre class="md-code"><code>' + E(codeBuf.join('\n')) + '</code></pre>'; inCode = false; codeBuf = []; }
+      else { flushPara(); closeList(); inCode = true; }
+      continue;
+    }
+    if (inCode) { codeBuf.push(line); continue; }
+    // 表格：| a | b | 后跟 |---|---|
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      flushPara(); closeList();
+      const cells = r => r.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
+      html += '<table class="md-table"><thead><tr>' + cells(line).map(c => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>';
+      i += 2;
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+        html += '<tr>' + cells(lines[i]).map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>'; i++;
+      }
+      i--; html += '</tbody></table>';
+      continue;
+    }
+    if (/^\s*$/.test(line)) { flushPara(); closeList(); continue; }
+    let m;
+    if (m = line.match(/^(#{1,6})\s+(.*)$/)) { flushPara(); closeList(); const lv = m[1].length; html += '<h' + lv + '>' + inline(m[2]) + '</h' + lv + '>'; continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); closeList(); html += '<hr>'; continue; }
+    if (m = line.match(/^\s*>\s?(.*)$/)) { flushPara(); closeList(); html += '<blockquote>' + inline(m[1]) + '</blockquote>'; continue; }
+    if (m = line.match(/^\s*[-*+]\s+(.*)$/)) { flushPara(); if (listType !== 'ul') { closeList(); html += '<ul>'; listType = 'ul'; } html += '<li>' + inline(m[1]) + '</li>'; continue; }
+    if (m = line.match(/^\s*\d+[.)]\s+(.*)$/)) { flushPara(); if (listType !== 'ol') { closeList(); html += '<ol>'; listType = 'ol'; } html += '<li>' + inline(m[1]) + '</li>'; continue; }
+    para.push(line.trim());
+  }
+  flushPara(); closeList();
+  if (inCode) html += '<pre class="md-code"><code>' + E(codeBuf.join('\n')) + '</code></pre>';
+  return html;
 }
 function openViewer(id, name, ext) {
   openViewerUrl('/api/materials/' + id + '/view', name, ext, '/api/materials/' + id + '/download');

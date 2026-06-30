@@ -273,8 +273,15 @@
   <section id="view-viewer" class="view hidden">
     <div class="viewer-bar">
       <span id="viewer-name"></span>
+      <span class="reader-tools hidden" id="reader-tools">
+        <button id="rd-fontminus" title="字号减小">A-</button>
+        <button id="rd-fontplus" title="字号增大">A+</button>
+        <button id="rd-serif" title="切换字体">宋体</button>
+        <button id="rd-theme" title="护眼背景">护眼</button>
+      </span>
       <a id="viewer-dl" class="btn" download>下载</a>
     </div>
+    <div id="viewer-reader" class="reader hidden"></div>
     <iframe id="viewer-frame" title="文件预览"></iframe>
   </section>
 </main>
