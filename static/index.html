@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a6fb5">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>公考助手</title>
@@ -85,6 +85,7 @@
           <div id="cp-imgs" class="cp-thumbs"></div>
           <div id="cp-files" class="cp-files"></div>
           <div id="cp-tags" class="cp-tagedit"></div>
+          <input id="cp-taginput" class="cp-taginput hidden" type="text" placeholder="输入标签后回车，可加多个" autocomplete="off">
           <div class="cp-foot">
             <span class="cp-hint" id="cp-hint"></span>
             <span class="cp-btns">
@@ -284,7 +285,7 @@
     <h3>上传资料</h3>
     <div class="opt"><span>板块</span><select id="up-board"></select></div>
     <div class="opt"><span>名称</span><input id="up-title" type="text" placeholder="选填，默认用文件名"></div>
-    <input id="up-file" type="file" style="margin:8px 0 14px;width:100%;">
+    <input id="up-file" type="file" multiple style="margin:8px 0 14px;width:100%;">
     <div class="modal-actions">
       <button class="btn" id="up-cancel">取消</button>
       <button class="btn primary" id="up-go">上传</button>

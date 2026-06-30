@@ -717,6 +717,28 @@ def material_download(mid):
     return send_file(path, as_attachment=True, download_name=m["orig_name"])
 
 
+@app.put("/api/materials/<int:mid>")
+def material_update(mid):
+    m = _get_material(mid)
+    if not m:
+        return jsonify({"error": "未找到"}), 404
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "名称不能为空"}), 400
+    db = get_db()
+    if "board" in data:
+        board = (data.get("board") or "").strip()
+        if board and board not in ALL_BOARDS:
+            return jsonify({"error": "板块无效"}), 400
+        db.execute("UPDATE materials SET title=?, board=? WHERE id=? AND user_id=?",
+                   (title, board, mid, uid()))
+    else:
+        db.execute("UPDATE materials SET title=? WHERE id=? AND user_id=?", (title, mid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 @app.delete("/api/materials/<int:mid>")
 def material_delete(mid):
     m = _get_material(mid)
@@ -764,7 +786,14 @@ def _save_note_images(files):
             continue
         ext = os.path.splitext(f.filename)[1].lower()
         if ext not in NOTE_IMG_EXT:
-            continue
+            # 相册/content URI 选图常无扩展名：按 mimetype 兜底
+            mt = (f.mimetype or "").lower()
+            if mt.startswith("image/"):
+                ext = "." + mt.split("/", 1)[1].split("+")[0]
+                if ext not in NOTE_IMG_EXT:
+                    ext = ".jpg"
+            else:
+                continue
         stored = "note_" + uuid.uuid4().hex + ext
         f.save(os.path.join(_user_dir(uid()), stored))
         names.append(stored)

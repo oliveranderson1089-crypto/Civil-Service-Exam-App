@@ -59,6 +59,10 @@ public class MainActivity extends Activity {
         ws.setDatabaseEnabled(true);
         ws.setUseWideViewPort(true);
         ws.setLoadWithOverviewMode(true);
+        // 禁止双指/双击缩放：让网页像原生 App，不会缩放错位
+        ws.setSupportZoom(false);
+        ws.setBuiltInZoomControls(false);
+        ws.setDisplayZoomControls(false);
         // 关键：标记“APP 内”，前端据此用 GET 链接触发系统下载
         ws.setUserAgentString(ws.getUserAgentString() + " GongkaoApp");
 
@@ -83,16 +87,27 @@ public class MainActivity extends Activity {
                 if (wantCam && acceptsImage(params.getAcceptTypes()) && launchCamera()) {
                     return true;
                 }
-                Intent intent;
-                try {
-                    intent = params.createIntent();
-                } catch (Exception e) {
-                    intent = new Intent(Intent.ACTION_GET_CONTENT);
-                    intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    intent.setType("*/*");
+                // 手动构造意图：尊重 accept 类型 + 支持多选（比 createIntent 更稳）
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                String[] types = params.getAcceptTypes();
+                String primary = "*/*";
+                if (types != null && types.length > 0 && types[0] != null && !types[0].isEmpty()) {
+                    primary = types[0];
+                }
+                intent.setType(primary);
+                if (types != null && types.length > 1) {
+                    java.util.ArrayList<String> mt = new java.util.ArrayList<>();
+                    for (String t : types) if (t != null && !t.isEmpty()) mt.add(t);
+                    if (!mt.isEmpty()) intent.putExtra(Intent.EXTRA_MIME_TYPES, mt.toArray(new String[0]));
                 }
                 try {
-                    startActivityForResult(intent, FILE_REQ);
+                    if (params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                    }
+                } catch (Exception ignore) {}
+                try {
+                    startActivityForResult(Intent.createChooser(intent, "选择文件"), FILE_REQ);
                 } catch (ActivityNotFoundException e) {
                     filePathCallback = null;
                     Toast.makeText(MainActivity.this, "没有可用的文件选择器", Toast.LENGTH_LONG).show();
@@ -216,7 +231,21 @@ public class MainActivity extends Activity {
         }
         if (requestCode == FILE_REQ) {
             if (filePathCallback != null) {
-                Uri[] results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                Uri[] results = null;
+                if (resultCode == RESULT_OK && data != null) {
+                    results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                    if (results == null) {   // 部分机型 parseResult 返回 null，手动兜底
+                        if (data.getClipData() != null) {
+                            int n = data.getClipData().getItemCount();
+                            results = new Uri[n];
+                            for (int i = 0; i < n; i++) {
+                                results[i] = data.getClipData().getItemAt(i).getUri();
+                            }
+                        } else if (data.getData() != null) {
+                            results = new Uri[]{ data.getData() };
+                        }
+                    }
+                }
                 filePathCallback.onReceiveValue(results);
                 filePathCallback = null;
             }

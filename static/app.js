@@ -252,7 +252,8 @@ function renderComposer() {
   $('#cp-files').innerHTML = draft.files.map((f, i) =>
     `<div class="cp-file">📎 <span>${esc(f.name)}</span><button class="cp-x" data-flr="${i}">×</button></div>`).join('');
   $('#cp-tags').innerHTML = draft.tags.map((t, i) =>
-    `<span class="cp-tag"># ${esc(t)}<button class="cp-x" data-tgr="${i}">×</button></span>`).join('');
+    `<span class="cp-tag"># ${esc(t)}<button class="cp-x" data-tgr="${i}">×</button></span>`).join('') +
+    `<button type="button" class="cp-tag-add" data-tagadd>＋ 标签</button>`;
   const editing = !!draft.id;
   $('#cp-submit').textContent = editing ? '保存' : '发布';
   $('#cp-del').classList.toggle('hidden', !editing);
@@ -272,8 +273,36 @@ document.querySelector('.cp-bar').addEventListener('click', e => {
     draft.todos.push({ text: '', done: false }); renderComposer();
     const ins = document.querySelectorAll('.cp-todo-text'); if (ins.length) ins[ins.length - 1].focus();
   } else if (t === 'tag') {
-    const tg = prompt('添加标签：'); if (tg && tg.trim()) { const v = tg.trim(); if (!draft.tags.includes(v)) draft.tags.push(v); renderComposer(); }
+    showTagInput();
   }
+});
+/* 行内标签输入（替代原生 prompt，仿语雀） */
+function showTagInput() {
+  const inp = $('#cp-taginput');
+  inp.classList.remove('hidden'); inp.value = '';
+  setTimeout(() => inp.focus(), 30);
+}
+function addTagsFrom(raw) {
+  let added = false;
+  (raw || '').split(/[\s,，、]+/).filter(Boolean).forEach(v => {
+    if (!draft.tags.includes(v)) { draft.tags.push(v); added = true; }
+  });
+  return added;
+}
+$('#cp-taginput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (addTagsFrom(e.target.value)) renderComposer();
+    e.target.value = '';
+    setTimeout(() => { const i = $('#cp-taginput'); i.classList.remove('hidden'); i.focus(); }, 10);
+  } else if (e.key === 'Escape') { e.target.value = ''; e.target.classList.add('hidden'); }
+});
+$('#cp-taginput').addEventListener('blur', e => {
+  if (addTagsFrom(e.target.value)) renderComposer();
+  e.target.value = ''; e.target.classList.add('hidden');
+});
+$('#cp-tags').addEventListener('click', e => {
+  if (e.target.closest('[data-tagadd]')) { showTagInput(); }
 });
 function addDraftImages(files) { [...files].forEach(f => draft.images.push({ kind: 'new', fileObj: f, url: URL.createObjectURL(f) })); renderComposer(); }
 $('#cp-imgfile').addEventListener('change', e => { addDraftImages(e.target.files); e.target.value = ''; });
@@ -446,6 +475,13 @@ $('#feed').addEventListener('click', async e => {
   const im = e.target.closest('[data-img]');
   if (im) { openViewerUrl(im.dataset.img, '图片', '.png'); return; }
 });
+/* 双击小记卡片即可编辑（除点到按钮/图片/附件/勾选） */
+$('#feed').addEventListener('dblclick', e => {
+  if (e.target.closest('button,a,input,[data-img],[data-file]')) return;
+  const card = e.target.closest('.feed-card'); if (!card) return;
+  const it = ($('#feed')._items || []).find(x => x.id == card.dataset.id);
+  if (it) loadDraft(it);
+});
 
 /* ================= 资料库 ================= */
 const EXT_ICON = {
@@ -483,6 +519,7 @@ async function loadMaterials() {
           <div class="mat-meta">${esc((m.ext || '').replace('.', '').toUpperCase())} · ${fmtSize(m.size)}${m.board ? ' · ' + esc(m.board) : ''}</div>
         </div>
         <div class="mat-actions">
+          <button class="iconbtn" data-act="rename" title="重命名">✎</button>
           <button class="iconbtn" data-act="dl" title="下载">⬇</button>
           <button class="iconbtn" data-act="del" title="删除">🗑</button>
         </div>
@@ -498,6 +535,13 @@ $('#mat-list').addEventListener('click', async e => {
     if (act.dataset.act === 'dl') {
       const a = document.createElement('a'); a.href = '/api/materials/' + id + '/download'; a.download = '';
       document.body.appendChild(a); a.click(); a.remove();
+    } else if (act.dataset.act === 'rename') {
+      const cur = item.querySelector('.mat-name').textContent;
+      const v = await kbPrompt('重命名文档', cur);
+      if (v && v !== cur) {
+        try { await api('/api/materials/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) }); toast('已重命名'); loadMaterials(); }
+        catch (err) { toast(err.message, true); }
+      }
     } else if (act.dataset.act === 'del') {
       if (!confirm('删除这个资料？')) return;
       try { await api('/api/materials/' + id, { method: 'DELETE' }); toast('已删除'); loadMaterials(); }
@@ -529,17 +573,22 @@ $('#upload-btn').onclick = () => {
 $('#up-cancel').onclick = () => $('#upload-modal').classList.add('hidden');
 $('#upload-modal').addEventListener('click', e => { if (e.target.id === 'upload-modal') $('#upload-modal').classList.add('hidden'); });
 $('#up-go').onclick = async () => {
-  const file = $('#up-file').files[0];
-  if (!file) { toast('请选择文件', true); return; }
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('board', $('#up-board').value);
-  fd.append('section', '');
-  fd.append('title', $('#up-title').value.trim());
+  const files = [...$('#up-file').files];
+  if (!files.length) { toast('请选择文件', true); return; }
+  const board = $('#up-board').value, title = $('#up-title').value.trim();
   $('#up-go').disabled = true; $('#up-go').textContent = '上传中…';
-  try { await api('/api/materials', { method: 'POST', body: fd }); toast('上传成功'); $('#upload-modal').classList.add('hidden'); loadMaterials(); }
-  catch (e) { toast(e.message, true); }
+  let ok = 0;
+  for (const file of files) {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('board', board);
+    fd.append('section', '');
+    fd.append('title', files.length === 1 ? title : '');  // 多个文件各用文件名
+    try { await api('/api/materials', { method: 'POST', body: fd }); ok++; }
+    catch (e) { toast(file.name + '：' + e.message, true); }
+  }
   $('#up-go').disabled = false; $('#up-go').textContent = '上传';
+  if (ok) { toast('上传成功 ' + ok + ' 个'); $('#upload-modal').classList.add('hidden'); loadMaterials(); }
 };
 /* 资料库拍照直接上传 */
 $('#mat-camfile').addEventListener('change', async e => {

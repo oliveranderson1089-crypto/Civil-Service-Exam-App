@@ -324,7 +324,13 @@ main{max-width:none;margin:0;padding:0;}
 .cp-files{margin-top:9px;display:flex;flex-direction:column;gap:5px;}
 .cp-file{display:flex;align-items:center;gap:6px;font-size:13px;background:#f5f7fa;border-radius:8px;padding:6px 9px;}
 .cp-file span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.cp-tagedit{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.cp-tagedit{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center;}
+.cp-tag-add{border:1px dashed #c4d0e0;background:transparent;color:#6b7890;font-size:12.5px;
+  padding:3px 12px;border-radius:20px;cursor:pointer;line-height:1.6;}
+.cp-tag-add:hover{border-color:var(--blue);color:var(--blue);}
+.cp-taginput{margin-top:8px;width:100%;max-width:300px;border:1.5px solid var(--blue);border-radius:8px;
+  padding:8px 11px;font-size:14px;outline:none;box-shadow:var(--ring);}
+.cp-taginput.hidden{display:none;}
 .cp-tag{background:#eef4fb;color:var(--blue);font-size:12.5px;padding:3px 4px 3px 10px;border-radius:20px;display:inline-flex;align-items:center;}
 .cp-foot{display:flex;align-items:center;justify-content:space-between;margin-top:12px;}
 .cp-hint{font-size:12px;color:var(--muted);}
@@ -716,6 +722,27 @@ body.mobile-ui #view-notes .fc-time{font-size:11.5px;color:#9aa3b2;}
 .blk-ins-grid button:active{background:#e9edf2;}
 .blk-ins-grid .bi{width:24px;height:24px;color:#5a6b85;flex:0 0 auto;}
 .blk-ins-grid .bi svg{width:24px;height:24px;}
+
+/* ============================================================
+   原生化：禁缩放、防横向溢出、去双击缩放白闪
+   ============================================================ */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+html,body{overflow-x:hidden;max-width:100%;}
+body{touch-action:manipulation;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none;}
+img,svg,video{max-width:100%;}
+.topbar{overflow:hidden;}
+.brand-min{flex:1 1 auto;min-width:0;}
+.topbar-actions{flex:0 0 auto;}
+@media(max-width:440px){
+  .topbar{gap:6px;padding-left:10px;padding-right:10px;}
+  .logout{padding:5px 9px;font-size:12px;}
+  .navbtn{padding:5px 8px;font-size:12px;}
+  .logo-min{width:28px;height:28px;font-size:16px;}
+}
+/* 资料库头部：窄屏自适应，不溢出 */
+.mat-head{flex-wrap:wrap;gap:8px;}
+.mat-head .view-title{flex:1 1 auto;min-width:0;}
+.mat-head-btns{flex:0 0 auto;}
 
 /* 转换/样式列表 */
 .blk-conv-list{display:flex;flex-direction:column;gap:1px;}
