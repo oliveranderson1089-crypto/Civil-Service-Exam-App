@@ -87,27 +87,28 @@ public class MainActivity extends Activity {
                 if (wantCam && acceptsImage(params.getAcceptTypes()) && launchCamera()) {
                     return true;
                 }
-                // 手动构造意图：尊重 accept 类型 + 支持多选（比 createIntent 更稳）
-                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                // 手动构造意图：尊重 accept 类型 + 支持多选
                 String[] types = params.getAcceptTypes();
                 String primary = "*/*";
                 if (types != null && types.length > 0 && types[0] != null && !types[0].isEmpty()) {
                     primary = types[0];
                 }
+                boolean imageOnly = primary.startsWith("image");
+                boolean multiple = false;
+                try { multiple = params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE; } catch (Exception ignore) {}
+                // 图片走相册(ACTION_GET_CONTENT)；其它文件走系统文档界面(ACTION_OPEN_DOCUMENT)——能可靠多选
+                Intent intent = new Intent(imageOnly ? Intent.ACTION_GET_CONTENT : Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
                 intent.setType(primary);
                 if (types != null && types.length > 1) {
                     java.util.ArrayList<String> mt = new java.util.ArrayList<>();
                     for (String t : types) if (t != null && !t.isEmpty()) mt.add(t);
                     if (!mt.isEmpty()) intent.putExtra(Intent.EXTRA_MIME_TYPES, mt.toArray(new String[0]));
                 }
+                if (multiple) intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 try {
-                    if (params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) {
-                        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-                    }
-                } catch (Exception ignore) {}
-                try {
-                    startActivityForResult(Intent.createChooser(intent, "选择文件"), FILE_REQ);
+                    // ACTION_OPEN_DOCUMENT 是系统活动，不用 createChooser；GET_CONTENT 用 chooser 方便选相册
+                    startActivityForResult(imageOnly ? Intent.createChooser(intent, "选择图片") : intent, FILE_REQ);
                 } catch (ActivityNotFoundException e) {
                     filePathCallback = null;
                     Toast.makeText(MainActivity.this, "没有可用的文件选择器", Toast.LENGTH_LONG).show();

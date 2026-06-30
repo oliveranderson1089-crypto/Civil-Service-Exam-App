@@ -321,10 +321,31 @@ $('#cp-taginput').addEventListener('blur', e => {
 $('#cp-tags').addEventListener('click', e => {
   if (e.target.closest('[data-tagadd]')) { showTagInput(); }
 });
-function addDraftImages(files) { [...files].forEach(f => draft.images.push({ kind: 'new', fileObj: f, url: URL.createObjectURL(f) })); renderComposer(); }
-$('#cp-imgfile').addEventListener('change', e => { addDraftImages(e.target.files); e.target.value = ''; });
-$('#cp-camfile').addEventListener('change', e => { addDraftImages(e.target.files); e.target.value = ''; });
-$('#cp-attfile').addEventListener('change', e => { [...e.target.files].forEach(f => draft.files.push({ kind: 'new', fileObj: f, name: f.name })); e.target.value = ''; renderComposer(); });
+// 立刻把所选文件读进内存（趁 content:// URI 权限还有效），避免发布时 URI 失效导致传 0 字节
+async function _materialize(f, fallbackType) {
+  try {
+    const buf = await f.arrayBuffer();
+    return new Blob([buf], { type: f.type || fallbackType || 'application/octet-stream' });
+  } catch (_) { return f; }   // 兜底用原 File
+}
+async function addDraftImages(files) {
+  const list = [...files];
+  for (const f of list) {
+    const blob = await _materialize(f, 'image/jpeg');
+    draft.images.push({ kind: 'new', fileObj: blob, name: f.name || ('img_' + Date.now() + '.jpg'), url: URL.createObjectURL(blob) });
+  }
+  renderComposer();
+}
+$('#cp-imgfile').addEventListener('change', async e => { const fs = [...e.target.files]; e.target.value = ''; await addDraftImages(fs); });
+$('#cp-camfile').addEventListener('change', async e => { const fs = [...e.target.files]; e.target.value = ''; await addDraftImages(fs); });
+$('#cp-attfile').addEventListener('change', async e => {
+  const list = [...e.target.files]; e.target.value = '';
+  for (const f of list) {
+    const blob = await _materialize(f);
+    draft.files.push({ kind: 'new', fileObj: blob, name: f.name || 'file' });
+  }
+  renderComposer();
+});
 $('#cp-todos').addEventListener('click', e => { const r = e.target.closest('[data-tdr]'); if (r) { draft.todos.splice(+r.dataset.tdr, 1); renderComposer(); } });
 $('#cp-todos').addEventListener('change', e => { const c = e.target.closest('[data-tdo]'); if (c) draft.todos[+c.dataset.tdo].done = c.checked; });
 $('#cp-todos').addEventListener('input', e => { const t = e.target.closest('[data-tdt]'); if (t) draft.todos[+t.dataset.tdt].text = t.value; });
@@ -346,8 +367,8 @@ $('#cp-submit').onclick = async () => {
   fd.append('content', content);
   fd.append('todos', JSON.stringify(draft.todos));
   fd.append('tags', JSON.stringify(draft.tags));
-  draft.images.filter(i => i.kind === 'new').forEach(i => fd.append('images', i.fileObj));
-  draft.files.filter(i => i.kind === 'new').forEach(i => fd.append('attachments', i.fileObj));
+  draft.images.filter(i => i.kind === 'new').forEach(i => fd.append('images', i.fileObj, i.name || 'image.jpg'));
+  draft.files.filter(i => i.kind === 'new').forEach(i => fd.append('attachments', i.fileObj, i.name || 'file'));
   $('#cp-submit').disabled = true;
   try {
     if (draft.id) {
