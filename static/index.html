@@ -331,6 +331,46 @@
     <div class="cd-wrap" id="cd-wrap"></div>
   </section>
 
+  <!-- ===== 错题本：列表 ===== -->
+  <section id="view-wrongq" class="view hidden">
+    <div class="cls-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="wq-input" type="search" placeholder="搜题干 / 题型 / 知识点…" autocomplete="off">
+    </div>
+    <div class="cls-cats" id="wq-cats"></div>
+    <div id="wq-list" class="wq-list"></div>
+    <p id="wq-empty" class="empty hidden"></p>
+    <nav id="wq-pager" class="pager hidden">
+      <button id="wq-prev" class="btn">上一页</button><span id="wq-info" class="pg-info"></span><button id="wq-next" class="btn">下一页</button>
+    </nav>
+    <button class="kb-fab" id="wq-fab" title="记录错题">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+  </section>
+
+  <!-- ===== 错题本：记录/新增 ===== -->
+  <section id="view-wqadd" class="view hidden">
+    <div class="wqa-form">
+      <div class="wqa-lb">题干 <span class="wqa-hint">可拍照/选图自动识别文字</span></div>
+      <textarea id="wqa-q" rows="6" placeholder="输入、粘贴题目，或用下面按钮拍照识别…"></textarea>
+      <div class="wqa-imgrow">
+        <label class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>拍照识题<input id="wqa-cam" type="file" accept="image/*" capture="environment" hidden></label>
+        <label class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg>选图识题<input id="wqa-img" type="file" accept="image/*" hidden></label>
+      </div>
+      <div id="wqa-imgprev" class="wqa-imgprev"></div>
+      <div class="wqa-lb">板块 <span class="wqa-hint">可留空，AI 自动判断</span></div>
+      <select id="wqa-board"></select>
+      <div class="wqa-lb">我的答案 / 参考解析 <span class="wqa-hint">选填，帮 AI 分析更准</span></div>
+      <textarea id="wqa-a" rows="3" placeholder="选填…"></textarea>
+      <button class="btn primary wqa-go" id="wqa-go">🤖 AI 分析并收录</button>
+    </div>
+  </section>
+
+  <!-- ===== 错题本：详情 ===== -->
+  <section id="view-wqdetail" class="view hidden">
+    <div id="wqd-wrap" class="wqd-wrap"></div>
+  </section>
+
   <!-- 古诗文导出 PDF 选项 -->
   <div id="clsx-modal" class="modal hidden">
     <div class="modal-box">
