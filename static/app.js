@@ -72,6 +72,9 @@ function back() { if (stack.length > 1) { stack.pop(); render(); } }
 function goHome() { stack = [{ view: 'home' }]; render(); }
 // 供安卓原生「返回/侧滑」调用：能退则退并返回 true，已在首页返回 false
 window.appBack = function () {
+  // AI 面板
+  const aip = $('#ai-panel');
+  if (aip && !aip.classList.contains('hidden')) { aip.classList.add('hidden'); return true; }
   // 0) 任意底部弹层（小记新建 / 知识库 + / 块菜单 / 插入面板）
   const sheets = [...document.querySelectorAll('.note-sheet:not(.hidden)')];
   if (sheets.length) { sheets[sheets.length - 1].classList.add('hidden'); return true; }
@@ -394,7 +397,7 @@ $('#notes-pill').addEventListener('click', e => {
   const p = b.dataset.pill;
   if (p === 'add') $('#note-sheet').classList.remove('hidden');
   else if (p === 'search') toggleNoteSearch();
-  else if (p === 'ai') toast('AI 助手开发中，敬请期待');
+  else if (p === 'ai') openAI();
 });
 // 新建小记面板
 $('#note-sheet').addEventListener('click', e => {
@@ -1077,8 +1080,8 @@ $('#nb-pill').addEventListener('click', e => {
   const b = e.target.closest('[data-nbpill]'); if (!b) return;
   const p = b.dataset.nbpill;
   if (p === 'add') openKbSheet(null);
-  else if (p === 'search') toast('知识库搜索开发中');
-  else if (p === 'ai') toast('AI 助手开发中，敬请期待');
+  else if (p === 'search') openSearch();
+  else if (p === 'ai') openAI();
 });
 
 /* + 面板：新建 空白文档 / 知识库 / 分组 */
@@ -1534,6 +1537,57 @@ $('#cls-list').addEventListener('click', async e => {
 });
 $('#cls-prev').onclick = () => { if (clsState.page > 1) { clsState.page--; loadClassics(); window.scrollTo({ top: 0 }); } };
 $('#cls-next').onclick = () => { if (clsState.page < clsState.pages) { clsState.page++; loadClassics(); window.scrollTo({ top: 0 }); } };
+
+/* ================= AI 助手 ================= */
+let aiMsgs = [], aiBusy = false;
+async function openAI(preset) {
+  $('#ai-panel').classList.remove('hidden');
+  if (!aiMsgs.length) {
+    let greet = '我是你的公考 AI 助手 👋 让我讲知识点、出题、翻译古文、分析错题都行。';
+    try {
+      const s = await api('/api/ai/status');
+      if (!s.configured) {
+        greet = ME && ME.is_admin
+          ? '⚠️ AI 还没配置。请到「后台 → AI 设置」填写 DeepSeek 的 API Key（在 platform.deepseek.com 申请）。'
+          : '⚠️ AI 还没配置，请让管理员在后台填写 API Key。';
+      }
+    } catch (_) { }
+    aiMsgs.push({ role: 'assistant', content: greet });
+    renderAI();
+  }
+  if (preset) { $('#ai-text').value = preset; aiGrow(); }
+  setTimeout(() => $('#ai-text').focus(), 60);
+}
+function renderAI() {
+  $('#ai-msgs').innerHTML = aiMsgs.map(m =>
+    `<div class="ai-msg ${m.role}">${m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content)}</div>`).join('')
+    + (aiBusy ? '<div class="ai-msg assistant ai-typing">思考中…</div>' : '');
+  const box = $('#ai-msgs'); box.scrollTop = box.scrollHeight;
+  $('#ai-send').disabled = aiBusy;
+}
+async function aiSend() {
+  const t = $('#ai-text').value.trim();
+  if (!t || aiBusy) return;
+  aiMsgs.push({ role: 'user', content: t });
+  $('#ai-text').value = ''; aiGrow();
+  aiBusy = true; renderAI();
+  try {
+    const d = await api('/api/ai/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: aiMsgs.slice(-12) })
+    });
+    aiMsgs.push({ role: 'assistant', content: d.reply || '（空回复）' });
+  } catch (e) {
+    aiMsgs.push({ role: 'assistant', content: '⚠️ ' + e.message });
+  }
+  aiBusy = false; renderAI();
+}
+function aiGrow() { const t = $('#ai-text'); t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
+$('#ai-send').onclick = aiSend;
+$('#ai-close').onclick = () => $('#ai-panel').classList.add('hidden');
+$('#ai-clear').onclick = () => { aiMsgs = []; renderAI(); openAI(); };
+$('#ai-text').addEventListener('input', aiGrow);
+$('#ai-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); } });
 
 /* ================= 全文搜索 ================= */
 let searchData = { q: '', filter: 'all', results: [] };

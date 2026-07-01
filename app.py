@@ -15,6 +15,8 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime
 
@@ -100,6 +102,51 @@ app.config.update(
 )
 
 _login_fails = {}  # username -> {count, locked_until}
+
+
+# ---------------------------------------------------------------- AI（云端大模型，OpenAI 兼容）
+def _save_cfg():
+    try:
+        with open(CONFIG, "w", encoding="utf-8") as f:
+            json.dump(CFG, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _ai_conf():
+    return {
+        "base": (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/"),
+        "model": CFG.get("ai_model") or "deepseek-chat",
+        "key": CFG.get("ai_key") or os.environ.get("GONGKAO_AI_KEY", ""),
+    }
+
+
+def ai_configured():
+    return bool(_ai_conf()["key"])
+
+
+def ai_chat(messages, temperature=0.4, max_tokens=1600, timeout=120):
+    """调用 OpenAI 兼容的对话接口（默认 DeepSeek），返回回复文本。"""
+    conf = _ai_conf()
+    if not conf["key"]:
+        raise RuntimeError("AI 未配置，请管理员在「后台 → AI 设置」填写 API Key")
+    b = conf["base"]
+    if b.endswith("/chat/completions"):
+        url = b
+    elif b.endswith("/v1"):
+        url = b + "/chat/completions"
+    else:
+        url = b + "/v1/chat/completions"
+    body = json.dumps({"model": conf["model"], "messages": messages,
+                       "temperature": temperature, "max_tokens": max_tokens,
+                       "stream": False}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + conf["key"],
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        d = json.loads(r.read().decode("utf-8"))
+    return d["choices"][0]["message"]["content"].strip()
 
 
 # ---------------------------------------------------------------- 数据库
@@ -1491,6 +1538,75 @@ def classics_star(cid):
         db.execute("DELETE FROM classic_stars WHERE user_id=? AND classic_id=?", (uid(), cid))
     db.commit()
     return jsonify({"ok": True, "starred": starred})
+
+
+# ================================================================ AI 助手
+def _ai_call_or_error(messages, **kw):
+    """统一封装：调用 AI，出错时返回 (None, (json, code))。"""
+    try:
+        return ai_chat(messages, **kw), None
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "ignore")[:300]
+        except Exception:
+            pass
+        msg = "AI 服务返回错误 %d" % e.code
+        if e.code == 401:
+            msg = "API Key 无效或未授权，请在后台重新填写"
+        elif e.code == 402:
+            msg = "账户余额不足，请到 DeepSeek 充值"
+        elif e.code == 429:
+            msg = "请求过于频繁，请稍后再试"
+        return None, (jsonify({"error": msg, "detail": detail}), 502)
+    except urllib.error.URLError as e:
+        return None, (jsonify({"error": "连不上 AI 服务：" + str(e.reason)}), 502)
+    except Exception as e:
+        return None, (jsonify({"error": "AI 调用失败：" + str(e)}), 502)
+
+
+@app.get("/api/ai/status")
+def ai_status():
+    return jsonify({"configured": ai_configured(), "model": _ai_conf()["model"]})
+
+
+@app.post("/api/ai/chat")
+def api_ai_chat():
+    data = request.get_json(silent=True) or {}
+    msgs = data.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        prompt = (data.get("prompt") or "").strip()
+        if not prompt:
+            return jsonify({"error": "请输入内容"}), 400
+        msgs = [{"role": "user", "content": prompt}]
+    sys = data.get("system") or "你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。"
+    full = [{"role": "system", "content": sys}] + msgs
+    reply, err = _ai_call_or_error(full, temperature=data.get("temperature", 0.6),
+                                   max_tokens=data.get("max_tokens", 1600))
+    if err:
+        return err
+    return jsonify({"reply": reply})
+
+
+@app.get("/api/admin/ai")
+def admin_ai_get():
+    c = _ai_conf()
+    return jsonify({"base": c["base"], "model": c["model"], "has_key": bool(c["key"])})
+
+
+@app.post("/api/admin/ai")
+def admin_ai_set():
+    data = request.get_json(silent=True) or {}
+    if "base" in data:
+        CFG["ai_base"] = (data.get("base") or "").strip() or "https://api.deepseek.com"
+    if "model" in data:
+        CFG["ai_model"] = (data.get("model") or "").strip() or "deepseek-chat"
+    if data.get("clear_key"):
+        CFG["ai_key"] = ""
+    elif (data.get("key") or "").strip():
+        CFG["ai_key"] = data.get("key").strip()
+    _save_cfg()
+    return jsonify({"ok": True, "configured": ai_configured()})
 
 
 # ================================================================ OCR 识图（tesseract）

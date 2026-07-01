@@ -31,6 +31,17 @@
     .ucard .meta{font-size:12.5px;color:var(--muted);margin-bottom:8px;}
     .ucard .acts{display:flex;flex-wrap:wrap;gap:4px;}
   }
+  .ai-cfg{background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:16px;}
+  .ai-tip{font-size:13px;color:#667;margin:0 0 14px;line-height:1.7;}
+  .ai-f{display:flex;align-items:center;gap:10px;margin-bottom:11px;}
+  .ai-f span{flex:0 0 74px;font-size:13px;color:#555;}
+  .ai-f input{flex:1;padding:9px 11px;border:1.5px solid #e6e9ef;border-radius:8px;font-size:14px;outline:none;}
+  .ai-f input:focus{border-color:var(--blue);}
+  .ai-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
+  .ubtn.primary{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .ai-msg2{font-size:13px;margin-top:10px;white-space:pre-wrap;line-height:1.6;}
+  .ai-msg2.ok{color:#1f9d57;}
+  .ai-msg2.err{color:#c0392b;}
 </style>
 </head>
 <body>
@@ -40,7 +51,20 @@
   <div class="topbar-actions"></div>
 </header>
 <main class="admin-main">
-  <h2 class="view-title">用户管理 <span class="uadd" id="ucount"></span></h2>
+  <h2 class="view-title">AI 设置</h2>
+  <div class="ai-cfg">
+    <p class="ai-tip">接入云端大模型（默认 <b>DeepSeek</b>，OpenAI 兼容）。到 <b>platform.deepseek.com</b> 申请 API Key 填入即可；用于 AI 助手、古诗文释义、错题分析等。</p>
+    <label class="ai-f"><span>接口地址</span><input id="ai-base" type="text" placeholder="https://api.deepseek.com"></label>
+    <label class="ai-f"><span>模型</span><input id="ai-model" type="text" placeholder="deepseek-chat"></label>
+    <label class="ai-f"><span>API Key</span><input id="ai-key" type="password" placeholder="留空=不改；已设会显示●●●" autocomplete="off"></label>
+    <div class="ai-acts">
+      <button class="ubtn" id="ai-clearkey">清除 Key</button>
+      <button class="ubtn" id="ai-test">测试连通</button>
+      <button class="ubtn primary" id="ai-save">保存</button>
+    </div>
+    <div id="ai-msg" class="ai-msg2"></div>
+  </div>
+  <h2 class="view-title" style="margin-top:26px;">用户管理 <span class="uadd" id="ucount"></span></h2>
   <table class="utable" id="utable">
     <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>密保</th><th>收录</th><th>资料</th><th>注册时间</th><th>操作</th></tr></thead>
     <tbody id="utbody"></tbody>
@@ -136,9 +160,44 @@ async function delUser(id, name) {
   const d = await r.json();
   if (r.ok) { toast('已删除'); load(); } else toast(d.error || '失败', true);
 }
+async function loadAI() {
+  try {
+    const d = await (await fetch('/api/admin/ai')).json();
+    $('#ai-base').value = d.base || '';
+    $('#ai-model').value = d.model || '';
+    $('#ai-key').placeholder = d.has_key ? '已设置 ●●●（留空=不改）' : 'sk-...（DeepSeek 的 API Key）';
+  } catch (_) {}
+}
+function aiMsg(text, ok) { const m = $('#ai-msg'); m.textContent = text; m.className = 'ai-msg2 ' + (ok === true ? 'ok' : ok === false ? 'err' : ''); }
+$('#ai-save').onclick = async () => {
+  const body = { base: $('#ai-base').value.trim(), model: $('#ai-model').value.trim() };
+  const k = $('#ai-key').value.trim(); if (k) body.key = k;
+  aiMsg('保存中…');
+  try {
+    const d = await (await fetch('/api/admin/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+    $('#ai-key').value = '';
+    aiMsg(d.configured ? '已保存，AI 已就绪。' : '已保存，但还没有可用的 API Key。', d.configured);
+    loadAI();
+  } catch (e) { aiMsg('保存失败：' + e.message, false); }
+};
+$('#ai-clearkey').onclick = async () => {
+  if (!confirm('清除已保存的 API Key？')) return;
+  try { await fetch('/api/admin/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear_key: true }) }); aiMsg('已清除 Key', true); loadAI(); }
+  catch (e) { aiMsg('失败：' + e.message, false); }
+};
+$('#ai-test').onclick = async () => {
+  aiMsg('测试中…（会真实调用一次）');
+  try {
+    const r = await fetch('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: '用一句话自我介绍。', max_tokens: 60 }) });
+    const d = await r.json();
+    if (r.ok) aiMsg('✓ 连通成功，AI 回复：\n' + d.reply, true);
+    else aiMsg('✗ ' + (d.error || '失败') + (d.detail ? '\n' + d.detail : ''), false);
+  } catch (e) { aiMsg('✗ ' + e.message, false); }
+};
 (async () => {
   try { const me = await (await fetch('/api/me')).json(); MY_NAME = me.username; } catch (_) {}
   await load();
+  await loadAI();
 })();
 </script>
 </body>

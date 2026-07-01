@@ -514,6 +514,20 @@
   </div>
 </div>
 
+<!-- AI 助手对话面板 -->
+<div id="ai-panel" class="ai-panel hidden">
+  <div class="ai-head">
+    <span class="ai-title">AI 助手</span>
+    <button id="ai-clear" class="ai-headbtn" title="清空对话">清空</button>
+    <button id="ai-close" class="ai-x" title="关闭">✕</button>
+  </div>
+  <div id="ai-msgs" class="ai-msgs"></div>
+  <div class="ai-input">
+    <textarea id="ai-text" rows="1" placeholder="问点什么…（讲知识点 / 出题 / 翻译古文 / 分析错题）"></textarea>
+    <button id="ai-send" class="ai-sendbtn">发送</button>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 <script src="app.js"></script>
 </body>
