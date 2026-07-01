@@ -41,6 +41,7 @@ const IC = {
   del: _svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
   clip: _svg('<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
   wrong: _svg('<path d="M9 11l-2 2 2 2"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="14 3 14 9 20 9"/><path d="M14.5 12.5l3 3M17.5 12.5l-3 3"/>'),
+  bulb: _svg('<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.8 10.6c.5.5.8 1 .8 1.9v.5h6v-.5c0-.9.3-1.4.8-1.9A6 6 0 0 0 12 3z"/>'),
 };
 // 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
 const BOARD_FEATURES = {
@@ -58,8 +59,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -154,29 +155,28 @@ $('#section-feats').addEventListener('click', e => {
   const c = e.target.closest('[data-secfeat]'); if (!c) return;
   if (c.dataset.secfeat === 'classics') openClassics();
 });
+let curBoardFeat = '';
 function openBoard(board) {
-  const feats = BOARD_FEATURES[board] || [];
+  curBoardFeat = board;
+  // 每个板块都有「基础知识点」，再加上板块专属功能
+  const feats = [{ key: 'boardkb', name: '基础知识点', desc: '基础知识 · 方法技巧', icon: 'bulb' }]
+    .concat(BOARD_FEATURES[board] || []);
   $('#board-title').textContent = board;
-  if (feats.length) {
-    $('#board-features').innerHTML = feats.map(f =>
-      `<div class="home-card" data-feat="${esc(f.key)}">
-        <div class="hc-logo">${IC[f.icon] || ''}</div>
-        <div class="hc-name">${esc(f.name)}</div>
-        <div class="hc-desc">${esc(f.desc)}</div>
-      </div>`).join('');
-    $('#board-features').classList.remove('hidden');
-    $('#board-ph').classList.add('hidden');
-  } else {
-    $('#board-features').classList.add('hidden');
-    $('#board-ph').classList.remove('hidden');
-    $('#board-ph-title').textContent = board;
-  }
+  $('#board-features').innerHTML = feats.map(f =>
+    `<div class="home-card" data-feat="${esc(f.key)}">
+      <div class="hc-logo">${IC[f.icon] || ''}</div>
+      <div class="hc-name">${esc(f.name)}</div>
+      <div class="hc-desc">${esc(f.desc)}</div>
+    </div>`).join('');
+  $('#board-features').classList.remove('hidden');
+  $('#board-ph').classList.add('hidden');
   push({ view: 'board', title: board });
 }
 $('#board-features').addEventListener('click', e => {
   const c = e.target.closest('[data-feat]'); if (!c) return;
   if (c.dataset.feat === 'idiom') openIdiom();
   else if (c.dataset.feat === 'classics') openClassics();
+  else if (c.dataset.feat === 'boardkb') openBoardKb(curBoardFeat);
 });
 $('#nav-back').onclick = back;
 
@@ -1904,6 +1904,56 @@ $('#wqd-wrap').addEventListener('click', async e => {
   if (e.target.closest('#wqd-del')) {
     if (!confirm('删除这道错题？')) return;
     try { await api('/api/wrongq/' + wqData.id, { method: 'DELETE' }); toast('已删除'); back(); loadWrongq(); loadWqBoards(); } catch (err) { toast(err.message, true); } return;
+  }
+});
+
+/* ================= 板块基础知识点 ================= */
+let bkbBoard = '', bkbData = null;
+async function openBoardKb(board) {
+  bkbBoard = board;
+  push({ view: 'boardkb', title: board + ' · 基础知识点' });
+  $('#bkb-wrap').innerHTML = '<p class="empty">加载中…</p>';
+  try { const d = await api('/api/boardkb?board=' + encodeURIComponent(board)); bkbData = d; renderBkb(); }
+  catch (e) { $('#bkb-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function renderBkb() {
+  const d = bkbData;
+  const ai = d.ai
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">📚 基础知识 · 方法技巧（AI 整理）</div>
+        <div class="cd-sec-b">${mdToHtml(d.ai)}</div>
+        <button class="btn cd-ai-regen" id="bkb-regen">重新生成</button></div>`
+    : `<div class="bkb-gen"><p class="cd-tip" style="margin:0 0 12px">还没有整理这个板块的基础知识点，让 AI 帮你系统梳理一份。</p>
+        <button class="btn primary" id="bkb-gen" style="width:100%;padding:13px;">🤖 AI 生成基础知识点</button></div>`;
+  const pts = (d.points || []).map(p =>
+    `<div class="bkb-point"><div class="bkb-point-c">${esc(p.content).replace(/\n/g, '<br>')}</div>
+      <button class="bkb-point-del" data-bpdel="${p.id}">×</button></div>`).join('');
+  $('#bkb-wrap').innerHTML = ai + `
+    <div class="cd-sec"><div class="cd-sec-t">✍️ 我的补充</div>
+      <div class="bkb-points">${pts || '<p class="cd-tip" style="margin:0 0 10px">还没有补充，写点自己的要点/技巧吧。</p>'}</div>
+      <div class="bkb-add">
+        <textarea id="bkb-input" rows="2" placeholder="添加一条自己的知识点/技巧…"></textarea>
+        <button class="btn primary" id="bkb-addbtn">添加</button>
+      </div>
+    </div>`;
+}
+$('#bkb-wrap').addEventListener('click', async e => {
+  const g = e.target.closest('#bkb-gen') || e.target.closest('#bkb-regen');
+  if (g) {
+    g.disabled = true; g.textContent = 'AI 生成中…（约二十秒）';
+    try {
+      const d = await api('/api/boardkb/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: bkbBoard, force: g.id === 'bkb-regen' }) });
+      bkbData.ai = d.content; renderBkb(); toast('已生成');
+    } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 AI 生成基础知识点'; }
+    return;
+  }
+  if (e.target.closest('#bkb-addbtn')) {
+    const c = $('#bkb-input').value.trim(); if (!c) return;
+    try { const p = await api('/api/boardkb/point', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: bkbBoard, content: c }) }); bkbData.points.unshift({ id: p.id, content: c }); renderBkb(); } catch (err) { toast(err.message, true); }
+    return;
+  }
+  const del = e.target.closest('[data-bpdel]');
+  if (del) {
+    try { await api('/api/boardkb/point/' + del.dataset.bpdel, { method: 'DELETE' }); bkbData.points = bkbData.points.filter(p => p.id != del.dataset.bpdel); renderBkb(); } catch (err) { toast(err.message, true); }
   }
 });
 
