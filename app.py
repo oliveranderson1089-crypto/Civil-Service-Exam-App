@@ -276,6 +276,12 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_bp_user ON board_points(user_id, board);
+        -- 党建理论学习词典（爬自共产党员网 12371.cn，全局共享）
+        CREATE TABLE IF NOT EXISTS party_dict(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cat TEXT, term TEXT, content TEXT, url TEXT, ord INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_pd_cat ON party_dict(cat);
         """
     )
     # entries 老表可能缺 user_id 列（先补列，再建索引）
@@ -1792,21 +1798,41 @@ def api_ocr():
     ext = os.path.splitext(f.filename)[1].lower() or ".jpg"
     tmp = os.path.join(tempfile.gettempdir(), "ocr_" + uuid.uuid4().hex + ext)
     f.save(tmp)
+    # 预处理：摆正方向 / 灰度 / 放大 / 拉对比度 / 锐化 —— 显著提升拍照识别率
+    proc = tmp
+    try:
+        from PIL import Image, ImageOps, ImageFilter
+        im = Image.open(tmp)
+        im = ImageOps.exif_transpose(im)
+        im = im.convert("L")
+        w, h = im.size
+        if max(w, h) < 2200:
+            s = min(3.0, 2200.0 / max(w, h))
+            im = im.resize((int(w * s), int(h * s)), Image.LANCZOS)
+        im = ImageOps.autocontrast(im, cutoff=2)
+        im = im.filter(ImageFilter.SHARPEN)
+        proc = tmp + ".png"
+        im.save(proc)
+    except Exception:
+        proc = tmp
     text = ""
     try:
-        out = subprocess.run(["tesseract", tmp, "stdout", "-l", "chi_sim+eng", "--psm", "6"],
-                             capture_output=True, timeout=90)
+        out = subprocess.run(["tesseract", proc, "stdout", "-l", "chi_sim+eng",
+                              "--oem", "1", "--psm", "6"],
+                             capture_output=True, timeout=120)
         text = out.stdout.decode("utf-8", "ignore")
     except Exception as e:
+        for p in {tmp, proc}:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+        return jsonify({"error": "识别失败：" + str(e)}), 500
+    for p in {tmp, proc}:
         try:
-            os.remove(tmp)
+            os.remove(p)
         except Exception:
             pass
-        return jsonify({"error": "识别失败：" + str(e)}), 500
-    try:
-        os.remove(tmp)
-    except Exception:
-        pass
     # tesseract 中文常在汉字间插空格，去掉相邻汉字间的空白
     text = re.sub(r"(?<=[一-鿿，。！？；：、（）《》“”])[ \t]+(?=[一-鿿，。！？；：、（）《》“”])", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -2034,10 +2060,11 @@ def boardkb_generate():
         "分这几节，内容要具体可操作：\n"
         "## 一、这个板块考什么\n## 二、必备基础知识（概念/公式/常识要点）\n"
         "## 三、核心方法与解题技巧\n## 四、常见题型与应对思路\n"
-        "## 五、易错点与提分建议\n" % (sec, board))
+        "## 五、易错点与提分建议\n"
+        "要求：每节都要写完整、写到位，覆盖该板块主要考点，不要中途省略或截断。" % (sec, board))
     reply, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是公考辅导老师，讲解系统、具体、条理清晰，用简体中文 Markdown。"},
-         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=2200)
+        [{"role": "system", "content": "你是公考辅导老师，讲解系统、具体、条理清晰，用简体中文 Markdown。务必输出完整、不要截断。"},
+         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=8000)
     if err:
         return err
     db = get_db()
@@ -2064,6 +2091,30 @@ def boardkb_del_point(pid):
     get_db().execute("DELETE FROM board_points WHERE id=? AND user_id=?", (pid, uid()))
     get_db().commit()
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 党建理论学习词典（12371.cn）
+@app.get("/api/partydict/cats")
+def partydict_cats():
+    db = get_db()
+    rows = db.execute("SELECT cat, COUNT(*) c FROM party_dict GROUP BY cat ORDER BY MIN(id)").fetchall()
+    total = db.execute("SELECT COUNT(*) FROM party_dict").fetchone()[0]
+    return jsonify({"total": total, "cats": [{"cat": r["cat"], "count": r["c"]} for r in rows]})
+
+
+@app.get("/api/partydict")
+def partydict_list():
+    cat = (request.args.get("cat") or "").strip()
+    q = (request.args.get("q") or "").strip()
+    sql = "SELECT id,cat,term,content,url FROM party_dict WHERE 1=1"
+    args = []
+    if cat and cat != "全部":
+        sql += " AND cat=?"; args.append(cat)
+    if q:
+        sql += " AND (term LIKE ? OR content LIKE ?)"; args += ["%" + q + "%", "%" + q + "%"]
+    sql += " ORDER BY ord, id LIMIT 600"
+    rows = get_db().execute(sql, args).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
 
 
 # ---------------------------------------------------------------- 安卓包下载

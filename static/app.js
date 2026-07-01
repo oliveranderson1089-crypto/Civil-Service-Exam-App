@@ -48,6 +48,9 @@ const BOARD_FEATURES = {
   '言语理解与表达': [
     { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
   ],
+  '政治理论': [
+    { key: 'partydict', name: '党的创新理论学习词典', desc: '两个确立·四个意识… 12371 术语速查', icon: 'book' },
+  ],
   '议论文': [
     { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
   ],
@@ -59,8 +62,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -177,6 +180,7 @@ $('#board-features').addEventListener('click', e => {
   if (c.dataset.feat === 'idiom') openIdiom();
   else if (c.dataset.feat === 'classics') openClassics();
   else if (c.dataset.feat === 'boardkb') openBoardKb(curBoardFeat);
+  else if (c.dataset.feat === 'partydict') openPartyDict();
 });
 $('#nav-back').onclick = back;
 
@@ -1968,34 +1972,86 @@ $('#logout-btn').onclick = async () => {
   try { await fetch('/logout', { method: 'POST' }); } catch (_) {}
   location.href = '/login';
 };
-$('#settings-btn').onclick = async () => {
+/* ================= 党的创新理论学习词典（12371.cn） ================= */
+let pdCat = '全部', pdTimer = null;
+async function openPartyDict() {
+  push({ view: 'partydict', title: '创新理论词典' });
+  $('#pd-q').value = ''; pdCat = '全部';
+  try {
+    const d = await api('/api/partydict/cats');
+    const chips = [`<button class="pd-chip on" data-cat="全部">全部 ${d.total}</button>`]
+      .concat(d.cats.map(c => `<button class="pd-chip" data-cat="${esc(c.cat)}">${esc(c.cat)} ${c.count}</button>`));
+    $('#pd-cats').innerHTML = chips.join('');
+  } catch (e) {}
+  loadPartyDict();
+}
+async function loadPartyDict() {
+  const q = $('#pd-q').value.trim();
+  $('#pd-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/partydict?cat=' + encodeURIComponent(pdCat) + '&q=' + encodeURIComponent(q));
+    if (!d.items.length) { $('#pd-list').innerHTML = '<p class="empty">没有匹配的词条，换个关键词试试。</p>'; return; }
+    $('#pd-list').innerHTML = d.items.map(it =>
+      `<div class="pd-item"><div class="pd-term">${esc(it.term)}<span class="pd-tag">${esc(it.cat)}</span></div>
+        <div class="pd-body">${esc(it.content).replace(/\n/g, '<br>')}</div></div>`).join('');
+  } catch (e) { $('#pd-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#pd-cats').addEventListener('click', e => {
+  const b = e.target.closest('.pd-chip'); if (!b) return;
+  pdCat = b.dataset.cat;
+  $('#pd-cats').querySelectorAll('.pd-chip').forEach(x => x.classList.toggle('on', x === b));
+  loadPartyDict();
+});
+$('#pd-q').addEventListener('input', () => { clearTimeout(pdTimer); pdTimer = setTimeout(loadPartyDict, 250); });
+
+/* ================= 账户 / 个人信息页 ================= */
+async function openAccount() {
+  push({ view: 'account', title: '账户' });
   try {
     const d = await api('/api/account');
     const qs = (await api('/api/sec_questions')).questions;
-    $('#set-secq').innerHTML = qs.map(q => `<option ${q === d.sec_question ? 'selected' : ''}>${esc(q)}</option>`).join('');
-    $('#set-oldpw').value = ''; $('#set-newpw').value = ''; $('#set-seca').value = '';
-    $('#set-app').classList.toggle('hidden', !IN_APP);
-    $('#settings-modal').classList.remove('hidden');
+    $('#acct-name').textContent = d.username || (ME && ME.username) || '';
+    $('#acct-email').textContent = d.email ? ('📧 ' + d.email) : '未绑定邮箱';
+    $('#acct-role').textContent = (ME && ME.is_admin) ? '管理员' : '普通用户';
+    $('#acct-email-in').value = d.email || '';
+    $('#acct-secq').innerHTML = qs.map(q => `<option ${q === d.sec_question ? 'selected' : ''}>${esc(q)}</option>`).join('');
+    $('#acct-oldpw').value = ''; $('#acct-newpw').value = ''; $('#acct-seca').value = '';
+    $('#acct-app').classList.toggle('hidden', !IN_APP);
+  } catch (e) { toast(e.message, true); }
+}
+$('#brand-logo').onclick = openAccount;
+$('#settings-btn').onclick = openAccount;
+$('#home-btn').onclick = goHome;
+
+$('#acct-email-save').onclick = async () => {
+  try {
+    await api('/api/account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: $('#acct-email-in').value.trim() }) });
+    const em = $('#acct-email-in').value.trim();
+    $('#acct-email').textContent = em ? ('📧 ' + em) : '未绑定邮箱';
+    toast('邮箱已保存');
   } catch (e) { toast(e.message, true); }
 };
-$('#set-refresh').onclick = () => {
+$('#acct-pw-save').onclick = async () => {
+  const np = $('#acct-newpw').value;
+  if (!np) { toast('请输入新密码', true); return; }
+  try {
+    await api('/api/account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new_password: np, old_password: $('#acct-oldpw').value }) });
+    $('#acct-oldpw').value = ''; $('#acct-newpw').value = ''; toast('密码已修改');
+  } catch (e) { toast(e.message, true); }
+};
+$('#acct-sec-save').onclick = async () => {
+  if (!$('#acct-seca').value.trim()) { toast('请输入密保答案', true); return; }
+  try {
+    await api('/api/account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sec_question: $('#acct-secq').value, sec_answer: $('#acct-seca').value }) });
+    $('#acct-seca').value = ''; toast('密保已保存');
+  } catch (e) { toast(e.message, true); }
+};
+$('#acct-refresh').onclick = () => {
   if (window.GongkaoNative && window.GongkaoNative.reload) { try { window.GongkaoNative.reload(); return; } catch (_) {} }
   location.reload();
 };
-$('#set-server').onclick = () => {
-  $('#settings-modal').classList.add('hidden');
-  try { window.GongkaoNative && window.GongkaoNative.changeServer(); } catch (_) {}
-};
-$('#set-cancel').onclick = () => $('#settings-modal').classList.add('hidden');
-$('#settings-modal').addEventListener('click', e => { if (e.target.id === 'settings-modal') $('#settings-modal').classList.add('hidden'); });
-$('#set-save').onclick = async () => {
-  const body = {};
-  if ($('#set-newpw').value) { body.new_password = $('#set-newpw').value; body.old_password = $('#set-oldpw').value; }
-  if ($('#set-seca').value) { body.sec_question = $('#set-secq').value; body.sec_answer = $('#set-seca').value; }
-  if (!body.new_password && !body.sec_answer) { $('#settings-modal').classList.add('hidden'); return; }
-  try { await api('/api/account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); toast('已保存'); $('#settings-modal').classList.add('hidden'); }
-  catch (e) { toast(e.message, true); }
-};
+$('#acct-server').onclick = () => { try { window.GongkaoNative && window.GongkaoNative.changeServer(); } catch (_) {} };
+$('#acct-logout').onclick = () => $('#logout-btn').click();
 
 init();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

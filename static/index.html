@@ -15,10 +15,11 @@
 <header class="topbar">
   <button id="nav-back" class="navbtn hidden">‹ 返回</button>
   <div class="brand-min">
-    <span class="logo-min">公</span>
+    <span class="logo-min" id="brand-logo" title="账户 / 个人信息">公</span>
     <span id="top-title">公考助手</span>
   </div>
   <div class="topbar-actions">
+    <button id="home-btn" class="logout" title="回到首页">首页</button>
     <button id="admin-btn" class="logout hidden" title="管理后台">后台</button>
     <button id="settings-btn" class="logout" title="账号设置">设置</button>
     <button id="logout-btn" class="logout" title="退出登录">退出</button>
@@ -376,6 +377,59 @@
     <div id="bkb-wrap" class="bkb-wrap"></div>
   </section>
 
+  <!-- ===== 账户 / 个人信息 ===== -->
+  <section id="view-account" class="view hidden">
+    <div class="acct-hero">
+      <div class="acct-avatar">公</div>
+      <div class="acct-id">
+        <div class="acct-name" id="acct-name">—</div>
+        <div class="acct-email" id="acct-email"></div>
+        <span class="acct-role" id="acct-role"></span>
+      </div>
+    </div>
+
+    <div class="acct-sec">
+      <div class="acct-sec-t">📧 邮箱</div>
+      <p class="acct-hint">用于登录展示与找回密码提示。</p>
+      <input id="acct-email-in" type="email" placeholder="绑定邮箱（如 you@example.com）">
+      <button class="btn primary acct-btn" id="acct-email-save">保存邮箱</button>
+    </div>
+
+    <div class="acct-sec">
+      <div class="acct-sec-t">🔒 修改密码</div>
+      <input id="acct-oldpw" type="password" placeholder="原密码">
+      <input id="acct-newpw" type="password" placeholder="新密码（至少 6 位）">
+      <button class="btn primary acct-btn" id="acct-pw-save">修改密码</button>
+    </div>
+
+    <div class="acct-sec">
+      <div class="acct-sec-t">🛡️ 密保问题</div>
+      <p class="acct-hint">忘记密码时用于身份验证。</p>
+      <select id="acct-secq"></select>
+      <input id="acct-seca" type="text" placeholder="新答案（留空则不修改）">
+      <button class="btn primary acct-btn" id="acct-sec-save">保存密保</button>
+    </div>
+
+    <div class="acct-sec hidden" id="acct-app">
+      <div class="acct-sec-t">📱 App</div>
+      <button class="btn acct-btn" id="acct-refresh">刷新页面</button>
+      <button class="btn acct-btn" id="acct-server">切换服务器地址</button>
+    </div>
+
+    <button class="btn acct-logout" id="acct-logout">退出登录</button>
+  </section>
+
+  <!-- ===== 党的创新理论学习词典（12371.cn） ===== -->
+  <section id="view-partydict" class="view hidden">
+    <div class="pd-intro">来源：共产党员网 12371.cn · 术语随时速查，可按分类筛选</div>
+    <div class="pd-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="pd-q" placeholder="搜索词条 / 关键词，如 两个确立、六个坚持">
+    </div>
+    <div class="pd-cats" id="pd-cats"></div>
+    <div class="pd-list" id="pd-list"></div>
+  </section>
+
   <!-- 古诗文导出 PDF 选项 -->
   <div id="clsx-modal" class="modal hidden">
     <div class="modal-box">
@@ -433,32 +487,6 @@
     <div class="modal-actions">
       <button class="btn" id="ex-cancel">取消</button>
       <button class="btn primary" id="ex-go">下载 PDF</button>
-    </div>
-  </div>
-</div>
-
-<!-- 账号设置 -->
-<div id="settings-modal" class="modal hidden">
-  <div class="modal-box">
-    <h3>账号设置</h3>
-    <div class="set-sec">
-      <div class="set-title">修改密码</div>
-      <input id="set-oldpw" type="password" placeholder="原密码">
-      <input id="set-newpw" type="password" placeholder="新密码（至少 6 位，留空不改）">
-    </div>
-    <div class="set-sec">
-      <div class="set-title">密保问题（用于找回密码）</div>
-      <select id="set-secq"></select>
-      <input id="set-seca" type="text" placeholder="新答案（留空不改）">
-    </div>
-    <div class="set-sec hidden" id="set-app">
-      <div class="set-title">App 设置</div>
-      <button class="btn" id="set-refresh" style="width:100%;margin-bottom:8px;">刷新页面</button>
-      <button class="btn" id="set-server" style="width:100%;">切换服务器地址</button>
-    </div>
-    <div class="modal-actions">
-      <button class="btn" id="set-cancel">取消</button>
-      <button class="btn primary" id="set-save">保存</button>
     </div>
   </div>
 </div>
