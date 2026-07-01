@@ -692,6 +692,45 @@ def _office_to_pdf(src):
     return pdf if os.path.exists(pdf) else None
 
 
+def _extract_pdf_text(pdf_path):
+    """用 pdftotext 提取 PDF 文字（-layout 尽量保留版式），供阅读模式用。"""
+    try:
+        out = subprocess.run(["pdftotext", "-layout", "-enc", "UTF-8", pdf_path, "-"],
+                             capture_output=True, timeout=90)
+        return out.stdout.decode("utf-8", "ignore")
+    except Exception:
+        return ""
+
+
+def _extract_text(path, ext):
+    """把文件转成纯文本：pdf 直接提取；Office 先转 pdf 再提取；文本类直接读。"""
+    if not os.path.exists(path):
+        return None
+    if ext == ".pdf":
+        return _extract_pdf_text(path)
+    if ext in OFFICE_EXT:
+        pdf = _office_to_pdf(path)
+        return _extract_pdf_text(pdf) if pdf else ""
+    if ext in TEXT_EXT or ext in (".html", ".htm"):
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        except Exception:
+            return ""
+    return ""
+
+
+@app.get("/api/materials/<int:mid>/text")
+def material_text(mid):
+    m = _get_material(mid)
+    if not m:
+        return jsonify({"error": "未找到"}), 404
+    t = _extract_text(os.path.join(UPLOADS, str(uid()), m["stored_name"]), m["ext"])
+    if t is None:
+        return jsonify({"error": "文件丢失"}), 404
+    return jsonify({"text": t})
+
+
 @app.get("/api/materials/<int:mid>/view")
 def material_view(mid):
     m = _get_material(mid)
@@ -963,6 +1002,21 @@ def note_file(nid, idx):
     if not dl and ext in INLINE_EXT:
         return send_file(path, as_attachment=False, download_name=a.get("name"))
     return send_file(path, as_attachment=True, download_name=a.get("name") or a["file"])
+
+
+@app.get("/api/notes/<int:nid>/file/<int:idx>/text")
+def note_file_text(nid, idx):
+    n = _get_note(nid)
+    if not n:
+        return jsonify({"error": "未找到"}), 404
+    atts = _jl(n, "attachments")
+    if idx < 0 or idx >= len(atts):
+        return jsonify({"error": "未找到"}), 404
+    a = atts[idx]
+    t = _extract_text(os.path.join(UPLOADS, str(uid()), a["file"]), a.get("ext", ""))
+    if t is None:
+        return jsonify({"error": "文件丢失"}), 404
+    return jsonify({"text": t})
 
 
 @app.put("/api/notes/<int:nid>")
@@ -1284,6 +1338,8 @@ def kb_asset(stored):
     if not os.path.exists(path):
         return "文件丢失", 404
     ext = os.path.splitext(stored)[1].lower()
+    if request.args.get("text") == "1":      # 阅读模式取文字
+        return jsonify({"text": _extract_text(path, ext) or ""})
     dl = request.args.get("dl") == "1"
     if not dl and ext in OFFICE_EXT:
         pdf = _office_to_pdf(path)

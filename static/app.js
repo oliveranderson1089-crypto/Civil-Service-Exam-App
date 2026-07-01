@@ -521,7 +521,9 @@ $('#feed').addEventListener('click', async e => {
   if (fl) {
     const base = '/api/notes/' + fl.dataset.file + '/file/' + fl.dataset.fi;
     if (fl.dataset.fview !== '1') { const a = document.createElement('a'); a.href = base + '?dl=1'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); return; }
-    openViewerUrl(base, fl.dataset.fname, fl.dataset.ext, base + '?dl=1'); return;
+    const fe = (fl.dataset.ext || '').toLowerCase();
+    const ftu = (fe === '.pdf' || OFFICE_EXT.includes(fe)) ? base + '/text' : null;
+    openViewerUrl(base, fl.dataset.fname, fl.dataset.ext, base + '?dl=1', ftu); return;
   }
   const im = e.target.closest('[data-img]');
   if (im) { openViewerUrl(im.dataset.img, '图片', '.png'); return; }
@@ -608,19 +610,49 @@ $('#mat-list').addEventListener('click', async e => {
   openViewer(id, item.querySelector('.mat-name').textContent, item.dataset.ext);
 });
 const READER_EXT = ['.md', '.markdown', '.txt'];
-function openViewerUrl(fileUrl, name, ext, dlUrl) {
+let viewerTextUrl = null;
+function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
   ext = (ext || '').toLowerCase();
   $('#viewer-name').textContent = name;
   $('#viewer-dl').href = dlUrl || fileUrl;
+  viewerTextUrl = textUrl || null;
   push({ view: 'viewer', title: name });
-  if (READER_EXT.includes(ext)) { openReader(fileUrl, ext); return; }
+  if (READER_EXT.includes(ext)) { $('#viewer-mode').classList.add('hidden'); openReader(fileUrl, ext); return; }
+  // 原版预览（pdf.js / iframe）
   $('#viewer-reader').classList.add('hidden');
   $('#reader-tools').classList.add('hidden');
   $('#viewer-frame').classList.remove('hidden');
-  const src = (ext === '.pdf' || OFFICE_EXT.includes(ext))
+  $('#viewer-frame').src = (ext === '.pdf' || OFFICE_EXT.includes(ext))
     ? '/pdfjs/web/viewer.html?file=' + encodeURIComponent(fileUrl) : fileUrl;
-  $('#viewer-frame').src = src;
+  // pdf/office 且有文本接口 → 提供「阅读模式」切换
+  const canRead = (ext === '.pdf' || OFFICE_EXT.includes(ext)) && viewerTextUrl;
+  $('#viewer-mode').classList.toggle('hidden', !canRead);
+  $('#viewer-mode').textContent = '阅读模式';
 }
+$('#viewer-mode').onclick = async () => {
+  const reading = !$('#viewer-reader').classList.contains('hidden');
+  if (reading) {
+    $('#viewer-reader').classList.add('hidden');
+    $('#reader-tools').classList.add('hidden');
+    $('#viewer-frame').classList.remove('hidden');
+    $('#viewer-mode').textContent = '阅读模式';
+    return;
+  }
+  $('#viewer-frame').classList.add('hidden');
+  $('#viewer-reader').classList.remove('hidden');
+  $('#reader-tools').classList.remove('hidden');
+  $('#viewer-mode').textContent = '原版';
+  $('#viewer-reader').innerHTML = '<p class="reader-tip">提取文字中…</p>';
+  applyReaderStyle();
+  try {
+    const d = await api(viewerTextUrl);
+    const txt = (d && typeof d.text === 'string') ? d.text : '';
+    $('#viewer-reader').innerHTML = txt.trim()
+      ? '<pre class="reader-pre">' + esc(txt) + '</pre>'
+      : '<p class="reader-tip">没提取到文字（可能是扫描/图片型 PDF，可用小记的 OCR 识图）</p>';
+    $('#viewer-reader').scrollTop = 0;
+  } catch (e) { $('#viewer-reader').innerHTML = '<p class="reader-tip">提取失败：' + esc(e.message) + '</p>'; }
+};
 /* ---- 阅读模式（md 渲染 / txt） ---- */
 let readerFont = 17, readerSepia = false, readerSerif = false;
 function applyReaderStyle() {
@@ -707,7 +739,9 @@ function mdToHtml(src) {
   return html;
 }
 function openViewer(id, name, ext) {
-  openViewerUrl('/api/materials/' + id + '/view', name, ext, '/api/materials/' + id + '/download');
+  const e = (ext || '').toLowerCase();
+  const textUrl = (e === '.pdf' || OFFICE_EXT.includes(e)) ? '/api/materials/' + id + '/text' : null;
+  openViewerUrl('/api/materials/' + id + '/view', name, ext, '/api/materials/' + id + '/download', textUrl);
 }
 /* 上传资料 */
 $('#upload-btn').onclick = () => {
@@ -1405,7 +1439,9 @@ $('#doc-attfile').addEventListener('change', async e => { const f = e.target.fil
 function openDocFile(b) {
   const d = b.data || {};
   if (!d.viewable) { const a = document.createElement('a'); a.href = d.url + '?dl=1'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); return; }
-  openViewerUrl(d.url, d.name, d.ext, d.url + '?dl=1');
+  const e = (d.ext || '').toLowerCase();
+  const tu = (e === '.pdf' || OFFICE_EXT.includes(e)) ? d.url + '?text=1' : null;
+  openViewerUrl(d.url, d.name, d.ext, d.url + '?dl=1', tu);
 }
 
 /* ================= 古诗文速查（唐诗宋词·四书五经） ================= */
