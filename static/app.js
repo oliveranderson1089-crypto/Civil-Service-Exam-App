@@ -811,13 +811,33 @@ async function doLookup() {
     const d = await api('/api/lookup?word=' + encodeURIComponent(word));
     preview = d;
     $('#pv-word').textContent = d.word; $('#pv-py').textContent = d.pinyin; $('#pv-cat').textContent = d.category;
-    $('#pv-found').textContent = d.found ? '✓ 词典已收录' : '✎ 词典未收录，可手动补充';
+    $('#pv-found').textContent = d.found ? (d.source === 'ai' ? '✓ AI 已解释并收录' : '✓ 词典已收录') : '✎ 词典未收录，可 AI 解释或手动补充';
     $('#pv-exp').value = d.explanation; $('#pv-der').value = d.derivation; $('#pv-exa').value = d.example;
     $('#pv-note').value = ''; $('#pv-catsel').value = d.category;
     $('#pv-der-wrap').classList.toggle('hidden', !d.derivation && d.source !== 'idiom');
     $('#pv-exa-wrap').classList.toggle('hidden', !d.example && d.source !== 'idiom');
+    $('#pv-ai').classList.toggle('hidden', d.found);  // 仅未收录时显示 AI 解释
     $('#preview').classList.remove('hidden'); $('#add-hint').textContent = '';
   } catch (e) { $('#add-hint').textContent = ''; toast(e.message, true); }
+}
+async function doAiExplain() {
+  if (!preview || !preview.word) return;
+  const btn = $('#pv-ai');
+  btn.disabled = true; btn.textContent = '🤖 AI 解释中…';
+  try {
+    const d = await api('/api/lookup/ai', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word: preview.word, category: $('#pv-catsel').value }),
+    });
+    preview.explanation = d.explanation; preview.pinyin = d.pinyin;
+    preview.category = d.category; preview.found = true; preview.source = 'ai';
+    $('#pv-exp').value = d.explanation; $('#pv-py').textContent = d.pinyin;
+    $('#pv-cat').textContent = d.category; $('#pv-catsel').value = d.category;
+    $('#pv-found').textContent = '✓ AI 已解释并收录';
+    btn.classList.add('hidden');
+    toast('已解释并收录进词库，以后可直接查到');
+  } catch (e) { toast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = '🤖 AI 解释并收录'; }
 }
 async function doSave() {
   if (!preview) return;
@@ -892,6 +912,7 @@ $('#list').addEventListener('click', async e => {
   }
 });
 $('#lookup-btn').onclick = doLookup;
+$('#pv-ai').onclick = doAiExplain;
 $('#word-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLookup(); });
 $('#save-btn').onclick = doSave;
 $('#filters').addEventListener('click', e => {

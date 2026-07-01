@@ -282,6 +282,11 @@ def init_db():
             cat TEXT, term TEXT, content TEXT, url TEXT, ord INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_pd_cat ON party_dict(cat);
+        -- 词典未收录的词/成语：AI 解释后全局缓存，lookup 也会命中（生成一次全站可查）
+        CREATE TABLE IF NOT EXISTS ci_ai(
+            word TEXT PRIMARY KEY, pinyin TEXT, category TEXT, explanation TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         """
     )
     # entries 老表可能缺 user_id 列（先补列，再建索引）
@@ -446,6 +451,11 @@ def lookup(word):
     if row:
         info.update(pinyin=to_pinyin(word), category="词语",
                     explanation=row["explanation"] or "", source="ci", found=True)
+        return info
+    row = db.execute("SELECT * FROM ci_ai WHERE word=?", (word,)).fetchone()
+    if row:
+        info.update(pinyin=row["pinyin"] or to_pinyin(word), category=row["category"] or info["category"],
+                    explanation=row["explanation"] or "", source="ai", found=True)
         return info
     info["pinyin"] = to_pinyin(word)
     if len(word) == 4 and CJK_RE.match(word):
@@ -2143,6 +2153,40 @@ def static_files(fname):
 @app.get("/api/lookup")
 def api_lookup():
     return jsonify(lookup(request.args.get("word", "")))
+
+
+@app.post("/api/lookup/ai")
+def api_lookup_ai():
+    """词典未收录时用 AI 解释，写入全局 ci_ai 缓存（此后 lookup 可直接命中）。"""
+    data = request.get_json(silent=True) or {}
+    word = (data.get("word") or "").strip()
+    if not word:
+        return jsonify({"error": "请输入词语"}), 400
+    db = get_db()
+    cached = db.execute("SELECT * FROM ci_ai WHERE word=?", (word,)).fetchone()
+    if cached and not data.get("force"):
+        return jsonify({"word": word, "pinyin": cached["pinyin"], "category": cached["category"],
+                        "explanation": cached["explanation"], "found": True, "cached": True})
+    cat = (data.get("category") or "").strip()
+    if cat not in ("成语", "词语"):
+        cat = "成语" if (len(word) == 4 and CJK_RE.match(word)) else "词语"
+    prompt = (
+        "请解释%s「%s」，面向公务员考试考生，用简体中文：\n"
+        "1. 用一两句话给出准确、通顺的释义；\n"
+        "2. 若是成语，补充出处/典故，并给一个例句；\n"
+        "3. 简要点出常见使用语境或近义辨析（如有）。\n"
+        "直接给解释内容，不要把词语本身当标题重复。") % (cat, word)
+    reply, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是权威的汉语词典与公考词汇助手，释义准确、简洁、条理清晰，用简体中文。"},
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=700)
+    if err:
+        return err
+    py = to_pinyin(word)
+    db.execute("INSERT OR REPLACE INTO ci_ai(word,pinyin,category,explanation) VALUES(?,?,?,?)",
+               (word, py, cat, reply))
+    db.commit()
+    return jsonify({"word": word, "pinyin": py, "category": cat, "explanation": reply,
+                    "found": True, "cached": False})
 
 
 @app.post("/api/entries")
