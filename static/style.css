@@ -387,6 +387,40 @@ main{max-width:none;margin:0;padding:0;}
 .pd-tag{font-size:11px;font-weight:600;color:var(--blue);background:#eaf1fc;
   border-radius:5px;padding:1px 8px;}
 .pd-body{font-size:14.5px;line-height:1.75;color:#39414d;text-align:justify;}
+.pd-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
+.pd-recite-btn{font-size:13px;border:1px solid var(--blue);color:var(--blue);background:#fff;
+  border-radius:999px;padding:6px 14px;cursor:pointer;font-family:inherit;transition:.15s;
+  -webkit-tap-highlight-color:transparent;}
+.pd-recite-btn:hover{background:#eef4fb;}
+.pd-recite-btn.on{background:var(--blue);color:#fff;}
+.pd-recite-hint{font-size:12px;color:#9aa1ac;}
+.pd-list.reciting .pd-item{cursor:pointer;}
+.pd-list.reciting .pd-body{filter:blur(6px);opacity:.4;user-select:none;
+  transition:filter .18s,opacity .18s;}
+.pd-list.reciting .pd-item.revealed .pd-body{filter:none;opacity:1;}
+
+/* 时政要文库 */
+#view-policydoc,#view-policydocd{max-width:760px;margin:0 auto;}
+.poly-list{display:flex;flex-direction:column;gap:11px;}
+.poly-card{background:#fff;border:1px solid #eef1f5;border-radius:12px;padding:15px 16px;
+  box-shadow:var(--shadow);cursor:pointer;transition:.15s;}
+.poly-card:hover{border-color:#cfd8e3;transform:translateY(-1px);}
+.poly-badge{display:inline-block;color:#fff;font-size:11.5px;font-weight:600;
+  border-radius:6px;padding:2px 9px;margin-bottom:8px;}
+.poly-t{font-weight:800;font-size:16.5px;color:#1f2733;line-height:1.4;}
+.poly-meta{font-size:12.5px;color:#9aa1ac;margin-top:6px;}
+.poly-ai-on{color:var(--teal,#0f766e);font-weight:600;}
+.poly-head{margin-bottom:14px;}
+.poly-head h2{font-size:20px;font-weight:800;line-height:1.4;margin:0 0 6px;}
+.poly-src{font-size:12.5px;color:var(--blue);text-decoration:none;}
+.poly-genbox{background:#fff;border:1px solid #eef1f5;border-radius:12px;padding:16px;
+  box-shadow:var(--shadow);margin-bottom:16px;}
+.poly-readert{font-weight:700;font-size:14px;color:#6b7280;margin:18px 0 8px;
+  padding-left:10px;border-left:3px solid var(--blue);}
+.poly-reader{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;
+  font-family:"Songti SC","SimSun",serif;font-size:16.5px;line-height:1.95;
+  color:#2a2f37;text-align:justify;box-shadow:var(--shadow);}
+.poly-reader p{margin:0 0 13px;text-indent:2em;}
 
 /* ---- 阅读模式（md / txt 渲染） ---- */
 .reader-tools{display:inline-flex;gap:4px;flex:0 0 auto;}

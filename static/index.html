@@ -33,7 +33,6 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span>搜索小记 / 资料 / 知识库文档…</span>
     </button>
-    <p class="welcome">欢迎，<b id="me-name"></b> 👋</p>
     <div class="home-cards" id="home-cards"></div>
   </section>
 
@@ -428,7 +427,22 @@
       <input id="pd-q" placeholder="搜索词条 / 关键词，如 两个确立、六个坚持">
     </div>
     <div class="pd-cats" id="pd-cats"></div>
+    <div class="pd-toolbar">
+      <button id="pd-recite" class="pd-recite-btn">🎯 背诵模式</button>
+      <span class="pd-recite-hint hidden" id="pd-recite-hint">释义已隐藏 · 点卡片显示 / 再点收起</span>
+    </div>
     <div class="pd-list" id="pd-list"></div>
+  </section>
+
+  <!-- ===== 时政要文库（列表） ===== -->
+  <section id="view-policydoc" class="view hidden">
+    <div class="pd-intro">掌握优先级最高的重要文件 · 全文精读 + AI 政策解读</div>
+    <div id="poly-list" class="poly-list"></div>
+  </section>
+
+  <!-- ===== 时政要文库（全文 + AI 解读） ===== -->
+  <section id="view-policydocd" class="view hidden">
+    <div id="poly-wrap" class="poly-wrap"></div>
   </section>
 
   <!-- 古诗文导出 PDF 选项 -->

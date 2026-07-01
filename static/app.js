@@ -49,6 +49,7 @@ const BOARD_FEATURES = {
     { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
   ],
   '政治理论': [
+    { key: 'policydoc', name: '时政要文库', desc: '二十大·十五五·两会报告 全文+AI解读', icon: 'book' },
     { key: 'partydict', name: '党的创新理论学习词典', desc: '两个确立·四个意识… 12371 术语速查', icon: 'book' },
   ],
   '议论文': [
@@ -62,8 +63,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -107,7 +108,6 @@ async function init() {
     SECTIONS = d.sections; IDIOM_BOARD = d.idiom_board;
     ALL_BOARDS = SECTIONS.flatMap(s => s.boards);
   } catch (e) { return; }
-  $('#me-name').textContent = ME.username;
   $('#admin-btn').classList.toggle('hidden', !ME.is_admin);
   $('#home-cards').innerHTML =
     SECTIONS.map(s => `
@@ -181,6 +181,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'classics') openClassics();
   else if (c.dataset.feat === 'boardkb') openBoardKb(curBoardFeat);
   else if (c.dataset.feat === 'partydict') openPartyDict();
+  else if (c.dataset.feat === 'policydoc') openPolicyDocs();
 });
 $('#nav-back').onclick = back;
 
@@ -1993,6 +1994,61 @@ $('#logout-btn').onclick = async () => {
   try { await fetch('/logout', { method: 'POST' }); } catch (_) {}
   location.href = '/login';
 };
+/* ================= 时政要文库（重要文件全文 + AI 政策解读） ================= */
+let polyData = null;
+const POLY_COLOR = { '党代会报告': '#b23b2e', '中央全会文件': '#8c2f24', '政府工作报告': '#2b6fd6', '中央一号文件': '#0f766e', '地方政府工作报告': '#7a5cc0', '五年规划': '#c2671f' };
+async function openPolicyDocs() {
+  push({ view: 'policydoc', title: '时政要文库' });
+  $('#poly-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/policydocs');
+    $('#poly-list').innerHTML = d.items.map(it => {
+      const col = POLY_COLOR[it.category] || '#666';
+      return `<div class="poly-card" data-poly="${it.id}">
+        <span class="poly-badge" style="background:${col}">${esc(it.category)}</span>
+        <div class="poly-t">${esc(it.title)}</div>
+        <div class="poly-meta">全文约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">✓ 已有 AI 解读</span>' : ''}</div>
+      </div>`;
+    }).join('');
+  } catch (e) { $('#poly-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#poly-list').addEventListener('click', e => {
+  const c = e.target.closest('[data-poly]'); if (c) openPolicyDoc(+c.dataset.poly);
+});
+async function openPolicyDoc(id) {
+  push({ view: 'policydocd', title: '要文精读' });
+  $('#poly-wrap').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/policydocs/' + id); polyData = d;
+    stack[stack.length - 1].title = d.title; $('#top-title').textContent = d.title;
+    renderPolicyDoc();
+  } catch (e) { $('#poly-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function renderPolicyDoc() {
+  const d = polyData;
+  const ai = d.interpretation
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 政策解读</div><div class="cd-sec-b">${mdToHtml(d.interpretation)}</div>
+        <button class="btn cd-ai-regen" id="poly-regen">重新生成</button></div>`
+    : `<div class="poly-genbox"><p class="cd-tip" style="margin:0 0 10px">让 AI 提炼这份文件的核心要点、公考高频考点、可引用金句与答题运用。</p>
+        <button class="btn primary" id="poly-gen" style="width:100%;padding:12px;">🤖 生成 AI 政策解读</button></div>`;
+  const body = (d.content || '').split('\n').filter(x => x.trim()).map(p => `<p>${esc(p)}</p>`).join('');
+  $('#poly-wrap').innerHTML = `
+    <div class="poly-head"><h2>${esc(d.title)}</h2>
+      <a class="poly-src" href="${esc(d.source_url)}" target="_blank" rel="noopener">原文来源 ↗</a></div>
+    ${ai}
+    <div class="poly-readert">全文</div>
+    <div class="poly-reader">${body}</div>`;
+}
+$('#poly-wrap').addEventListener('click', async e => {
+  const g = e.target.closest('#poly-gen') || e.target.closest('#poly-regen');
+  if (!g) return;
+  g.disabled = true; g.textContent = 'AI 解读生成中…（约二三十秒）';
+  try {
+    const d = await api('/api/policydocs/' + polyData.id + '/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: g.id === 'poly-regen' }) });
+    polyData.interpretation = d.content; renderPolicyDoc(); toast('已生成');
+  } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 政策解读'; }
+});
+
 /* ================= 党的创新理论学习词典（12371.cn） ================= */
 let pdCat = '全部', pdTimer = null;
 async function openPartyDict() {
@@ -2024,6 +2080,20 @@ $('#pd-cats').addEventListener('click', e => {
   loadPartyDict();
 });
 $('#pd-q').addEventListener('input', () => { clearTimeout(pdTimer); pdTimer = setTimeout(loadPartyDict, 250); });
+// 背诵模式：隐藏释义、点卡片显示/收起
+let pdRecite = false;
+$('#pd-recite').onclick = () => {
+  pdRecite = !pdRecite;
+  $('#pd-list').classList.toggle('reciting', pdRecite);
+  $('#pd-recite').classList.toggle('on', pdRecite);
+  $('#pd-recite').textContent = pdRecite ? '✓ 背诵中' : '🎯 背诵模式';
+  $('#pd-recite-hint').classList.toggle('hidden', !pdRecite);
+  $('#pd-list').querySelectorAll('.pd-item.revealed').forEach(x => x.classList.remove('revealed'));
+};
+$('#pd-list').addEventListener('click', e => {
+  if (!pdRecite) return;
+  const it = e.target.closest('.pd-item'); if (it) it.classList.toggle('revealed');
+});
 
 /* ================= 账户 / 个人信息页 ================= */
 async function openAccount() {
