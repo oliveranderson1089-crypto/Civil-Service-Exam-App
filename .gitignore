@@ -23,3 +23,6 @@ android/local.properties
 uploads/
 *.bak
 *.bak.*
+
+# 古诗文原始大数据(用 .gz 版)
+data/classics.json

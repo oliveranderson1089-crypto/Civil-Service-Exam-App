@@ -2,17 +2,26 @@
 """把 data/classics.json（唐诗宋词·四书五经，已转简体）导入 app.db 的 classics 表。
 用法：.venv/bin/python3 build_classics.py   （GONGKAO_DB 可指定数据库路径）
 重复运行会先清空 classics 再重建（收藏表 classic_stars 不动）。"""
+import gzip
 import json
 import os
 import sqlite3
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
-SRC = os.path.join(BASE, "data", "classics.json")
+SRC = os.path.join(BASE, "data", "classics.json")       # 本地原始（大，已 gitignore）
+SRC_GZ = SRC + ".gz"                                    # 仓库自带（压缩）
+
+
+def _load():
+    if os.path.exists(SRC):
+        return json.load(open(SRC, encoding="utf-8"))
+    with gzip.open(SRC_GZ, "rt", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def main():
-    data = json.load(open(SRC, encoding="utf-8"))
+    data = _load()
     con = sqlite3.connect(DB)
     con.executescript(
         """
