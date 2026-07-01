@@ -265,6 +265,31 @@ main{max-width:none;margin:0;padding:0;}
 .cls-star.on{color:#f0a500;}
 .cls-body{font-size:15px;line-height:1.95;color:#2a2f3a;word-break:break-word;}
 .cls-meta{font-size:12.5px;color:var(--muted);margin-top:10px;}
+.cls-actions{display:flex;justify-content:flex-end;margin:-4px 0 12px;}
+.cls-actions .btn{padding:7px 16px;font-size:14px;}
+
+/* 古诗文详情 */
+#view-cdetail{max-width:760px;margin:0 auto;}
+.cd-head{display:flex;align-items:center;gap:10px;margin-bottom:5px;}
+.cd-title{font-size:22px;font-weight:700;margin:0;flex:1;min-width:0;line-height:1.3;}
+.cd-head .cls-badge{align-self:flex-start;margin-top:6px;}
+.cd-head .cls-star{font-size:24px;}
+.cd-meta{font-size:13px;color:var(--muted);margin-bottom:16px;}
+.cd-body{background:#fff;border:1px solid #eef1f5;border-radius:13px;padding:16px 18px;box-shadow:var(--shadow);}
+.cd-line{margin-bottom:11px;}
+.cd-line:last-child{margin-bottom:0;}
+.cd-py{font-size:12px;color:#3183c8;line-height:1.5;letter-spacing:.3px;margin-bottom:1px;}
+.cd-han{font-size:18px;line-height:1.65;color:#20242c;}
+.cd-sec{background:#fff;border:1px solid #eef1f5;border-radius:13px;padding:14px 16px;margin-top:14px;box-shadow:var(--shadow);}
+.cd-sec-t{font-size:13px;font-weight:700;color:var(--blue);margin-bottom:9px;padding-left:9px;border-left:3px solid var(--blue);}
+.cd-sec-b{font-size:15px;line-height:1.95;color:#333;word-break:break-word;}
+.cd-sec-b p{margin:.4em 0;} .cd-sec-b p:first-child{margin-top:0;} .cd-sec-b p:last-child{margin-bottom:0;}
+.cd-sec-b h1,.cd-sec-b h2,.cd-sec-b h3{font-size:1.05em;margin:.6em 0 .3em;}
+.cd-sec-b ul,.cd-sec-b ol{padding-left:1.3em;margin:.4em 0;}
+.cd-sec.cd-ai{border-color:#d7e6f6;background:#f8fbff;}
+.cd-ai-btn{width:100%;margin-top:16px;padding:13px;font-size:15px;}
+.cd-ai-regen{margin-top:12px;font-size:13px;padding:6px 14px;}
+.cd-tip{color:var(--muted);font-size:14px;margin:16px 2px 0;}
 
 /* ---- 阅读模式（md / txt 渲染） ---- */
 .reader-tools{display:inline-flex;gap:4px;flex:0 0 auto;}

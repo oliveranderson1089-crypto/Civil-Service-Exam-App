@@ -316,6 +316,7 @@
       <input id="cls-input" type="search" placeholder="搜诗文 / 作者 / 名句…" autocomplete="off">
     </div>
     <div class="cls-cats" id="cls-cats"></div>
+    <div class="cls-actions"><button class="btn" id="cls-export">导出 PDF</button></div>
     <div id="cls-list" class="cls-list"></div>
     <p id="cls-empty" class="empty hidden"></p>
     <nav id="cls-pager" class="pager hidden">
@@ -324,6 +325,27 @@
       <button id="cls-next" class="btn">下一页</button>
     </nav>
   </section>
+
+  <!-- ===== 古诗文：详情（拼音/译文/赏析 + AI讲解） ===== -->
+  <section id="view-cdetail" class="view hidden">
+    <div class="cd-wrap" id="cd-wrap"></div>
+  </section>
+
+  <!-- 古诗文导出 PDF 选项 -->
+  <div id="clsx-modal" class="modal hidden">
+    <div class="modal-box">
+      <h3>导出古诗文 PDF</h3>
+      <div class="opt"><span>范围</span><select id="clsx-scope"></select></div>
+      <div class="opt checks">
+        <label><input type="checkbox" id="clsx-py" checked> 拼音</label>
+        <label><input type="checkbox" id="clsx-tr" checked> 译文（若有）</label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="clsx-cancel">取消</button>
+        <button class="btn primary" id="clsx-go">下载 PDF</button>
+      </div>
+    </div>
+  </div>
 </main>
 
 <!-- 上传资料 -->

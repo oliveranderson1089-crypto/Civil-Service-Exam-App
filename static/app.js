@@ -57,8 +57,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -1525,16 +1525,96 @@ function renderClassics(items, total) {
   }
 }
 $('#cls-list').addEventListener('click', async e => {
-  const s = e.target.closest('[data-star]'); if (!s) return;
-  const id = s.dataset.star;
-  const on = !s.classList.contains('on');
-  try {
-    await api('/api/classics/' + id + '/star', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) });
-    s.classList.toggle('on', on); s.textContent = on ? '★' : '☆';
-    const it = ($('#cls-list')._items || []).find(x => x.id == id); if (it) it.starred = on;
-    if (clsState.star && !on) loadClassics();   // 收藏页里取消收藏即移除
-  } catch (err) { toast(err.message, true); }
+  const s = e.target.closest('[data-star]');
+  if (s) {
+    const id = s.dataset.star;
+    const on = !s.classList.contains('on');
+    try {
+      await api('/api/classics/' + id + '/star', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) });
+      s.classList.toggle('on', on); s.textContent = on ? '★' : '☆';
+      const it = ($('#cls-list')._items || []).find(x => x.id == id); if (it) it.starred = on;
+      if (clsState.star && !on) loadClassics();   // 收藏页里取消收藏即移除
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+  const card = e.target.closest('.cls-item'); if (!card) return;
+  openClassicDetail(+card.dataset.id);
 });
+
+/* ---- 古诗文详情：拼音 / 译文 / 赏析 / AI 讲解 ---- */
+let cdData = null;
+async function openClassicDetail(id) {
+  push({ view: 'cdetail', title: '古诗文' });
+  $('#cd-wrap').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/classics/' + id + '/detail');
+    cdData = d;
+    stack[stack.length - 1].title = d.title;
+    $('#top-title').textContent = d.title;
+    renderCDetail();
+  } catch (e) { $('#cd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function renderCDetail() {
+  const d = cdData;
+  const meta = [d.dynasty, d.author, d.sub].filter(Boolean).join(' · ');
+  const body = d.lines.map((ln, i) => {
+    if (!ln.trim()) return '';
+    return `<div class="cd-line"><div class="cd-py">${esc(d.pinyin[i] || '')}</div><div class="cd-han">${esc(ln)}</div></div>`;
+  }).join('');
+  let res = '';
+  if (d.translation) res += `<div class="cd-sec"><div class="cd-sec-t">译文</div><div class="cd-sec-b">${esc(d.translation).replace(/\n/g, '<br>')}</div></div>`;
+  if (d.appreciation) res += `<div class="cd-sec"><div class="cd-sec-t">赏析</div><div class="cd-sec-b">${esc(d.appreciation).replace(/\n/g, '<br>')}</div></div>`;
+  const aiBox = d.ai_explain
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">AI 讲解</div><div class="cd-sec-b">${mdToHtml(d.ai_explain)}</div>
+        <button class="btn cd-ai-regen" id="cd-ai-regen">重新生成</button></div>`
+    : `<button class="btn primary cd-ai-btn" id="cd-ai-btn">🤖 AI 讲解${d.translation ? '（不满意资源时用）' : ''}</button>`;
+  $('#cd-wrap').innerHTML = `
+    <div class="cd-head">
+      <span class="cls-badge" style="background:${CLS_BADGE[d.category] || '#888'}">${esc(d.category)}</span>
+      <h2 class="cd-title">${esc(d.title)}</h2>
+      <button class="cls-star ${d.starred ? 'on' : ''}" id="cd-star">${d.starred ? '★' : '☆'}</button>
+    </div>
+    <div class="cd-meta">${esc(meta)}</div>
+    <div class="cd-body">${body}</div>
+    ${res || (d.ai_explain ? '' : '<p class="cd-tip">这篇暂无现成译文，可点下面让 AI 讲解。</p>')}
+    ${aiBox}`;
+}
+$('#cd-wrap').addEventListener('click', async e => {
+  if (e.target.closest('#cd-star')) {
+    const on = !cdData.starred;
+    try { await api('/api/classics/' + cdData.id + '/star', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) }); cdData.starred = on; renderCDetail(); } catch (err) { toast(err.message, true); }
+    return;
+  }
+  const gen = e.target.closest('#cd-ai-btn') || e.target.closest('#cd-ai-regen');
+  if (gen) {
+    const regen = gen.id === 'cd-ai-regen';
+    gen.disabled = true; gen.textContent = 'AI 生成中…（约十几秒）';
+    try {
+      const d = await api('/api/classics/' + cdData.id + '/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: regen }) });
+      cdData.ai_explain = d.content; renderCDetail();
+    } catch (err) { toast(err.message, true); gen.disabled = false; gen.textContent = '🤖 AI 讲解'; }
+  }
+});
+
+/* ---- 导出 PDF ---- */
+$('#cls-export').onclick = () => {
+  const scopes = [['cur', '当前筛选']];
+  scopes.push(['star', '仅收藏']);
+  $('#clsx-scope').innerHTML = scopes.map(s => `<option value="${s[0]}">${s[1]}</option>`).join('');
+  $('#clsx-modal').classList.remove('hidden');
+};
+$('#clsx-cancel').onclick = () => $('#clsx-modal').classList.add('hidden');
+$('#clsx-modal').addEventListener('click', e => { if (e.target.id === 'clsx-modal') $('#clsx-modal').classList.add('hidden'); });
+$('#clsx-go').onclick = () => {
+  const scope = $('#clsx-scope').value;
+  const p = new URLSearchParams();
+  p.set('py', $('#clsx-py').checked ? 1 : 0);
+  p.set('tr', $('#clsx-tr').checked ? 1 : 0);
+  if (scope === 'star' || clsState.star) p.set('star', 1);
+  if (scope !== 'star') { if (clsState.cat) p.set('category', clsState.cat); if (clsState.q) p.set('q', clsState.q); }
+  $('#clsx-modal').classList.add('hidden'); toast('正在导出 PDF…');
+  window.location.href = '/api/classics/export?' + p.toString();
+};
 $('#cls-prev').onclick = () => { if (clsState.page > 1) { clsState.page--; loadClassics(); window.scrollTo({ top: 0 }); } };
 $('#cls-next').onclick = () => { if (clsState.page < clsState.pages) { clsState.page++; loadClassics(); window.scrollTo({ top: 0 }); } };
 

@@ -236,7 +236,8 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_kbn_book ON kb_nodes(user_id, notebook_id, parent_id);
         CREATE TABLE IF NOT EXISTS classics(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category TEXT, title TEXT, author TEXT, dynasty TEXT, content TEXT, sub TEXT
+            category TEXT, title TEXT, author TEXT, dynasty TEXT, content TEXT, sub TEXT,
+            translation TEXT, appreciation TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_classics_cat ON classics(category);
         CREATE TABLE IF NOT EXISTS classic_stars(
@@ -244,6 +245,12 @@ def init_db():
             classic_id INTEGER NOT NULL,
             created_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(user_id, classic_id)
+        );
+        -- AI 讲解全局缓存（同一首诗只算一次，省钱）
+        CREATE TABLE IF NOT EXISTS classic_ai(
+            classic_id INTEGER PRIMARY KEY,
+            content TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         """
     )
@@ -255,6 +262,11 @@ def init_db():
     for col in ("tags", "attachments", "todos"):
         if col not in _cols(con, "notes"):
             con.execute(f"ALTER TABLE notes ADD COLUMN {col} TEXT")
+    # classics 表补充字段：译文 / 赏析
+    if "classics" in [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]:
+        for col in ("translation", "appreciation"):
+            if col not in _cols(con, "classics"):
+                con.execute(f"ALTER TABLE classics ADD COLUMN {col} TEXT")
 
     # 迁移：把旧的单账号(config.json)迁入 users 表，并把无主收录归给它
     if con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
@@ -1538,6 +1550,143 @@ def classics_star(cid):
         db.execute("DELETE FROM classic_stars WHERE user_id=? AND classic_id=?", (uid(), cid))
     db.commit()
     return jsonify({"ok": True, "starred": starred})
+
+
+def _py_line(line):
+    """一行文字的拼音（仅汉字，标点忽略），空格分隔。"""
+    out = []
+    for seg in _pinyin(line or "", style=Style.TONE, errors="ignore"):
+        if seg and seg[0]:
+            out.append(seg[0])
+    return " ".join(out)
+
+
+@app.get("/api/classics/<int:cid>/detail")
+def classics_detail(cid):
+    r = get_db().execute("SELECT * FROM classics WHERE id=?", (cid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    lines = (r["content"] or "").split("\n")
+    ai = get_db().execute("SELECT content FROM classic_ai WHERE classic_id=?", (cid,)).fetchone()
+    starred = bool(get_db().execute(
+        "SELECT 1 FROM classic_stars WHERE user_id=? AND classic_id=?", (uid(), cid)).fetchone())
+    return jsonify({
+        "id": r["id"], "category": r["category"], "title": r["title"], "author": r["author"],
+        "dynasty": r["dynasty"], "sub": r["sub"] or "",
+        "lines": lines, "pinyin": [_py_line(l) for l in lines],
+        "translation": (r["translation"] or "") if "translation" in r.keys() else "",
+        "appreciation": (r["appreciation"] or "") if "appreciation" in r.keys() else "",
+        "ai_explain": ai["content"] if ai else "", "starred": starred,
+    })
+
+
+@app.post("/api/classics/<int:cid>/ai")
+def classics_ai(cid):
+    r = get_db().execute("SELECT * FROM classics WHERE id=?", (cid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    force = (request.get_json(silent=True) or {}).get("force")
+    cached = get_db().execute("SELECT content FROM classic_ai WHERE classic_id=?", (cid,)).fetchone()
+    if cached and not force:
+        return jsonify({"content": cached["content"], "cached": True})
+    prompt = (
+        "请为下面这篇《%s》（%s·%s）做讲解，面向备考公务员的考生，用简体中文，"
+        "分三部分并用小标题：\n【译文】通顺白话，完整翻译全文。\n"
+        "【注释】解释重点字词、典故（分条）。\n"
+        "【赏析·可用于申论】点出主旨，以及可引用的角度/场景。\n\n原文：\n%s"
+    ) % (r["title"], r["dynasty"], r["author"], r["content"])
+    reply, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是古诗文讲解助手，准确、简洁、条理清晰，用简体中文。"},
+         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=1300)
+    if err:
+        return err
+    db = get_db()
+    db.execute("INSERT OR REPLACE INTO classic_ai(classic_id,content) VALUES(?,?)", (cid, reply))
+    db.commit()
+    return jsonify({"content": reply, "cached": False})
+
+
+def _classics_query(category, q, star, ids):
+    db = get_db()
+    if ids:
+        qmarks = ",".join("?" * len(ids))
+        return db.execute("SELECT * FROM classics WHERE id IN (%s) ORDER BY id" % qmarks, ids).fetchall()
+    where, args, join = [], [], ""
+    if star:
+        join = "JOIN classic_stars s ON s.classic_id=c.id AND s.user_id=?"
+        args.append(uid())
+    if category:
+        where.append("c.category=?"); args.append(category)
+    if q:
+        where.append("(c.content LIKE ? OR c.title LIKE ? OR c.author LIKE ?)")
+        like = "%" + q + "%"; args += [like, like, like]
+    wsql = (" WHERE " + " AND ".join(where)) if where else ""
+    return db.execute("SELECT c.* FROM classics c %s%s ORDER BY c.id LIMIT 400" % (join, wsql), args).fetchall()
+
+
+def build_classics_pdf(rows, opts):
+    ensure_pdf_font()
+    f = PDF_FONT
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
+                            topMargin=16 * mm, bottomMargin=16 * mm, title="古诗文积累")
+    st_title = ParagraphStyle("t", fontName=f, fontSize=20, leading=26, alignment=1, spaceAfter=2)
+    st_sub = ParagraphStyle("s", fontName=f, fontSize=10, leading=14, alignment=1,
+                            textColor=colors.grey, spaceAfter=10)
+    st_h = ParagraphStyle("h", fontName=f, fontSize=15, leading=20, spaceBefore=2)
+    st_meta = ParagraphStyle("m", fontName=f, fontSize=10, leading=14, textColor=colors.grey)
+    st_line = ParagraphStyle("l", fontName=f, fontSize=13, leading=20)
+    st_py = ParagraphStyle("py", fontName=f, fontSize=9.5, leading=13,
+                           textColor=colors.HexColor("#1a6fb5"))
+    st_label = ParagraphStyle("lb", fontName=f, fontSize=10.5, leading=16, textColor=colors.HexColor("#444444"))
+    inc_py = opts.get("pinyin", True)
+    inc_tr = opts.get("translation", True)
+    story = [Paragraph("古诗文积累", st_title),
+             Paragraph(datetime.now().strftime("导出于 %Y-%m-%d %H:%M") + f"　共 {len(rows)} 篇", st_sub)]
+    for i, r in enumerate(rows, 1):
+        story.append(Paragraph(f"<b>{i}. {r['title']}</b>", st_h))
+        meta = " · ".join(x for x in [r["dynasty"], r["author"], r["category"]] if x)
+        story.append(Paragraph(meta, st_meta))
+        story.append(Spacer(1, 3))
+        for line in (r["content"] or "").split("\n"):
+            if not line.strip():
+                continue
+            if inc_py:
+                py = _py_line(line)
+                if py:
+                    story.append(Paragraph(py, st_py))
+            story.append(Paragraph(line, st_line))
+        tr = (r["translation"] or "") if "translation" in r.keys() else ""
+        if inc_tr and tr.strip():
+            story.append(Spacer(1, 3))
+            story.append(Paragraph('<font color="#888888">译文</font>　' + tr.replace("\n", "<br/>"), st_label))
+        story.append(Spacer(1, 5))
+        story.append(HRFlowable(width="100%", thickness=0.4, color=colors.HexColor("#dddddd")))
+        story.append(Spacer(1, 6))
+    doc.build(story)
+    buf.seek(0)
+    return buf
+
+
+@app.route("/api/classics/export", methods=["GET", "POST"])
+def classics_export():
+    if request.method == "GET":
+        a = request.args
+        category = a.get("category", ""); q = a.get("q", "")
+        star = _truthy(a.get("star"), False)
+        ids = [int(x) for x in a.get("ids", "").split(",") if x.strip().isdigit()]
+        opts = {"pinyin": _truthy(a.get("py")), "translation": _truthy(a.get("tr"))}
+    else:
+        d = request.get_json(silent=True) or {}
+        category = d.get("category", ""); q = d.get("q", "")
+        star = bool(d.get("star")); ids = d.get("ids") or []
+        opts = {"pinyin": d.get("pinyin", True), "translation": d.get("translation", True)}
+    rows = _classics_query(category, q, star, ids)
+    if not rows:
+        return jsonify({"error": "没有可导出的内容"}), 400
+    pdf = build_classics_pdf(rows, opts)
+    fname = "古诗文积累_%s.pdf" % datetime.now().strftime("%Y%m%d_%H%M")
+    return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=fname)
 
 
 # ================================================================ AI 助手

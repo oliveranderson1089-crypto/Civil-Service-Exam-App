@@ -18,16 +18,22 @@ def main():
         """
         CREATE TABLE IF NOT EXISTS classics(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category TEXT, title TEXT, author TEXT, dynasty TEXT, content TEXT, sub TEXT
+            category TEXT, title TEXT, author TEXT, dynasty TEXT, content TEXT, sub TEXT,
+            translation TEXT, appreciation TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_classics_cat ON classics(category);
         """
     )
+    for col in ("translation", "appreciation"):
+        cols = [r[1] for r in con.execute("PRAGMA table_info(classics)")]
+        if col not in cols:
+            con.execute("ALTER TABLE classics ADD COLUMN %s TEXT" % col)
     con.execute("DELETE FROM classics")
     con.executemany(
-        "INSERT INTO classics(category,title,author,dynasty,content,sub) VALUES(?,?,?,?,?,?)",
-        [(r["category"], r["title"], r["author"], r["dynasty"], r["content"], r.get("sub", ""))
-         for r in data])
+        "INSERT INTO classics(category,title,author,dynasty,content,sub,translation,appreciation) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        [(r["category"], r["title"], r["author"], r["dynasty"], r["content"], r.get("sub", ""),
+          r.get("translation", ""), r.get("appreciation", "")) for r in data])
     con.commit()
     n = con.execute("SELECT COUNT(*) FROM classics").fetchone()[0]
     cats = con.execute("SELECT category, COUNT(*) FROM classics GROUP BY category").fetchall()
