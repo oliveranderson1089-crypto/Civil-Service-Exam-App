@@ -1622,7 +1622,7 @@ def classics_ai(cid):
     ) % (r["title"], r["dynasty"], r["author"], r["content"])
     reply, err = _ai_call_or_error(
         [{"role": "system", "content": "你是古诗文讲解助手，准确、简洁、条理清晰，用简体中文。"},
-         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=1300)
+         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=1800)
     if err:
         return err
     db = get_db()

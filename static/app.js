@@ -1564,13 +1564,17 @@ function renderCDetail() {
     if (!ln.trim()) return '';
     return `<div class="cd-line"><div class="cd-py">${esc(d.pinyin[i] || '')}</div><div class="cd-han">${esc(ln)}</div></div>`;
   }).join('');
+  // AI 讲解一旦生成，即替换掉开源译文/赏析；未生成时才展示开源资源
+  const hasAI = !!d.ai_explain;
   let res = '';
-  if (d.translation) res += `<div class="cd-sec"><div class="cd-sec-t">译文</div><div class="cd-sec-b">${esc(d.translation).replace(/\n/g, '<br>')}</div></div>`;
-  if (d.appreciation) res += `<div class="cd-sec"><div class="cd-sec-t">赏析</div><div class="cd-sec-b">${esc(d.appreciation).replace(/\n/g, '<br>')}</div></div>`;
-  const aiBox = d.ai_explain
+  if (!hasAI) {
+    if (d.translation) res += `<div class="cd-sec"><div class="cd-sec-t">译文</div><div class="cd-sec-b">${esc(d.translation).replace(/\n/g, '<br>')}</div></div>`;
+    if (d.appreciation) res += `<div class="cd-sec"><div class="cd-sec-t">赏析</div><div class="cd-sec-b">${esc(d.appreciation).replace(/\n/g, '<br>')}</div></div>`;
+  }
+  const aiBox = hasAI
     ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">AI 讲解</div><div class="cd-sec-b">${mdToHtml(d.ai_explain)}</div>
         <button class="btn cd-ai-regen" id="cd-ai-regen">重新生成</button></div>`
-    : `<button class="btn primary cd-ai-btn" id="cd-ai-btn">🤖 AI 讲解${d.translation ? '（不满意资源时用）' : ''}</button>`;
+    : `<button class="btn primary cd-ai-btn" id="cd-ai-btn">🤖 AI 讲解${(d.translation || d.appreciation) ? '（生成后替换开源译文/赏析）' : ''}</button>`;
   $('#cd-wrap').innerHTML = `
     <div class="cd-head">
       <span class="cls-badge" style="background:${CLS_BADGE[d.category] || '#888'}">${esc(d.category)}</span>
@@ -1579,7 +1583,7 @@ function renderCDetail() {
     </div>
     <div class="cd-meta">${esc(meta)}</div>
     <div class="cd-body">${body}</div>
-    ${res || (d.ai_explain ? '' : '<p class="cd-tip">这篇暂无现成译文，可点下面让 AI 讲解。</p>')}
+    ${res || (hasAI ? '' : '<p class="cd-tip">这篇暂无现成译文，可点下面让 AI 讲解。</p>')}
     ${aiBox}`;
 }
 $('#cd-wrap').addEventListener('click', async e => {
