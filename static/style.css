@@ -1074,3 +1074,27 @@ img,svg,video{max-width:100%;}
 .rv-body{color:#5a6270;font-size:13.5px;}
 .rv-done{margin-top:10px;padding:8px 16px;color:var(--blue);border-color:#bcd4f2;}
 .rv-done:disabled{opacity:.8;}
+
+/* 常识积累 */
+#view-changshi,#view-csboard{max-width:760px;margin:0 auto;}
+.cs-tier-name{font-size:13px;font-weight:800;color:#6b7280;margin:18px 0 10px;
+  display:flex;align-items:center;gap:8px;}
+.cs-tier-name::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--blue);}
+.cs-tier-name:first-child{margin-top:0;}
+.cs-cards .hc-logo{color:#fff;font-size:22px;font-weight:800;display:grid;place-items:center;}
+.cs-overview{background:#fff;border:1px solid #eef1f5;border-radius:12px;
+  box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden;}
+.cs-ov-head{padding:12px 15px;font-weight:700;font-size:14px;color:#39414d;cursor:pointer;
+  display:flex;align-items:center;gap:6px;-webkit-tap-highlight-color:transparent;}
+.cs-ov-arrow{margin-left:auto;color:#9aa1ac;}
+.cs-ov-body{padding:0 15px 13px;font-size:13.5px;line-height:1.8;color:#5a6270;text-align:justify;}
+.cs-ov-body b{color:#1a2432;}
+.cs-kq{background:#f6f9fe;border:1px solid #dbe7f8;border-radius:11px;
+  padding:12px 14px;margin-bottom:13px;}
+.cs-kq-row{font-size:13px;line-height:1.75;color:#445062;margin-bottom:7px;text-align:justify;}
+.cs-kq-row:last-child{margin-bottom:0;}
+.cs-kq-row>b{display:inline-block;background:var(--blue);color:#fff;font-size:11px;
+  border-radius:5px;padding:1px 7px;margin-right:7px;font-weight:600;vertical-align:1px;}
+.cs-kq-map{border-top:1px dashed #cdd9ec;padding-top:8px;}
+.cs-kq-row .sc-body b,.cs-kq-row b:not(:first-child){color:#1a2432;background:none;font-size:inherit;padding:0;}
+.cs-date{margin-left:auto;font-size:11.5px;color:#9aa1ac;flex:0 0 auto;}

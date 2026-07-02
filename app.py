@@ -317,6 +317,15 @@ def init_db():
             UNIQUE(date, kind, content)
         );
         CREATE INDEX IF NOT EXISTS idx_sc_date ON sucai_items(date);
+        -- 常识积累（7板块×专题，条目由 AI 生成/每日更新/新法跟踪，全局共享）
+        CREATE TABLE IF NOT EXISTS changshi_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            board TEXT, topic TEXT, title TEXT, content TEXT,
+            date TEXT, source TEXT DEFAULT 'ai',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(board, topic, title)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cs_bt ON changshi_items(board, topic);
         -- 遗忘曲线复习进度（艾宾浩斯间隔：1/2/4/7/15/30/60 天）
         CREATE TABLE IF NOT EXISTS review_state(
             user_id INTEGER NOT NULL, kind TEXT NOT NULL, item_id INTEGER NOT NULL,
@@ -2414,6 +2423,52 @@ def sucai_list():
     return jsonify({"items": [dict(r) for r in rows], "counts": counts})
 
 
+# ---------------------------------------------------------------- 常识积累（7板块）
+_CS_META = {}
+try:
+    with open(os.path.join(BASE, "changshi_meta.json"), encoding="utf-8") as _f:
+        _CS_META = json.load(_f)
+except Exception:
+    _CS_META = {"tiers": [], "boards": {}}
+
+
+@app.get("/api/changshi/boards")
+def changshi_boards():
+    db = get_db()
+    counts = {}
+    for r in db.execute("SELECT board, COUNT(*) c FROM changshi_items GROUP BY board"):
+        counts[r["board"]] = r["c"]
+    tiers = []
+    for t in _CS_META.get("tiers", []):
+        tiers.append({"name": t["name"], "boards": [
+            {"name": b, "count": counts.get(b, 0),
+             "topics": len(_CS_META["boards"].get(b, {}).get("topics", []))}
+            for b in t["boards"]]})
+    return jsonify({"tiers": tiers})
+
+
+@app.get("/api/changshi/board")
+def changshi_board():
+    board = (request.args.get("board") or "").strip()
+    topic = (request.args.get("topic") or "").strip()
+    meta = _CS_META.get("boards", {}).get(board)
+    if not meta:
+        return jsonify({"error": "板块无效"}), 404
+    db = get_db()
+    tcounts = {r["topic"]: r["c"] for r in db.execute(
+        "SELECT topic, COUNT(*) c FROM changshi_items WHERE board=? GROUP BY topic", (board,))}
+    topics = [{"name": t["name"], "tezheng": t.get("tezheng", ""), "silu": t.get("silu", ""),
+               "map": t.get("map", ""), "count": tcounts.get(t["name"], 0)}
+              for t in meta.get("topics", [])]
+    if not topic and topics:
+        topic = topics[0]["name"]
+    rows = db.execute("SELECT id,title,content,date,source FROM changshi_items "
+                      "WHERE board=? AND topic=? ORDER BY date DESC, id DESC LIMIT 300",
+                      (board, topic)).fetchall()
+    return jsonify({"board": board, "overview": meta.get("overview", ""), "daily": bool(meta.get("daily")),
+                    "topics": topics, "topic": topic, "items": [dict(r) for r in rows]})
+
+
 # ---------------------------------------------------------------- 遗忘曲线复习（艾宾浩斯间隔）
 REVIEW_INTERVALS = [1, 2, 4, 7, 15, 30, 60]  # 达到第 n 阶后，下次间隔天数
 
@@ -2492,6 +2547,7 @@ def api_sync():
         ("SELECT COUNT(*), COALESCE(MAX(news_id),0) FROM news_stars WHERE user_id=?", (u,)),
         ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM sucai_items", ()),
         ("SELECT COUNT(*), COALESCE(MAX(rowid),0) FROM review_state WHERE user_id=?", (u,)),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM changshi_items", ()),
     ]:
         try:
             parts.append(",".join(str(x) for x in db.execute(sql, args).fetchone()))

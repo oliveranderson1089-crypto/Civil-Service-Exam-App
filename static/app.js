@@ -47,6 +47,9 @@ const IC = {
 };
 // 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
 const BOARD_FEATURES = {
+  '常识判断': [
+    { key: 'changshi', name: '常识积累', desc: '人文/科技/法律… 七大板块 每日更新', icon: 'bulb' },
+  ],
   '言语理解与表达': [
     { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
   ],
@@ -71,8 +74,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -206,6 +209,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'gaikuo') openGaikuo();
   else if (c.dataset.feat === 'sucai') openSucai('全部');
   else if (c.dataset.feat === 'lianjie') openSucai('衔接表达');
+  else if (c.dataset.feat === 'changshi') openChangshi();
 });
 $('#nav-back').onclick = back;
 
@@ -2249,6 +2253,69 @@ $('#rv-list').addEventListener('click', async e => {
   } catch (err) { toast(err.message, true); btn.disabled = false; }
 });
 
+/* ============= 常识积累（7板块 · 考情 + 高频考点） ============= */
+const CS_COLOR = { '人文常识': '#b23b2e', '科技常识': '#2b6fd6', '法律常识': '#8c2f24', '地理常识': '#0f766e', '经济常识': '#c2671f', '公文常识': '#7a5cc0', '管理常识': '#5a6b85' };
+let csBoard = '', csTopic = '';
+async function openChangshi() {
+  push({ view: 'changshi', title: '常识积累' });
+  $('#cs-tiers').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/changshi/boards');
+    $('#cs-tiers').innerHTML = d.tiers.map(t => `
+      <div class="cs-tier-name">${esc(t.name)}</div>
+      <div class="home-cards cs-cards">${t.boards.map(b => `
+        <div class="home-card" data-csb="${esc(b.name)}">
+          <div class="hc-logo" style="background:${CS_COLOR[b.name] || '#666'}">${esc(b.name[0])}</div>
+          <div class="hc-name">${esc(b.name)}</div>
+          <div class="hc-desc">${b.topics} 个专题 · ${b.count} 条考点</div>
+        </div>`).join('')}</div>`).join('');
+  } catch (e) { $('#cs-tiers').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#cs-tiers').addEventListener('click', e => {
+  const c = e.target.closest('[data-csb]'); if (c) openCsBoard(c.dataset.csb);
+});
+function openCsBoard(board) {
+  csBoard = board; csTopic = '';
+  push({ view: 'csboard', title: board });
+  loadCsBoard();
+}
+async function loadCsBoard() {
+  $('#cs-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/changshi/board?board=' + encodeURIComponent(csBoard) + '&topic=' + encodeURIComponent(csTopic));
+    csTopic = d.topic;
+    $('#top-title').textContent = csBoard;
+    $('#cs-ov-body').innerHTML = emKey(d.overview);
+    $('#cs-topics').innerHTML = d.topics.map(t =>
+      `<button class="chip ${t.name === csTopic ? 'active' : ''}" data-cst="${esc(t.name)}">${esc(t.name)}${t.count ? ' ' + t.count : ''}</button>`).join('');
+    const tm = d.topics.find(t => t.name === csTopic) || {};
+    $('#cs-kaoqing').innerHTML = `
+      <div class="cs-kq">
+        ${tm.tezheng ? `<div class="cs-kq-row"><b>题型特征</b>${emKey(tm.tezheng)}</div>` : ''}
+        ${tm.silu ? `<div class="cs-kq-row"><b>破题思路</b>${emKey(tm.silu)}</div>` : ''}
+        ${tm.map ? `<div class="cs-kq-row cs-kq-map"><b>要点导图</b>${emKey(tm.map)}</div>` : ''}
+      </div>`;
+    if (!d.items.length) {
+      $('#cs-list').innerHTML = '<p class="empty">' + (d.daily ? '考点生成中，每天还会自动新增～' : '考点生成中，稍后再来看看～') + '</p>';
+      return;
+    }
+    $('#cs-list').innerHTML = d.items.map(it => `
+      <div class="gk-card">
+        <div class="gk-head"><span class="poly-badge" style="background:${CS_COLOR[csBoard] || '#666'}">${esc(it.title)}</span>
+          <span class="cs-date">${esc(it.date || '')}${it.source === '新法跟踪' ? ' · 新法跟踪' : ''}</span></div>
+        <div class="sc-body">${emKey(it.content)}</div>
+      </div>`).join('');
+  } catch (e) { $('#cs-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#cs-topics').addEventListener('click', e => {
+  const c = e.target.closest('[data-cst]'); if (!c) return;
+  csTopic = c.dataset.cst; loadCsBoard();
+});
+$('#cs-ov-toggle').onclick = () => {
+  const b = $('#cs-ov-body'); b.classList.toggle('hidden');
+  $('#cs-ov-toggle').querySelector('.cs-ov-arrow').textContent = b.classList.contains('hidden') ? '▾' : '▴';
+};
+
 /* ================= 时政要文库（重要文件全文 + AI 政策解读） ================= */
 let polyData = null;
 const POLY_COLOR = { '重要讲话': '#c81e1e', '党代会报告': '#b23b2e', '中央全会文件': '#8c2f24', '政府工作报告': '#2b6fd6', '中央一号文件': '#0f766e', '地方政府工作报告': '#7a5cc0', '五年规划': '#c2671f' };
@@ -2415,6 +2482,7 @@ const SYNC_REFRESH = {
   partydict: () => loadPartyDict(),
   sucai: () => loadSucai(),
   review: () => loadReview(),
+  csboard: () => loadCsBoard(),
 };
 function _syncEditing() {
   // 正在编辑/弹窗打开时不打扰（块编辑器、小记编辑器有内容、任何弹层）
