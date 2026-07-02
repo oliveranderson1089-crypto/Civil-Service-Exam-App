@@ -42,6 +42,8 @@ const IC = {
   clip: _svg('<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>'),
   wrong: _svg('<path d="M9 11l-2 2 2 2"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="14 3 14 9 20 9"/><path d="M14.5 12.5l3 3M17.5 12.5l-3 3"/>'),
   bulb: _svg('<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.8 10.6c.5.5.8 1 .8 1.9v.5h6v-.5c0-.9.3-1.4.8-1.9A6 6 0 0 0 12 3z"/>'),
+  clock: _svg('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>'),
+  quote: _svg('<path d="M6 17h3l2-4V7H5v6h3z"/><path d="M14 17h3l2-4V7h-6v6h3z"/>'),
 };
 // 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
 const BOARD_FEATURES = {
@@ -57,6 +59,8 @@ const BOARD_FEATURES = {
     { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
   ],
   '议论文': [
+    { key: 'sucai', name: '素材积累', desc: '每日更新 · 人物/事例/理论论据', icon: 'clip' },
+    { key: 'lianjie', name: '衔接表达', desc: '过渡/转折/万能句式 不口语不重复', icon: 'quote' },
     { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
   ],
 };
@@ -67,8 +71,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -123,8 +127,19 @@ async function init() {
     <div class="home-card" data-go="notes"><div class="hc-logo">${IC.feather}</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 标签归类</div></div>
     <div class="home-card" data-go="kb"><div class="hc-logo">${IC.book}</div><div class="hc-name">知识库</div><div class="hc-desc">笔记本 · 文档 · 分组整理</div></div>
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
-    <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>`;
+    <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
+    <div class="home-card" data-go="review"><div class="hc-logo hc-rev">${IC.clock || IC.bulb}<span class="rev-badge hidden" id="rev-badge"></span></div><div class="hc-name">今日复习</div><div class="hc-desc" id="rev-desc">遗忘曲线 · 该复习的都在这</div></div>`;
   goHome();
+  refreshReviewBadge();
+}
+async function refreshReviewBadge() {
+  try {
+    const d = await api('/api/review/today');
+    const b = $('#rev-badge');
+    if (d.count > 0) { b.textContent = d.count > 99 ? '99+' : d.count; b.classList.remove('hidden'); }
+    else b.classList.add('hidden');
+    $('#rev-desc').textContent = d.count > 0 ? `今天有 ${d.count} 条要复习` : '今日复习完成，棒！';
+  } catch (_) {}
 }
 $('#home-cards').addEventListener('click', e => {
   const c = e.target.closest('[data-go]'); if (!c) return;
@@ -135,6 +150,7 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'wrongq') openWrongq();
   else if (g === 'materials') openMaterials();
   else if (g === 'idiom') openIdiom();
+  else if (g === 'review') openReview();
 });
 function openSection(key) {
   const sec = SECTIONS.find(s => s.key === key); if (!sec) return;
@@ -188,6 +204,8 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'policydoc') openPolicyDocs();
   else if (c.dataset.feat === 'news') openNews();
   else if (c.dataset.feat === 'gaikuo') openGaikuo();
+  else if (c.dataset.feat === 'sucai') openSucai('全部');
+  else if (c.dataset.feat === 'lianjie') openSucai('衔接表达');
 });
 $('#nav-back').onclick = back;
 
@@ -2057,21 +2075,29 @@ function renderDateStrip(el, dates, cur, attr) {
     `<button class="chip ${d.date === cur ? 'active' : ''}" data-${attr}="${esc(d.date)}">${fmtDay(d.date)} ${d.count}</button>`).join('');
 }
 async function loadNews() {
+  const starMode = newsBoard === '收藏';
   document.querySelectorAll('#news-boards .chip').forEach(x => x.classList.toggle('active', x.dataset.nb === newsBoard));
   $('#news-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
-    const d = await api('/api/news?board=' + encodeURIComponent(newsBoard) + '&date=' + encodeURIComponent(newsDate));
+    const d = await api(starMode ? '/api/news?star=1'
+      : '/api/news?board=' + encodeURIComponent(newsBoard) + '&date=' + encodeURIComponent(newsDate));
     if (d.counts) document.querySelectorAll('#news-boards .chip').forEach(x => {
+      if (x.dataset.nb === '收藏') { x.textContent = '⭐ 收藏' + (d.star_total ? ' ' + d.star_total : ''); return; }
       const n = d.counts[x.dataset.nb]; x.textContent = x.dataset.nb + (n ? ' ' + n : '');
     });
     newsDate = d.date || '';
     renderDateStrip($('#news-dates'), d.dates, newsDate, 'nd');
-    if (!d.items.length) { $('#news-list').innerHTML = '<p class="empty">这一天该板块没有时政，点上面换一天看看～</p>'; return; }
+    $('#news-dates').classList.toggle('hidden', starMode);
+    if (!d.items.length) {
+      $('#news-list').innerHTML = '<p class="empty">' + (starMode ? '还没有收藏，点新闻卡右上角的 ☆ 收藏。' : '这一天该板块没有时政，点上面换一天看看～') + '</p>';
+      return;
+    }
     $('#news-list').innerHTML = d.items.map(it => {
       const sum = (it.ai_summary || '').trim();
-      return `<div class="poly-card" data-news="${it.id}">
+      return `<div class="poly-card news-card" data-news="${it.id}">
+        <button class="news-star ${it.starred ? 'on' : ''}" data-nstar="${it.id}">${it.starred ? '★' : '☆'}</button>
         <div class="news-date">🗓 ${esc(it.pub_date || '')} · ${esc(it.source || '')}</div>
-        <div class="poly-t" style="font-size:16px">${esc(it.title)}</div>
+        <div class="poly-t" style="font-size:16px;padding-right:34px;">${esc(it.title)}</div>
         ${sum ? `<div class="news-sum" style="white-space:pre-wrap">${esc(sum)}</div>` : ''}
       </div>`;
     }).join('');
@@ -2086,7 +2112,19 @@ $('#news-dates').addEventListener('click', e => {
   const c = e.target.closest('[data-nd]'); if (!c) return;
   newsDate = c.dataset.nd; loadNews();
 });
-$('#news-list').addEventListener('click', e => {
+$('#news-list').addEventListener('click', async e => {
+  const st = e.target.closest('[data-nstar]');
+  if (st) {
+    e.stopPropagation();
+    const on = !st.classList.contains('on');
+    try {
+      await api('/api/news/' + st.dataset.nstar + '/star', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) });
+      st.classList.toggle('on', on); st.textContent = on ? '★' : '☆';
+      if (newsBoard === '收藏' && !on) loadNews();
+      else toast(on ? '已收藏' : '已取消收藏');
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
   const c = e.target.closest('[data-news]'); if (c) openNewsItem(+c.dataset.news);
 });
 async function openNewsItem(id) {
@@ -2135,9 +2173,85 @@ $('#gk-dates').addEventListener('click', e => {
   gkDate = c.dataset.gd; loadGaikuo();
 });
 
+/* ============= 议论文 · 素材积累 / 衔接表达（与微信 08:00 推送同源） ============= */
+let scKind = '全部';
+const SC_COLOR = { '人物事例': '#b23b2e', '具体事例': '#0f766e', '理论论据': '#7a5cc0', '衔接表达': '#c2671f' };
+async function loadSucai() {
+  document.querySelectorAll('#sc-kinds .chip').forEach(x => x.classList.toggle('active', x.dataset.sk === scKind));
+  $('#sc-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/sucai?kind=' + encodeURIComponent(scKind));
+    document.querySelectorAll('#sc-kinds .chip').forEach(x => {
+      if (x.dataset.sk === '全部') return;
+      const n = d.counts[x.dataset.sk]; x.textContent = x.dataset.sk + (n ? ' ' + n : '');
+    });
+    if (!d.items.length) { $('#sc-list').innerHTML = '<p class="empty">还没有素材，每天 08:00 自动生成～</p>'; return; }
+    let lastDate = '';
+    $('#sc-list').innerHTML = d.items.map(it => {
+      const head = it.date !== lastDate ? `<div class="sc-day">🗓 ${fmtDay(it.date)}</div>` : '';
+      lastDate = it.date;
+      const col = SC_COLOR[it.kind] || '#666';
+      return head + `<div class="gk-card">
+        <div class="gk-head"><span class="poly-badge" style="background:${col}">${esc(it.kind)}</span>
+          ${it.topic ? `<span class="gk-topic">${esc(it.topic)}</span>` : ''}</div>
+        <div class="sc-body">${emKey(it.content)}</div>
+      </div>`;
+    }).join('');
+  } catch (e) { $('#sc-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function openSucai(kind) {
+  scKind = kind || '全部';
+  push({ view: 'sucai', title: scKind === '衔接表达' ? '衔接表达' : '素材积累' });
+  loadSucai();
+}
+$('#sc-kinds').addEventListener('click', e => {
+  const c = e.target.closest('[data-sk]'); if (!c) return;
+  scKind = c.dataset.sk; loadSucai();
+});
+
+/* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
+const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文' };
+const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e' };
+async function loadReview() {
+  $('#rv-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/review/today');
+    if (!d.items.length) {
+      $('#rv-summary').classList.add('hidden');
+      $('#rv-list').innerHTML = '<p class="empty">🎉 今天没有要复习的内容。收录的成语/错题/收藏古诗文会按遗忘曲线自动出现在这里。</p>';
+      refreshReviewBadge();
+      return;
+    }
+    $('#rv-summary').classList.remove('hidden');
+    $('#rv-summary').textContent = `今天要复习 ${d.count} 条 · 复习完点「✓ 记住了」进入下一轮`;
+    $('#rv-list').innerHTML = d.items.map(it => `
+      <div class="gk-card rv-item" data-rvk="${it.kind}" data-rvid="${it.id}">
+        <div class="gk-head">
+          <span class="poly-badge" style="background:${RV_COLOR[it.kind] || '#666'}">${RV_KIND[it.kind] || it.kind}</span>
+          <span class="gk-topic">${esc(it.title)}</span>
+          <span class="rv-stage">第 ${it.stage + 1} 轮</span>
+        </div>
+        ${it.sub ? `<div class="rv-sub">${esc(it.sub)}</div>` : ''}
+        ${it.body ? `<div class="sc-body rv-body">${esc(it.body)}…</div>` : ''}
+        <button class="btn rv-done" data-rvdone="1">✓ 记住了</button>
+      </div>`).join('');
+  } catch (e) { $('#rv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function openReview() { push({ view: 'review', title: '今日复习' }); loadReview(); }
+$('#rv-list').addEventListener('click', async e => {
+  const btn = e.target.closest('[data-rvdone]'); if (!btn) return;
+  const card = btn.closest('.rv-item'); if (!card) return;
+  btn.disabled = true;
+  try {
+    const d = await api('/api/review/done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: card.dataset.rvk, id: +card.dataset.rvid }) });
+    card.style.opacity = '.35'; btn.textContent = `✓ ${d.interval} 天后再见`;
+    refreshReviewBadge();
+  } catch (err) { toast(err.message, true); btn.disabled = false; }
+});
+
 /* ================= 时政要文库（重要文件全文 + AI 政策解读） ================= */
 let polyData = null;
-const POLY_COLOR = { '党代会报告': '#b23b2e', '中央全会文件': '#8c2f24', '政府工作报告': '#2b6fd6', '中央一号文件': '#0f766e', '地方政府工作报告': '#7a5cc0', '五年规划': '#c2671f' };
+const POLY_COLOR = { '重要讲话': '#c81e1e', '党代会报告': '#b23b2e', '中央全会文件': '#8c2f24', '政府工作报告': '#2b6fd6', '中央一号文件': '#0f766e', '地方政府工作报告': '#7a5cc0', '五年规划': '#c2671f' };
 async function openPolicyDocs() {
   push({ view: 'policydoc', title: '时政要文库' });
   $('#poly-list').innerHTML = '<p class="empty">加载中…</p>';
@@ -2299,6 +2413,8 @@ const SYNC_REFRESH = {
   news: () => loadNews(),
   gaikuo: () => loadGaikuo(),
   partydict: () => loadPartyDict(),
+  sucai: () => loadSucai(),
+  review: () => loadReview(),
 };
 function _syncEditing() {
   // 正在编辑/弹窗打开时不打扰（块编辑器、小记编辑器有内容、任何弹层）

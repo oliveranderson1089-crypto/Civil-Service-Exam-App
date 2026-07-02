@@ -19,7 +19,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import (Flask, g, jsonify, redirect, request, session,
                    send_file, send_from_directory, Response)
@@ -301,6 +301,27 @@ def init_db():
             title TEXT, category TEXT, source_url TEXT,
             content TEXT, interpretation TEXT, ord INTEGER,
             created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 每日时政收藏（按人）
+        CREATE TABLE IF NOT EXISTS news_stars(
+            user_id INTEGER NOT NULL, news_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, news_id)
+        );
+        -- 每日写作素材（人物事例/具体事例/理论论据/衔接表达）：与微信 08:00 推送共用
+        -- 同一份生成结果（~/.openclaw/kaogong-cache/*.txt），App 端解析入库展示
+        CREATE TABLE IF NOT EXISTS sucai_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT, kind TEXT, topic TEXT, content TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(date, kind, content)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sc_date ON sucai_items(date);
+        -- 遗忘曲线复习进度（艾宾浩斯间隔：1/2/4/7/15/30/60 天）
+        CREATE TABLE IF NOT EXISTS review_state(
+            user_id INTEGER NOT NULL, kind TEXT NOT NULL, item_id INTEGER NOT NULL,
+            stage INTEGER DEFAULT 0, next_due TEXT, last_done TEXT,
+            PRIMARY KEY(user_id, kind, item_id)
         );
         -- 申论概括句积累：每日由当天时政素材生成（全局共享，按日期查看）
         CREATE TABLE IF NOT EXISTS gaikuo_items(
@@ -2255,7 +2276,19 @@ def partydict_list():
 def news_list():
     board = (request.args.get("board") or "").strip()
     date = (request.args.get("date") or "").strip()
+    star_only = request.args.get("star") == "1"
     db = get_db()
+    if star_only:
+        # 收藏夹：跨板块跨日期，按收藏时间倒序
+        rows = db.execute(
+            "SELECT n.id,n.title,n.source,n.pub_date,n.ai_summary,COALESCE(n.board,'国内') board,"
+            "length(n.content) chars, 1 starred FROM news_items n "
+            "JOIN news_stars s ON s.news_id=n.id AND s.user_id=? "
+            "ORDER BY s.created_at DESC LIMIT 200", (uid(),)).fetchall()
+        counts = {r[0]: r[1] for r in
+                  db.execute("SELECT COALESCE(board,'国内'), COUNT(*) FROM news_items GROUP BY COALESCE(board,'国内')")}
+        return jsonify({"items": [dict(r) for r in rows], "dates": [], "date": "", "star_total": len(rows),
+                        "counts": {b: counts.get(b, 0) for b in ("党内", "国内", "四川", "国际")}})
     where, args = [], []
     if board in ("党内", "国内", "四川", "国际"):
         where.append("board=?"); args.append(board)
@@ -2267,13 +2300,28 @@ def news_list():
         date = dates[0]["date"]  # 默认最新一天
     if date:
         where.append("pub_date=?"); args.append(date)
-    sql = ("SELECT id,title,source,pub_date,ai_summary,COALESCE(board,'国内') board,length(content) chars "
-           "FROM news_items %s ORDER BY id DESC LIMIT 60") % (("WHERE " + " AND ".join(where)) if where else "")
+    sql = ("SELECT n.id,n.title,n.source,n.pub_date,n.ai_summary,COALESCE(n.board,'国内') board,"
+           "length(n.content) chars,(s.news_id IS NOT NULL) starred "
+           "FROM news_items n LEFT JOIN news_stars s ON s.news_id=n.id AND s.user_id=%d %s "
+           "ORDER BY n.id DESC LIMIT 60") % (uid(), ("WHERE " + " AND ".join("n." + w for w in where)) if where else "")
     rows = db.execute(sql, args).fetchall()
     counts = {r[0]: r[1] for r in
               db.execute("SELECT COALESCE(board,'国内'), COUNT(*) FROM news_items GROUP BY COALESCE(board,'国内')")}
-    return jsonify({"items": [dict(r) for r in rows], "dates": dates, "date": date,
+    star_total = db.execute("SELECT COUNT(*) FROM news_stars WHERE user_id=?", (uid(),)).fetchone()[0]
+    return jsonify({"items": [dict(r) for r in rows], "dates": dates, "date": date, "star_total": star_total,
                     "counts": {b: counts.get(b, 0) for b in ("党内", "国内", "四川", "国际")}})
+
+
+@app.post("/api/news/<int:nid>/star")
+def news_star(nid):
+    on = bool((request.get_json(silent=True) or {}).get("starred"))
+    db = get_db()
+    if on:
+        db.execute("INSERT OR IGNORE INTO news_stars(user_id,news_id) VALUES(?,?)", (uid(), nid))
+    else:
+        db.execute("DELETE FROM news_stars WHERE user_id=? AND news_id=?", (uid(), nid))
+    db.commit()
+    return jsonify({"starred": on})
 
 
 @app.get("/api/news/<int:nid>")
@@ -2299,6 +2347,132 @@ def gaikuo_list():
     return jsonify({"dates": dates, "date": date, "items": [dict(r) for r in rows]})
 
 
+# ---------------------------------------------------------------- 每日写作素材（与微信 08:00 推送共用一份生成结果）
+KAOGONG_CACHE = os.environ.get("KAOGONG_CACHE", os.path.expanduser("~/.openclaw/kaogong-cache"))
+_SUCAI_KIND_MAP = {"人物事例": "人物事例", "事实论据": "人物事例", "具体事例": "具体事例",
+                   "理论论据": "理论论据", "衔接表达": "衔接表达"}
+
+
+def _sucai_parse(text):
+    """解析 kaogong-cache 每日素材文本 → [(kind, topic, content)]；兼容早期无小节头的格式。"""
+    items, kind = [], "人物事例"
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        m = re.match(r"^【(人物事例|事实论据|具体事例|理论论据|衔接表达)】$", line)
+        if m:
+            kind = _SUCAI_KIND_MAP[m.group(1)]
+            continue
+        m = re.match(r"^(?:\d+[.、．]\s*|[·•]\s*)(.+)$", line)
+        if not m:
+            continue
+        body = m.group(1).strip()
+        topic = ""
+        tm = re.match(r"^【(.+?)】\s*(.*)$", body)
+        if tm and tm.group(2).strip():
+            topic, body = tm.group(1), tm.group(2).strip()
+        if body:
+            items.append((kind, topic, body))
+    return items
+
+
+def _sucai_import(db):
+    """扫描缓存目录，把还没入库的日期解析进 sucai_items（幂等）。"""
+    try:
+        files = [f for f in os.listdir(KAOGONG_CACHE) if re.match(r"^\d{4}-\d{2}-\d{2}\.txt$", f)]
+    except Exception:
+        return
+    have = {r[0] for r in db.execute("SELECT DISTINCT date FROM sucai_items")}
+    changed = False
+    for f in sorted(files):
+        d = f[:10]
+        if d in have:
+            continue
+        try:
+            text = open(os.path.join(KAOGONG_CACHE, f), encoding="utf-8", errors="ignore").read()
+        except Exception:
+            continue
+        for kind, topic, content in _sucai_parse(text):
+            db.execute("INSERT OR IGNORE INTO sucai_items(date,kind,topic,content) VALUES(?,?,?,?)",
+                       (d, kind, topic, content))
+        changed = True
+    if changed:
+        db.commit()
+
+
+@app.get("/api/sucai")
+def sucai_list():
+    kind = (request.args.get("kind") or "").strip()
+    db = get_db()
+    _sucai_import(db)
+    counts = {r[0]: r[1] for r in db.execute("SELECT kind, COUNT(*) FROM sucai_items GROUP BY kind")}
+    where, args = "", []
+    if kind and kind != "全部":
+        where = "WHERE kind=?"; args = [kind]
+    rows = db.execute("SELECT * FROM sucai_items %s ORDER BY date DESC, id LIMIT 400" % where, args).fetchall()
+    return jsonify({"items": [dict(r) for r in rows], "counts": counts})
+
+
+# ---------------------------------------------------------------- 遗忘曲线复习（艾宾浩斯间隔）
+REVIEW_INTERVALS = [1, 2, 4, 7, 15, 30, 60]  # 达到第 n 阶后，下次间隔天数
+
+
+def _review_due(db, u, today):
+    states = {(r["kind"], r["item_id"]): r for r in
+              db.execute("SELECT * FROM review_state WHERE user_id=?", (u,)).fetchall()}
+    due = []
+
+    def check(kind, rid, created, payload):
+        st = states.get((kind, rid))
+        if st:
+            if (st["next_due"] or "") <= today:
+                due.append(dict(payload, kind=kind, id=rid, stage=st["stage"]))
+        elif (created or "")[:10] < today:  # 收录次日进入第一轮复习
+            due.append(dict(payload, kind=kind, id=rid, stage=0))
+
+    for r in db.execute("SELECT * FROM entries WHERE user_id=?", (u,)):
+        check("entry", r["id"], r["created_at"], {
+            "title": r["word"], "sub": r["category"] or "词语", "body": (r["explanation"] or "")[:90]})
+    for r in db.execute("SELECT * FROM wrong_questions WHERE user_id=?", (u,)):
+        check("wrongq", r["id"], r["created_at"], {
+            "title": (r["question"] or "（图片错题）")[:36], "sub": r["qtype"] or r["board"] or "错题",
+            "body": (r["points"] or "")[:90]})
+    for r in db.execute("SELECT s.classic_id cid, s.created_at ca, c.title t, c.author a, c.content ct "
+                        "FROM classic_stars s JOIN classics c ON c.id=s.classic_id WHERE s.user_id=?", (u,)):
+        check("classic", r["cid"], r["ca"], {
+            "title": r["t"], "sub": r["a"] or "古诗文", "body": (r["ct"] or "").split("\n")[0][:44]})
+    return due
+
+
+@app.get("/api/review/today")
+def review_today():
+    today = datetime.now().strftime("%Y-%m-%d")
+    due = _review_due(get_db(), uid(), today)
+    order = {"entry": 0, "wrongq": 1, "classic": 2}
+    due.sort(key=lambda x: (order.get(x["kind"], 9), x["id"]))
+    return jsonify({"today": today, "count": len(due), "items": due})
+
+
+@app.post("/api/review/done")
+def review_done():
+    data = request.get_json(silent=True) or {}
+    kind, rid = (data.get("kind") or "").strip(), int(data.get("id") or 0)
+    if kind not in ("entry", "wrongq", "classic") or not rid:
+        return jsonify({"error": "参数错误"}), 400
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    st = db.execute("SELECT stage FROM review_state WHERE user_id=? AND kind=? AND item_id=?",
+                    (uid(), kind, rid)).fetchone()
+    stage = (st["stage"] + 1) if st else 1
+    iv = REVIEW_INTERVALS[min(stage, len(REVIEW_INTERVALS) - 1)]
+    nd = (datetime.now() + timedelta(days=iv)).strftime("%Y-%m-%d")
+    db.execute("INSERT OR REPLACE INTO review_state(user_id,kind,item_id,stage,next_due,last_done) "
+               "VALUES(?,?,?,?,?,?)", (uid(), kind, rid, stage, nd, today))
+    db.commit()
+    return jsonify({"stage": stage, "next_due": nd, "interval": iv})
+
+
 # ---------------------------------------------------------------- 数据版本（浏览器/手机自动同步用）
 @app.get("/api/sync")
 def api_sync():
@@ -2315,6 +2489,9 @@ def api_sync():
         ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM board_points WHERE user_id=?", (u,)),
         ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM news_items", ()),
         ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM gaikuo_items", ()),
+        ("SELECT COUNT(*), COALESCE(MAX(news_id),0) FROM news_stars WHERE user_id=?", (u,)),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM sucai_items", ()),
+        ("SELECT COUNT(*), COALESCE(MAX(rowid),0) FROM review_state WHERE user_id=?", (u,)),
     ]:
         try:
             parts.append(",".join(str(x) for x in db.execute(sql, args).fetchone()))
