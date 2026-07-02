@@ -20,9 +20,8 @@
   </div>
   <div class="topbar-actions">
     <button id="home-btn" class="logout" title="回到首页">首页</button>
+    <button id="account-btn" class="logout" title="账户 / 个人信息">账户</button>
     <button id="admin-btn" class="logout hidden" title="管理后台">后台</button>
-    <button id="settings-btn" class="logout" title="账号设置">设置</button>
-    <button id="logout-btn" class="logout" title="退出登录">退出</button>
   </div>
 </header>
 
@@ -305,6 +304,8 @@
       <button class="chip" data-sf="note">小记</button>
       <button class="chip" data-sf="material">资料</button>
       <button class="chip" data-sf="doc">知识库</button>
+      <button class="chip" data-sf="wrongq">错题本</button>
+      <button class="chip" data-sf="boardkb">基础知识</button>
     </div>
     <div id="search-results" class="search-results"></div>
     <p id="search-empty" class="empty hidden"></p>
@@ -443,6 +444,17 @@
   <!-- ===== 时政要文库（全文 + AI 解读） ===== -->
   <section id="view-policydocd" class="view hidden">
     <div id="poly-wrap" class="poly-wrap"></div>
+  </section>
+
+  <!-- ===== 每日时政（列表） ===== -->
+  <section id="view-news" class="view hidden">
+    <div class="pd-intro">每天自动抓取时政要闻，AI 提炼摘要与考点 · 来源 12371.cn</div>
+    <div id="news-list" class="poly-list"></div>
+  </section>
+
+  <!-- ===== 每日时政（详情） ===== -->
+  <section id="view-newsd" class="view hidden">
+    <div id="news-wrap" class="poly-wrap"></div>
   </section>
 
   <!-- 古诗文导出 PDF 选项 -->

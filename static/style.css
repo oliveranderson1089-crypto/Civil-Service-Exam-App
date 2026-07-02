@@ -421,6 +421,13 @@ main{max-width:none;margin:0;padding:0;}
   font-family:"Songti SC","SimSun",serif;font-size:16.5px;line-height:1.95;
   color:#2a2f37;text-align:justify;box-shadow:var(--shadow);}
 .poly-reader p{margin:0 0 13px;text-indent:2em;}
+#view-news,#view-newsd{max-width:760px;margin:0 auto;}
+.news-date{font-size:12px;color:#9aa1ac;margin-bottom:6px;}
+.news-sum{font-size:13.5px;color:#5a6270;line-height:1.6;margin-top:7px;}
+.poly-reader .poly-h{font-weight:800;color:#1a2432;text-indent:0;margin:18px 0 9px;font-size:17px;}
+.poly-reader b{color:#b23b2e;font-weight:700;}
+.pd-body b{color:#1a2432;font-weight:700;}
+.pd-list.reciting .pd-body b{color:inherit;}
 
 /* ---- 阅读模式（md / txt 渲染） ---- */
 .reader-tools{display:inline-flex;gap:4px;flex:0 0 auto;}

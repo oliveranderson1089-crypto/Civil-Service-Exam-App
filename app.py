@@ -287,6 +287,13 @@ def init_db():
             word TEXT PRIMARY KEY, pinyin TEXT, category TEXT, explanation TEXT,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        -- 每日时政：爬虫抓取 + AI 处理（全局共享，定时后台跑，省 token）
+        CREATE TABLE IF NOT EXISTS news_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT, url TEXT UNIQUE, source TEXT, pub_date TEXT,
+            content TEXT, ai_summary TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         -- 时政要文库：重要文件全文 + AI 政策解读（全局共享）
         CREATE TABLE IF NOT EXISTS policy_docs(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -300,6 +307,10 @@ def init_db():
     if "user_id" not in _cols(con, "entries"):
         con.execute("ALTER TABLE entries ADD COLUMN user_id INTEGER")
     con.execute("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)")
+    # ci_ai 结构化：补 出处/例句 列
+    for col in ("derivation", "example"):
+        if col not in _cols(con, "ci_ai"):
+            con.execute("ALTER TABLE ci_ai ADD COLUMN %s TEXT" % col)
     # notes 表补充字段：标签 / 附件 / 待办清单
     for col in ("tags", "attachments", "todos"):
         if col not in _cols(con, "notes"):
@@ -461,8 +472,12 @@ def lookup(word):
         return info
     row = db.execute("SELECT * FROM ci_ai WHERE word=?", (word,)).fetchone()
     if row:
+        rk = row.keys()
         info.update(pinyin=row["pinyin"] or to_pinyin(word), category=row["category"] or info["category"],
-                    explanation=row["explanation"] or "", source="ai", found=True)
+                    explanation=row["explanation"] or "",
+                    derivation=(row["derivation"] if "derivation" in rk else "") or "",
+                    example=(row["example"] if "example" in rk else "") or "",
+                    source="ai", found=True)
         return info
     info["pinyin"] = to_pinyin(word)
     if len(word) == 4 and CJK_RE.match(word):
@@ -1535,6 +1550,27 @@ def api_search():
             results.append({"type": "doc", "id": r["id"], "notebook_id": r["notebook_id"],
                             "notebook": nb_names.get(r["notebook_id"], ""),
                             "title": title or "无标题文档", "snippet": _snippet(body, q)})
+    # 错题本
+    for r in db.execute("SELECT * FROM wrong_questions WHERE user_id=? ORDER BY id DESC", (uid(),)).fetchall():
+        hay = " ".join(str(r[k] or "") for k in ("question", "points", "method", "skill", "steps", "note", "qtype", "board"))
+        if ql in hay.lower():
+            qtext = (r["question"] or "").strip()
+            results.append({"type": "wrongq", "id": r["id"],
+                            "title": (qtext[:26] or "（图片错题）"),
+                            "board": r["board"] or r["qtype"] or "",
+                            "snippet": _snippet(qtext or r["points"] or "", q)})
+    # 基础知识点（各板块 · 全站共享）+ 我的补充
+    for r in db.execute("SELECT * FROM board_kb").fetchall():
+        body = r["content"] or ""
+        if ql in body.lower() or ql in (r["board"] or "").lower():
+            results.append({"type": "boardkb", "id": 0, "board": r["board"],
+                            "title": (r["board"] or "") + " · 基础知识点",
+                            "snippet": _snippet(body, q)})
+    for r in db.execute("SELECT * FROM board_points WHERE user_id=?", (uid(),)).fetchall():
+        if ql in (r["content"] or "").lower():
+            results.append({"type": "boardkb", "id": 0, "board": r["board"],
+                            "title": (r["board"] or "") + " · 我的补充",
+                            "snippet": _snippet(r["content"] or "", q)})
     return jsonify({"results": results, "q": q})
 
 
@@ -1767,6 +1803,46 @@ def ai_status():
     return jsonify({"configured": ai_configured(), "model": _ai_conf()["model"]})
 
 
+def _user_stats():
+    """汇总用户与本应用的数据，供 AI 助手回答“我收录了多少…/这个应用有多少…”。"""
+    db = get_db()
+    u = uid()
+    try:
+        # 全局库总量
+        cls = db.execute("SELECT category, COUNT(*) c FROM classics GROUP BY category ORDER BY c DESC").fetchall()
+        cls_lib = "、".join("%s%d" % (r["category"], r["c"]) for r in cls)
+        cls_total = sum(r["c"] for r in cls)
+        idi = db.execute("SELECT COUNT(*) FROM ref_idiom").fetchone()[0]
+        ci = db.execute("SELECT COUNT(*) FROM ref_ci").fetchone()[0]
+        pdict = db.execute("SELECT COUNT(*) FROM party_dict").fetchone()[0]
+        pdoc = db.execute("SELECT COUNT(*) FROM policy_docs").fetchone()[0]
+        # 用户个人
+        ent = db.execute("SELECT category, COUNT(*) c FROM entries WHERE user_id=? GROUP BY category", (u,)).fetchall()
+        ent_by = "、".join("%s%d" % (r["category"], r["c"]) for r in ent) or "无"
+        ent_total = sum(r["c"] for r in ent)
+        star_ent = db.execute("SELECT COUNT(*) FROM entries WHERE user_id=? AND starred=1", (u,)).fetchone()[0]
+        cstar = db.execute("SELECT c.category cat, COUNT(*) c FROM classic_stars s JOIN classics c ON c.id=s.classic_id "
+                           "WHERE s.user_id=? GROUP BY c.category", (u,)).fetchall()
+        cstar_by = "、".join("%s%d" % (r["cat"], r["c"]) for r in cstar) or "无"
+        cstar_total = sum(r["c"] for r in cstar)
+        wq = db.execute("SELECT COUNT(*) FROM wrong_questions WHERE user_id=?", (u,)).fetchone()[0]
+        notes = db.execute("SELECT COUNT(*) FROM notes WHERE user_id=?", (u,)).fetchone()[0]
+        docs = db.execute("SELECT COUNT(*) FROM kb_nodes WHERE user_id=? AND type='doc'", (u,)).fetchone()[0]
+        mats = db.execute("SELECT COUNT(*) FROM materials WHERE user_id=?", (u,)).fetchone()[0]
+    except Exception:
+        return ""
+    return "\n".join([
+        "【本应用的数据（用户若问“这个应用有多少…”，用这些数）】",
+        "· 古诗文库共 %d 首：%s。" % (cls_total, cls_lib),
+        "· 成语库 %d 条、词语库 %d 条；党建理论学习词典 %d 条；时政要文库 %d 篇。" % (idi, ci, pdict, pdoc),
+        "【当前用户个人的数据（用户若问“我收录/收藏了多少…”，用这些数）】",
+        "· 成语词语收录共 %d 条（%s），其中收藏 %d 条。" % (ent_total, ent_by, star_ent),
+        "· 收藏古诗文共 %d 首（%s）。" % (cstar_total, cstar_by),
+        "· 错题本 %d 道、小记 %d 条、知识库文档 %d 篇、资料库文件 %d 个。" % (wq, notes, docs, mats),
+        "注意：区分“本应用库总量”与“用户个人收录/收藏量”，按提问对象选用；数字以上面为准。",
+    ])
+
+
 @app.post("/api/ai/chat")
 def api_ai_chat():
     data = request.get_json(silent=True) or {}
@@ -1777,6 +1853,9 @@ def api_ai_chat():
             return jsonify({"error": "请输入内容"}), 400
         msgs = [{"role": "user", "content": prompt}]
     sys = data.get("system") or "你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。"
+    stats = _user_stats()
+    if stats:
+        sys = sys + "\n\n" + stats
     full = [{"role": "system", "content": sys}] + msgs
     reply, err = _ai_call_or_error(full, temperature=data.get("temperature", 0.6),
                                    max_tokens=data.get("max_tokens", 1600))
@@ -2134,6 +2213,25 @@ def partydict_list():
     return jsonify({"items": [dict(r) for r in rows]})
 
 
+# ---------------------------------------------------------------- 每日时政（爬虫 + AI，全局共享）
+@app.get("/api/news")
+def news_list():
+    rows = get_db().execute(
+        "SELECT id,title,source,pub_date,ai_summary,length(content) chars "
+        "FROM news_items ORDER BY id DESC LIMIT 100").fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/news/<int:nid>")
+def news_detail(nid):
+    r = get_db().execute("SELECT * FROM news_items WHERE id=?", (nid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    return jsonify({"id": r["id"], "title": r["title"], "url": r["url"], "source": r["source"],
+                    "pub_date": r["pub_date"], "content": r["content"] or "",
+                    "ai_summary": r["ai_summary"] or ""})
+
+
 # ---------------------------------------------------------------- 时政要文库（重要文件全文 + AI 政策解读）
 @app.get("/api/policydocs")
 def policydocs_list():
@@ -2220,28 +2318,38 @@ def api_lookup_ai():
     db = get_db()
     cached = db.execute("SELECT * FROM ci_ai WHERE word=?", (word,)).fetchone()
     if cached and not data.get("force"):
+        ck = cached.keys()
         return jsonify({"word": word, "pinyin": cached["pinyin"], "category": cached["category"],
-                        "explanation": cached["explanation"], "found": True, "cached": True})
+                        "explanation": cached["explanation"] or "",
+                        "derivation": (cached["derivation"] if "derivation" in ck else "") or "",
+                        "example": (cached["example"] if "example" in ck else "") or "",
+                        "found": True, "cached": True})
     cat = (data.get("category") or "").strip()
     if cat not in ("成语", "词语"):
         cat = "成语" if (len(word) == 4 and CJK_RE.match(word)) else "词语"
     prompt = (
-        "请解释%s「%s」，面向公务员考试考生，用简体中文：\n"
-        "1. 用一两句话给出准确、通顺的释义；\n"
-        "2. 若是成语，补充出处/典故，并给一个例句；\n"
-        "3. 简要点出常见使用语境或近义辨析（如有）。\n"
-        "直接给解释内容，不要把词语本身当标题重复。") % (cat, word)
+        "请解释%s「%s」，面向公务员考试考生，用简体中文，只输出 JSON（不要多余文字），字段：\n"
+        '{"explanation":"准确通顺的释义，一到三句，可含近义辨析",'
+        '"derivation":"出处/典故；没有则留空字符串",'
+        '"example":"一个规范例句；没有则留空字符串"}') % (cat, word)
     reply, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是权威的汉语词典与公考词汇助手，释义准确、简洁、条理清晰，用简体中文。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=700)
+        [{"role": "system", "content": "你是权威的汉语词典与公考词汇助手，释义准确、简洁，严格输出 JSON，用简体中文。"},
+         {"role": "user", "content": prompt}], temperature=0.3, max_tokens=700, json_mode=True)
     if err:
         return err
+    try:
+        obj = json.loads(reply)
+    except Exception:
+        obj = {"explanation": reply, "derivation": "", "example": ""}
+    exp = (obj.get("explanation") or "").strip()
+    der = (obj.get("derivation") or "").strip()
+    exa = (obj.get("example") or "").strip()
     py = to_pinyin(word)
-    db.execute("INSERT OR REPLACE INTO ci_ai(word,pinyin,category,explanation) VALUES(?,?,?,?)",
-               (word, py, cat, reply))
+    db.execute("INSERT OR REPLACE INTO ci_ai(word,pinyin,category,explanation,derivation,example) VALUES(?,?,?,?,?,?)",
+               (word, py, cat, exp, der, exa))
     db.commit()
-    return jsonify({"word": word, "pinyin": py, "category": cat, "explanation": reply,
-                    "found": True, "cached": False})
+    return jsonify({"word": word, "pinyin": py, "category": cat, "explanation": exp,
+                    "derivation": der, "example": exa, "found": True, "cached": False})
 
 
 @app.post("/api/entries")

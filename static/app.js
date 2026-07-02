@@ -49,6 +49,7 @@ const BOARD_FEATURES = {
     { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
   ],
   '政治理论': [
+    { key: 'news', name: '每日时政', desc: '每天自动更新 · AI 摘要+考点', icon: 'feather' },
     { key: 'policydoc', name: '时政要文库', desc: '二十大·十五五·两会报告 全文+AI解读', icon: 'book' },
     { key: 'partydict', name: '党的创新理论学习词典', desc: '两个确立·四个意识… 12371 术语速查', icon: 'book' },
   ],
@@ -63,8 +64,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -182,6 +183,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'boardkb') openBoardKb(curBoardFeat);
   else if (c.dataset.feat === 'partydict') openPartyDict();
   else if (c.dataset.feat === 'policydoc') openPolicyDocs();
+  else if (c.dataset.feat === 'news') openNews();
 });
 $('#nav-back').onclick = back;
 
@@ -832,8 +834,12 @@ async function doAiExplain() {
     });
     preview.explanation = d.explanation; preview.pinyin = d.pinyin;
     preview.category = d.category; preview.found = true; preview.source = 'ai';
+    preview.derivation = d.derivation || ''; preview.example = d.example || '';
     $('#pv-exp').value = d.explanation; $('#pv-py').textContent = d.pinyin;
     $('#pv-cat').textContent = d.category; $('#pv-catsel').value = d.category;
+    $('#pv-der').value = d.derivation || ''; $('#pv-exa').value = d.example || '';
+    $('#pv-der-wrap').classList.toggle('hidden', !d.derivation);
+    $('#pv-exa-wrap').classList.toggle('hidden', !d.example);
     $('#pv-found').textContent = '✓ AI 已解释并收录';
     btn.classList.add('hidden');
     toast('已解释并收录进词库，以后可直接查到');
@@ -1741,7 +1747,7 @@ function hl(text, q) {
   try { return t.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); }
   catch (_) { return t; }
 }
-const SR_TYPE = { note: '小记', material: '资料', doc: '知识库' };
+const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识' };
 function renderSearch() {
   const box = $('#search-results');
   if (!searchData.q) { box.innerHTML = ''; $('#search-empty').classList.add('hidden'); return; }
@@ -1757,7 +1763,8 @@ function renderSearch() {
   box.innerHTML = items.map((r, i) => {
     const meta = r.type === 'doc' ? ('知识库：' + esc(r.notebook || ''))
       : r.type === 'material' ? ((r.ext || '').replace('.', '').toUpperCase() + (r.board ? ' · ' + esc(r.board) : ''))
-        : (r.tags && r.tags.length ? r.tags.map(t => '#' + esc(t)).join(' ') : (r.board ? esc(r.board) : ''));
+        : (r.type === 'wrongq' || r.type === 'boardkb') ? (r.board ? esc(r.board) : '')
+          : (r.tags && r.tags.length ? r.tags.map(t => '#' + esc(t)).join(' ') : (r.board ? esc(r.board) : ''));
     return `<div class="sr-item" data-sri="${i}">
       <div class="sr-head"><span class="sr-type ${r.type}">${SR_TYPE[r.type]}</span>
         <span class="sr-title">${hl(r.title, searchData.q)}</span></div>
@@ -1782,6 +1789,10 @@ $('#search-results').addEventListener('click', async e => {
       openNotes();
       setTimeout(() => loadDraft(note), 120);
     } catch (e) { toast(e.message, true); }
+  } else if (r.type === 'wrongq') {
+    openWqDetail(r.id);
+  } else if (r.type === 'boardkb') {
+    openBoardKb(r.board);
   }
 });
 
@@ -1989,11 +2000,67 @@ $('#bkb-wrap').addEventListener('click', async e => {
 
 /* ================= 顶栏 ================= */
 $('#admin-btn').onclick = () => { location.href = '/admin'; };
-$('#logout-btn').onclick = async () => {
+async function doLogout() {
   if (!confirm('退出登录？')) return;
   try { await fetch('/logout', { method: 'POST' }); } catch (_) {}
   location.href = '/login';
-};
+}
+// 关键点加粗：书名号/引号/【】/「」/“X个XX”等高频要点；换行转 <br>
+function emKey(text) {
+  let t = esc(text || '');
+  t = t.replace(/《[^》]{1,40}》/g, m => '<b>' + m + '</b>')
+    .replace(/“[^”]{1,40}”/g, m => '<b>' + m + '</b>')
+    .replace(/「[^」]{1,40}」/g, m => '<b>' + m + '</b>')
+    .replace(/【[^】]{1,40}】/g, m => '<b>' + m + '</b>')
+    .replace(/[一二三四五六七八九十两]+个[一-龥]{2,8}/g, m => '<b>' + m + '</b>');
+  return t.replace(/\n/g, '<br>');
+}
+function isDocHeading(s) {
+  return /^(第[一二三四五六七八九十百]+[篇章节]|[一二三四五六七八九十]+、|（[一二三四五六七八九十]+）|\([一二三四五六七八九十]+\)|\d+[、.．])/.test(s);
+}
+
+/* ================= 每日时政（爬虫 + AI 摘要，全局共享） ================= */
+async function openNews() {
+  push({ view: 'news', title: '每日时政' });
+  $('#news-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/news');
+    if (!d.items.length) { $('#news-list').innerHTML = '<p class="empty">还没有抓取到时政，稍后再来看看。</p>'; return; }
+    $('#news-list').innerHTML = d.items.map(it => {
+      const oneLine = (it.ai_summary || '').replace(/^#+\s*一句话摘要\s*/m, '').split('\n').map(s => s.trim()).filter(Boolean)[0] || '';
+      return `<div class="poly-card" data-news="${it.id}">
+        <div class="news-date">🗓 ${esc(it.pub_date || '')} · ${esc(it.source || '')}</div>
+        <div class="poly-t" style="font-size:16px">${esc(it.title)}</div>
+        ${oneLine ? `<div class="news-sum">${esc(oneLine).replace(/^[（(]?摘要[:：]?\s*/, '')}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) { $('#news-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#news-list').addEventListener('click', e => {
+  const c = e.target.closest('[data-news]'); if (c) openNewsItem(+c.dataset.news);
+});
+async function openNewsItem(id) {
+  push({ view: 'newsd', title: '时政详情' });
+  $('#news-wrap').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/news/' + id);
+    stack[stack.length - 1].title = d.title; $('#top-title').textContent = d.title;
+    const body = (d.content || '').split('\n').filter(x => x.trim()).map(p => {
+      const s = p.trim();
+      return isDocHeading(s) ? `<p class="poly-h">${emKey(s)}</p>` : `<p>${emKey(s)}</p>`;
+    }).join('');
+    const ai = d.ai_summary
+      ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 摘要 · 考点</div><div class="cd-sec-b">${mdToHtml(d.ai_summary)}</div></div>` : '';
+    $('#news-wrap').innerHTML = `
+      <div class="poly-head"><h2>${esc(d.title)}</h2>
+        <div class="news-date">🗓 ${esc(d.pub_date || '')} · ${esc(d.source || '')}</div>
+        <a class="poly-src" href="${esc(d.url)}" target="_blank" rel="noopener">原文来源 ↗</a></div>
+      ${ai}
+      <div class="poly-readert">全文</div>
+      <div class="poly-reader">${body}</div>`;
+  } catch (e) { $('#news-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+
 /* ================= 时政要文库（重要文件全文 + AI 政策解读） ================= */
 let polyData = null;
 const POLY_COLOR = { '党代会报告': '#b23b2e', '中央全会文件': '#8c2f24', '政府工作报告': '#2b6fd6', '中央一号文件': '#0f766e', '地方政府工作报告': '#7a5cc0', '五年规划': '#c2671f' };
@@ -2031,7 +2098,10 @@ function renderPolicyDoc() {
         <button class="btn cd-ai-regen" id="poly-regen">重新生成</button></div>`
     : `<div class="poly-genbox"><p class="cd-tip" style="margin:0 0 10px">让 AI 提炼这份文件的核心要点、公考高频考点、可引用金句与答题运用。</p>
         <button class="btn primary" id="poly-gen" style="width:100%;padding:12px;">🤖 生成 AI 政策解读</button></div>`;
-  const body = (d.content || '').split('\n').filter(x => x.trim()).map(p => `<p>${esc(p)}</p>`).join('');
+  const body = (d.content || '').split('\n').filter(x => x.trim()).map(p => {
+    const s = p.trim();
+    return isDocHeading(s) ? `<p class="poly-h">${emKey(s)}</p>` : `<p>${emKey(s)}</p>`;
+  }).join('');
   $('#poly-wrap').innerHTML = `
     <div class="poly-head"><h2>${esc(d.title)}</h2>
       <a class="poly-src" href="${esc(d.source_url)}" target="_blank" rel="noopener">原文来源 ↗</a></div>
@@ -2070,7 +2140,7 @@ async function loadPartyDict() {
     if (!d.items.length) { $('#pd-list').innerHTML = '<p class="empty">没有匹配的词条，换个关键词试试。</p>'; return; }
     $('#pd-list').innerHTML = d.items.map(it =>
       `<div class="pd-item"><div class="pd-term">${esc(it.term)}<span class="pd-tag">${esc(it.cat)}</span></div>
-        <div class="pd-body">${esc(it.content).replace(/\n/g, '<br>')}</div></div>`).join('');
+        <div class="pd-body">${emKey(it.content)}</div></div>`).join('');
   } catch (e) { $('#pd-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
 $('#pd-cats').addEventListener('click', e => {
@@ -2111,7 +2181,7 @@ async function openAccount() {
   } catch (e) { toast(e.message, true); }
 }
 $('#brand-logo').onclick = openAccount;
-$('#settings-btn').onclick = openAccount;
+$('#account-btn').onclick = openAccount;
 $('#home-btn').onclick = goHome;
 
 $('#acct-email-save').onclick = async () => {
@@ -2142,7 +2212,18 @@ $('#acct-refresh').onclick = () => {
   location.reload();
 };
 $('#acct-server').onclick = () => { try { window.GongkaoNative && window.GongkaoNative.changeServer(); } catch (_) {} };
-$('#acct-logout').onclick = () => $('#logout-btn').click();
+$('#acct-logout').onclick = doLogout;
+
+// 外部链接一律新开/交给系统浏览器，避免在应用内跳走后无法返回
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[href]'); if (!a) return;
+  const href = a.getAttribute('href') || '';
+  if (/^https?:\/\//i.test(href) && href.indexOf(location.host) < 0) {
+    e.preventDefault();
+    try { if (window.GongkaoNative && window.GongkaoNative.openUrl) { window.GongkaoNative.openUrl(href); return; } } catch (_) {}
+    window.open(href, '_blank', 'noopener');
+  }
+});
 
 init();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
