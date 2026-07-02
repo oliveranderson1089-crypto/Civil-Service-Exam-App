@@ -24,8 +24,12 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.Toast;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 
 import java.io.File;
+import java.util.HashMap;
+import java.util.Locale;
 
 /**
  * 公考积累 安卓壳：一个全屏 WebView，加载电脑上运行的服务地址。
@@ -37,6 +41,8 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private SharedPreferences prefs;
+    private TextToSpeech tts;                 // 朗读引擎（供网页 speechSynthesis 桥接）
+    private volatile boolean ttsReady = false;
     private ValueCallback<Uri[]> filePathCallback;   // 网页文件选择回调
     private Uri cameraUri;                            // 拍照输出 URI
     private static final int FILE_REQ = 1001;
@@ -69,8 +75,21 @@ public class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
-        // 原生桥接：网页「设置」里可调用，改服务器地址 / 刷新
+        // 原生桥接：网页「设置」里可调用，改服务器地址 / 刷新 / 朗读(TTS)
         web.addJavascriptInterface(new Bridge(), "GongkaoNative");
+
+        // 朗读引擎：让网页里的 window.speechSynthesis（后端注入的 polyfill）真正发声
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                try { tts.setLanguage(Locale.CHINESE); } catch (Exception ignore) {}
+                ttsReady = true;
+            }
+        });
+        tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override public void onStart(String id) {}
+            @Override public void onDone(String id) { fireTtsEnd(id); }
+            @Override public void onError(String id) { fireTtsEnd(id); }
+        });
 
         web.setWebChromeClient(new WebChromeClient() {
             // 关键：让网页里的「选择文件」能唤起系统文件选择器
@@ -180,12 +199,37 @@ public class MainActivity extends Activity {
     }
 
     /** 暴露给网页的原生方法（网页「设置」里调用）。 */
+    /** TTS 播完/出错时回调网页顶层的 __ttsEvent（资料页在 iframe，回调走 window.top 中转）。 */
+    private void fireTtsEnd(String id) {
+        if (id == null) return;
+        runOnUiThread(() -> {
+            if (web != null) web.evaluateJavascript(
+                "window.__ttsEvent&&window.__ttsEvent('" + id + "','end')", null);
+        });
+    }
+
     public class Bridge {
         @android.webkit.JavascriptInterface
         public void changeServer() { runOnUiThread(() -> promptUrl(false)); }
 
         @android.webkit.JavascriptInterface
         public void reload() { runOnUiThread(() -> web.reload()); }
+
+        @android.webkit.JavascriptInterface
+        public void ttsSpeak(String id, String text, float rate) {
+            runOnUiThread(() -> {
+                if (!ttsReady || tts == null) { fireTtsEnd(id); return; }
+                try {
+                    tts.setSpeechRate(rate > 0 ? rate : 1f);
+                    HashMap<String, String> p = new HashMap<>();
+                    p.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id);
+                    tts.speak(text, TextToSpeech.QUEUE_FLUSH, p);
+                } catch (Exception e) { fireTtsEnd(id); }
+            });
+        }
+
+        @android.webkit.JavascriptInterface
+        public void ttsCancel() { runOnUiThread(() -> { if (tts != null) tts.stop(); }); }
     }
 
     private boolean acceptsImage(String[] types) {
@@ -265,5 +309,14 @@ public class MainActivity extends Activity {
                     moveTaskToBack(true);   // 不杀进程，避免回来要重新登录
                 }
             });
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (tts != null) {
+            try { tts.stop(); tts.shutdown(); } catch (Exception ignore) {}
+            tts = null;
+        }
+        super.onDestroy();
     }
 }

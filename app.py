@@ -6,6 +6,7 @@
 - 每个板块：资料库（上传图片/文档/网页，应用内直接查看，Office 自动转 PDF）
 - 多用户 + 密保问题找回密码 + 管理员后台
 """
+import hashlib
 import io
 import json
 import os
@@ -301,6 +302,13 @@ def init_db():
             content TEXT, interpretation TEXT, ord INTEGER,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        -- 申论概括句积累：每日由当天时政素材生成（全局共享，按日期查看）
+        CREATE TABLE IF NOT EXISTS gaikuo_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT, topic TEXT, raw TEXT, sentence TEXT, tip TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_gk_date ON gaikuo_items(date);
         """
     )
     # entries 老表可能缺 user_id 列（先补列，再建索引）
@@ -480,8 +488,9 @@ def lookup(word):
                     source="ai", found=True)
         return info
     info["pinyin"] = to_pinyin(word)
-    if len(word) == 4 and CJK_RE.match(word):
-        info["category"] = "成语"
+    # 词典都查不到时按长度猜类别：≥4 字多为「词组」（如 生理功能），2-3 字按词语
+    if len(word) >= 4 and CJK_RE.match(word):
+        info["category"] = "词组"
     return info
 
 
@@ -852,6 +861,33 @@ def material_text(mid):
     return jsonify({"text": t})
 
 
+# 朗读 TTS polyfill：APK 内（有 GongkaoNative 桥）用 Android TTS 实现 window.speechSynthesis，
+# 让上传 HTML 里现成的朗读代码无需改动即可发声；普通浏览器不注入、保留原生。
+# 注入到 <head> 最前，早于页面脚本执行；回调经 window.top 中转以支持 iframe 内的资料页。
+_TTS_POLYFILL = """<script>(function(){
+if(!(window.GongkaoNative&&window.GongkaoNative.ttsSpeak))return;
+var T=window.top||window;
+if(!T.__ttsReg){T.__ttsReg={};T.__ttsEvent=function(id,ev){var u=T.__ttsReg[id];if(!u)return;if(ev==='end'){delete T.__ttsReg[id];if(u.__sp)u.__sp.speaking=false;if(typeof u.onend==='function'){try{u.onend({});}catch(e){}}}};}
+function U(t){this.text=t||'';this.rate=1;this.pitch=1;this.volume=1;this.lang='zh-CN';this.onend=null;this.onstart=null;this.onerror=null;this.onboundary=null;this._id='u'+Date.now()+'_'+Math.floor(Math.random()*1e6);this.__sp=null;}
+var SP={speaking:false,pending:false,paused:false,
+speak:function(u){if(!u||!u.text)return;u.__sp=this;T.__ttsReg[u._id]=u;this.speaking=true;if(typeof u.onstart==='function'){try{u.onstart({});}catch(e){}}try{window.GongkaoNative.ttsSpeak(u._id,String(u.text),u.rate||1);}catch(e){this.speaking=false;if(typeof u.onend==='function'){try{u.onend({});}catch(_){}}}},
+cancel:function(){this.speaking=false;T.__ttsReg={};try{window.GongkaoNative.ttsCancel();}catch(e){}},
+pause:function(){},resume:function(){},getVoices:function(){return[];}};
+window.SpeechSynthesisUtterance=U;window.speechSynthesis=SP;
+})();</script>"""
+
+
+def _inject_tts(html_txt):
+    low = html_txt.lower()
+    for tag in ("<head", "<html"):
+        i = low.find(tag)
+        if i >= 0:
+            j = html_txt.find(">", i)
+            if j >= 0:
+                return html_txt[:j + 1] + _TTS_POLYFILL + html_txt[j + 1:]
+    return _TTS_POLYFILL + html_txt
+
+
 @app.get("/api/materials/<int:mid>/view")
 def material_view(mid):
     m = _get_material(mid)
@@ -868,7 +904,8 @@ def material_view(mid):
         return send_file(pdf, mimetype="application/pdf", as_attachment=False)
     if ext in (".html", ".htm"):
         with open(path, "rb") as fp:
-            return Response(fp.read(), mimetype="text/html; charset=utf-8")
+            html_txt = fp.read().decode("utf-8", "ignore")
+        return Response(_inject_tts(html_txt), mimetype="text/html; charset=utf-8")
     if ext in TEXT_EXT:
         with open(path, "rb") as fp:
             return Response(fp.read(), mimetype="text/plain; charset=utf-8")
@@ -2216,10 +2253,27 @@ def partydict_list():
 # ---------------------------------------------------------------- 每日时政（爬虫 + AI，全局共享）
 @app.get("/api/news")
 def news_list():
-    rows = get_db().execute(
-        "SELECT id,title,source,pub_date,ai_summary,length(content) chars "
-        "FROM news_items ORDER BY id DESC LIMIT 100").fetchall()
-    return jsonify({"items": [dict(r) for r in rows]})
+    board = (request.args.get("board") or "").strip()
+    date = (request.args.get("date") or "").strip()
+    db = get_db()
+    where, args = [], []
+    if board in ("党内", "国内", "四川", "国际"):
+        where.append("board=?"); args.append(board)
+    # 该板块下有哪些日期（号数导航用）
+    dsql = "SELECT pub_date, COUNT(*) c FROM news_items %s GROUP BY pub_date ORDER BY pub_date DESC LIMIT 30" % (
+        ("WHERE " + " AND ".join(where)) if where else "")
+    dates = [{"date": r["pub_date"], "count": r["c"]} for r in db.execute(dsql, args).fetchall()]
+    if not date and dates:
+        date = dates[0]["date"]  # 默认最新一天
+    if date:
+        where.append("pub_date=?"); args.append(date)
+    sql = ("SELECT id,title,source,pub_date,ai_summary,COALESCE(board,'国内') board,length(content) chars "
+           "FROM news_items %s ORDER BY id DESC LIMIT 60") % (("WHERE " + " AND ".join(where)) if where else "")
+    rows = db.execute(sql, args).fetchall()
+    counts = {r[0]: r[1] for r in
+              db.execute("SELECT COALESCE(board,'国内'), COUNT(*) FROM news_items GROUP BY COALESCE(board,'国内')")}
+    return jsonify({"items": [dict(r) for r in rows], "dates": dates, "date": date,
+                    "counts": {b: counts.get(b, 0) for b in ("党内", "国内", "四川", "国际")}})
 
 
 @app.get("/api/news/<int:nid>")
@@ -2230,6 +2284,48 @@ def news_detail(nid):
     return jsonify({"id": r["id"], "title": r["title"], "url": r["url"], "source": r["source"],
                     "pub_date": r["pub_date"], "content": r["content"] or "",
                     "ai_summary": r["ai_summary"] or ""})
+
+
+# ---------------------------------------------------------------- 申论概括句积累（每日生成，全局共享）
+@app.get("/api/gaikuo")
+def gaikuo_list():
+    date = (request.args.get("date") or "").strip()
+    db = get_db()
+    dates = [{"date": r["date"], "count": r["c"]} for r in db.execute(
+        "SELECT date, COUNT(*) c FROM gaikuo_items GROUP BY date ORDER BY date DESC LIMIT 60").fetchall()]
+    if not date and dates:
+        date = dates[0]["date"]
+    rows = db.execute("SELECT * FROM gaikuo_items WHERE date=? ORDER BY id", (date,)).fetchall() if date else []
+    return jsonify({"dates": dates, "date": date, "items": [dict(r) for r in rows]})
+
+
+# ---------------------------------------------------------------- 数据版本（浏览器/手机自动同步用）
+@app.get("/api/sync")
+def api_sync():
+    """返回当前用户可见数据的版本指纹；变化了说明有别的端改过，前端自动刷新当前视图。"""
+    db = get_db()
+    u = uid()
+    parts = []
+    for sql, args in [
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM notes WHERE user_id=?", (u,)),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM materials WHERE user_id=?", (u,)),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0), COALESCE(MAX(LENGTH(content)),0) FROM kb_nodes WHERE user_id=?", (u,)),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM entries WHERE user_id=?", (u,)),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM wrong_questions WHERE user_id=?", (u,)),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM board_points WHERE user_id=?", (u,)),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM news_items", ()),
+        ("SELECT COUNT(*), COALESCE(MAX(id),0) FROM gaikuo_items", ()),
+    ]:
+        try:
+            parts.append(",".join(str(x) for x in db.execute(sql, args).fetchone()))
+        except Exception:
+            parts.append("-")
+    # kb_nodes 编辑不改行数时靠内容长度粗判；notes 同理用 updated 时间戳（若无列则忽略）
+    try:
+        parts.append(str(db.execute("SELECT COALESCE(MAX(created_at),'') FROM notes WHERE user_id=?", (u,)).fetchone()[0]))
+    except Exception:
+        pass
+    return jsonify({"token": hashlib.md5("|".join(parts).encode()).hexdigest()})
 
 
 # ---------------------------------------------------------------- 时政要文库（重要文件全文 + AI 政策解读）
@@ -2325,8 +2421,8 @@ def api_lookup_ai():
                         "example": (cached["example"] if "example" in ck else "") or "",
                         "found": True, "cached": True})
     cat = (data.get("category") or "").strip()
-    if cat not in ("成语", "词语"):
-        cat = "成语" if (len(word) == 4 and CJK_RE.match(word)) else "词语"
+    if cat not in ("成语", "词语", "词组"):
+        cat = "词组" if (len(word) >= 4 and CJK_RE.match(word)) else "词语"
     prompt = (
         "请解释%s「%s」，面向公务员考试考生，用简体中文，只输出 JSON（不要多余文字），字段：\n"
         '{"explanation":"准确通顺的释义，一到三句，可含近义辨析",'
@@ -2347,6 +2443,11 @@ def api_lookup_ai():
     py = to_pinyin(word)
     db.execute("INSERT OR REPLACE INTO ci_ai(word,pinyin,category,explanation,derivation,example) VALUES(?,?,?,?,?,?)",
                (word, py, cat, exp, der, exa))
+    # 重新生成(force)时，同步刷新该用户已收录的同名词条（保留其笔记），
+    # 让「重新生成」对已收录条目真正生效，覆盖历史未规范化的旧解释。
+    if data.get("force"):
+        db.execute("UPDATE entries SET pinyin=?, category=?, explanation=?, derivation=?, example=? "
+                   "WHERE user_id=? AND word=?", (py, cat, exp, der, exa, uid(), word))
     db.commit()
     return jsonify({"word": word, "pinyin": py, "category": cat, "explanation": exp,
                     "derivation": der, "example": exa, "found": True, "cached": False})

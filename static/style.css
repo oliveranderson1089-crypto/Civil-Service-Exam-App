@@ -421,8 +421,26 @@ main{max-width:none;margin:0;padding:0;}
   font-family:"Songti SC","SimSun",serif;font-size:16.5px;line-height:1.95;
   color:#2a2f37;text-align:justify;box-shadow:var(--shadow);}
 .poly-reader p{margin:0 0 13px;text-indent:2em;}
-#view-news,#view-newsd{max-width:760px;margin:0 auto;}
+#view-news,#view-newsd,#view-gaikuo{max-width:760px;margin:0 auto;}
 .news-date{font-size:12px;color:#9aa1ac;margin-bottom:6px;}
+/* 日期条（每日时政 / 概括句 共用） */
+.date-strip{display:flex;gap:7px;overflow-x:auto;padding-bottom:6px;margin-bottom:10px;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.date-strip::-webkit-scrollbar{display:none;}
+.date-strip .chip{flex:0 0 auto;white-space:nowrap;}
+/* 概括句卡片 */
+.gk-card{background:#fff;border:1px solid #eef1f5;border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);}
+.gk-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;}
+.gk-no{width:22px;height:22px;border-radius:7px;background:var(--blue);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;flex:0 0 auto;}
+.gk-topic{font-weight:800;font-size:15px;color:#1f2733;}
+.gk-lab{display:inline-block;font-size:11px;font-weight:600;color:#8a92a0;background:#f1f4f8;
+  border-radius:5px;padding:1px 7px;margin-right:7px;vertical-align:1px;}
+.gk-lab-s{color:#fff;background:var(--blue);}
+.gk-raw{font-size:13.5px;color:#6b7280;line-height:1.7;margin-bottom:8px;}
+.gk-sent{font-size:15px;color:#16324f;line-height:1.75;background:#f2f7ff;border-left:3px solid var(--blue);
+  border-radius:0 9px 9px 0;padding:9px 12px;margin-bottom:8px;}
+.gk-tip{font-size:12.5px;color:#9aa1ac;line-height:1.6;}
 .news-sum{font-size:13.5px;color:#5a6270;line-height:1.6;margin-top:7px;}
 .poly-reader .poly-h{font-weight:800;color:#1a2432;text-indent:0;margin:18px 0 9px;font-size:17px;}
 .poly-reader b{color:#b23b2e;font-weight:700;}

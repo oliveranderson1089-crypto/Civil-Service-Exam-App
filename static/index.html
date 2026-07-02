@@ -183,7 +183,7 @@
         <div class="pv-field"><label>笔记</label><input id="pv-note" type="text" placeholder="辨析、易混词、真题出处…"></div>
         <div class="pv-actions">
           <label class="catpick">类别：
-            <select id="pv-catsel"><option>成语</option><option>词语</option></select>
+            <select id="pv-catsel"><option>成语</option><option>词语</option><option>词组</option></select>
           </label>
           <button id="save-btn" class="btn primary">收录</button>
         </div>
@@ -195,6 +195,7 @@
         <button class="chip active" data-f="all">全部</button>
         <button class="chip" data-f="成语">成语</button>
         <button class="chip" data-f="词语">词语</button>
+        <button class="chip" data-f="词组">词组</button>
         <button class="chip" data-f="star">收藏</button>
       </div>
       <input id="search" type="search" placeholder="搜索已收录…">
@@ -448,13 +449,27 @@
 
   <!-- ===== 每日时政（列表） ===== -->
   <section id="view-news" class="view hidden">
-    <div class="pd-intro">每天自动抓取时政要闻，AI 提炼摘要与考点 · 来源 12371.cn</div>
+    <div class="pd-intro">每天自动抓取国内 / 四川 / 国际时政，AI 提炼「事件·角度·素材」供申论积累</div>
+    <div id="news-boards" style="display:flex;gap:8px;margin:2px 0 10px;flex-wrap:wrap;">
+      <span class="chip active" data-nb="党内">党内</span>
+      <span class="chip" data-nb="国内">国内</span>
+      <span class="chip" data-nb="四川">四川</span>
+      <span class="chip" data-nb="国际">国际</span>
+    </div>
+    <div id="news-dates" class="date-strip"></div>
     <div id="news-list" class="poly-list"></div>
   </section>
 
   <!-- ===== 每日时政（详情） ===== -->
   <section id="view-newsd" class="view hidden">
     <div id="news-wrap" class="poly-wrap"></div>
+  </section>
+
+  <!-- ===== 申论 · 概括句积累 ===== -->
+  <section id="view-gaikuo" class="view hidden">
+    <div class="pd-intro">每天从当日时政素材提炼「材料表述 → 规范概括句」· 按日期积累背诵</div>
+    <div id="gk-dates" class="date-strip"></div>
+    <div id="gk-list" class="poly-list"></div>
   </section>
 
   <!-- 古诗文导出 PDF 选项 -->
@@ -484,6 +499,18 @@
     <div class="modal-actions">
       <button class="btn" id="up-cancel">取消</button>
       <button class="btn primary" id="up-go">上传</button>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑笔记 -->
+<div id="note-modal" class="modal hidden">
+  <div class="modal-box">
+    <h3 id="note-modal-title">笔记</h3>
+    <textarea id="note-modal-input" rows="5" placeholder="辨析、易混词、真题出处、记忆点…"></textarea>
+    <div class="modal-actions">
+      <button class="btn" id="note-modal-cancel">取消</button>
+      <button class="btn primary" id="note-modal-save">保存</button>
     </div>
   </div>
 </div>

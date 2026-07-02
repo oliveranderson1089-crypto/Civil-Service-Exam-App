@@ -53,6 +53,9 @@ const BOARD_FEATURES = {
     { key: 'policydoc', name: '时政要文库', desc: '二十大·十五五·两会报告 全文+AI解读', icon: 'book' },
     { key: 'partydict', name: '党的创新理论学习词典', desc: '两个确立·四个意识… 12371 术语速查', icon: 'book' },
   ],
+  '应用文': [
+    { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
+  ],
   '议论文': [
     { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
   ],
@@ -64,8 +67,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -184,6 +187,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'partydict') openPartyDict();
   else if (c.dataset.feat === 'policydoc') openPolicyDocs();
   else if (c.dataset.feat === 'news') openNews();
+  else if (c.dataset.feat === 'gaikuo') openGaikuo();
 });
 $('#nav-back').onclick = back;
 
@@ -819,18 +823,21 @@ async function doLookup() {
     $('#pv-note').value = ''; $('#pv-catsel').value = d.category;
     $('#pv-der-wrap').classList.toggle('hidden', !d.derivation && d.source !== 'idiom');
     $('#pv-exa-wrap').classList.toggle('hidden', !d.example && d.source !== 'idiom');
-    $('#pv-ai').classList.toggle('hidden', d.found);  // 仅未收录时显示 AI 解释
+    // AI 生成按钮始终显示：未解释过=「AI 解释并收录」，已解释过=「AI 重新生成」，均可反复点
+    $('#pv-ai').classList.remove('hidden');
+    $('#pv-ai').textContent = d.found ? '🤖 AI 重新生成' : '🤖 AI 解释并收录';
     $('#preview').classList.remove('hidden'); $('#add-hint').textContent = '';
   } catch (e) { $('#add-hint').textContent = ''; toast(e.message, true); }
 }
 async function doAiExplain() {
   if (!preview || !preview.word) return;
   const btn = $('#pv-ai');
-  btn.disabled = true; btn.textContent = '🤖 AI 解释中…';
+  const regen = !!preview.found;  // 已解释过 → 本次是「重新生成」
+  btn.disabled = true; btn.textContent = regen ? '🤖 重新生成中…' : '🤖 AI 解释中…';
   try {
     const d = await api('/api/lookup/ai', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ word: preview.word, category: $('#pv-catsel').value }),
+      body: JSON.stringify({ word: preview.word, category: $('#pv-catsel').value, force: true }),
     });
     preview.explanation = d.explanation; preview.pinyin = d.pinyin;
     preview.category = d.category; preview.found = true; preview.source = 'ai';
@@ -841,10 +848,11 @@ async function doAiExplain() {
     $('#pv-der-wrap').classList.toggle('hidden', !d.derivation);
     $('#pv-exa-wrap').classList.toggle('hidden', !d.example);
     $('#pv-found').textContent = '✓ AI 已解释并收录';
-    btn.classList.add('hidden');
-    toast('已解释并收录进词库，以后可直接查到');
+    // 不隐藏按钮：不满意可反复重新生成
+    toast(regen ? '已重新生成，不满意可再次点击' : '已解释并收录进词库，以后可直接查到');
+    if (regen) loadEntries();  // 已收录的同名词条已被后端同步刷新，重载列表
   } catch (e) { toast(e.message, true); }
-  finally { btn.disabled = false; btn.textContent = '🤖 AI 解释并收录'; }
+  finally { btn.disabled = false; btn.textContent = (preview && preview.found) ? '🤖 AI 重新生成' : '🤖 AI 解释并收录'; }
 }
 async function doSave() {
   if (!preview) return;
@@ -863,7 +871,7 @@ async function doSave() {
 }
 async function loadEntries() {
   let url = '/api/entries?page=' + state.page + '&page_size=' + PAGE_SIZE + '&';
-  if (state.filter === '成语' || state.filter === '词语') url += 'category=' + encodeURIComponent(state.filter) + '&';
+  if (state.filter === '成语' || state.filter === '词语' || state.filter === '词组') url += 'category=' + encodeURIComponent(state.filter) + '&';
   if (state.filter === 'star') url += 'starred=1&';
   if (state.q) url += 'q=' + encodeURIComponent(state.q);
   try {
@@ -904,6 +912,24 @@ function renderPager(total) {
   $('#pg-prev').disabled = state.page <= 1; $('#pg-next').disabled = state.page >= state.pages;
 }
 function goPage(p) { if (p < 1 || p > state.pages || p === state.page) return; state.page = p; loadEntries(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+// 应用内笔记编辑弹窗（替代原生 prompt），返回 Promise<string|null>（取消为 null）
+function editNote(title, value) {
+  return new Promise(resolve => {
+    const modal = $('#note-modal'), input = $('#note-modal-input');
+    $('#note-modal-title').textContent = title;
+    input.value = value || '';
+    modal.classList.remove('hidden');
+    setTimeout(() => { input.focus(); }, 50);
+    const done = (val) => {
+      modal.classList.add('hidden');
+      $('#note-modal-save').onclick = $('#note-modal-cancel').onclick = modal.onclick = null;
+      resolve(val);
+    };
+    $('#note-modal-save').onclick = () => done(input.value);
+    $('#note-modal-cancel').onclick = () => done(null);
+    modal.onclick = (e) => { if (e.target === modal) done(null); };  // 点遮罩取消
+  });
+}
 $('#list').addEventListener('click', async e => {
   const btn = e.target.closest('[data-act]'); if (!btn) return;
   const id = btn.closest('.item').dataset.id;
@@ -914,8 +940,9 @@ $('#list').addEventListener('click', async e => {
     if (!confirm('删除「' + it.word + '」？')) return;
     try { await api('/api/entries/' + id, { method: 'DELETE' }); toast('已删除'); loadEntries(); } catch (err) { toast(err.message, true); }
   } else if (btn.dataset.act === 'edit') {
-    const note = prompt('笔记：', it.note || ''); if (note === null) return;
-    try { await api('/api/entries/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) }); loadEntries(); } catch (err) { toast(err.message, true); }
+    const note = await editNote('「' + it.word + '」的笔记', it.note || '');
+    if (note === null) return;
+    try { await api('/api/entries/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) }); toast('已保存'); loadEntries(); } catch (err) { toast(err.message, true); }
   }
 });
 $('#lookup-btn').onclick = doLookup;
@@ -2019,23 +2046,46 @@ function isDocHeading(s) {
   return /^(第[一二三四五六七八九十百]+[篇章节]|[一二三四五六七八九十]+、|（[一二三四五六七八九十]+）|\([一二三四五六七八九十]+\)|\d+[、.．])/.test(s);
 }
 
-/* ================= 每日时政（爬虫 + AI 摘要，全局共享） ================= */
-async function openNews() {
-  push({ view: 'news', title: '每日时政' });
+/* ============= 每日时政（爬虫 + AI 三行式；国内/四川/国际 三板块，全局共享） ============= */
+let newsBoard = '党内', newsDate = '';
+function fmtDay(iso) {
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(iso || '');
+  return m ? (+m[1]) + '月' + (+m[2]) + '日' : (iso || '');
+}
+function renderDateStrip(el, dates, cur, attr) {
+  el.innerHTML = (dates || []).map(d =>
+    `<button class="chip ${d.date === cur ? 'active' : ''}" data-${attr}="${esc(d.date)}">${fmtDay(d.date)} ${d.count}</button>`).join('');
+}
+async function loadNews() {
+  document.querySelectorAll('#news-boards .chip').forEach(x => x.classList.toggle('active', x.dataset.nb === newsBoard));
   $('#news-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
-    const d = await api('/api/news');
-    if (!d.items.length) { $('#news-list').innerHTML = '<p class="empty">还没有抓取到时政，稍后再来看看。</p>'; return; }
+    const d = await api('/api/news?board=' + encodeURIComponent(newsBoard) + '&date=' + encodeURIComponent(newsDate));
+    if (d.counts) document.querySelectorAll('#news-boards .chip').forEach(x => {
+      const n = d.counts[x.dataset.nb]; x.textContent = x.dataset.nb + (n ? ' ' + n : '');
+    });
+    newsDate = d.date || '';
+    renderDateStrip($('#news-dates'), d.dates, newsDate, 'nd');
+    if (!d.items.length) { $('#news-list').innerHTML = '<p class="empty">这一天该板块没有时政，点上面换一天看看～</p>'; return; }
     $('#news-list').innerHTML = d.items.map(it => {
-      const oneLine = (it.ai_summary || '').replace(/^#+\s*一句话摘要\s*/m, '').split('\n').map(s => s.trim()).filter(Boolean)[0] || '';
+      const sum = (it.ai_summary || '').trim();
       return `<div class="poly-card" data-news="${it.id}">
         <div class="news-date">🗓 ${esc(it.pub_date || '')} · ${esc(it.source || '')}</div>
         <div class="poly-t" style="font-size:16px">${esc(it.title)}</div>
-        ${oneLine ? `<div class="news-sum">${esc(oneLine).replace(/^[（(]?摘要[:：]?\s*/, '')}</div>` : ''}
+        ${sum ? `<div class="news-sum" style="white-space:pre-wrap">${esc(sum)}</div>` : ''}
       </div>`;
     }).join('');
   } catch (e) { $('#news-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
+function openNews() { newsDate = ''; push({ view: 'news', title: '每日时政' }); loadNews(); }
+$('#news-boards').addEventListener('click', e => {
+  const c = e.target.closest('[data-nb]'); if (!c) return;
+  newsBoard = c.dataset.nb; newsDate = ''; loadNews();
+});
+$('#news-dates').addEventListener('click', e => {
+  const c = e.target.closest('[data-nd]'); if (!c) return;
+  newsDate = c.dataset.nd; loadNews();
+});
 $('#news-list').addEventListener('click', e => {
   const c = e.target.closest('[data-news]'); if (c) openNewsItem(+c.dataset.news);
 });
@@ -2060,6 +2110,30 @@ async function openNewsItem(id) {
       <div class="poly-reader">${body}</div>`;
   } catch (e) { $('#news-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
+
+/* ============= 申论 · 概括句积累（每日由时政生成，按日期查看） ============= */
+let gkDate = '';
+async function loadGaikuo() {
+  $('#gk-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/gaikuo?date=' + encodeURIComponent(gkDate));
+    gkDate = d.date || '';
+    renderDateStrip($('#gk-dates'), d.dates, gkDate, 'gd');
+    if (!d.items.length) { $('#gk-list').innerHTML = '<p class="empty">还没有概括句，每天早上会自动从当日时政生成～</p>'; return; }
+    $('#gk-list').innerHTML = d.items.map((it, i) => `
+      <div class="gk-card">
+        <div class="gk-head"><span class="gk-no">${i + 1}</span><span class="gk-topic">${esc(it.topic)}</span></div>
+        ${it.raw ? `<div class="gk-raw"><span class="gk-lab">材料</span>${esc(it.raw)}</div>` : ''}
+        <div class="gk-sent"><span class="gk-lab gk-lab-s">概括</span><b>${esc(it.sentence)}</b></div>
+        ${it.tip ? `<div class="gk-tip">💡 ${esc(it.tip)}</div>` : ''}
+      </div>`).join('');
+  } catch (e) { $('#gk-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function openGaikuo() { gkDate = ''; push({ view: 'gaikuo', title: '概括句积累' }); loadGaikuo(); }
+$('#gk-dates').addEventListener('click', e => {
+  const c = e.target.closest('[data-gd]'); if (!c) return;
+  gkDate = c.dataset.gd; loadGaikuo();
+});
 
 /* ================= 时政要文库（重要文件全文 + AI 政策解读） ================= */
 let polyData = null;
@@ -2213,6 +2287,45 @@ $('#acct-refresh').onclick = () => {
 };
 $('#acct-server').onclick = () => { try { window.GongkaoNative && window.GongkaoNative.changeServer(); } catch (_) {} };
 $('#acct-logout').onclick = doLogout;
+
+/* ============= 多端自动同步：数据变了自动刷新当前视图，无需手动更新 ============= */
+let _syncToken = null, _syncBusy = false;
+const SYNC_REFRESH = {
+  notes: () => { loadFeed(); loadFeedTags(); },
+  materials: () => loadMaterials(),
+  idiom: () => loadEntries(),
+  kb: () => loadNotebooks(),
+  wrongq: () => loadWrongq(),
+  news: () => loadNews(),
+  gaikuo: () => loadGaikuo(),
+  partydict: () => loadPartyDict(),
+};
+function _syncEditing() {
+  // 正在编辑/弹窗打开时不打扰（块编辑器、小记编辑器有内容、任何弹层）
+  const v = stack.length ? stack[stack.length - 1].view : '';
+  if (v === 'doc' || v === 'wqadd') return true;
+  const cp = $('#cp-content'); if (cp && cp.value.trim()) return true;
+  if (document.querySelector('.modal:not(.hidden)') || document.querySelector('.note-sheet:not(.hidden)')) return true;
+  return false;
+}
+async function checkSync() {
+  if (_syncBusy || document.hidden || !ME) return;
+  _syncBusy = true;
+  try {
+    const d = await api('/api/sync');
+    if (_syncToken === null) { _syncToken = d.token; return; }
+    if (d.token !== _syncToken) {
+      _syncToken = d.token;
+      if (!_syncEditing()) {
+        const v = stack.length ? stack[stack.length - 1].view : '';
+        if (SYNC_REFRESH[v]) SYNC_REFRESH[v]();
+      }
+    }
+  } catch (_) {} finally { _syncBusy = false; }
+}
+setInterval(checkSync, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkSync(); });
+window.addEventListener('focus', checkSync);
 
 // 外部链接一律新开/交给系统浏览器，避免在应用内跳走后无法返回
 document.addEventListener('click', e => {
