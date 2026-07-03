@@ -1788,7 +1788,10 @@ async function runSearch(q) {
   if (!q) { searchData.results = []; renderSearch(); return; }
   try {
     const d = await api('/api/search?q=' + encodeURIComponent(q));
-    searchData.results = d.results;
+    // 功能入口匹配（名称/关键词），置顶
+    const fhits = FEATURES.filter(f => f.name.includes(q) || f.kw.includes(q))
+      .map(f => ({ type: 'feature', title: f.name, snippet: f.desc, _open: f.open }));
+    searchData.results = fhits.concat(d.results);
     renderSearch();
   } catch (e) { toast(e.message, true); }
 }
@@ -1798,7 +1801,26 @@ function hl(text, q) {
   try { return t.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); }
   catch (_) { return t; }
 }
-const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语' };
+const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能' };
+// 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
+const FEATURES = [
+  { name: '每日时政', desc: '政治理论 · 每天自动更新 AI 三行式', kw: '时政新闻党内国内四川国际', open: () => openNews() },
+  { name: '时政要文库', desc: '政治理论 · 重要文件全文+AI解读', kw: '要文二十大报告十五五规划政府工作报告一号文件讲话', open: () => openPolicyDocs() },
+  { name: '党的创新理论学习词典', desc: '政治理论 · 12371 术语速查+背诵', kw: '词典理论两个确立四个意识党章党史', open: () => openPartyDict() },
+  { name: '常识积累', desc: '常识判断 · 七大板块考情+考点', kw: '常识人文科技法律地理经济公文管理', open: () => openChangshi() },
+  { name: '成语词语积累', desc: '言语理解 · 查询收录+AI解释', kw: '成语词语词组选词填空', open: () => openIdiom() },
+  { name: '古诗文·名句速查', desc: '议论文 · 唐诗宋词四书五经', kw: '古诗文诗词名句唐诗宋词论语', open: () => openClassics() },
+  { name: '素材积累', desc: '议论文 · 人物/事例/理论论据 每日更新', kw: '素材人物事例理论论据写作', open: () => openSucai('全部') },
+  { name: '衔接表达', desc: '议论文 · 过渡/转折/万能句式', kw: '衔接过渡转折句式', open: () => openSucai('衔接表达') },
+  { name: '概括句积累', desc: '应用文 · 材料表述→规范概括句', kw: '概括句申论', open: () => openGaikuo() },
+  { name: '错题本', desc: '拍照/输入 · AI 判题型给解析', kw: '错题刷题', open: () => openWrongq() },
+  { name: '今日复习', desc: '遗忘曲线 · 该复习的都在这', kw: '复习遗忘曲线艾宾浩斯背诵', open: () => openReview() },
+  { name: '小记', desc: '随手记 · 标签归类', kw: '笔记记录', open: () => openNotes() },
+  { name: '知识库', desc: '笔记本 · 文档 · 分组整理', kw: '文档笔记本', open: () => openKb() },
+  { name: '资料库', desc: '图片/文档/网页 应用内查看', kw: '资料文件上传', open: () => openMaterials() },
+  { name: '基础知识点', desc: '各板块 基础知识+方法技巧', kw: '基础知识方法技巧', open: () => { const b = ALL_BOARDS[0] ? null : null; openSection(SECTIONS[0] && SECTIONS[0].key); toast('进入任意板块即可看「基础知识点」'); } },
+  { name: '账户', desc: '个人信息 · 改密码/邮箱/密保', kw: '账号设置密码退出登录', open: () => openAccount() },
+];
 function renderSearch() {
   const box = $('#search-results');
   if (!searchData.q) { box.innerHTML = ''; $('#search-empty').classList.add('hidden'); return; }
@@ -1828,7 +1850,9 @@ function renderSearch() {
 $('#search-results').addEventListener('click', async e => {
   const it = e.target.closest('[data-sri]'); if (!it) return;
   const r = ($('#search-results')._items || [])[+it.dataset.sri]; if (!r) return;
-  if (r.type === 'material') {
+  if (r.type === 'feature') {
+    if (r._open) r._open();
+  } else if (r.type === 'material') {
     if (r.viewable) openViewer(r.id, r.title, r.ext);
     else { const a = document.createElement('a'); a.href = '/api/materials/' + r.id + '/download'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); }
   } else if (r.type === 'doc') {

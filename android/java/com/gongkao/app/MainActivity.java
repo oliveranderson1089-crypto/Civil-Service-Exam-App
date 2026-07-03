@@ -143,6 +143,23 @@ public class MainActivity extends Activity {
                     promptUrl(true);  // 主页面加载失败才提示改地址
                 }
             }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                // 外站链接（原文来源等）交给系统浏览器打开，APP 停在原页可正常返回
+                try {
+                    Uri target = Uri.parse(url);
+                    String scheme = target.getScheme() == null ? "" : target.getScheme();
+                    if (!scheme.equals("http") && !scheme.equals("https")) return false;
+                    String cur = v.getUrl();
+                    String curHost = cur == null ? null : Uri.parse(cur).getHost();
+                    if (curHost != null && !curHost.equals(target.getHost())) {
+                        startActivity(new Intent(Intent.ACTION_VIEW, target));
+                        return true;
+                    }
+                } catch (Exception ignored) { }
+                return false;
+            }
         });
 
         web.setDownloadListener(new DownloadListener() {
@@ -230,6 +247,14 @@ public class MainActivity extends Activity {
 
         @android.webkit.JavascriptInterface
         public void ttsCancel() { runOnUiThread(() -> { if (tts != null) tts.stop(); }); }
+
+        @android.webkit.JavascriptInterface
+        public void openUrl(String url) {
+            runOnUiThread(() -> {
+                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
+                catch (Exception ignored) { }
+            });
+        }
     }
 
     private boolean acceptsImage(String[] types) {
@@ -303,6 +328,15 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         // 边缘侧滑 / 返回键：先交给网页 SPA 退上一级；网页已在首页才退到后台
         if (web == null) { super.onBackPressed(); return; }
+        if (web.canGoBack()) {
+            // 兜底：若 WebView 被外站页面占据（无 appBack 可用），先回退历史
+            String cur = web.getUrl();
+            if (cur != null && !cur.contains("/static/") && web.getOriginalUrl() != null
+                    && !Uri.parse(cur).getHost().equals(Uri.parse(web.getOriginalUrl()).getHost())) {
+                web.goBack();
+                return;
+            }
+        }
         web.evaluateJavascript("(window.appBack && window.appBack()) ? true : false",
             value -> {
                 if (!"true".equals(value)) {
