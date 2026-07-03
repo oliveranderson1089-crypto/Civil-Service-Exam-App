@@ -83,8 +83,8 @@ function render() {
   $('#nav-back').classList.toggle('hidden', stack.length <= 1);
   // 文档编辑器自带顶栏，隐藏全局顶栏
   document.querySelector('.topbar').classList.toggle('hidden', st.view === 'doc');
-  // 朗读悬浮按钮：内容型视图显示；切换视图时停止朗读
-  if (window.Reader) { Reader.stop(); $('#read-fab').classList.toggle('hidden', !READ_SRC[st.view]); }
+  // 切换视图时停止朗读
+  if (window.Reader && Reader.playing) Reader.stop();
 }
 function push(state) { stack.push(state); render(); }
 function back() { if (stack.length > 1) { stack.pop(); render(); } }
@@ -2442,36 +2442,43 @@ $('#pd-list').addEventListener('click', e => {
   const it = e.target.closest('.pd-item'); if (it) it.classList.toggle('revealed');
 });
 
-/* ================= 全局朗读（安卓 TTS 桥 / 浏览器 speechSynthesis） ================= */
-// 各内容视图的正文容器：取 innerText 朗读
-const READ_SRC = {
-  cdetail: '#cd-wrap', newsd: '#news-wrap', policydocd: '#poly-wrap', boardkb: '#bkb-wrap',
-  csboard: '#view-csboard', partydict: '#pd-list', sucai: '#sc-list', gaikuo: '#gk-list',
-  news: '#news-list', wqdetail: '#wqd-wrap', review: '#rv-list', viewer: '#view-viewer', idiom: '#list',
-};
+/* ================= 逐条朗读（安卓 TTS 桥 / 浏览器 speechSynthesis） ================= */
+// 会自动注入 🔊 按钮的内容条目选择器（新渲染的列表/卡片自动获得朗读按钮）
+const READ_ITEM_SEL = '.gk-card, .pd-item, .poly-card, .cd-sec, .cd-body, .item, .poly-reader, #viewer-reader, .cs-ov-body, .cs-kq, .ai-msg.assistant, .sc-body-solo';
 const READ_RATES = [1.0, 1.2, 1.5, 0.8];
 window.Reader = {
-  playing: false, segs: [], idx: 0, gen: 0, rateIdx: 0,
+  playing: false, segs: [], idx: 0, gen: 0, rateIdx: 0, card: null,
   native() { return !!(window.GongkaoNative && window.GongkaoNative.ttsSpeak); },
   rate() { return READ_RATES[this.rateIdx]; },
   split(text) {
-    // 清理多余空白，按句切段（每段≤200字，安卓 TTS 单次不宜过长）
+    // 按句切分（细粒度：切语速时从当前句继续，不用重头）；超长句再按逗号拆
     const t = (text || '').replace(/\s+/g, ' ').trim();
-    const parts = t.split(/(?<=[。！？；.!?;])/); const segs = []; let cur = '';
-    for (const p of parts) {
-      if ((cur + p).length > 200) { if (cur.trim()) segs.push(cur.trim()); cur = p; }
-      else cur += p;
+    const sents = t.split(/(?<=[。！？；.!?;\n])/);
+    const segs = [];
+    for (let s of sents) {
+      s = s.trim(); if (!s) continue;
+      if (s.length <= 120) { segs.push(s); continue; }
+      let cur = '';
+      for (const p of s.split(/(?<=[，,、])/)) {
+        if ((cur + p).length > 120) { if (cur.trim()) segs.push(cur.trim()); cur = p; }
+        else cur += p;
+      }
+      if (cur.trim()) segs.push(cur.trim());
     }
-    if (cur.trim()) segs.push(cur.trim());
     return segs;
   },
-  start() {
-    const st = stack[stack.length - 1];
-    const sel = READ_SRC[st && st.view]; if (!sel) return;
-    const el = document.querySelector(sel); if (!el) return;
-    const segs = this.split(el.innerText);
-    if (!segs.length) { toast('本页没有可朗读的内容', true); return; }
-    this.stop(); this.segs = segs; this.idx = 0; this.playing = true;
+  textOf(card) {
+    const c = card.cloneNode(true);
+    c.querySelectorAll('button, .read-item-btn, .item-actions, .news-star, .iconbtn, .rv-stage').forEach(x => x.remove());
+    return c.innerText || '';
+  },
+  readCard(card) {
+    if (this.card === card && this.playing) { this.stop(); return; }  // 再点同一条 = 停止
+    this.stop();
+    const segs = this.split(this.textOf(card));
+    if (!segs.length) { toast('这一条没有可朗读的文字', true); return; }
+    this.card = card; card.classList.add('reading-src');
+    this.segs = segs; this.idx = 0; this.playing = true;
     this.ui(); this.next();
   },
   next() {
@@ -2490,20 +2497,23 @@ window.Reader = {
       speechSynthesis.speak(u);
     } else { toast('当前环境不支持语音朗读', true); this.stop(); }
   },
+  reRate() {
+    // 调语速：取消当前发声，但 idx 不动 → 从当前这句接着读，不从头
+    if (!this.playing) return;
+    this.gen++;
+    try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
+    try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
+    setTimeout(() => this.next(), 60);
+  },
   stop() {
-    if (!this.playing && !this.segs.length) return;
     this.playing = false; this.gen++; this.segs = []; this.idx = 0;
+    if (this.card) { this.card.classList.remove('reading-src'); this.card = null; }
     try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
     this.ui();
   },
   ui() {
-    const btn = $('#read-btn'); if (!btn) return;
-    btn.classList.toggle('playing', this.playing);
-    btn.innerHTML = this.playing
-      ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>'
-      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
-    $('#read-rate').classList.toggle('hidden', !this.playing);
+    $('#read-ctrl').classList.toggle('hidden', !this.playing);
     $('#read-rate').textContent = this.rate().toFixed(1) + '×';
   },
 };
@@ -2511,12 +2521,30 @@ window.Reader = {
 window.__ttsEvent = function (id, ev) {
   if (ev === 'end' && Reader.playing && id === Reader._waitId) { Reader.idx++; Reader.next(); }
 };
-$('#read-btn').onclick = () => { Reader.playing ? Reader.stop() : Reader.start(); };
+$('#read-stop').onclick = () => Reader.stop();
 $('#read-rate').onclick = () => {
   Reader.rateIdx = (Reader.rateIdx + 1) % READ_RATES.length;
   $('#read-rate').textContent = Reader.rate().toFixed(1) + '×';
-  if (Reader.playing) { Reader.gen++; try { Reader.native() ? GongkaoNative.ttsCancel() : speechSynthesis.cancel(); } catch (_) {} Reader.next(); }
+  Reader.reRate();
 };
+// 自动给内容条目注入 🔊 朗读按钮（MutationObserver 覆盖所有现在/将来渲染的列表）
+const READ_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
+function injectReadBtns() {
+  document.querySelectorAll(READ_ITEM_SEL).forEach(card => {
+    if (card.querySelector(':scope > .read-item-btn')) return;
+    if (!(card.innerText || '').trim()) return;
+    const b = document.createElement('button');
+    b.className = 'read-item-btn'; b.title = '朗读这一条'; b.innerHTML = READ_ICON;
+    b.onclick = e => { e.stopPropagation(); e.preventDefault(); Reader.readCard(card); };
+    card.appendChild(b);
+  });
+}
+let _readInjTimer = null;
+new MutationObserver(() => {
+  clearTimeout(_readInjTimer);
+  _readInjTimer = setTimeout(injectReadBtns, 120);
+}).observe(document.body, { childList: true, subtree: true });
+injectReadBtns();
 
 /* ================= 账户 / 个人信息页 ================= */
 async function openAccount() {
