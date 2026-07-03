@@ -1777,7 +1777,7 @@ $('#cls-next').onclick = () => { if (clsState.page < clsState.pages) { clsState.
 /* ================= AI 助手 ================= */
 /* ---- 全局 AI 会话中心（仿 Claude：新对话 / 项目 / 最近） ---- */
 let aiMsgs = [], aiBusy = false, aiChatId = null, aiProjectId = null;
-const AI_FOLDER = '<svg class="ai-folder" viewBox="0 0 24 24"><defs><linearGradient id="fldg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd66b"/><stop offset="1" stop-color="#f5a623"/></linearGradient></defs><path fill="url(#fldg)" stroke="#e8940f" stroke-width="1" d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2.5h7A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>';
+const AI_FOLDER = '<svg class="ai-folder" viewBox="0 0 48 44"><path fill="#e8971e" d="M4 10.5C4 8 6 6 8.5 6h9.2c1.2 0 2.4.5 3.2 1.5l2.4 2.8h16.2c2.5 0 4.5 2 4.5 4.5v20.7c0 2.5-2 4.5-4.5 4.5h-31C6 40 4 38 4 35.5z"/><path fill="#ffc94d" d="M6.8 17.5h34.4c2.3 0 4 2.1 3.6 4.4l-2.2 13.4c-.4 2.2-2.2 3.7-4.4 3.7H9.8c-2.2 0-4-1.5-4.4-3.7L3.2 21.9c-.4-2.3 1.3-4.4 3.6-4.4z"/><path fill="#ffe291" d="M6.9 17.5h34.2l.4 2.4H6.5z"/></svg>';
 function aiShow(v) {
   ['aiv-home', 'aiv-projects', 'aiv-chat'].forEach(id => $('#' + id).classList.add('hidden'));
   $('#aiv-' + v).classList.remove('hidden');

@@ -1265,3 +1265,4 @@ img,svg,video{max-width:100%;}
 /* 修复：对话菜单要显示在 AI 面板(z-index:90)之上 */
 #ai-chatmenu{z-index:130;}
 .chip-newcat{border-style:dashed;color:var(--blue);border-color:#a9c6ec;}
+.ai-folder{width:21px;height:19px;vertical-align:-4px;}
