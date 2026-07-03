@@ -19,7 +19,14 @@ public class CamProvider extends ContentProvider {
     public static final String AUTH = "com.gongkao.app.camprovider";
 
     private File fileFor(Uri uri) {
-        return new File(new File(getContext().getCacheDir(), "camera"), uri.getLastPathSegment());
+        java.util.List<String> seg = uri.getPathSegments();
+        String dir = "camera", name;
+        if (seg.size() >= 2 && (seg.get(0).equals("camera") || seg.get(0).equals("share"))) {
+            dir = seg.get(0); name = seg.get(seg.size() - 1);
+        } else {
+            name = uri.getLastPathSegment();
+        }
+        return new File(new File(getContext().getCacheDir(), dir), name);
     }
 
     @Override
@@ -46,7 +53,15 @@ public class CamProvider extends ContentProvider {
     }
 
     @Override
-    public String getType(Uri uri) { return "image/jpeg"; }
+    public String getType(Uri uri) {
+        String n = uri.getLastPathSegment();
+        if (n == null) return "application/octet-stream";
+        n = n.toLowerCase();
+        String ext = n.contains(".") ? n.substring(n.lastIndexOf('.') + 1) : "";
+        String mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+        if (mime != null) return mime;
+        return ext.isEmpty() ? "image/jpeg" : "application/octet-stream";
+    }
 
     @Override
     public Uri insert(Uri uri, ContentValues values) { return null; }

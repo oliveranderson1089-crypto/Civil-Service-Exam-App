@@ -677,10 +677,7 @@ async function loadMaterials() {
           <div class="mat-meta">${esc((m.ext || '').replace('.', '').toUpperCase())} · ${fmtSize(m.size)}${m.board ? ' · ' + esc(m.board) : ''}</div>
         </div>
         <div class="mat-actions">
-          <button class="iconbtn" data-act="rename" title="重命名">✎</button>
-          <button class="iconbtn" data-act="dup" title="复制一份">⧉</button>
-          <button class="iconbtn" data-act="dl" title="下载">⬇</button>
-          <button class="iconbtn" data-act="del" title="删除">🗑</button>
+          <button class="iconbtn mat-more" data-act="menu" title="更多操作">⋮</button>
         </div>
       </div>`).join('');
   } catch (e) { toast(e.message, true); }
@@ -689,6 +686,11 @@ $('#mat-list').addEventListener('click', async e => {
   const item = e.target.closest('.mat-item'); if (!item) return;
   const id = item.dataset.id;
   const act = e.target.closest('[data-act]');
+  if (act && act.dataset.act === 'menu') {
+    e.stopPropagation();
+    openMatMenu(id, item.querySelector('.mat-name').textContent, item.dataset.ext);
+    return;
+  }
   if (act) {
     e.stopPropagation();
     if (act.dataset.act === 'dl') {
@@ -1777,7 +1779,7 @@ $('#cls-next').onclick = () => { if (clsState.page < clsState.pages) { clsState.
 /* ================= AI 助手 ================= */
 /* ---- 全局 AI 会话中心（仿 Claude：新对话 / 项目 / 最近） ---- */
 let aiMsgs = [], aiBusy = false, aiChatId = null, aiProjectId = null;
-const AI_FOLDER = '<svg class="ai-folder" viewBox="0 0 48 44"><path fill="#e8971e" d="M4 10.5C4 8 6 6 8.5 6h9.2c1.2 0 2.4.5 3.2 1.5l2.4 2.8h16.2c2.5 0 4.5 2 4.5 4.5v20.7c0 2.5-2 4.5-4.5 4.5h-31C6 40 4 38 4 35.5z"/><path fill="#ffc94d" d="M6.8 17.5h34.4c2.3 0 4 2.1 3.6 4.4l-2.2 13.4c-.4 2.2-2.2 3.7-4.4 3.7H9.8c-2.2 0-4-1.5-4.4-3.7L3.2 21.9c-.4-2.3 1.3-4.4 3.6-4.4z"/><path fill="#ffe291" d="M6.9 17.5h34.2l.4 2.4H6.5z"/></svg>';
+const AI_FOLDER = '<svg class="ai-folder" viewBox="0 0 48 48"><rect x="2" y="2" width="44" height="44" rx="13" fill="#5b6cf0"/><path fill="#7d8cf8" opacity=".5" d="M2 15C2 7.8 7.8 2 15 2h18c7.2 0 13 5.8 13 13v2H2z"/><rect x="11" y="11" width="11.5" height="11.5" rx="3.5" fill="#fff"/><rect x="25.5" y="11" width="11.5" height="11.5" rx="3.5" fill="#fff" opacity=".82"/><rect x="11" y="25.5" width="11.5" height="11.5" rx="3.5" fill="#fff" opacity=".82"/><circle cx="31.2" cy="31.2" r="5.8" fill="#ffd66b"/></svg>';
 function aiShow(v) {
   ['aiv-home', 'aiv-projects', 'aiv-chat'].forEach(id => $('#' + id).classList.add('hidden'));
   $('#aiv-' + v).classList.remove('hidden');
@@ -3189,3 +3191,52 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   });
   fab.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
 })();
+
+/* 资料库条目 ⋮ 菜单：分享 / 重命名 / 复制 / 下载 / 删除 */
+let matMenuCtx = null;
+function openMatMenu(id, name, ext) {
+  matMenuCtx = { id, name, ext };
+  $('#mm-title').textContent = name;
+  $('#ai-chatmenu').classList.add('hidden');
+  $('#mat-menu').classList.remove('hidden');
+}
+$('#mat-menu').addEventListener('click', async e => {
+  if (e.target.closest('[data-sheet-close]') || e.target.id === 'mat-menu') {
+    $('#mat-menu').classList.add('hidden'); return;
+  }
+  const b = e.target.closest('[data-mm]');
+  if (!b || !matMenuCtx) return;
+  const { id, name } = matMenuCtx;
+  $('#mat-menu').classList.add('hidden');
+  const act = b.dataset.mm;
+  if (act === 'share') {
+    const url = location.origin + '/api/materials/' + id + '/download';
+    try {
+      if (window.GongkaoNative && typeof GongkaoNative.shareFile === 'function') {
+        toast('正在准备分享…');
+        GongkaoNative.shareFile(url, name);
+        return;
+      }
+    } catch (_) {}
+    // 兜底：分享/复制文件名+说明
+    const card = document.createElement('div');
+    card.innerText = '「' + name + '」（来自公考助手资料库）';
+    shareCard(card);
+  } else if (act === 'rename') {
+    const v = await appPrompt('重命名文档', '', name);
+    if (v && v.trim() && v !== name) {
+      try { await api('/api/materials/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v.trim() }) }); toast('已重命名'); loadMaterials(); }
+      catch (err) { toast(err.message, true); }
+    }
+  } else if (act === 'dup') {
+    try { await api('/api/materials/' + id + '/duplicate', { method: 'POST' }); toast('已复制一份'); loadMaterials(); }
+    catch (err) { toast(err.message, true); }
+  } else if (act === 'dl') {
+    const a = document.createElement('a'); a.href = '/api/materials/' + id + '/download'; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+  } else if (act === 'del') {
+    if (!(await appConfirm('删除「' + name + '」？'))) return;
+    try { await api('/api/materials/' + id, { method: 'DELETE' }); toast('已删除'); loadMaterials(); }
+    catch (err) { toast(err.message, true); }
+  }
+});

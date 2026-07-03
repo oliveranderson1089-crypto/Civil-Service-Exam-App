@@ -270,6 +270,44 @@ public class MainActivity extends Activity {
         }
 
         @android.webkit.JavascriptInterface
+        public void shareFile(String url, String name) {
+            new Thread(() -> {
+                try {
+                    File dir = new File(getCacheDir(), "share");
+                    dir.mkdirs();
+                    String safe = name == null || name.trim().isEmpty()
+                            ? ("file_" + System.currentTimeMillis())
+                            : name.replaceAll("[/\\\\:*?\"<>|]", "_");
+                    File out = new File(dir, safe);
+                    HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+                    String cookie = CookieManager.getInstance().getCookie(url);
+                    if (cookie != null) conn.setRequestProperty("Cookie", cookie);
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(120000);
+                    InputStream in = conn.getInputStream();
+                    java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+                    fo.close(); in.close(); conn.disconnect();
+                    final Uri cu = Uri.parse("content://" + CamProvider.AUTH + "/share/" + Uri.encode(safe));
+                    final String mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+                            safe.contains(".") ? safe.substring(safe.lastIndexOf('.') + 1).toLowerCase() : "");
+                    runOnUiThread(() -> {
+                        Intent i = new Intent(Intent.ACTION_SEND);
+                        i.setType(mime != null ? mime : "application/octet-stream");
+                        i.putExtra(Intent.EXTRA_STREAM, cu);
+                        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        startActivity(Intent.createChooser(i, "分享文件"));
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "分享失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
+                }
+            }).start();
+        }
+
+        @android.webkit.JavascriptInterface
         public void openUrl(String url) {
             runOnUiThread(() -> {
                 try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }

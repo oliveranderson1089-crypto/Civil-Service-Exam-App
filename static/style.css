@@ -1266,3 +1266,33 @@ img,svg,video{max-width:100%;}
 #ai-chatmenu{z-index:130;}
 .chip-newcat{border-style:dashed;color:var(--blue);border-color:#a9c6ec;}
 .ai-folder{width:21px;height:19px;vertical-align:-4px;}
+
+/* ===== 视觉焕新（2026-07）：多彩首页 + 柔和层次 ===== */
+.ai-folder{width:20px;height:20px;vertical-align:-4px;border-radius:5px;}
+/* 首页卡片图标按功能配色（渐变） */
+.home-card[data-go="sec:xingce"] .hc-logo{background:linear-gradient(135deg,#2b6fd6,#4bb0f0);}
+.home-card[data-go="sec:shenlun"] .hc-logo{background:linear-gradient(135deg,#5b6cf0,#8d6bf5);}
+.home-card[data-go="notes"] .hc-logo{background:linear-gradient(135deg,#12b886,#3ddc97);}
+.home-card[data-go="kb"] .hc-logo{background:linear-gradient(135deg,#f59f00,#ffc94d);}
+.home-card[data-go="wrongq"] .hc-logo{background:linear-gradient(135deg,#e0524d,#ff8a65);}
+.home-card[data-go="materials"] .hc-logo{background:linear-gradient(135deg,#0ca678,#38d9a9);}
+.home-card[data-go="quiz"] .hc-logo{background:linear-gradient(135deg,#7048e8,#9775fa);}
+.home-card[data-go="review"] .hc-logo{background:linear-gradient(135deg,#f76707,#ffa94d);}
+.home-card[data-go="sec:xingce"] .hc-logo{box-shadow:0 6px 16px rgba(43,111,214,.35);}
+.home-card[data-go="sec:shenlun"] .hc-logo{box-shadow:0 6px 16px rgba(91,108,240,.35);}
+.home-card[data-go="notes"] .hc-logo{box-shadow:0 6px 16px rgba(18,184,134,.35);}
+.home-card[data-go="kb"] .hc-logo{box-shadow:0 6px 16px rgba(245,159,0,.35);}
+.home-card[data-go="wrongq"] .hc-logo{box-shadow:0 6px 16px rgba(224,82,77,.35);}
+.home-card[data-go="materials"] .hc-logo{box-shadow:0 6px 16px rgba(12,166,120,.35);}
+.home-card[data-go="quiz"] .hc-logo{box-shadow:0 6px 16px rgba(112,72,232,.35);}
+.home-card[data-go="review"] .hc-logo{box-shadow:0 6px 16px rgba(247,103,7,.35);}
+/* 卡片交互质感 */
+.home-card{transition:transform .16s,box-shadow .16s;}
+.home-card:active{transform:scale(.97);}
+.poly-card,.gk-card,.pd-item,.mat-item,.aih-item{transition:transform .14s,box-shadow .14s;}
+.poly-card:active,.gk-card:active,.pd-item:active{transform:scale(.985);}
+/* chips 统一质感 */
+.chip{transition:all .15s;}
+.chip.active{box-shadow:0 3px 10px rgba(43,111,214,.3);}
+/* 资料条目 ⋮ */
+.mat-more{font-size:20px;font-weight:700;color:#8b93a1;padding:4px 10px;}
