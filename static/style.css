@@ -1259,3 +1259,9 @@ img,svg,video{max-width:100%;}
 .aih-projects .aih-arr{margin-left:6px;}
 .ai-msg.assistant{padding-bottom:38px;}
 .ai-msg.assistant.ai-typing{padding-bottom:12px;}
+
+/* 修复：悬浮球拖动跟手（阻止浏览器把手势当页面滚动） */
+#ai-fab{touch-action:none;}
+/* 修复：对话菜单要显示在 AI 面板(z-index:90)之上 */
+#ai-chatmenu{z-index:130;}
+.chip-newcat{border-style:dashed;color:var(--blue);border-color:#a9c6ec;}

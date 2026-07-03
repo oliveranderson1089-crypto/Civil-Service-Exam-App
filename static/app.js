@@ -638,7 +638,8 @@ async function renderMatFilter() {
   } catch (_) { matCustomBoards = []; }
   const all = ALL_BOARDS.concat(matCustomBoards);
   $('#mat-filter').innerHTML = `<button class="chip ${matBoard === '' ? 'active' : ''}" data-mb="">全部</button>` +
-    all.map(b => `<button class="chip ${b === matBoard ? 'active' : ''}" data-mb="${esc(b)}">${esc(b)}</button>`).join('');
+    all.map(b => `<button class="chip ${b === matBoard ? 'active' : ''}" data-mb="${esc(b)}">${esc(b)}</button>`).join('') +
+    `<button class="chip chip-newcat" id="mat-newcat">＋ 分类</button>`;
 }
 function openMaterials() {
   matBoard = '';
@@ -646,7 +647,17 @@ function openMaterials() {
   push({ view: 'materials' });
   loadMaterials();
 }
-$('#mat-filter').addEventListener('click', e => {
+$('#mat-filter').addEventListener('click', async e => {
+  if (e.target.closest('#mat-newcat')) {
+    const name = await appPrompt('新建分类', '分类名，如：晨读');
+    const v = (name || '').trim().slice(0, 20);
+    if (!v) return;
+    if (!matCustomBoards.includes(v) && !ALL_BOARDS.includes(v)) matCustomBoards.push(v);
+    matBoard = v;                     // 选中新分类：之后上传/拍照默认归入它
+    renderMatFilter(); loadMaterials();
+    toast('分类「' + v + '」已就绪，现在上传的资料会归入它');
+    return;
+  }
   const c = e.target.closest('[data-mb]'); if (!c) return;
   matBoard = c.dataset.mb;
   document.querySelectorAll('#mat-filter .chip').forEach(x => x.classList.toggle('active', x.dataset.mb === matBoard));
