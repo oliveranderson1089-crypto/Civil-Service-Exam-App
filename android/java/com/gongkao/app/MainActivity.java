@@ -28,7 +28,14 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 
 import java.io.File;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
 import java.util.HashMap;
+import android.database.Cursor;
+import android.provider.OpenableColumns;
 import java.util.Locale;
 
 /**
@@ -186,6 +193,8 @@ public class MainActivity extends Activity {
             }
         });
 
+        handleShareIntent(getIntent());  // 冷启动即处理「分享到公考助手」
+
         String url = prefs.getString(KEY, "");
         if (url.isEmpty()) {
             promptUrl(false);
@@ -247,6 +256,18 @@ public class MainActivity extends Activity {
 
         @android.webkit.JavascriptInterface
         public void ttsCancel() { runOnUiThread(() -> { if (tts != null) tts.stop(); }); }
+
+        @android.webkit.JavascriptInterface
+        public void share(String text) {
+            runOnUiThread(() -> {
+                try {
+                    Intent i = new Intent(Intent.ACTION_SEND);
+                    i.setType("text/plain");
+                    i.putExtra(Intent.EXTRA_TEXT, text);
+                    startActivity(Intent.createChooser(i, "分享到"));
+                } catch (Exception ignored) { }
+            });
+        }
 
         @android.webkit.JavascriptInterface
         public void openUrl(String url) {
@@ -322,6 +343,108 @@ public class MainActivity extends Activity {
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleShareIntent(intent);
+    }
+
+    /** 其他应用「分享到公考助手」：文件直接上传到资料库；纯文本先存成 .txt 再上传 */
+    private void handleShareIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        final ArrayList<Uri> uris = new ArrayList<>();
+        String text = null;
+        if (Intent.ACTION_SEND.equals(action)) {
+            Uri u = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (u != null) uris.add(u);
+            else text = intent.getStringExtra(Intent.EXTRA_TEXT);
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            ArrayList<Uri> us = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (us != null) uris.addAll(us);
+        } else {
+            return;
+        }
+        intent.setAction(Intent.ACTION_MAIN);  // 防旋转等重复处理
+        if (uris.isEmpty() && (text == null || text.trim().isEmpty())) return;
+        final String server = prefs.getString(KEY, "");
+        if (server.isEmpty()) {
+            Toast.makeText(this, "请先在 APP 里登录一次再分享", Toast.LENGTH_LONG).show();
+            return;
+        }
+        final String sharedText = text;
+        Toast.makeText(this, "正在上传到资料库…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            int ok = 0;
+            if (sharedText != null && !sharedText.trim().isEmpty()) {
+                String name = sharedText.trim();
+                name = (name.length() > 12 ? name.substring(0, 12) : name) + ".txt";
+                if (uploadBytes(server, name, sharedText.getBytes())) ok++;
+            }
+            for (Uri u : uris) {
+                try {
+                    String name = displayName(u);
+                    InputStream in = getContentResolver().openInputStream(u);
+                    java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+                    in.close();
+                    if (uploadBytes(server, name, bo.toByteArray())) ok++;
+                } catch (Exception ignored) { }
+            }
+            final int done = ok;
+            runOnUiThread(() -> {
+                Toast.makeText(this, done > 0 ? ("已上传 " + done + " 个到资料库") : "上传失败，请确认已登录", Toast.LENGTH_LONG).show();
+                if (done > 0 && web != null)
+                    web.evaluateJavascript("window.loadMaterials && loadMaterials()", null);
+            });
+        }).start();
+    }
+
+    private String displayName(Uri u) {
+        try (Cursor c = getContentResolver().query(u, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (i >= 0 && c.getString(i) != null) return c.getString(i);
+            }
+        } catch (Exception ignored) { }
+        String p = u.getLastPathSegment();
+        return p != null ? p : ("share_" + System.currentTimeMillis());
+    }
+
+    /** 原生 multipart 上传，带 WebView 的登录 Cookie */
+    private boolean uploadBytes(String server, String filename, byte[] data) {
+        try {
+            String boundary = "----gk" + System.currentTimeMillis();
+            URL url = new URL(server.replaceAll("/+$", "") + "/api/materials");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(60000);
+            String cookie = CookieManager.getInstance().getCookie(server);
+            if (cookie != null) conn.setRequestProperty("Cookie", cookie);
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+            OutputStream out = conn.getOutputStream();
+            String head = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"board\"\r\n\r\n\r\n"
+                    + "--" + boundary + "\r\nContent-Disposition: form-data; name=\"section\"\r\n\r\n\r\n"
+                    + "--" + boundary + "\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n\r\n"
+                    + "--" + boundary + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + filename.replace("\"", "") + "\"\r\n"
+                    + "Content-Type: application/octet-stream\r\n\r\n";
+            out.write(head.getBytes("UTF-8"));
+            out.write(data);
+            out.write(("\r\n--" + boundary + "--\r\n").getBytes("UTF-8"));
+            out.flush(); out.close();
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            return code >= 200 && code < 300;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @Override

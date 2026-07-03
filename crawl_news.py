@@ -262,23 +262,36 @@ def gen_xiyu(con):
     if con.execute("SELECT COUNT(*) FROM xiyu_items WHERE date=?", (today,)).fetchone()[0]:
         print("── 习语金句：今日(%s)已生成，跳过" % today)
         return
+    # 双源：人民网习近平讲话数据库 + 求是网（学习强国反爬无法直抓，用户 2026-07-03 指定求是替代）
+    art_urls = []
     try:
         h = fetch("http://jhsjk.people.cn/")
+        seen = set()
+        for m in re.finditer(r'href="article/(\d+)', h):
+            if m.group(1) not in seen:
+                seen.add(m.group(1))
+                art_urls.append("http://jhsjk.people.cn/article/" + m.group(1))
+        art_urls = art_urls[:8]
     except Exception as e:
-        print("── 习语：列表页抓取失败", e)
-        return
-    ids = []
-    for m in re.finditer(r'href="article/(\d+)', h):
-        if m.group(1) not in ids:
-            ids.append(m.group(1))
+        print("── 习语：jhsjk 列表页失败", e)
+    try:
+        h = fetch("https://www.qstheory.cn/")
+        seen = set()
+        qs = []
+        for m in re.finditer(r'href="(20\d{6}/[0-9a-f]{16,40}/c\.html)"', h):
+            if m.group(1) not in seen:
+                seen.add(m.group(1))
+                qs.append("https://www.qstheory.cn/" + m.group(1))
+        art_urls += qs[-6:]  # 求是首页链接大致按时间排，取最新几篇
+    except Exception as e:
+        print("── 习语：求是网列表页失败", e)
     corpus = []
-    for aid in ids[:8]:
-        url = "http://jhsjk.people.cn/article/" + aid
+    for url in art_urls:
         try:
             page = fetch(url)
             ps = re.findall(r"<p[^>]*>(.*?)</p>", page, re.S)
             body = "\n".join(x for x in (clean(p) for p in ps) if len(x) > 15)
-            if len(body) > 150:
+            if len(body) > 250:  # 过滤视频页/短讯
                 corpus.append((url, body[:2200]))
         except Exception:
             continue

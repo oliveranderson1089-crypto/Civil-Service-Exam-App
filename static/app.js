@@ -630,11 +630,19 @@ const EXT_ICON = {
 };
 const iconFor = (ext) => EXT_ICON[(ext || '').replace('.', '')] || '📎';
 const OFFICE_EXT = ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.rtf'];
-let matBoard = '';
+let matBoard = '', matCustomBoards = [];
+async function renderMatFilter() {
+  try {
+    const d = await api('/api/materials/boards');
+    matCustomBoards = d.boards.filter(b => !ALL_BOARDS.includes(b));
+  } catch (_) { matCustomBoards = []; }
+  const all = ALL_BOARDS.concat(matCustomBoards);
+  $('#mat-filter').innerHTML = `<button class="chip ${matBoard === '' ? 'active' : ''}" data-mb="">全部</button>` +
+    all.map(b => `<button class="chip ${b === matBoard ? 'active' : ''}" data-mb="${esc(b)}">${esc(b)}</button>`).join('');
+}
 function openMaterials() {
   matBoard = '';
-  $('#mat-filter').innerHTML = `<button class="chip active" data-mb="">全部</button>` +
-    ALL_BOARDS.map(b => `<button class="chip" data-mb="${esc(b)}">${esc(b)}</button>`).join('');
+  renderMatFilter();
   push({ view: 'materials' });
   loadMaterials();
 }
@@ -831,7 +839,9 @@ function openViewer(id, name, ext) {
 }
 /* 上传资料 */
 $('#upload-btn').onclick = () => {
-  $('#up-board').innerHTML = `<option value="">未分类</option>` + ALL_BOARDS.map(b => `<option ${b === matBoard ? 'selected' : ''}>${esc(b)}</option>`).join('');
+  $('#up-board').innerHTML = `<option value="">未分类</option>`
+    + ALL_BOARDS.concat(matCustomBoards).map(b => `<option ${b === matBoard ? 'selected' : ''}>${esc(b)}</option>`).join('')
+    + `<option value="__new__">＋ 新建分类…</option>`;
   $('#up-title').value = ''; $('#up-file').value = '';
   $('#upload-modal').classList.remove('hidden');
 };
@@ -2876,6 +2886,18 @@ $('#read-rate').onclick = () => {
 };
 // 自动给内容条目注入 🔊 朗读按钮（MutationObserver 覆盖所有现在/将来渲染的列表）
 const READ_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
+const SHARE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/></svg>';
+async function shareCard(card) {
+  const text = (Reader.textOf(card) || '').trim();
+  if (!text) { toast('这一条没有可分享的文字', true); return; }
+  const payload = text + '\n\n—— 来自「公考助手」';
+  try { if (window.GongkaoNative && GongkaoNative.share) { GongkaoNative.share(payload); return; } } catch (_) {}
+  if (navigator.share) {
+    try { await navigator.share({ text: payload }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(payload); toast('已复制，去别的应用粘贴即可分享'); }
+  catch (_) { toast('复制失败', true); }
+}
 function injectReadBtns() {
   document.querySelectorAll(READ_ITEM_SEL).forEach(card => {
     if (card.querySelector(':scope > .read-item-btn')) return;
@@ -2884,6 +2906,10 @@ function injectReadBtns() {
     b.className = 'read-item-btn'; b.title = '朗读这一条'; b.innerHTML = READ_ICON;
     b.onclick = e => { e.stopPropagation(); e.preventDefault(); Reader.readCard(card); };
     card.appendChild(b);
+    const sb = document.createElement('button');
+    sb.className = 'read-item-btn share-item-btn'; sb.title = '分享这一条'; sb.innerHTML = SHARE_ICON;
+    sb.onclick = e => { e.stopPropagation(); e.preventDefault(); shareCard(card); };
+    card.appendChild(sb);
   });
 }
 let _readInjTimer = null;
@@ -2997,3 +3023,52 @@ document.addEventListener('click', e => {
 
 init();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+/* 资料库：分类下拉选「新建分类」时弹输入 */
+$('#up-board').addEventListener('change', async e => {
+  if (e.target.value !== '__new__') return;
+  const name = await appPrompt('新建分类', '分类名，如：晨读');
+  const v = (name || '').trim().slice(0, 20);
+  if (v) {
+    if (!matCustomBoards.includes(v) && !ALL_BOARDS.includes(v)) matCustomBoards.push(v);
+    const opt = document.createElement('option');
+    opt.textContent = v; opt.value = v;
+    e.target.insertBefore(opt, e.target.querySelector('option[value="__new__"]'));
+    e.target.value = v;
+  } else e.target.value = '';
+});
+
+/* 资料库：拖拽 / 粘贴 直接上传（网页端；APP 端用系统分享接收） */
+async function uploadDropped(files) {
+  if (!files.length) return;
+  toast('上传中…（' + files.length + ' 个）');
+  let ok = 0;
+  for (const file of files) {
+    const fd = new FormData();
+    fd.append('file', file, file.name || ('粘贴_' + Date.now() + '.png'));
+    fd.append('board', matBoard);
+    fd.append('section', '');
+    fd.append('title', '');
+    try { await api('/api/materials', { method: 'POST', body: fd }); ok++; }
+    catch (e) { toast((file.name || '文件') + '：' + e.message, true); }
+  }
+  if (ok) { toast('已上传 ' + ok + ' 个'); loadMaterials(); }
+}
+(function () {
+  const mv = $('#view-materials'); if (!mv) return;
+  ['dragover', 'dragenter'].forEach(ev => mv.addEventListener(ev, e => {
+    e.preventDefault(); mv.classList.add('drag-on');
+  }));
+  mv.addEventListener('dragleave', e => { if (e.target === mv) mv.classList.remove('drag-on'); });
+  mv.addEventListener('drop', e => {
+    e.preventDefault(); mv.classList.remove('drag-on');
+    const fs = [...(e.dataTransfer ? e.dataTransfer.files : [])];
+    if (fs.length) uploadDropped(fs);
+  });
+  document.addEventListener('paste', e => {
+    const st = stack[stack.length - 1];
+    if (!st || st.view !== 'materials') return;
+    const fs = [...((e.clipboardData && e.clipboardData.files) || [])];
+    if (fs.length) { e.preventDefault(); uploadDropped(fs); }
+  });
+})();

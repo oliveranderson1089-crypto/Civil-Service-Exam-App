@@ -841,8 +841,9 @@ def material_upload():
     section = (request.form.get("section") or "").strip()
     board = (request.form.get("board") or "").strip()
     title = (request.form.get("title") or "").strip()
-    if board and board not in ALL_BOARDS:
-        return jsonify({"error": "板块无效"}), 400
+    # 板块支持自定义分类（如「晨读」），不再限定固定板块
+    if len(board) > 20:
+        return jsonify({"error": "分类名太长"}), 400
     f = request.files.get("file")
     if not f or not f.filename:
         return jsonify({"error": "请选择文件"}), 400
@@ -860,6 +861,13 @@ def material_upload():
     db.commit()
     row = db.execute("SELECT * FROM materials WHERE id=?", (cur.lastrowid,)).fetchone()
     return jsonify(dict(row)), 201
+
+
+@app.get("/api/materials/boards")
+def material_boards():
+    rows = get_db().execute(
+        "SELECT DISTINCT board FROM materials WHERE user_id=? AND board<>'' ORDER BY board", (uid(),)).fetchall()
+    return jsonify({"boards": [r["board"] for r in rows]})
 
 
 @app.get("/api/materials")
@@ -1016,8 +1024,8 @@ def material_update(mid):
     db = get_db()
     if "board" in data:
         board = (data.get("board") or "").strip()
-        if board and board not in ALL_BOARDS:
-            return jsonify({"error": "板块无效"}), 400
+        if len(board) > 20:
+            return jsonify({"error": "分类名太长"}), 400
         db.execute("UPDATE materials SET title=?, board=? WHERE id=? AND user_id=?",
                    (title, board, mid, uid()))
     else:

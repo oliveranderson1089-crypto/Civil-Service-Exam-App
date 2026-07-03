@@ -1240,3 +1240,6 @@ img,svg,video{max-width:100%;}
 .qz-expl{margin-top:12px;}
 .qz-nav{display:flex;gap:10px;margin:16px 0 30px;}
 .qz-nav .btn{flex:1;padding:12px;}
+#view-materials.drag-on{outline:3px dashed var(--blue);outline-offset:-6px;border-radius:14px;background:#f0f6ff;}
+.share-item-btn{right:44px;background:rgba(15,118,110,.09);color:#0f766e;}
+.share-item-btn:active{background:rgba(15,118,110,.25);}
