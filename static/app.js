@@ -144,7 +144,7 @@ function hideSplash() {
   // 名言至少展示 1.2 秒，再淡出进入首页
   const shown = Date.now() - (window.__t0 || Date.now());
   setTimeout(() => { sp.classList.add('fade'); setTimeout(() => sp.remove(), 550); },
-    Math.max(0, 1200 - shown));
+    Math.max(0, 2000 - shown));
 }
 window.__t0 = Date.now();
 setTimeout(hideSplash, 6000);  // 兜底：万一接口异常也不挡界面
@@ -1766,6 +1766,7 @@ $('#cls-next').onclick = () => { if (clsState.page < clsState.pages) { clsState.
 /* ================= AI 助手 ================= */
 /* ---- 全局 AI 会话中心（仿 Claude：新对话 / 项目 / 最近） ---- */
 let aiMsgs = [], aiBusy = false, aiChatId = null, aiProjectId = null;
+const AI_FOLDER = '<svg class="ai-folder" viewBox="0 0 24 24"><defs><linearGradient id="fldg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd66b"/><stop offset="1" stop-color="#f5a623"/></linearGradient></defs><path fill="url(#fldg)" stroke="#e8940f" stroke-width="1" d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2.5h7A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>';
 function aiShow(v) {
   ['aiv-home', 'aiv-projects', 'aiv-chat'].forEach(id => $('#' + id).classList.add('hidden'));
   $('#aiv-' + v).classList.remove('hidden');
@@ -1778,24 +1779,24 @@ async function openAI(preset) {
 async function loadAiHome() {
   try {
     const d = await api('/api/aichat/home');
-    $('#aih-pcount').textContent = d.projects.length ? d.projects.length : '';
+    $('#aih-pcount').textContent = d.projects.length || '';
     $('#aih-recents').innerHTML = d.chats.length ? d.chats.map(c => `
       <div class="aih-item" data-aichat="${c.id}">
-        <div class="aih-it">${esc(c.title || '（新对话）')}</div>
-        <div class="aih-im">${c.pname ? '📁 ' + esc(c.pname) + ' · ' : ''}${esc((c.updated_at || '').slice(5, 16))}</div>
-        <button class="aih-del" data-aidel="${c.id}">✕</button>
+        <div class="aih-it">${c.starred ? '⭐ ' : ''}${esc(c.title || '（新对话）')}</div>
+        <div class="aih-im">${c.pname ? AI_FOLDER + ' ' + esc(c.pname) + ' · ' : ''}${esc((c.updated_at || '').slice(5, 16))}</div>
+        <button class="aih-del" data-aimenu="${c.id}" data-atitle="${esc(c.title || '')}" data-aproj="${c.project_id || ''}" data-astar="${c.starred ? 1 : 0}">⋮</button>
       </div>`).join('') : '<p class="empty" style="padding:20px 0">还没有对话，点上面「＋ 新对话」开始。</p>';
     $('#ai-panel')._projects = d.projects;
   } catch (e) { toast(e.message, true); }
 }
 async function aiNewChat(projectId) {
-  try {
-    const d = await api('/api/aichat/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: projectId || null }) });
-    aiChatId = d.id; aiProjectId = projectId || null; aiMsgs = [];
-    $('#aic-title').textContent = '新对话';
-    aiShow('chat'); renderAI();
-    setTimeout(() => $('#ai-text').focus(), 60);
-  } catch (e) { toast(e.message, true); }
+  // 懒创建：先进界面，第一次发送消息时才真正建会话（不产生空记录）
+  aiChatId = null; aiProjectId = projectId || null; aiMsgs = [];
+  const ps = $('#ai-panel')._projects || [];
+  const p = ps.find(x => x.id === aiProjectId);
+  $('#aic-title').textContent = p ? ('📁 ' + p.name + ' · 新对话') : '新对话';
+  aiShow('chat'); renderAI();
+  setTimeout(() => $('#ai-text').focus(), 60);
 }
 async function aiOpenChat(id) {
   try {
@@ -1809,7 +1810,7 @@ function renderAiProjects() {
   const ps = $('#ai-panel')._projects || [];
   $('#aip-list').innerHTML = (ps.length ? ps.map(p => `
     <div class="aih-item" data-aiproj="${p.id}">
-      <div class="aih-it">📁 ${esc(p.name)}</div>
+      <div class="aih-it">${AI_FOLDER} ${esc(p.name)}</div>
       <div class="aih-im">${p.cnt} 个对话${p.instructions ? ' · 有自定义指令' : ''}</div>
       <button class="aih-del" data-aipdel="${p.id}">✕</button>
     </div>`).join('') : '<p class="empty" style="padding:20px 0">还没有项目。项目=一组对话+自定义指令（比如"申论批改"）。</p>')
@@ -1826,7 +1827,12 @@ function renderAI() {
 async function aiSend() {
   const t = $('#ai-text').value.trim();
   if (!t || aiBusy) return;
-  if (!aiChatId) { await aiNewChat(); }
+  if (!aiChatId) {
+    try {
+      const d = await api('/api/aichat/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: aiProjectId || null }) });
+      aiChatId = d.id;
+    } catch (e) { toast(e.message, true); return; }
+  }
   aiMsgs.push({ role: 'user', content: t });
   $('#ai-text').value = ''; aiGrow();
   aiBusy = true; renderAI();
@@ -1863,11 +1869,10 @@ $('#ai-panel').addEventListener('click', async e => {
     else { aiShow('home'); loadAiHome(); }
     return;
   }
-  const del = e.target.closest('[data-aidel]');
-  if (del) {
+  const menu = e.target.closest('[data-aimenu]');
+  if (menu) {
     e.stopPropagation();
-    if (!(await appConfirm('删除这个对话？'))) return;
-    try { await api('/api/aichat/chats/' + del.dataset.aidel, { method: 'DELETE' }); loadAiHome(); } catch (err) { toast(err.message, true); }
+    openAiChatMenu(+menu.dataset.aimenu, menu.dataset.atitle, menu.dataset.aproj, menu.dataset.astar === '1');
     return;
   }
   const pdel = e.target.closest('[data-aipdel]');
@@ -2891,15 +2896,28 @@ async function shareCard(card) {
   const text = (Reader.textOf(card) || '').trim();
   if (!text) { toast('这一条没有可分享的文字', true); return; }
   const payload = text + '\n\n—— 来自「公考助手」';
-  try { if (window.GongkaoNative && GongkaoNative.share) { GongkaoNative.share(payload); return; } } catch (_) {}
+  try {
+    if (window.GongkaoNative && typeof GongkaoNative.share === 'function') { GongkaoNative.share(payload); return; }
+  } catch (_) {}
   if (navigator.share) {
     try { await navigator.share({ text: payload }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
   }
-  try { await navigator.clipboard.writeText(payload); toast('已复制，去别的应用粘贴即可分享'); }
-  catch (_) { toast('复制失败', true); }
+  // 剪贴板兜底（旧 APK / 无分享面板环境）
+  let copied = false;
+  try { await navigator.clipboard.writeText(payload); copied = true; } catch (_) {}
+  if (!copied) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = payload; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      copied = document.execCommand('copy'); ta.remove();
+    } catch (_) {}
+  }
+  toast(copied ? '已复制内容，去微信等应用粘贴即可（更新 APK 后可直接弹分享面板）' : '分享失败', !copied);
 }
 function injectReadBtns() {
   document.querySelectorAll(READ_ITEM_SEL).forEach(card => {
+    if (card.classList.contains('ai-typing')) return;  // 「思考中…」气泡不加按钮
     if (card.querySelector(':scope > .read-item-btn')) return;
     if (!(card.innerText || '').trim()) return;
     const b = document.createElement('button');
@@ -3071,4 +3089,92 @@ async function uploadDropped(files) {
     const fs = [...((e.clipboardData && e.clipboardData.files) || [])];
     if (fs.length) { e.preventDefault(); uploadDropped(fs); }
   });
+})();
+
+/* AI 会话卡 ⋮ 菜单：置顶/重命名/移动项目/移出项目/删除 */
+let aiMenuCtx = null;
+function openAiChatMenu(id, title, projId, starred) {
+  aiMenuCtx = { id, title, projId: projId ? +projId : null, starred };
+  const ps = $('#ai-panel')._projects || [];
+  $('#acm-list').innerHTML = `
+    <button data-acm="star">${starred ? '☆ 取消置顶' : '⭐ 置顶'}</button>
+    <button data-acm="rename">✏️ 重命名</button>
+    ${ps.length ? `<button data-acm="move">${AI_FOLDER} 移动到项目 ›</button>` : ''}
+    ${aiMenuCtx.projId ? '<button data-acm="unproj">📤 移出项目</button>' : ''}
+    <button data-acm="del" class="acm-danger">🗑 删除对话</button>`;
+  $('#ai-chatmenu').classList.remove('hidden');
+}
+$('#ai-chatmenu').addEventListener('click', async e => {
+  if (e.target.closest('[data-sheet-close]') || e.target.id === 'ai-chatmenu') {
+    $('#ai-chatmenu').classList.add('hidden'); return;
+  }
+  const mv = e.target.closest('[data-acmproj]');
+  if (mv && aiMenuCtx) {
+    $('#ai-chatmenu').classList.add('hidden');
+    try {
+      await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: +mv.dataset.acmproj }) });
+      toast('已移动'); loadAiHome();
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+  const b = e.target.closest('[data-acm]');
+  if (!b || !aiMenuCtx) return;
+  const act = b.dataset.acm;
+  if (act === 'move') {
+    const ps = $('#ai-panel')._projects || [];
+    $('#acm-list').innerHTML = '<div class="acm-tip">移动到哪个项目：</div>'
+      + ps.map(p => `<button data-acmproj="${p.id}">${AI_FOLDER} ${esc(p.name)}</button>`).join('');
+    return;
+  }
+  $('#ai-chatmenu').classList.add('hidden');
+  try {
+    if (act === 'star') {
+      await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: !aiMenuCtx.starred }) });
+    } else if (act === 'rename') {
+      const t = await appPrompt('重命名对话', '', aiMenuCtx.title);
+      if (!t || !t.trim()) return;
+      await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: t.trim() }) });
+    } else if (act === 'unproj') {
+      await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: null }) });
+    } else if (act === 'del') {
+      if (!(await appConfirm('删除这个对话？'))) return;
+      await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'DELETE' });
+    }
+    loadAiHome();
+  } catch (err) { toast(err.message, true); }
+});
+
+/* AI 悬浮球：可拖动（位置记忆），小位移视为点击 */
+(function () {
+  const fab = $('#ai-fab'); if (!fab) return;
+  try {
+    const p = JSON.parse(localStorage.getItem('aifab') || 'null');
+    if (p) { fab.style.left = p.x + 'px'; fab.style.top = p.y + 'px'; fab.style.right = 'auto'; fab.style.bottom = 'auto'; }
+  } catch (_) {}
+  let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, dragging = false;
+  fab.addEventListener('pointerdown', e => {
+    dragging = true; moved = false;
+    sx = e.clientX; sy = e.clientY;
+    const r = fab.getBoundingClientRect(); ox = r.left; oy = r.top;
+    fab.setPointerCapture(e.pointerId);
+  });
+  fab.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) + Math.abs(dy) > 6) moved = true;
+    if (!moved) return;
+    let x = Math.min(Math.max(4, ox + dx), window.innerWidth - fab.offsetWidth - 4);
+    let y = Math.min(Math.max(4, oy + dy), window.innerHeight - fab.offsetHeight - 4);
+    fab.style.left = x + 'px'; fab.style.top = y + 'px';
+    fab.style.right = 'auto'; fab.style.bottom = 'auto';
+  });
+  fab.addEventListener('pointerup', e => {
+    dragging = false;
+    if (moved) {
+      const r = fab.getBoundingClientRect();
+      try { localStorage.setItem('aifab', JSON.stringify({ x: r.left, y: r.top })); } catch (_) {}
+      e.preventDefault(); e.stopPropagation();
+    }
+  });
+  fab.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
 })();

@@ -1243,3 +1243,19 @@ img,svg,video{max-width:100%;}
 #view-materials.drag-on{outline:3px dashed var(--blue);outline-offset:-6px;border-radius:14px;background:#f0f6ff;}
 .share-item-btn{right:44px;background:rgba(15,118,110,.09);color:#0f766e;}
 .share-item-btn:active{background:rgba(15,118,110,.25);}
+
+/* AI 菜单 / 文件夹图标 / 计数徽章 */
+.acm-list{display:flex;flex-direction:column;gap:2px;padding-bottom:8px;}
+.acm-list button{border:none;background:transparent;text-align:left;padding:13px 10px;
+  font-size:15px;color:#222;border-radius:10px;cursor:pointer;font-family:inherit;
+  display:flex;align-items:center;gap:8px;-webkit-tap-highlight-color:transparent;}
+.acm-list button:active{background:#f0f3f7;}
+.acm-list .acm-danger{color:#e0524d;}
+.acm-tip{font-size:12.5px;color:#9aa1ac;padding:6px 10px;}
+.ai-folder{width:19px;height:19px;vertical-align:-4px;display:inline-block;}
+#aih-pcount{margin-left:auto;background:#eef2f8;color:#5a6270;font-size:12px;
+  border-radius:999px;padding:2px 9px;font-weight:700;}
+#aih-pcount:empty{display:none;}
+.aih-projects .aih-arr{margin-left:6px;}
+.ai-msg.assistant{padding-bottom:38px;}
+.ai-msg.assistant.ai-typing{padding-bottom:12px;}

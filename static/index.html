@@ -766,7 +766,7 @@
     </div>
     <div class="aih-scroll">
       <button class="aih-new" id="aih-new">＋ 新对话</button>
-      <button class="aih-projects" id="aih-projects">📁 项目 <span id="aih-pcount"></span><span class="aih-arr">›</span></button>
+      <button class="aih-projects" id="aih-projects"><svg class="ai-folder" viewBox="0 0 24 24"><path fill="#f5a623" stroke="#e8940f" stroke-width="1" d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2.5h7A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg> 项目 <span id="aih-pcount"></span><span class="aih-arr">›</span></button>
       <div class="aih-sec">最近对话</div>
       <div id="aih-recents"></div>
     </div>
@@ -793,6 +793,16 @@
       <textarea id="ai-text" rows="1" placeholder="问点什么…（讲知识点 / 出题 / 翻译古文 / 分析错题）"></textarea>
       <button id="ai-send" class="ai-sendbtn">发送</button>
     </div>
+  </div>
+</div>
+
+<!-- AI 对话操作菜单 -->
+<div id="ai-chatmenu" class="note-sheet hidden">
+  <div class="ns-mask" data-sheet-close></div>
+  <div class="ns-panel">
+    <div class="ns-handle"></div>
+    <div class="ns-title">对话操作</div>
+    <div id="acm-list" class="acm-list"></div>
   </div>
 </div>
 

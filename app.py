@@ -394,6 +394,9 @@ def init_db():
     if "user_id" not in _cols(con, "entries"):
         con.execute("ALTER TABLE entries ADD COLUMN user_id INTEGER")
     con.execute("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)")
+    # ai_chats 补 starred（置顶）
+    if "starred" not in _cols(con, "ai_chats"):
+        con.execute("ALTER TABLE ai_chats ADD COLUMN starred INTEGER DEFAULT 0")
     # ci_ai 结构化：补 出处/例句 列
     for col in ("derivation", "example"):
         if col not in _cols(con, "ci_ai"):
@@ -2652,10 +2655,14 @@ def works_ai(wid):
 @app.get("/api/aichat/home")
 def aichat_home():
     db = get_db()
+    db.execute("DELETE FROM ai_chats WHERE user_id=? AND created_at < datetime('now','localtime','-1 hour') "
+               "AND NOT EXISTS(SELECT 1 FROM ai_msgs m WHERE m.chat_id=ai_chats.id)", (uid(),))
+    db.commit()
     chats = db.execute(
-        "SELECT c.id, c.title, c.updated_at, c.project_id, p.name pname FROM ai_chats c "
+        "SELECT c.id, c.title, c.updated_at, c.project_id, c.starred, p.name pname FROM ai_chats c "
         "LEFT JOIN ai_projects p ON p.id=c.project_id "
-        "WHERE c.user_id=? ORDER BY c.updated_at DESC LIMIT 50", (uid(),)).fetchall()
+        "WHERE c.user_id=? AND EXISTS(SELECT 1 FROM ai_msgs m WHERE m.chat_id=c.id) "
+        "ORDER BY c.starred DESC, c.updated_at DESC LIMIT 50", (uid(),)).fetchall()
     projects = db.execute(
         "SELECT p.id, p.name, p.instructions,"
         "(SELECT COUNT(*) FROM ai_chats c WHERE c.project_id=p.id) cnt "
@@ -2683,6 +2690,26 @@ def aichat_get(cid):
     msgs = db.execute("SELECT role, content FROM ai_msgs WHERE chat_id=? ORDER BY id", (cid,)).fetchall()
     return jsonify({"id": c["id"], "title": c["title"], "project_id": c["project_id"],
                     "msgs": [dict(r) for r in msgs]})
+
+
+@app.put("/api/aichat/chats/<int:cid>")
+def aichat_update(cid):
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
+    if not c:
+        return jsonify({"error": "未找到"}), 404
+    if "title" in data:
+        t = (data.get("title") or "").strip()[:40]
+        if t:
+            db.execute("UPDATE ai_chats SET title=? WHERE id=?", (t, cid))
+    if "project_id" in data:
+        pid = data.get("project_id")
+        db.execute("UPDATE ai_chats SET project_id=? WHERE id=?", (pid, cid))
+    if "starred" in data:
+        db.execute("UPDATE ai_chats SET starred=? WHERE id=?", (1 if data.get("starred") else 0, cid))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 @app.delete("/api/aichat/chats/<int:cid>")
