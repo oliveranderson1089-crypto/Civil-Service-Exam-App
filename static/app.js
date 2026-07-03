@@ -83,6 +83,8 @@ function render() {
   $('#nav-back').classList.toggle('hidden', stack.length <= 1);
   // 文档编辑器自带顶栏，隐藏全局顶栏
   document.querySelector('.topbar').classList.toggle('hidden', st.view === 'doc');
+  // 朗读悬浮按钮：内容型视图显示；切换视图时停止朗读
+  if (window.Reader) { Reader.stop(); $('#read-fab').classList.toggle('hidden', !READ_SRC[st.view]); }
 }
 function push(state) { stack.push(state); render(); }
 function back() { if (stack.length > 1) { stack.pop(); render(); } }
@@ -988,9 +990,9 @@ $('#ex-mode').addEventListener('change', e => { const r = e.target.value === 're
 $('#ex-go').onclick = async () => {
   const scope = $('#ex-scope').value, mode = $('#ex-mode').value;
   const body = { mode, derivation: $('#ex-der').checked, example: $('#ex-exa').checked, note: $('#ex-note').checked };
-  if (scope === '成语' || scope === '词语') body.category = scope;
+  if (scope === '成语' || scope === '词语' || scope === '词组') body.category = scope;
   else if (scope === 'star') body.starred = true;
-  else if (state.filter === '成语' || state.filter === '词语') body.category = state.filter;
+  else if (state.filter === '成语' || state.filter === '词语' || state.filter === '词组') body.category = state.filter;
   else if (state.filter === 'star') body.starred = true;
   if (IN_APP) {
     const p = new URLSearchParams();
@@ -1796,7 +1798,7 @@ function hl(text, q) {
   try { return t.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); }
   catch (_) { return t; }
 }
-const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识' };
+const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语' };
 function renderSearch() {
   const box = $('#search-results');
   if (!searchData.q) { box.innerHTML = ''; $('#search-empty').classList.add('hidden'); return; }
@@ -1812,8 +1814,8 @@ function renderSearch() {
   box.innerHTML = items.map((r, i) => {
     const meta = r.type === 'doc' ? ('知识库：' + esc(r.notebook || ''))
       : r.type === 'material' ? ((r.ext || '').replace('.', '').toUpperCase() + (r.board ? ' · ' + esc(r.board) : ''))
-        : (r.type === 'wrongq' || r.type === 'boardkb') ? (r.board ? esc(r.board) : '')
-          : (r.tags && r.tags.length ? r.tags.map(t => '#' + esc(t)).join(' ') : (r.board ? esc(r.board) : ''));
+        : r.type === 'note' ? (r.tags && r.tags.length ? r.tags.map(t => '#' + esc(t)).join(' ') : (r.board ? esc(r.board) : ''))
+          : (r.board ? esc(r.board) : '');
     return `<div class="sr-item" data-sri="${i}">
       <div class="sr-head"><span class="sr-type ${r.type}">${SR_TYPE[r.type]}</span>
         <span class="sr-title">${hl(r.title, searchData.q)}</span></div>
@@ -1842,6 +1844,26 @@ $('#search-results').addEventListener('click', async e => {
     openWqDetail(r.id);
   } else if (r.type === 'boardkb') {
     openBoardKb(r.board);
+  } else if (r.type === 'news') {
+    openNewsItem(r.id);
+  } else if (r.type === 'policydoc') {
+    openPolicyDoc(r.id);
+  } else if (r.type === 'classic') {
+    openClassicDetail(r.id);
+  } else if (r.type === 'partydict') {
+    await openPartyDict();
+    $('#pd-q').value = r.title; loadPartyDict();
+  } else if (r.type === 'changshi') {
+    csBoard = r.cs_board; csTopic = r.cs_topic;
+    push({ view: 'csboard', title: csBoard });
+    loadCsBoard();
+  } else if (r.type === 'sucai') {
+    openSucai(r.kind || '全部');
+  } else if (r.type === 'gaikuo') {
+    openGaikuo();
+  } else if (r.type === 'entry') {
+    openIdiom();
+    state.q = r.title; $('#search').value = r.title; loadEntries();
   }
 });
 
@@ -2419,6 +2441,82 @@ $('#pd-list').addEventListener('click', e => {
   if (!pdRecite) return;
   const it = e.target.closest('.pd-item'); if (it) it.classList.toggle('revealed');
 });
+
+/* ================= 全局朗读（安卓 TTS 桥 / 浏览器 speechSynthesis） ================= */
+// 各内容视图的正文容器：取 innerText 朗读
+const READ_SRC = {
+  cdetail: '#cd-wrap', newsd: '#news-wrap', policydocd: '#poly-wrap', boardkb: '#bkb-wrap',
+  csboard: '#view-csboard', partydict: '#pd-list', sucai: '#sc-list', gaikuo: '#gk-list',
+  news: '#news-list', wqdetail: '#wqd-wrap', review: '#rv-list', viewer: '#view-viewer', idiom: '#list',
+};
+const READ_RATES = [1.0, 1.2, 1.5, 0.8];
+window.Reader = {
+  playing: false, segs: [], idx: 0, gen: 0, rateIdx: 0,
+  native() { return !!(window.GongkaoNative && window.GongkaoNative.ttsSpeak); },
+  rate() { return READ_RATES[this.rateIdx]; },
+  split(text) {
+    // 清理多余空白，按句切段（每段≤200字，安卓 TTS 单次不宜过长）
+    const t = (text || '').replace(/\s+/g, ' ').trim();
+    const parts = t.split(/(?<=[。！？；.!?;])/); const segs = []; let cur = '';
+    for (const p of parts) {
+      if ((cur + p).length > 200) { if (cur.trim()) segs.push(cur.trim()); cur = p; }
+      else cur += p;
+    }
+    if (cur.trim()) segs.push(cur.trim());
+    return segs;
+  },
+  start() {
+    const st = stack[stack.length - 1];
+    const sel = READ_SRC[st && st.view]; if (!sel) return;
+    const el = document.querySelector(sel); if (!el) return;
+    const segs = this.split(el.innerText);
+    if (!segs.length) { toast('本页没有可朗读的内容', true); return; }
+    this.stop(); this.segs = segs; this.idx = 0; this.playing = true;
+    this.ui(); this.next();
+  },
+  next() {
+    if (!this.playing) return;
+    if (this.idx >= this.segs.length) { this.stop(); return; }
+    const myGen = ++this.gen; const seg = this.segs[this.idx];
+    if (this.native()) {
+      this._waitId = 'r' + myGen;
+      try { window.GongkaoNative.ttsSpeak(this._waitId, seg, this.rate()); }
+      catch (_) { this.stop(); }
+    } else if (window.speechSynthesis) {
+      const u = new SpeechSynthesisUtterance(seg);
+      u.lang = 'zh-CN'; u.rate = this.rate();
+      u.onend = () => { if (this.playing && myGen === this.gen) { this.idx++; this.next(); } };
+      u.onerror = () => { if (this.playing && myGen === this.gen) { this.idx++; this.next(); } };
+      speechSynthesis.speak(u);
+    } else { toast('当前环境不支持语音朗读', true); this.stop(); }
+  },
+  stop() {
+    if (!this.playing && !this.segs.length) return;
+    this.playing = false; this.gen++; this.segs = []; this.idx = 0;
+    try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
+    try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
+    this.ui();
+  },
+  ui() {
+    const btn = $('#read-btn'); if (!btn) return;
+    btn.classList.toggle('playing', this.playing);
+    btn.innerHTML = this.playing
+      ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+    $('#read-rate').classList.toggle('hidden', !this.playing);
+    $('#read-rate').textContent = this.rate().toFixed(1) + '×';
+  },
+};
+// 安卓 TTS 段落结束回调
+window.__ttsEvent = function (id, ev) {
+  if (ev === 'end' && Reader.playing && id === Reader._waitId) { Reader.idx++; Reader.next(); }
+};
+$('#read-btn').onclick = () => { Reader.playing ? Reader.stop() : Reader.start(); };
+$('#read-rate').onclick = () => {
+  Reader.rateIdx = (Reader.rateIdx + 1) % READ_RATES.length;
+  $('#read-rate').textContent = Reader.rate().toFixed(1) + '×';
+  if (Reader.playing) { Reader.gen++; try { Reader.native() ? GongkaoNative.ttsCancel() : speechSynthesis.cancel(); } catch (_) {} Reader.next(); }
+};
 
 /* ================= 账户 / 个人信息页 ================= */
 async function openAccount() {

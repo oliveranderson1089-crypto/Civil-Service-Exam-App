@@ -1098,3 +1098,19 @@ img,svg,video{max-width:100%;}
 .cs-kq-map{border-top:1px dashed #cdd9ec;padding-top:8px;}
 .cs-kq-row .sc-body b,.cs-kq-row b:not(:first-child){color:#1a2432;background:none;font-size:inherit;padding:0;}
 .cs-date{margin-left:auto;font-size:11.5px;color:#9aa1ac;flex:0 0 auto;}
+
+/* 全局朗读悬浮按钮 */
+.read-fab{position:fixed;right:16px;bottom:calc(24px + env(safe-area-inset-bottom));
+  z-index:60;display:flex;flex-direction:column;align-items:center;gap:8px;}
+.rf-main{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;
+  background:var(--blue);color:#fff;display:grid;place-items:center;
+  box-shadow:0 4px 14px rgba(43,111,214,.45);-webkit-tap-highlight-color:transparent;
+  transition:transform .15s,background .15s;}
+.rf-main:active{transform:scale(.94);}
+.rf-main svg{width:24px;height:24px;}
+.rf-main.playing{background:#0f766e;box-shadow:0 4px 14px rgba(15,118,110,.45);
+  animation:rf-pulse 1.6s ease-in-out infinite;}
+@keyframes rf-pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.06);}}
+.rf-rate{border:1px solid var(--line);background:#fff;color:#39414d;font-size:12px;
+  border-radius:999px;padding:4px 10px;cursor:pointer;font-family:inherit;
+  box-shadow:var(--shadow);-webkit-tap-highlight-color:transparent;}

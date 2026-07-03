@@ -307,6 +307,11 @@
       <button class="chip" data-sf="doc">知识库</button>
       <button class="chip" data-sf="wrongq">错题本</button>
       <button class="chip" data-sf="boardkb">基础知识</button>
+      <button class="chip" data-sf="news">时政</button>
+      <button class="chip" data-sf="policydoc">要文</button>
+      <button class="chip" data-sf="classic">古诗文</button>
+      <button class="chip" data-sf="changshi">常识</button>
+      <button class="chip" data-sf="partydict">理论词典</button>
     </div>
     <div id="search-results" class="search-results"></div>
     <p id="search-empty" class="empty hidden"></p>
@@ -716,6 +721,14 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
+
+<!-- 全局朗读悬浮按钮 -->
+<div id="read-fab" class="read-fab hidden">
+  <button id="read-rate" class="rf-rate hidden">1.0×</button>
+  <button id="read-btn" class="rf-main" title="朗读本页">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+  </button>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1638,6 +1638,64 @@ def api_search():
             results.append({"type": "boardkb", "id": 0, "board": r["board"],
                             "title": (r["board"] or "") + " · 我的补充",
                             "snippet": _snippet(r["content"] or "", q)})
+    like = "%" + q + "%"
+    # 每日时政
+    for r in db.execute("SELECT id,title,board,pub_date,content,ai_summary FROM news_items "
+                        "WHERE title LIKE ? OR content LIKE ? OR ai_summary LIKE ? "
+                        "ORDER BY id DESC LIMIT 15", (like, like, like)):
+        body = r["content"] or r["ai_summary"] or ""
+        results.append({"type": "news", "id": r["id"], "title": r["title"],
+                        "board": "%s · %s" % (r["board"] or "时政", r["pub_date"] or ""),
+                        "snippet": _snippet(body if ql in body.lower() else r["title"], q)})
+    # 时政要文库（全文+AI解读）
+    for r in db.execute("SELECT id,title,category,content,interpretation FROM policy_docs "
+                        "WHERE title LIKE ? OR content LIKE ? OR interpretation LIKE ? LIMIT 10",
+                        (like, like, like)):
+        body = r["content"] or ""
+        if ql not in body.lower():
+            body = r["interpretation"] or r["title"]
+        results.append({"type": "policydoc", "id": r["id"], "title": r["title"],
+                        "board": r["category"] or "要文", "snippet": _snippet(body, q)})
+    # 党的创新理论学习词典
+    for r in db.execute("SELECT id,term,cat,content FROM party_dict "
+                        "WHERE term LIKE ? OR content LIKE ? LIMIT 15", (like, like)):
+        results.append({"type": "partydict", "id": r["id"], "title": r["term"],
+                        "board": r["cat"] or "", "snippet": _snippet(r["content"] or "", q)})
+    # 古诗文库
+    for r in db.execute("SELECT id,title,author,category,content FROM classics "
+                        "WHERE title LIKE ? OR content LIKE ? OR author LIKE ? LIMIT 15",
+                        (like, like, like)):
+        results.append({"type": "classic", "id": r["id"], "title": r["title"],
+                        "board": "%s · %s" % (r["category"] or "", r["author"] or ""),
+                        "snippet": _snippet(r["content"] or "", q)})
+    # 常识积累
+    for r in db.execute("SELECT id,board,topic,title,content FROM changshi_items "
+                        "WHERE title LIKE ? OR content LIKE ? LIMIT 15", (like, like)):
+        results.append({"type": "changshi", "id": r["id"], "title": r["title"],
+                        "board": "%s · %s" % (r["board"], r["topic"]),
+                        "cs_board": r["board"], "cs_topic": r["topic"],
+                        "snippet": _snippet(r["content"] or "", q)})
+    # 写作素材 / 衔接表达
+    for r in db.execute("SELECT id,kind,topic,content,date FROM sucai_items "
+                        "WHERE topic LIKE ? OR content LIKE ? LIMIT 10", (like, like)):
+        results.append({"type": "sucai", "id": r["id"], "title": (r["topic"] or r["kind"]),
+                        "board": "%s · %s" % (r["kind"], r["date"] or ""), "kind": r["kind"],
+                        "snippet": _snippet(r["content"] or "", q)})
+    # 概括句
+    try:
+        for r in db.execute("SELECT id,topic,raw,sentence FROM gaikuo_items "
+                            "WHERE topic LIKE ? OR sentence LIKE ? OR raw LIKE ? LIMIT 10",
+                            (like, like, like)):
+            results.append({"type": "gaikuo", "id": r["id"], "title": r["topic"] or "概括句",
+                            "board": "概括句积累", "snippet": _snippet(r["sentence"] or r["raw"] or "", q)})
+    except Exception:
+        pass
+    # 我的成语词语收录
+    for r in db.execute("SELECT id,word,category,explanation FROM entries "
+                        "WHERE user_id=? AND (word LIKE ? OR explanation LIKE ? OR note LIKE ?) LIMIT 10",
+                        (uid(), like, like, like)):
+        results.append({"type": "entry", "id": r["id"], "title": r["word"],
+                        "board": r["category"] or "收录", "snippet": _snippet(r["explanation"] or "", q)})
     return jsonify({"results": results, "q": q})
 
 
@@ -2730,7 +2788,7 @@ def api_list():
         where += " AND (word LIKE ? OR pinyin LIKE ? OR explanation LIKE ? OR note LIKE ?)"
         like = f"%{q}%"
         args += [like, like, like, like]
-    if category in ("成语", "词语"):
+    if category in ("成语", "词语", "词组"):
         where += " AND category=?"
         args.append(category)
     if starred == "1":

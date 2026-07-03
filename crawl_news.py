@@ -18,6 +18,8 @@ UA = {"User-Agent": "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 
 FOOTER = re.compile(r"(版权所有|ICP备|公网安备|责任编辑|扫一扫|分享到|来源[:：]|返回|打印|字号|视频加载|上一篇|下一篇|相关(报道|新闻)|点击进入专题|网站地图|违法和不良信息)")
 # 选材过滤：纯人事任免/程序性内容对申论积累价值低，直接跳过（用户 2026-07-02 指定）
 SKIP_TITLE = re.compile(r"(任免|任命|免去.*职务|人事|讣告|逝世|唁电|吊唁|治丧|遗体送别)")
+# 正文杂质：人民网视频播放器参数等 JS 片段混进 <p>
+JSJUNK = re.compile(r"(width\s*:|height\s*:|\}\);|createPlayer|videoUrl|\bvar\s|function\s*\()")
 
 # 三板块数据源。每个 re 必须捕获 4 组：(完整或相对url, 年, 月, 日)
 BOARDS = {
@@ -99,7 +101,7 @@ def fetch_article(url):
     lines = []
     for p in ps:
         t = clean(p)
-        if len(t) >= 12 and not FOOTER.search(t):
+        if len(t) >= 12 and not FOOTER.search(t) and not JSJUNK.search(t):
             lines.append(t)
     return title, "\n".join(lines)
 
