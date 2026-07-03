@@ -238,7 +238,88 @@ def main():
         gen_gaikuo(con)
     except Exception as e:
         print("── 概括句生成失败:", e)
+    try:
+        gen_xiyu(con)
+    except Exception as e:
+        print("── 习语金句生成失败:", e)
     con.close()
+
+
+XIYU_CATS = ["经济", "文化", "社会", "党建", "科教", "生态", "国防", "国际"]
+
+
+def gen_xiyu(con):
+    """习语金句（学习强国风格）：每日从人民网「习近平系列重要讲话数据库」(jhsjk.people.cn)
+    抓最新讲话原文，AI 逐字摘录金句并按 经济/文化/社会/党建/科教/生态/国防/国际 分类。
+    一天只生成一次；金句必须出自原文，杜绝编造。"""
+    if not AI_KEY:
+        return
+    con.execute("""CREATE TABLE IF NOT EXISTS xiyu_items(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, category TEXT,
+        quote TEXT, note TEXT, source_url TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')), UNIQUE(quote))""")
+    today = time.strftime("%Y-%m-%d")
+    if con.execute("SELECT COUNT(*) FROM xiyu_items WHERE date=?", (today,)).fetchone()[0]:
+        print("── 习语金句：今日(%s)已生成，跳过" % today)
+        return
+    try:
+        h = fetch("http://jhsjk.people.cn/")
+    except Exception as e:
+        print("── 习语：列表页抓取失败", e)
+        return
+    ids = []
+    for m in re.finditer(r'href="article/(\d+)', h):
+        if m.group(1) not in ids:
+            ids.append(m.group(1))
+    corpus = []
+    for aid in ids[:8]:
+        url = "http://jhsjk.people.cn/article/" + aid
+        try:
+            page = fetch(url)
+            ps = re.findall(r"<p[^>]*>(.*?)</p>", page, re.S)
+            body = "\n".join(x for x in (clean(p) for p in ps) if len(x) > 15)
+            if len(body) > 150:
+                corpus.append((url, body[:2200]))
+        except Exception:
+            continue
+        time.sleep(0.3)
+    if not corpus:
+        print("── 习语：没有抓到讲话原文")
+        return
+    material = "\n\n".join("【文章%d｜%s】\n%s" % (i + 1, u, b) for i, (u, b) in enumerate(corpus))
+    prompt = (
+        "下面是习近平总书记近期讲话/报道的真实原文素材。请从中【逐字摘录】适合公务员申论/面试引用的金句，"
+        "按类别归类：经济、文化、社会、党建、科教、生态、国防、国际（原文没涉及的类别就跳过，宁缺毋滥）。\n"
+        "每条：quote=原文金句（必须逐字出自素材，不得改写编造，20~80字）；category=八类之一；"
+        "note=一句申论运用点拨（30字内）；src=来源文章编号(数字)。\n"
+        '只输出 JSON：{"items":[{"category":"...","quote":"...","note":"...","src":1},...]}\n\n' + material)
+    payload = {"model": AI_MODEL, "temperature": 0.3, "max_tokens": 1800,
+               "response_format": {"type": "json_object"},
+               "messages": [{"role": "system", "content": "你是严谨的公考时政编辑，金句必须逐字摘自给定素材，严格输出 JSON。"},
+                            {"role": "user", "content": prompt}]}
+    req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Authorization": "Bearer " + AI_KEY, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        j = json.loads(resp.read().decode("utf-8"))
+    try:
+        items = json.loads(j["choices"][0]["message"]["content"]).get("items", [])
+    except Exception:
+        items = []
+    n = 0
+    for it in items:
+        cat = (it.get("category") or "").strip()
+        quote = (it.get("quote") or "").strip()
+        if cat not in XIYU_CATS or len(quote) < 10:
+            continue
+        try:
+            src = corpus[int(it.get("src", 1)) - 1][0]
+        except Exception:
+            src = corpus[0][0]
+        cur = con.execute("INSERT OR IGNORE INTO xiyu_items(date,category,quote,note,source_url) "
+                          "VALUES(?,?,?,?,?)", (today, cat, quote, (it.get("note") or "").strip(), src))
+        n += cur.rowcount
+    con.commit()
+    print("── 习语金句 +%d 条" % n)
 
 
 if __name__ == "__main__":

@@ -74,8 +74,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -133,9 +133,52 @@ async function init() {
     <div class="home-card" data-go="kb"><div class="hc-logo">${IC.book}</div><div class="hc-name">知识库</div><div class="hc-desc">笔记本 · 文档 · 分组整理</div></div>
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
     <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
+    <div class="home-card" data-go="quiz"><div class="hc-logo">${IC.edit}</div><div class="hc-name">题库</div><div class="hc-desc">四川省考卷面 · 每周自动更新</div></div>
     <div class="home-card" data-go="review"><div class="hc-logo hc-rev">${IC.clock || IC.bulb}<span class="rev-badge hidden" id="rev-badge"></span></div><div class="hc-name">今日复习</div><div class="hc-desc" id="rev-desc">遗忘曲线 · 该复习的都在这</div></div>`;
   goHome();
   refreshReviewBadge();
+  hideSplash();
+}
+function hideSplash() {
+  const sp = document.getElementById('splash'); if (!sp) return;
+  // 名言至少展示 1.2 秒，再淡出进入首页
+  const shown = Date.now() - (window.__t0 || Date.now());
+  setTimeout(() => { sp.classList.add('fade'); setTimeout(() => sp.remove(), 550); },
+    Math.max(0, 1200 - shown));
+}
+window.__t0 = Date.now();
+setTimeout(hideSplash, 6000);  // 兜底：万一接口异常也不挡界面
+
+/* ---------------- 应用内确认/输入弹窗（替代原生 confirm/prompt） ---------------- */
+let _adResolve = null;
+function _dialog(o) {
+  return new Promise(res => {
+    _adResolve = res;
+    $('#ad-title').textContent = o.title || '确认';
+    $('#ad-msg').textContent = o.msg || '';
+    $('#ad-msg').classList.toggle('hidden', !o.msg);
+    const inp = $('#ad-input');
+    inp.classList.toggle('hidden', !o.input);
+    if (o.input) { inp.value = o.val || ''; inp.placeholder = o.placeholder || ''; }
+    $('#ad-ok').textContent = o.okText || '确定';
+    $('#ad-ok').classList.toggle('danger', !!o.danger);
+    $('#app-dialog').classList.remove('hidden');
+    if (o.input) setTimeout(() => inp.focus(), 80);
+  });
+}
+function _adDone(v) {
+  $('#app-dialog').classList.add('hidden');
+  const r = _adResolve; _adResolve = null;
+  if (r) r(v);
+}
+$('#ad-ok').onclick = () => _adDone($('#ad-input').classList.contains('hidden') ? true : $('#ad-input').value);
+$('#ad-cancel').onclick = () => _adDone($('#ad-input').classList.contains('hidden') ? false : null);
+$('#app-dialog').addEventListener('click', e => { if (e.target.id === 'app-dialog') $('#ad-cancel').click(); });
+function appConfirm(msg, opts) {
+  return _dialog(Object.assign({ title: '确认操作', msg, danger: /删除|退出|清空/.test(msg) }, opts || {}));
+}
+function appPrompt(title, placeholder, val) {
+  return _dialog({ title, input: true, placeholder, val });
 }
 async function refreshReviewBadge() {
   try {
@@ -156,6 +199,7 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'materials') openMaterials();
   else if (g === 'idiom') openIdiom();
   else if (g === 'review') openReview();
+  else if (g === 'quiz') openQuiz();
 });
 function openSection(key) {
   const sec = SECTIONS.find(s => s.key === key); if (!sec) return;
@@ -212,6 +256,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'sucai') openSucai('全部');
   else if (c.dataset.feat === 'lianjie') openSucai('衔接表达');
   else if (c.dataset.feat === 'changshi') openChangshi();
+  else if (c.dataset.feat === 'works') openWorks();
 });
 $('#nav-back').onclick = back;
 
@@ -395,7 +440,7 @@ $('#cp-files').addEventListener('click', e => { const r = e.target.closest('[dat
 $('#cp-tags').addEventListener('click', e => { const r = e.target.closest('[data-tgr]'); if (r) { draft.tags.splice(+r.dataset.tgr, 1); renderComposer(); } });
 $('#cp-cancel').onclick = () => newDraft();
 $('#cp-del').onclick = async () => {
-  if (!draft.id || !confirm('删除这条小记？')) return;
+  if (!draft.id || !(await appConfirm('删除这条小记？'))) return;
   try { await api('/api/notes/' + draft.id, { method: 'DELETE' }); toast('已删除'); newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
   catch (e) { toast(e.message, true); }
 };
@@ -554,7 +599,7 @@ $('#feed').addEventListener('click', async e => {
   if (ed) { const it = (box._items || []).find(x => x.id == ed.dataset.edit); if (it) loadDraft(it); return; }
   const dl = e.target.closest('[data-del]');
   if (dl) {
-    if (!confirm('删除这条小记？')) return;
+    if (!(await appConfirm('删除这条小记？'))) return;
     try { await api('/api/notes/' + dl.dataset.del, { method: 'DELETE' }); toast('已删除'); if (draft.id == dl.dataset.del) newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
     catch (err) { toast(err.message, true); } return;
   }
@@ -641,7 +686,7 @@ $('#mat-list').addEventListener('click', async e => {
       try { await api('/api/materials/' + id + '/duplicate', { method: 'POST' }); toast('已复制一份'); loadMaterials(); }
       catch (err) { toast(err.message, true); }
     } else if (act.dataset.act === 'del') {
-      if (!confirm('删除这个资料？')) return;
+      if (!(await appConfirm('删除这个资料？'))) return;
       try { await api('/api/materials/' + id, { method: 'DELETE' }); toast('已删除'); loadMaterials(); }
       catch (err) { toast(err.message, true); }
     }
@@ -961,7 +1006,7 @@ $('#list').addEventListener('click', async e => {
   if (btn.dataset.act === 'star') {
     try { await api('/api/entries/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: !it.starred }) }); loadEntries(); } catch (err) { toast(err.message, true); }
   } else if (btn.dataset.act === 'del') {
-    if (!confirm('删除「' + it.word + '」？')) return;
+    if (!(await appConfirm('删除「' + it.word + '」？'))) return;
     try { await api('/api/entries/' + id, { method: 'DELETE' }); toast('已删除'); loadEntries(); } catch (err) { toast(err.message, true); }
   } else if (btn.dataset.act === 'edit') {
     const note = await editNote('「' + it.word + '」的笔记', it.note || '');
@@ -1099,7 +1144,7 @@ $('#nb-save').onclick = async () => {
 };
 $('#nb-del').onclick = async () => {
   if (!nbEditId) return;
-  if (!confirm('删除整个知识库「' + $('#nb-in-name').value + '」？里面所有文档和分组都会删除，不可恢复！')) return;
+  if (!(await appConfirm('删除整个知识库「' + $('#nb-in-name').value + '」？里面所有文档和分组都会删除，不可恢复！'))) return;
   try {
     await api('/api/kb/notebooks/' + nbEditId, { method: 'DELETE' });
     toast('已删除'); $('#nb-modal').classList.add('hidden');
@@ -1219,7 +1264,7 @@ $('#node-menu').addEventListener('click', async e => {
   } else if (act === 'add') { KB.openGroups[id] = true; openKbSheet(id); }
   else if (act === 'open') { openDoc(id); }
   else if (act === 'del') {
-    if (!confirm('删除「' + (n.title || '该项') + '」' + (n.type === 'group' ? '及其下所有内容' : '') + '？不可恢复')) return;
+    if (!(await appConfirm('删除「' + (n.title || '该项') + '」' + (n.type === 'group' ? '及其下所有内容' : '') + '？不可恢复'))) return;
     try { await api('/api/kb/nodes/' + id, { method: 'DELETE' }); toast('已删除'); loadNotebook(KB.nb.id); } catch (e) { toast(e.message, true); }
   }
 });
@@ -1709,28 +1754,61 @@ $('#cls-prev').onclick = () => { if (clsState.page > 1) { clsState.page--; loadC
 $('#cls-next').onclick = () => { if (clsState.page < clsState.pages) { clsState.page++; loadClassics(); window.scrollTo({ top: 0 }); } };
 
 /* ================= AI 助手 ================= */
-let aiMsgs = [], aiBusy = false;
+/* ---- 全局 AI 会话中心（仿 Claude：新对话 / 项目 / 最近） ---- */
+let aiMsgs = [], aiBusy = false, aiChatId = null, aiProjectId = null;
+function aiShow(v) {
+  ['aiv-home', 'aiv-projects', 'aiv-chat'].forEach(id => $('#' + id).classList.add('hidden'));
+  $('#aiv-' + v).classList.remove('hidden');
+}
 async function openAI(preset) {
   $('#ai-panel').classList.remove('hidden');
-  if (!aiMsgs.length) {
-    let greet = '我是你的公考 AI 助手 👋 让我讲知识点、出题、翻译古文、分析错题都行。';
-    try {
-      const s = await api('/api/ai/status');
-      if (!s.configured) {
-        greet = ME && ME.is_admin
-          ? '⚠️ AI 还没配置。请到「后台 → AI 设置」填写 DeepSeek 的 API Key（在 platform.deepseek.com 申请）。'
-          : '⚠️ AI 还没配置，请让管理员在后台填写 API Key。';
-      }
-    } catch (_) { }
-    aiMsgs.push({ role: 'assistant', content: greet });
-    renderAI();
-  }
-  if (preset) { $('#ai-text').value = preset; aiGrow(); }
-  setTimeout(() => $('#ai-text').focus(), 60);
+  if (preset) { await aiNewChat(); $('#ai-text').value = preset; aiGrow(); return; }
+  aiShow('home'); loadAiHome();
+}
+async function loadAiHome() {
+  try {
+    const d = await api('/api/aichat/home');
+    $('#aih-pcount').textContent = d.projects.length ? d.projects.length : '';
+    $('#aih-recents').innerHTML = d.chats.length ? d.chats.map(c => `
+      <div class="aih-item" data-aichat="${c.id}">
+        <div class="aih-it">${esc(c.title || '（新对话）')}</div>
+        <div class="aih-im">${c.pname ? '📁 ' + esc(c.pname) + ' · ' : ''}${esc((c.updated_at || '').slice(5, 16))}</div>
+        <button class="aih-del" data-aidel="${c.id}">✕</button>
+      </div>`).join('') : '<p class="empty" style="padding:20px 0">还没有对话，点上面「＋ 新对话」开始。</p>';
+    $('#ai-panel')._projects = d.projects;
+  } catch (e) { toast(e.message, true); }
+}
+async function aiNewChat(projectId) {
+  try {
+    const d = await api('/api/aichat/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: projectId || null }) });
+    aiChatId = d.id; aiProjectId = projectId || null; aiMsgs = [];
+    $('#aic-title').textContent = '新对话';
+    aiShow('chat'); renderAI();
+    setTimeout(() => $('#ai-text').focus(), 60);
+  } catch (e) { toast(e.message, true); }
+}
+async function aiOpenChat(id) {
+  try {
+    const d = await api('/api/aichat/chats/' + id);
+    aiChatId = d.id; aiMsgs = d.msgs; aiProjectId = d.project_id;
+    $('#aic-title').textContent = d.title || '对话';
+    aiShow('chat'); renderAI();
+  } catch (e) { toast(e.message, true); }
+}
+function renderAiProjects() {
+  const ps = $('#ai-panel')._projects || [];
+  $('#aip-list').innerHTML = (ps.length ? ps.map(p => `
+    <div class="aih-item" data-aiproj="${p.id}">
+      <div class="aih-it">📁 ${esc(p.name)}</div>
+      <div class="aih-im">${p.cnt} 个对话${p.instructions ? ' · 有自定义指令' : ''}</div>
+      <button class="aih-del" data-aipdel="${p.id}">✕</button>
+    </div>`).join('') : '<p class="empty" style="padding:20px 0">还没有项目。项目=一组对话+自定义指令（比如"申论批改"）。</p>')
+    + '<p class="cd-tip" style="margin-top:14px">点项目名在该项目下开新对话，AI 会遵循项目指令。</p>';
 }
 function renderAI() {
-  $('#ai-msgs').innerHTML = aiMsgs.map(m =>
-    `<div class="ai-msg ${m.role}">${m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content)}</div>`).join('')
+  $('#ai-msgs').innerHTML = (aiMsgs.length ? '' : '<div class="ai-msg assistant">我是你的公考 AI 助手 👋 讲知识点、出题、翻译古文、分析错题、聊备考都行。我还能看到你的收录/错题/复习数据。</div>')
+    + aiMsgs.map(m =>
+      `<div class="ai-msg ${m.role}">${m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content)}</div>`).join('')
     + (aiBusy ? '<div class="ai-msg assistant ai-typing">思考中…</div>' : '');
   const box = $('#ai-msgs'); box.scrollTop = box.scrollHeight;
   $('#ai-send').disabled = aiBusy;
@@ -1738,15 +1816,17 @@ function renderAI() {
 async function aiSend() {
   const t = $('#ai-text').value.trim();
   if (!t || aiBusy) return;
+  if (!aiChatId) { await aiNewChat(); }
   aiMsgs.push({ role: 'user', content: t });
   $('#ai-text').value = ''; aiGrow();
   aiBusy = true; renderAI();
   try {
-    const d = await api('/api/ai/chat', {
+    const d = await api('/api/aichat/chats/' + aiChatId + '/send', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: aiMsgs.slice(-12) })
+      body: JSON.stringify({ content: t })
     });
     aiMsgs.push({ role: 'assistant', content: d.reply || '（空回复）' });
+    if (d.title) $('#aic-title').textContent = d.title;
   } catch (e) {
     aiMsgs.push({ role: 'assistant', content: '⚠️ ' + e.message });
   }
@@ -1754,8 +1834,45 @@ async function aiSend() {
 }
 function aiGrow() { const t = $('#ai-text'); t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
 $('#ai-send').onclick = aiSend;
+$('#ai-fab').onclick = () => openAI();
+$('#aih-new').onclick = () => aiNewChat();
+$('#aih-projects').onclick = () => { renderAiProjects(); aiShow('projects'); };
+$('#aip-new').onclick = async () => {
+  const name = await appPrompt('新建项目', '项目名，如：申论批改');
+  if (!name || !name.trim()) return;
+  const ins = await appPrompt('项目自定义指令（可留空）', '例：你是申论阅卷老师，对我提交的答案按采分点批改打分');
+  try {
+    await api('/api/aichat/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), instructions: (ins || '').trim() }) });
+    await loadAiHome(); renderAiProjects();
+  } catch (e) { toast(e.message, true); }
+};
+$('#ai-panel').addEventListener('click', async e => {
+  const back = e.target.closest('[data-aiback]');
+  if (back) {
+    if (back.dataset.aiback === 'close') $('#ai-panel').classList.add('hidden');
+    else { aiShow('home'); loadAiHome(); }
+    return;
+  }
+  const del = e.target.closest('[data-aidel]');
+  if (del) {
+    e.stopPropagation();
+    if (!(await appConfirm('删除这个对话？'))) return;
+    try { await api('/api/aichat/chats/' + del.dataset.aidel, { method: 'DELETE' }); loadAiHome(); } catch (err) { toast(err.message, true); }
+    return;
+  }
+  const pdel = e.target.closest('[data-aipdel]');
+  if (pdel) {
+    e.stopPropagation();
+    if (!(await appConfirm('删除这个项目？（对话会保留，只是不再归组）'))) return;
+    try { await api('/api/aichat/projects/' + pdel.dataset.aipdel, { method: 'DELETE' }); await loadAiHome(); renderAiProjects(); } catch (err) { toast(err.message, true); }
+    return;
+  }
+  const chat = e.target.closest('[data-aichat]');
+  if (chat) { aiOpenChat(+chat.dataset.aichat); return; }
+  const proj = e.target.closest('[data-aiproj]');
+  if (proj) { aiNewChat(+proj.dataset.aiproj); return; }
+});
 $('#ai-close').onclick = () => $('#ai-panel').classList.add('hidden');
-$('#ai-clear').onclick = () => { aiMsgs = []; renderAI(); openAI(); };
 $('#ai-text').addEventListener('input', aiGrow);
 $('#ai-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); } });
 
@@ -2038,7 +2155,7 @@ $('#wqd-wrap').addEventListener('click', async e => {
     try { wqData = await api('/api/wrongq/' + wqData.id + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); renderWqDetail(); toast('已更新'); } catch (err) { toast(err.message, true); rb.disabled = false; rb.textContent = '🤖 重新分析'; } return;
   }
   if (e.target.closest('#wqd-del')) {
-    if (!confirm('删除这道错题？')) return;
+    if (!(await appConfirm('删除这道错题？'))) return;
     try { await api('/api/wrongq/' + wqData.id, { method: 'DELETE' }); toast('已删除'); back(); loadWrongq(); loadWqBoards(); } catch (err) { toast(err.message, true); } return;
   }
 });
@@ -2096,7 +2213,7 @@ $('#bkb-wrap').addEventListener('click', async e => {
 /* ================= 顶栏 ================= */
 $('#admin-btn').onclick = () => { location.href = '/admin'; };
 async function doLogout() {
-  if (!confirm('退出登录？')) return;
+  if (!(await appConfirm('退出登录？'))) return;
   try { await fetch('/logout', { method: 'POST' }); } catch (_) {}
   location.href = '/login';
 }
@@ -2124,7 +2241,35 @@ function renderDateStrip(el, dates, cur, attr) {
   el.innerHTML = (dates || []).map(d =>
     `<button class="chip ${d.date === cur ? 'active' : ''}" data-${attr}="${esc(d.date)}">${fmtDay(d.date)} ${d.count}</button>`).join('');
 }
+const XY_COLOR = { '经济': '#c2671f', '文化': '#7a5cc0', '社会': '#2b6fd6', '党建': '#b23b2e', '科教': '#0f766e', '生态': '#2e7d32', '国防': '#5a6b85', '国际': '#0277bd' };
+let xyCat = '全部';
+async function loadXiyu() {
+  $('#news-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/xiyu?cat=' + encodeURIComponent(xyCat));
+    const cats = ['全部'].concat(Object.keys(XY_COLOR));
+    $('#news-dates').innerHTML = cats.map(c =>
+      `<button class="chip ${c === xyCat ? 'active' : ''}" data-xc="${c}">${c}${c !== '全部' && d.counts[c] ? ' ' + d.counts[c] : ''}</button>`).join('');
+    $('#news-dates').classList.remove('hidden');
+    if (!d.items.length) { $('#news-list').innerHTML = '<p class="empty">还没有金句，每天清晨自动从习近平讲话数据库提炼～</p>'; return; }
+    let lastDate = '';
+    $('#news-list').innerHTML = d.items.map(it => {
+      const head = it.date !== lastDate ? `<div class="sc-day">🗓 ${fmtDay(it.date)}</div>` : '';
+      lastDate = it.date;
+      return head + `<div class="gk-card">
+        <div class="gk-head"><span class="poly-badge" style="background:${XY_COLOR[it.category] || '#666'}">${esc(it.category)}</span></div>
+        <div class="xy-quote">${emKey('“' + it.quote + '”')}</div>
+        ${it.note ? `<div class="xy-note">💡 ${esc(it.note)}</div>` : ''}
+        ${it.source_url ? `<a class="poly-src" href="${esc(it.source_url)}" target="_blank" rel="noopener">讲话原文 ↗</a>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) { $('#news-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
 async function loadNews() {
+  if (newsBoard === '习语') {
+    document.querySelectorAll('#news-boards .chip').forEach(x => x.classList.toggle('active', x.dataset.nb === '习语'));
+    loadXiyu(); return;
+  }
   const starMode = newsBoard === '收藏';
   document.querySelectorAll('#news-boards .chip').forEach(x => x.classList.toggle('active', x.dataset.nb === newsBoard));
   $('#news-list').innerHTML = '<p class="empty">加载中…</p>';
@@ -2159,6 +2304,8 @@ $('#news-boards').addEventListener('click', e => {
   newsBoard = c.dataset.nb; newsDate = ''; loadNews();
 });
 $('#news-dates').addEventListener('click', e => {
+  const xc = e.target.closest('[data-xc]');
+  if (xc) { xyCat = xc.dataset.xc; loadXiyu(); return; }
   const c = e.target.closest('[data-nd]'); if (!c) return;
   newsDate = c.dataset.nd; loadNews();
 });
@@ -2262,41 +2409,217 @@ $('#sc-kinds').addEventListener('click', e => {
 /* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
 const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文' };
 const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e' };
+const RV_INTERVALS = [1, 2, 4, 7, 15, 30, 60];
+let rvQueue = [], rvTotal = 0, rvDoneN = 0;
 async function loadReview() {
-  $('#rv-list').innerHTML = '<p class="empty">加载中…</p>';
+  ['rv-empty', 'rv-card-wrap', 'rv-done'].forEach(id => $('#' + id).classList.add('hidden'));
   try {
     const d = await api('/api/review/today');
-    if (!d.items.length) {
-      $('#rv-summary').classList.add('hidden');
-      $('#rv-list').innerHTML = '<p class="empty">🎉 今天没有要复习的内容。收录的成语/错题/收藏古诗文会按遗忘曲线自动出现在这里。</p>';
-      refreshReviewBadge();
-      return;
-    }
-    $('#rv-summary').classList.remove('hidden');
-    $('#rv-summary').textContent = `今天要复习 ${d.count} 条 · 复习完点「✓ 记住了」进入下一轮`;
-    $('#rv-list').innerHTML = d.items.map(it => `
-      <div class="gk-card rv-item" data-rvk="${it.kind}" data-rvid="${it.id}">
-        <div class="gk-head">
-          <span class="poly-badge" style="background:${RV_COLOR[it.kind] || '#666'}">${RV_KIND[it.kind] || it.kind}</span>
-          <span class="gk-topic">${esc(it.title)}</span>
-          <span class="rv-stage">第 ${it.stage + 1} 轮</span>
-        </div>
-        ${it.sub ? `<div class="rv-sub">${esc(it.sub)}</div>` : ''}
-        ${it.body ? `<div class="sc-body rv-body">${esc(it.body)}…</div>` : ''}
-        <button class="btn rv-done" data-rvdone="1">✓ 记住了</button>
-      </div>`).join('');
-  } catch (e) { $('#rv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+    rvQueue = d.items; rvTotal = d.items.length; rvDoneN = 0;
+    if (!rvTotal) { $('#rv-empty').classList.remove('hidden'); refreshReviewBadge(); return; }
+    $('#rv-card-wrap').classList.remove('hidden');
+    rvShow();
+  } catch (e) { toast(e.message, true); }
 }
 function openReview() { push({ view: 'review', title: '今日复习' }); loadReview(); }
-$('#rv-list').addEventListener('click', async e => {
-  const btn = e.target.closest('[data-rvdone]'); if (!btn) return;
-  const card = btn.closest('.rv-item'); if (!card) return;
-  btn.disabled = true;
-  try {
-    const d = await api('/api/review/done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: card.dataset.rvk, id: +card.dataset.rvid }) });
-    card.style.opacity = '.35'; btn.textContent = `✓ ${d.interval} 天后再见`;
+function rvShow() {
+  if (!rvQueue.length) {
+    $('#rv-card-wrap').classList.add('hidden');
+    $('#rv-done').classList.remove('hidden');
     refreshReviewBadge();
-  } catch (err) { toast(err.message, true); btn.disabled = false; }
+    return;
+  }
+  const it = rvQueue[0];
+  $('#rv-bar').style.width = (rvTotal ? (rvDoneN / rvTotal * 100) : 0) + '%';
+  $('#rv-pos').textContent = `进度 ${rvDoneN} / ${rvTotal} · 待复习 ${rvQueue.length}`;
+  $('#rv-round').textContent = `第 ${it.stage + 1} 轮`;
+  $('#rvf-kind').textContent = RV_KIND[it.kind] || it.kind;
+  $('#rvf-kind').style.background = RV_COLOR[it.kind] || '#666';
+  $('#rvf-title').textContent = it.front || it.title;
+  $('#rvf-sub').textContent = it.front_sub || '';
+  $('#rvb-body').innerHTML = emKey(it.back || '');
+  $('#rv-back').classList.add('hidden');
+  $('#rvf-hint').classList.remove('hidden');
+  $('#rv-btns').classList.add('hidden');
+  const nd = RV_INTERVALS[Math.min(it.stage + 1, RV_INTERVALS.length - 1)];
+  $('#rv-know-d').textContent = nd + ' 天后';
+}
+$('#rv-flash').addEventListener('click', e => {
+  if (e.target.closest('.read-item-btn')) return;   // 朗读按钮不翻卡
+  const back = $('#rv-back');
+  const opening = back.classList.contains('hidden');
+  back.classList.toggle('hidden', !opening);
+  $('#rvf-hint').classList.toggle('hidden', opening);
+  $('#rv-btns').classList.toggle('hidden', !opening);
+});
+async function rvAnswer(result) {
+  const it = rvQueue.shift(); if (!it) return;
+  try {
+    await api('/api/review/done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, result }) });
+  } catch (e) { toast(e.message, true); rvQueue.unshift(it); return; }
+  if (result === 'forget') { it.stage = 0; rvQueue.push(it); }   // 忘记：今日重现（排到队尾）
+  else rvDoneN++;
+  rvShow();
+}
+$('#rv-know').onclick = () => rvAnswer('know');
+$('#rv-fuzzy').onclick = () => rvAnswer('fuzzy');
+$('#rv-forget').onclick = () => rvAnswer('forget');
+
+/* ============= 题库（四川省考卷面 · 练习模式） ============= */
+let qz = { set: null, qs: [], idx: 0 };
+async function openQuiz() {
+  push({ view: 'quiz', title: '题库' });
+  $('#qz-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/quiz/sets');
+    if (!d.items.length) { $('#qz-list').innerHTML = '<p class="empty">还没有套卷，每周二/五清晨自动生成～</p>'; return; }
+    $('#qz-list').innerHTML = d.items.map(it => {
+      const pct = it.done ? Math.round(it.right_n / it.done * 100) : 0;
+      return `<div class="poly-card" data-qset="${it.id}">
+        <span class="poly-badge" style="background:${it.kind === '申论' ? '#7a5cc0' : '#2b6fd6'}">${esc(it.kind)}</span>
+        <div class="poly-t" style="font-size:16px">${esc(it.name)}</div>
+        <div class="poly-meta">${it.total} 题 · 已做 ${it.done}${it.done ? ` · 正确率 ${pct}%` : ''}</div>
+      </div>`;
+    }).join('');
+  } catch (e) { $('#qz-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#qz-list').addEventListener('click', async e => {
+  const c = e.target.closest('[data-qset]'); if (!c) return;
+  try {
+    const d = await api('/api/quiz/sets/' + c.dataset.qset);
+    qz = { set: d, qs: d.questions, idx: 0 };
+    // 跳到第一道未作答的题
+    const firstUndone = d.questions.findIndex(q => !q.my_choice);
+    if (firstUndone > 0) qz.idx = firstUndone;
+    push({ view: 'quizrun', title: d.name });
+    renderQuiz();
+  } catch (err) { toast(err.message, true); }
+});
+function renderQuiz() {
+  const q = qz.qs[qz.idx];
+  if (!q) { $('#qzr-wrap').innerHTML = '<p class="empty">没有题目</p>'; return; }
+  const total = qz.qs.length;
+  const doneN = qz.qs.filter(x => x.my_choice).length;
+  const isSL = qz.set.kind === '申论';
+  const answered = !!q.my_choice;
+  let optHtml = '';
+  if (!isSL) {
+    optHtml = '<div class="qz-opts">' + q.options.map(o => {
+      const letter = (o || '').trim().slice(0, 1).toUpperCase();
+      let cls = '';
+      if (answered) {
+        if (letter === q.answer) cls = ' right';
+        else if (letter === q.my_choice) cls = ' wrong';
+        else cls = ' dim';
+      }
+      return `<button class="qz-opt${cls}" data-opt="${letter}" ${answered ? 'disabled' : ''}>${esc(o)}</button>`;
+    }).join('') + '</div>';
+  }
+  const expl = (answered && !isSL)
+    ? `<div class="cd-sec qz-expl"><div class="cd-sec-t">${q.my_choice === q.answer ? '✅ 回答正确' : '❌ 回答错误 · 正确答案 ' + esc(q.answer)}</div>
+        <div class="cd-sec-b">${emKey(q.explanation || '')}</div></div>` : '';
+  const slAns = isSL ? `
+    <button class="btn primary" id="qz-showans" style="width:100%;padding:12px;margin-top:12px;">查看参考答案</button>
+    <div class="cd-sec qz-expl hidden" id="qz-ansbox"><div class="cd-sec-t">📄 参考答案</div>
+      <div class="cd-sec-b">${emKey(q.explanation || '')}</div></div>` : '';
+  $('#qzr-wrap').innerHTML = `
+    <div class="rv-progress"><div class="rv-bar" style="width:${doneN / total * 100}%"></div></div>
+    <div class="rv-meta-row"><span>第 ${qz.idx + 1} / ${total} 题 · ${esc(q.module)}${q.qtype && q.qtype !== q.module ? '·' + esc(q.qtype) : ''}</span>
+      <span>已做 ${doneN} · 对 ${qz.qs.filter(x => x.my_choice && x.my_choice === x.answer).length}</span></div>
+    ${q.material ? `<div class="qz-mat"><div class="qz-mat-t">📋 ${isSL ? '给定资料' : '材料'}（上下滚动）</div><div class="qz-mat-b">${emKey(q.material)}</div></div>` : ''}
+    <div class="gk-card"><div class="qz-q">${qz.idx + 1}. ${emKey(q.question)}</div>${optHtml}${slAns}</div>
+    ${expl}
+    <div class="qz-nav">
+      <button class="btn" id="qz-prev" ${qz.idx === 0 ? 'disabled' : ''}>‹ 上一题</button>
+      <button class="btn primary" id="qz-next" ${qz.idx >= total - 1 ? 'disabled' : ''}>下一题 ›</button>
+    </div>`;
+  window.scrollTo(0, 0);
+}
+$('#qzr-wrap').addEventListener('click', async e => {
+  if (e.target.closest('#qz-prev')) { if (qz.idx > 0) { qz.idx--; renderQuiz(); } return; }
+  if (e.target.closest('#qz-next')) { if (qz.idx < qz.qs.length - 1) { qz.idx++; renderQuiz(); } return; }
+  if (e.target.closest('#qz-showans')) {
+    $('#qz-ansbox').classList.remove('hidden');
+    e.target.closest('#qz-showans').classList.add('hidden');
+    return;
+  }
+  const opt = e.target.closest('.qz-opt');
+  if (opt && !opt.disabled) {
+    const q = qz.qs[qz.idx];
+    try {
+      const d = await api('/api/quiz/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qid: q.id, choice: opt.dataset.opt }) });
+      q.my_choice = opt.dataset.opt; q.answer = d.answer; q.explanation = d.explanation;
+      renderQuiz();
+      // 答错自动收进错题本
+      if (!d.correct) {
+        try {
+          const fd = new FormData();
+          fd.append('board', q.module === '申论' ? '申论' : q.module);
+          fd.append('question', q.question + '\n' + (q.options || []).join('\n'));
+          fd.append('answer', d.answer);
+          fd.append('qtype', q.qtype || q.module);
+          fd.append('points', ''); fd.append('note', '来自题库：' + qz.set.name);
+          fd.append('analyze', '0');
+          await api('/api/wrongq', { method: 'POST', body: fd });
+          toast('已答错，这题自动收进错题本');
+        } catch (_) { }
+      }
+    } catch (err) { toast(err.message, true); }
+  }
+});
+
+/* ============= 经典著作（毛泽东选集） ============= */
+let wkData = null;
+async function openWorks() {
+  push({ view: 'works', title: '经典著作' });
+  $('#wk-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/works');
+    $('#wk-list').innerHTML = d.items.map(it => `
+      <div class="poly-card" data-work="${it.id}">
+        <div class="poly-t" style="font-size:15.5px">${it.ord + 1}. ${esc(it.title)}</div>
+        <div class="poly-meta">${esc(it.book)} · 约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">✓ 已有AI导读</span>' : ''}</div>
+      </div>`).join('');
+  } catch (e) { $('#wk-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#wk-list').addEventListener('click', e => {
+  const c = e.target.closest('[data-work]'); if (c) openWorkDetail(+c.dataset.work);
+});
+async function openWorkDetail(id) {
+  push({ view: 'workd', title: '精读' });
+  $('#wk-wrap').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/works/' + id); wkData = d;
+    stack[stack.length - 1].title = d.title; $('#top-title').textContent = d.title;
+    renderWork();
+  } catch (e) { $('#wk-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function renderWork() {
+  const d = wkData;
+  const ai = d.interpretation
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 导读</div><div class="cd-sec-b">${mdToHtml(d.interpretation)}</div>
+        <button class="btn cd-ai-regen" id="wk-regen">重新生成</button></div>`
+    : `<div class="poly-genbox"><p class="cd-tip" style="margin:0 0 10px">让 AI 梳理这篇文章的写作背景、核心观点、名句与公考运用。</p>
+        <button class="btn primary" id="wk-gen" style="width:100%;padding:12px;">🤖 生成 AI 导读</button></div>`;
+  const body = (d.content || '').split('\n').filter(x => x.trim()).map(p => {
+    const s2 = p.trim();
+    return isDocHeading(s2) ? `<p class="poly-h">${emKey(s2)}</p>` : `<p>${emKey(s2)}</p>`;
+  }).join('');
+  $('#wk-wrap').innerHTML = `
+    <div class="poly-head"><h2>${esc(d.title)}</h2>
+      <div class="news-date">📕 ${esc(d.book)}</div></div>
+    ${ai}
+    <div class="poly-readert">全文</div>
+    <div class="poly-reader">${body}</div>`;
+}
+$('#wk-wrap').addEventListener('click', async e => {
+  const g = e.target.closest('#wk-gen') || e.target.closest('#wk-regen');
+  if (!g) return;
+  g.disabled = true; g.textContent = 'AI 导读生成中…（约二三十秒）';
+  try {
+    const d = await api('/api/works/' + wkData.id + '/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: g.id === 'wk-regen' }) });
+    wkData.interpretation = d.content; renderWork(); toast('已生成');
+  } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 导读'; }
 });
 
 /* ============= 常识积累（7板块 · 考情 + 高频考点） ============= */
@@ -2468,7 +2791,7 @@ $('#pd-list').addEventListener('click', e => {
 
 /* ================= 逐条朗读（安卓 TTS 桥 / 浏览器 speechSynthesis） ================= */
 // 会自动注入 🔊 按钮的内容条目选择器（新渲染的列表/卡片自动获得朗读按钮）
-const READ_ITEM_SEL = '.gk-card, .pd-item, .poly-card, .cd-sec, .cd-body, .item, .poly-reader, #viewer-reader, .cs-ov-body, .cs-kq, .ai-msg.assistant, .sc-body-solo';
+const READ_ITEM_SEL = '.gk-card, .pd-item, .poly-card, .cd-sec, .cd-body, .item, .poly-reader, #viewer-reader, .cs-ov-body, .cs-kq, .ai-msg.assistant, .sc-body-solo, .rv-flash';
 const READ_RATES = [1.0, 1.2, 1.5, 0.8];
 window.Reader = {
   playing: false, segs: [], idx: 0, gen: 0, rateIdx: 0, card: null,

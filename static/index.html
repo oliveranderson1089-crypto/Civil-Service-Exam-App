@@ -12,6 +12,14 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- 启动加载页 -->
+<div id="splash">
+  <div class="sp-logo">公</div>
+  <div class="sp-name">公考助手</div>
+  <div class="sp-quote">“考公的主要矛盾：对全科平衡发展的追求同积累不足、知识点不熟练以及题型掌握不全面之间的矛盾。”</div>
+  <div class="sp-author">—— 李佩根</div>
+  <div class="sp-loading"><span></span><span></span><span></span></div>
+</div>
 <header class="topbar">
   <button id="nav-back" class="navbtn hidden">‹ 返回</button>
   <div class="brand-min">
@@ -460,6 +468,7 @@
       <span class="chip" data-nb="国内">国内</span>
       <span class="chip" data-nb="四川">四川</span>
       <span class="chip" data-nb="国际">国际</span>
+      <span class="chip" data-nb="习语">习语</span>
       <span class="chip" data-nb="收藏">⭐ 收藏</span>
     </div>
     <div id="news-dates" class="date-strip"></div>
@@ -491,11 +500,52 @@
     <div id="sc-list" class="poly-list"></div>
   </section>
 
-  <!-- ===== 今日复习（遗忘曲线） ===== -->
+  <!-- ===== 今日复习（遗忘曲线 · 墨墨式卡片） ===== -->
   <section id="view-review" class="view hidden">
-    <div class="pd-intro">艾宾浩斯遗忘曲线：收录次日起按 1 / 2 / 4 / 7 / 15 / 30 / 60 天间隔提醒复习</div>
-    <div id="rv-summary" class="rv-summary hidden"></div>
-    <div id="rv-list" class="poly-list"></div>
+    <div id="rv-empty" class="hidden"><p class="empty">🎉 今天没有要复习的内容。收录的成语/错题/收藏古诗文会按遗忘曲线（1/2/4/7/15/30/60 天）自动出现。</p></div>
+    <div id="rv-card-wrap" class="hidden">
+      <div class="rv-progress"><div class="rv-bar" id="rv-bar"></div></div>
+      <div class="rv-meta-row"><span id="rv-pos"></span><span id="rv-round"></span></div>
+      <div class="rv-flash" id="rv-flash">
+        <div class="rv-front">
+          <span class="poly-badge" id="rvf-kind"></span>
+          <div class="rvf-title" id="rvf-title"></div>
+          <div class="rvf-sub" id="rvf-sub"></div>
+          <div class="rvf-hint" id="rvf-hint">请回忆内容要点 · 点击卡片显示答案</div>
+        </div>
+        <div class="rv-back hidden" id="rv-back">
+          <div class="rvb-body" id="rvb-body"></div>
+        </div>
+      </div>
+      <div class="rv-btns hidden" id="rv-btns">
+        <button class="rvb rvb-know" id="rv-know">认识<small id="rv-know-d"></small></button>
+        <button class="rvb rvb-fuzzy" id="rv-fuzzy">模糊<small>明天 再见</small></button>
+        <button class="rvb rvb-forget" id="rv-forget">忘记<small>今日 重现</small></button>
+      </div>
+    </div>
+    <div id="rv-done" class="hidden"><p class="empty">🎉 今日复习全部完成！明天见～</p></div>
+  </section>
+
+  <!-- ===== 题库（套卷列表） ===== -->
+  <section id="view-quiz" class="view hidden">
+    <div class="pd-intro">按四川省考卷面：行测100题（常识15/言语30/数量10/判断30/资料15）+ 申论4题 · 每周二/五自动更新</div>
+    <div id="qz-list" class="poly-list"></div>
+  </section>
+
+  <!-- ===== 题库 · 做题 ===== -->
+  <section id="view-quizrun" class="view hidden">
+    <div id="qzr-wrap"></div>
+  </section>
+
+  <!-- ===== 经典著作（毛泽东选集） ===== -->
+  <section id="view-works" class="view hidden">
+    <div class="pd-intro">毛泽东选集 · 全文精读 + AI 导读 · 长按/点右下角可朗读</div>
+    <div id="wk-list" class="poly-list"></div>
+  </section>
+
+  <!-- ===== 经典著作 · 阅读 ===== -->
+  <section id="view-workd" class="view hidden">
+    <div id="wk-wrap" class="poly-wrap"></div>
   </section>
 
   <!-- ===== 常识积累（7板块 分梯队） ===== -->
@@ -708,15 +758,57 @@
 
 <!-- AI 助手对话面板 -->
 <div id="ai-panel" class="ai-panel hidden">
-  <div class="ai-head">
-    <span class="ai-title">AI 助手</span>
-    <button id="ai-clear" class="ai-headbtn" title="清空对话">清空</button>
-    <button id="ai-close" class="ai-x" title="关闭">✕</button>
+  <!-- 首页：新对话 / 项目 / 最近 -->
+  <div id="aiv-home" class="aiv">
+    <div class="ai-head">
+      <span class="ai-title">AI 助手</span>
+      <button id="ai-close" class="ai-x" title="关闭">✕</button>
+    </div>
+    <div class="aih-scroll">
+      <button class="aih-new" id="aih-new">＋ 新对话</button>
+      <button class="aih-projects" id="aih-projects">📁 项目 <span id="aih-pcount"></span><span class="aih-arr">›</span></button>
+      <div class="aih-sec">最近对话</div>
+      <div id="aih-recents"></div>
+    </div>
   </div>
-  <div id="ai-msgs" class="ai-msgs"></div>
-  <div class="ai-input">
-    <textarea id="ai-text" rows="1" placeholder="问点什么…（讲知识点 / 出题 / 翻译古文 / 分析错题）"></textarea>
-    <button id="ai-send" class="ai-sendbtn">发送</button>
+  <!-- 项目列表 -->
+  <div id="aiv-projects" class="aiv hidden">
+    <div class="ai-head">
+      <button class="ai-backbtn" data-aiback="home">‹</button>
+      <span class="ai-title">项目</span>
+      <button id="aip-new" class="ai-headbtn">＋ 新建</button>
+      <button class="ai-x" data-aiback="close">✕</button>
+    </div>
+    <div class="aih-scroll" id="aip-list"></div>
+  </div>
+  <!-- 会话 -->
+  <div id="aiv-chat" class="aiv hidden">
+    <div class="ai-head">
+      <button class="ai-backbtn" data-aiback="home">‹</button>
+      <span class="ai-title" id="aic-title">新对话</span>
+      <button class="ai-x" data-aiback="close">✕</button>
+    </div>
+    <div id="ai-msgs" class="ai-msgs"></div>
+    <div class="ai-input">
+      <textarea id="ai-text" rows="1" placeholder="问点什么…（讲知识点 / 出题 / 翻译古文 / 分析错题）"></textarea>
+      <button id="ai-send" class="ai-sendbtn">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全局 AI 悬浮按钮 -->
+<button id="ai-fab" title="AI 助手">AI</button>
+
+<!-- 通用确认/输入弹窗（替代安卓原生 confirm/prompt） -->
+<div id="app-dialog" class="modal hidden">
+  <div class="modal-box ad-box">
+    <h3 id="ad-title">确认</h3>
+    <p id="ad-msg" class="ad-msg hidden"></p>
+    <textarea id="ad-input" class="ad-input hidden" rows="3"></textarea>
+    <div class="modal-actions">
+      <button class="btn" id="ad-cancel">取消</button>
+      <button class="btn primary" id="ad-ok">确定</button>
+    </div>
   </div>
 </div>
 

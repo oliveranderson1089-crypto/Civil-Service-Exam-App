@@ -326,6 +326,55 @@ def init_db():
             UNIQUE(board, topic, title)
         );
         CREATE INDEX IF NOT EXISTS idx_cs_bt ON changshi_items(board, topic);
+        -- 题库（四川省考卷面结构，每周自动更新两次）
+        CREATE TABLE IF NOT EXISTS quiz_sets(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT, kind TEXT DEFAULT '行测',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS quiz_questions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, set_id INTEGER, seq INTEGER,
+            module TEXT, qtype TEXT, material TEXT, question TEXT,
+            options TEXT, answer TEXT, explanation TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_qq_set ON quiz_questions(set_id, seq);
+        CREATE TABLE IF NOT EXISTS quiz_answers(
+            user_id INTEGER NOT NULL, set_id INTEGER, qid INTEGER NOT NULL,
+            choice TEXT, correct INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, qid)
+        );
+        -- 习语金句（学习强国风格：每日从习近平讲话数据库真实原文提炼，分八类）
+        CREATE TABLE IF NOT EXISTS xiyu_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT, category TEXT, quote TEXT, note TEXT, source_url TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(quote)
+        );
+        -- 经典著作（毛泽东选集等）：全文 + AI 解读缓存
+        CREATE TABLE IF NOT EXISTS works(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book TEXT, ord INTEGER, title TEXT, content TEXT, interpretation TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 全局 AI 会话中心（仿 Claude：项目 / 会话 / 消息）
+        CREATE TABLE IF NOT EXISTS ai_projects(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            name TEXT, instructions TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS ai_chats(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            project_id INTEGER, title TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS ai_msgs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL,
+            role TEXT, content TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_aim_chat ON ai_msgs(chat_id);
         -- 遗忘曲线复习进度（艾宾浩斯间隔：1/2/4/7/15/30/60 天）
         CREATE TABLE IF NOT EXISTS review_state(
             user_id INTEGER NOT NULL, kind TEXT NOT NULL, item_id INTEGER NOT NULL,
@@ -2481,6 +2530,221 @@ def sucai_list():
     return jsonify({"items": [dict(r) for r in rows], "counts": counts})
 
 
+# ---------------------------------------------------------------- 题库（四川省考卷面）
+@app.get("/api/quiz/sets")
+def quiz_sets():
+    db = get_db()
+    rows = db.execute(
+        "SELECT s.id, s.name, s.kind, s.created_at,"
+        "(SELECT COUNT(*) FROM quiz_questions q WHERE q.set_id=s.id) total,"
+        "(SELECT COUNT(*) FROM quiz_answers a JOIN quiz_questions q2 ON q2.id=a.qid "
+        " WHERE a.user_id=? AND q2.set_id=s.id) done,"
+        "(SELECT COUNT(*) FROM quiz_answers a JOIN quiz_questions q3 ON q3.id=a.qid "
+        " WHERE a.user_id=? AND q3.set_id=s.id AND a.correct=1) right_n "
+        "FROM quiz_sets s ORDER BY s.id DESC", (uid(), uid())).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/quiz/sets/<int:sid>")
+def quiz_set_detail(sid):
+    db = get_db()
+    s = db.execute("SELECT * FROM quiz_sets WHERE id=?", (sid,)).fetchone()
+    if not s:
+        return jsonify({"error": "未找到"}), 404
+    qs = db.execute("SELECT id,seq,module,qtype,material,question,options,answer,explanation "
+                    "FROM quiz_questions WHERE set_id=? ORDER BY seq", (sid,)).fetchall()
+    mine = {r["qid"]: dict(r) for r in db.execute(
+        "SELECT qid, choice, correct FROM quiz_answers WHERE user_id=? AND set_id=?", (uid(), sid))}
+    items = []
+    for q in qs:
+        d = dict(q)
+        try:
+            d["options"] = json.loads(d["options"] or "[]")
+        except Exception:
+            d["options"] = []
+        m = mine.get(q["id"])
+        d["my_choice"] = m["choice"] if m else ""
+        items.append(d)
+    return jsonify({"id": s["id"], "name": s["name"], "kind": s["kind"], "questions": items})
+
+
+@app.post("/api/quiz/answer")
+def quiz_answer():
+    data = request.get_json(silent=True) or {}
+    qid = int(data.get("qid") or 0)
+    choice = (data.get("choice") or "").strip()
+    db = get_db()
+    q = db.execute("SELECT * FROM quiz_questions WHERE id=?", (qid,)).fetchone()
+    if not q:
+        return jsonify({"error": "题目不存在"}), 404
+    correct = 1 if choice and choice == (q["answer"] or "") else 0
+    db.execute("INSERT OR REPLACE INTO quiz_answers(user_id,set_id,qid,choice,correct) VALUES(?,?,?,?,?)",
+               (uid(), q["set_id"], qid, choice, correct))
+    db.commit()
+    return jsonify({"correct": bool(correct), "answer": q["answer"], "explanation": q["explanation"] or ""})
+
+
+# ---------------------------------------------------------------- 习语金句 / 经典著作
+@app.get("/api/xiyu")
+def xiyu_list():
+    cat = (request.args.get("cat") or "").strip()
+    db = get_db()
+    where, args = "", []
+    if cat and cat != "全部":
+        where = "WHERE category=?"; args = [cat]
+    rows = db.execute("SELECT * FROM xiyu_items %s ORDER BY date DESC, id LIMIT 200" % where, args).fetchall()
+    counts = {r[0]: r[1] for r in db.execute("SELECT category, COUNT(*) FROM xiyu_items GROUP BY category")}
+    return jsonify({"items": [dict(r) for r in rows], "counts": counts})
+
+
+@app.get("/api/works")
+def works_list():
+    rows = get_db().execute(
+        "SELECT id, book, ord, title, length(content) chars,"
+        "(interpretation IS NOT NULL AND interpretation<>'') has_ai "
+        "FROM works ORDER BY book, ord").fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/works/<int:wid>")
+def works_detail(wid):
+    r = get_db().execute("SELECT * FROM works WHERE id=?", (wid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    return jsonify({"id": r["id"], "book": r["book"], "title": r["title"],
+                    "content": r["content"] or "", "interpretation": r["interpretation"] or ""})
+
+
+@app.post("/api/works/<int:wid>/ai")
+def works_ai(wid):
+    r = get_db().execute("SELECT * FROM works WHERE id=?", (wid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    force = (request.get_json(silent=True) or {}).get("force")
+    if r["interpretation"] and not force:
+        return jsonify({"content": r["interpretation"], "cached": True})
+    excerpt = (r["content"] or "")[:8000]
+    prompt = (
+        "下面是《%s》中《%s》一文（可能为节选）。请面向公务员考试考生，用简体中文、Markdown 输出"
+        "「导读解读」，分节：\n## 一、写作背景\n## 二、核心观点（分条）\n"
+        "## 三、名句与经典表述（摘原文）\n## 四、公考如何运用（申论/面试引用角度）\n"
+        "要求准确、精炼、完整不截断。\n\n全文：\n%s") % (r["book"], r["title"], excerpt)
+    reply, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是理论功底扎实的公考辅导老师，解读准确精炼，用简体中文 Markdown。"},
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=4000)
+    if err:
+        return err
+    db = get_db()
+    db.execute("UPDATE works SET interpretation=? WHERE id=?", (reply, wid))
+    db.commit()
+    return jsonify({"content": reply, "cached": False})
+
+
+# ---------------------------------------------------------------- 全局 AI 会话中心
+@app.get("/api/aichat/home")
+def aichat_home():
+    db = get_db()
+    chats = db.execute(
+        "SELECT c.id, c.title, c.updated_at, c.project_id, p.name pname FROM ai_chats c "
+        "LEFT JOIN ai_projects p ON p.id=c.project_id "
+        "WHERE c.user_id=? ORDER BY c.updated_at DESC LIMIT 50", (uid(),)).fetchall()
+    projects = db.execute(
+        "SELECT p.id, p.name, p.instructions,"
+        "(SELECT COUNT(*) FROM ai_chats c WHERE c.project_id=p.id) cnt "
+        "FROM ai_projects p WHERE p.user_id=? ORDER BY p.id DESC", (uid(),)).fetchall()
+    return jsonify({"chats": [dict(r) for r in chats], "projects": [dict(r) for r in projects]})
+
+
+@app.post("/api/aichat/chats")
+def aichat_new():
+    data = request.get_json(silent=True) or {}
+    pid = data.get("project_id")
+    db = get_db()
+    cur = db.execute("INSERT INTO ai_chats(user_id,project_id,title) VALUES(?,?,?)",
+                     (uid(), pid, ""))
+    db.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+@app.get("/api/aichat/chats/<int:cid>")
+def aichat_get(cid):
+    db = get_db()
+    c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
+    if not c:
+        return jsonify({"error": "未找到"}), 404
+    msgs = db.execute("SELECT role, content FROM ai_msgs WHERE chat_id=? ORDER BY id", (cid,)).fetchall()
+    return jsonify({"id": c["id"], "title": c["title"], "project_id": c["project_id"],
+                    "msgs": [dict(r) for r in msgs]})
+
+
+@app.delete("/api/aichat/chats/<int:cid>")
+def aichat_del(cid):
+    db = get_db()
+    db.execute("DELETE FROM ai_msgs WHERE chat_id IN (SELECT id FROM ai_chats WHERE id=? AND user_id=?)", (cid, uid()))
+    db.execute("DELETE FROM ai_chats WHERE id=? AND user_id=?", (cid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/aichat/chats/<int:cid>/send")
+def aichat_send(cid):
+    data = request.get_json(silent=True) or {}
+    content = (data.get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "请输入内容"}), 400
+    db = get_db()
+    c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
+    if not c:
+        return jsonify({"error": "会话不存在"}), 404
+    sys_prompt = "你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。"
+    if c["project_id"]:
+        p = db.execute("SELECT * FROM ai_projects WHERE id=?", (c["project_id"],)).fetchone()
+        if p and (p["instructions"] or "").strip():
+            sys_prompt += "\n\n【本项目要求】" + p["instructions"].strip()
+    stats = _user_stats()
+    if stats:
+        sys_prompt += "\n\n" + stats
+    hist = db.execute("SELECT role, content FROM ai_msgs WHERE chat_id=? ORDER BY id DESC LIMIT 20",
+                      (cid,)).fetchall()
+    msgs = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
+    msgs.append({"role": "user", "content": content})
+    reply, err = _ai_call_or_error([{"role": "system", "content": sys_prompt}] + msgs,
+                                   temperature=0.6, max_tokens=2000)
+    if err:
+        return err
+    db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "user", content))
+    db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "assistant", reply))
+    title = c["title"]
+    if not title:
+        title = content[:24]
+        db.execute("UPDATE ai_chats SET title=? WHERE id=?", (title, cid))
+    db.execute("UPDATE ai_chats SET updated_at=datetime('now','localtime') WHERE id=?", (cid,))
+    db.commit()
+    return jsonify({"reply": reply, "title": title})
+
+
+@app.post("/api/aichat/projects")
+def aiproj_new():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "请输入项目名"}), 400
+    db = get_db()
+    cur = db.execute("INSERT INTO ai_projects(user_id,name,instructions) VALUES(?,?,?)",
+                     (uid(), name, (data.get("instructions") or "").strip()))
+    db.commit()
+    return jsonify({"id": cur.lastrowid, "name": name}), 201
+
+
+@app.delete("/api/aichat/projects/<int:pid>")
+def aiproj_del(pid):
+    db = get_db()
+    db.execute("UPDATE ai_chats SET project_id=NULL WHERE project_id=? AND user_id=?", (pid, uid()))
+    db.execute("DELETE FROM ai_projects WHERE id=? AND user_id=?", (pid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 # ---------------------------------------------------------------- 常识积累（7板块）
 _CS_META = {}
 try:
@@ -2545,16 +2809,37 @@ def _review_due(db, u, today):
             due.append(dict(payload, kind=kind, id=rid, stage=0))
 
     for r in db.execute("SELECT * FROM entries WHERE user_id=?", (u,)):
+        back = "\n".join(x for x in [
+            (r["explanation"] or "").strip(),
+            ("出处：" + r["derivation"]) if r["derivation"] else "",
+            ("例句：" + r["example"]) if r["example"] else "",
+            ("📝 " + r["note"]) if r["note"] else ""] if x)
         check("entry", r["id"], r["created_at"], {
-            "title": r["word"], "sub": r["category"] or "词语", "body": (r["explanation"] or "")[:90]})
+            "title": r["word"], "sub": r["category"] or "词语", "body": (r["explanation"] or "")[:90],
+            "front": r["word"], "front_sub": (r["pinyin"] or "") + " · " + (r["category"] or "词语"),
+            "back": back or "（无释义）"})
     for r in db.execute("SELECT * FROM wrong_questions WHERE user_id=?", (u,)):
+        back = "\n".join(x for x in [
+            ("【知识点】" + r["points"]) if r["points"] else "",
+            ("【方法】" + r["method"]) if r["method"] else "",
+            ("【技巧】" + r["skill"]) if r["skill"] else "",
+            ("【步骤】" + r["steps"]) if r["steps"] else "",
+            ("【答案】" + r["answer"]) if r["answer"] else ""] if x)
         check("wrongq", r["id"], r["created_at"], {
             "title": (r["question"] or "（图片错题）")[:36], "sub": r["qtype"] or r["board"] or "错题",
-            "body": (r["points"] or "")[:90]})
-    for r in db.execute("SELECT s.classic_id cid, s.created_at ca, c.title t, c.author a, c.content ct "
-                        "FROM classic_stars s JOIN classics c ON c.id=s.classic_id WHERE s.user_id=?", (u,)):
+            "body": (r["points"] or "")[:90],
+            "front": (r["question"] or "（图片错题）"), "front_sub": r["qtype"] or r["board"] or "错题",
+            "back": back or "（无解析，可回错题本重新分析）"})
+    for r in db.execute("SELECT s.classic_id cid, s.created_at ca, c.title t, c.author a, c.dynasty dy, "
+                        "c.content ct, c.translation tr FROM classic_stars s "
+                        "JOIN classics c ON c.id=s.classic_id WHERE s.user_id=?", (u,)):
+        back = (r["ct"] or "")
+        if r["tr"]:
+            back += "\n\n【译文】" + r["tr"][:300]
         check("classic", r["cid"], r["ca"], {
-            "title": r["t"], "sub": r["a"] or "古诗文", "body": (r["ct"] or "").split("\n")[0][:44]})
+            "title": r["t"], "sub": r["a"] or "古诗文", "body": (r["ct"] or "").split("\n")[0][:44],
+            "front": r["t"], "front_sub": ((r["dy"] or "") + " · " + (r["a"] or "")).strip(" ·"),
+            "back": back or "（无内容）"})
     return due
 
 
@@ -2571,19 +2856,27 @@ def review_today():
 def review_done():
     data = request.get_json(silent=True) or {}
     kind, rid = (data.get("kind") or "").strip(), int(data.get("id") or 0)
+    result = (data.get("result") or "know").strip()  # know认识 / fuzzy模糊 / forget忘记
     if kind not in ("entry", "wrongq", "classic") or not rid:
         return jsonify({"error": "参数错误"}), 400
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
     st = db.execute("SELECT stage FROM review_state WHERE user_id=? AND kind=? AND item_id=?",
                     (uid(), kind, rid)).fetchone()
-    stage = (st["stage"] + 1) if st else 1
-    iv = REVIEW_INTERVALS[min(stage, len(REVIEW_INTERVALS) - 1)]
-    nd = (datetime.now() + timedelta(days=iv)).strftime("%Y-%m-%d")
+    cur = st["stage"] if st else 0
+    if result == "forget":       # 忘记：重置，今日稍后重现
+        stage, iv, nd = 0, 0, today
+    elif result == "fuzzy":      # 模糊：不升轮，明天再看
+        stage, iv = max(cur, 1), 1
+        nd = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    else:                        # 认识：进入下一轮（1/2/4/7/15/30/60）
+        stage = cur + 1
+        iv = REVIEW_INTERVALS[min(stage, len(REVIEW_INTERVALS) - 1)]
+        nd = (datetime.now() + timedelta(days=iv)).strftime("%Y-%m-%d")
     db.execute("INSERT OR REPLACE INTO review_state(user_id,kind,item_id,stage,next_due,last_done) "
                "VALUES(?,?,?,?,?,?)", (uid(), kind, rid, stage, nd, today))
     db.commit()
-    return jsonify({"stage": stage, "next_due": nd, "interval": iv})
+    return jsonify({"stage": stage, "next_due": nd, "interval": iv, "result": result})
 
 
 # ---------------------------------------------------------------- 数据版本（浏览器/手机自动同步用）
