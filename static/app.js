@@ -93,7 +93,7 @@ function goHome() { stack = [{ view: 'home' }]; render(); }
 window.appBack = function () {
   // AI 面板
   const aip = $('#ai-panel');
-  if (aip && !aip.classList.contains('hidden')) { aip.classList.add('hidden'); return true; }
+  if (aip && !aip.classList.contains('hidden')) { return aiBack(); }
   // 0) 任意底部弹层（小记新建 / 知识库 + / 块菜单 / 插入面板）
   const sheets = [...document.querySelectorAll('.note-sheet:not(.hidden)')];
   if (sheets.length) { sheets[sheets.length - 1].classList.add('hidden'); return true; }
@@ -1898,8 +1898,7 @@ $('#ai-panel').addEventListener('click', async e => {
   const back = e.target.closest('[data-aiback]');
   if (back) {
     if (back.dataset.aiback === 'close') $('#ai-panel').classList.add('hidden');
-    else if (back.dataset.aiback === 'projects') { renderAiProjects(); aiShow('projects'); }
-    else { aiShow('home'); loadAiHome(); }
+    else aiBack();
     return;
   }
   const menu = e.target.closest('[data-aimenu]');
@@ -3262,3 +3261,41 @@ $('#mat-menu').addEventListener('click', async e => {
     catch (err) { toast(err.message, true); }
   }
 });
+
+/* ================= 主题：日间 / 夜间 / 跟随系统 ================= */
+const _themeMedia = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+function applyTheme() {
+  const mode = localStorage.getItem('theme') || 'auto';
+  const dark = mode === 'dark' || (mode === 'auto' && _themeMedia && _themeMedia.matches);
+  document.body.classList.toggle('dark', dark);
+  document.querySelectorAll('.theme-opt').forEach(b => b.classList.toggle('on', b.dataset.theme === mode));
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = dark ? '#0f141e' : '#1a6fb5';
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.theme-opt'); if (!b) return;
+  localStorage.setItem('theme', b.dataset.theme);
+  applyTheme();
+  toast(b.textContent.trim() + ' 已应用');
+});
+if (_themeMedia) {
+  try { _themeMedia.addEventListener('change', applyTheme); }
+  catch (_) { _themeMedia.addListener(applyTheme); }  // 旧 WebView
+}
+applyTheme();
+
+/* ================= AI 面板分层返回（返回上一级而非直接关闭） ================= */
+function aiBack() {
+  if ($('#ai-panel').classList.contains('hidden')) return false;
+  if (!$('#aiv-chat').classList.contains('hidden')) {
+    // 会话 → 所属项目详情（若有）或首页
+    if (aiProjectId && ($('#ai-panel')._projects || []).some(p => p.id === aiProjectId)) {
+      loadAiHome().then(() => openAiProject(aiProjectId));
+    } else { aiShow('home'); loadAiHome(); }
+    return true;
+  }
+  if (!$('#aiv-project').classList.contains('hidden')) { renderAiProjects(); aiShow('projects'); return true; }
+  if (!$('#aiv-projects').classList.contains('hidden')) { aiShow('home'); loadAiHome(); return true; }
+  $('#ai-panel').classList.add('hidden');
+  return true;
+}

@@ -1299,3 +1299,55 @@ img,svg,video{max-width:100%;}
 
 /* 确认/输入弹窗必须盖过 AI 面板与悬浮球 */
 #app-dialog{z-index:150;}
+
+/* ===== 夜间模式（body.dark，account 页可选 日间/夜间/跟随系统） ===== */
+body.dark{background:#0f141e;color:#cfd5e0;--line:#2a3345;--muted:#7e8898;}
+body.dark main{background:#0f141e;}
+/* 卡片/容器 */
+body.dark .home-card,body.dark .gk-card,body.dark .poly-card,body.dark .pd-item,
+body.dark .mat-item,body.dark .aih-item,body.dark .item,body.dark .cd-sec,
+body.dark .cs-overview,body.dark .cs-kq,body.dark .acct-sec,body.dark .rv-flash,
+body.dark .board-card,body.dark .feed-card,body.dark .composer,body.dark .bkb-gen,
+body.dark .poly-genbox,body.dark .pd-search,body.dark .qz-mat,body.dark .sr-item,
+body.dark .wq-item,body.dark .nb-card,body.dark .placeholder-box{
+  background:#1a2233;border-color:#2a3345;color:#cfd5e0;box-shadow:0 2px 10px rgba(0,0,0,.35);}
+body.dark .cd-body,body.dark .poly-reader,body.dark #viewer-reader{
+  background:#1a2233;border-color:#2a3345;color:#d6dce8;}
+/* 文字层级 */
+body.dark .hc-name,body.dark .gk-topic,body.dark .poly-t,body.dark .rvf-title,
+body.dark .aih-it,body.dark .qz-q,body.dark .pd-term,body.dark .cd-title,
+body.dark .view-title,body.dark .mat-name,body.dark .item-word,body.dark .cd-han,
+body.dark .acct-sec-t,body.dark .ns-title,body.dark h2,body.dark h3{color:#e8ecf4;}
+body.dark .sc-body,body.dark .pd-body,body.dark .cs-ov-body,body.dark .cs-kq-row,
+body.dark .item-exp,body.dark .rvb-body,body.dark .news-sum,body.dark .qz-mat-b,
+body.dark .ad-msg,body.dark .xy-quote{color:#c3cad6;}
+body.dark .sc-body b,body.dark .pd-body b,body.dark .rvb-body b,
+body.dark .gk-head .gk-topic,body.dark .cs-ov-body b{color:#f0f3f8;}
+/* 输入 / chips / 弹层 */
+body.dark input,body.dark textarea,body.dark select{
+  background:#141b29;border-color:#2a3345;color:#e2e7ef;}
+body.dark .chip{background:#1a2233;border-color:#2a3345;color:#aeb7c6;}
+body.dark .chip.active{background:var(--blue);color:#fff;}
+body.dark .ns-panel,body.dark .modal-box{background:#1a2233;color:#cfd5e0;}
+body.dark .acm-list button{color:#d6dce8;}
+body.dark .acm-list button:active{background:#232d42;}
+body.dark .home-search{background:#1a2233;border-color:#2a3345;color:#7e8898;}
+body.dark .ai-msgs{background:#0f141e;}
+body.dark .ai-msg.assistant{background:#1a2233;color:#d6dce8;}
+body.dark .ai-msg.user{background:var(--blue);}
+body.dark .ai-input{background:#141b29;border-color:#2a3345;}
+body.dark .qz-opt{background:#141b29;border-color:#2a3345;color:#c3cad6;}
+body.dark .qz-opt.right{background:#12301f;border-color:#2e9d6b;color:#7fe0ae;}
+body.dark .qz-opt.wrong{background:#331a18;border-color:#e0524d;color:#ff9c94;}
+body.dark .aih-projects,body.dark .aih-new+*{background:#1a2233;border-color:#2a3345;color:#d6dce8;}
+body.dark .rv-back{border-color:#2a3345;}
+body.dark .read-item-btn{background:rgba(90,140,240,.15);}
+body.dark .empty,body.dark .cd-tip,body.dark .pd-intro{color:#7e8898;}
+body.dark .mat-meta,body.dark .aih-im,body.dark .item-py,body.dark .news-date{color:#7e8898;}
+.theme-row{display:flex;gap:8px;}
+.theme-opt{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:11px;
+  padding:11px 6px;font-size:13.5px;cursor:pointer;font-family:inherit;color:#5a6270;
+  -webkit-tap-highlight-color:transparent;}
+.theme-opt.on{border-color:var(--blue);color:var(--blue);background:#eef4fb;font-weight:700;}
+body.dark .theme-opt{background:#141b29;color:#aeb7c6;}
+body.dark .theme-opt.on{background:#1c2a45;color:#7fb0ff;border-color:#3a6ad0;}
