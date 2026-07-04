@@ -102,19 +102,21 @@ def cmd_seed(con, only_board=None):
 
 
 def cmd_daily(con):
-    """人文/科技 每日各挑一个专题新增 3 条（按当日序数轮换专题，传已有标题去重）。"""
-    doy = date.today().toordinal()
+    """人文/科技 每日为「每个专题」各新增 2 条（去重），保证每天各板块都有当日新内容。"""
+    total = 0
     for board in ("人文常识", "科技常识"):
         meta = META["boards"][board]
-        tm = meta["topics"][doy % len(meta["topics"])]
-        avoid = [r[0] for r in con.execute(
-            "SELECT title FROM changshi_items WHERE board=? AND topic=? ORDER BY id DESC LIMIT 80",
-            (board, tm["name"]))]
-        try:
-            n = gen_topic(con, board, tm, count=3, avoid=avoid)
-            print("✓ 每日 %s/%s +%d 条" % (board, tm["name"], n))
-        except Exception as e:
-            print("✗ 每日 %s/%s 失败: %s" % (board, tm["name"], e))
+        for tm in meta["topics"]:
+            avoid = [r[0] for r in con.execute(
+                "SELECT title FROM changshi_items WHERE board=? AND topic=? ORDER BY id DESC LIMIT 120",
+                (board, tm["name"]))]
+            try:
+                n = gen_topic(con, board, tm, count=2, avoid=avoid)
+                total += n
+                print("✓ 每日 %s/%s +%d 条" % (board, tm["name"], n))
+            except Exception as e:
+                print("✗ 每日 %s/%s 失败: %s" % (board, tm["name"], e))
+    print("── 每日常识合计 +%d 条" % total)
 
 
 def _fetch(url):
