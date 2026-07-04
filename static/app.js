@@ -1781,7 +1781,7 @@ $('#cls-next').onclick = () => { if (clsState.page < clsState.pages) { clsState.
 let aiMsgs = [], aiBusy = false, aiChatId = null, aiProjectId = null;
 const AI_FOLDER = '<svg class="ai-folder" viewBox="0 0 48 48"><rect x="2" y="2" width="44" height="44" rx="13" fill="#5b6cf0"/><path fill="#7d8cf8" opacity=".5" d="M2 15C2 7.8 7.8 2 15 2h18c7.2 0 13 5.8 13 13v2H2z"/><rect x="11" y="11" width="11.5" height="11.5" rx="3.5" fill="#fff"/><rect x="25.5" y="11" width="11.5" height="11.5" rx="3.5" fill="#fff" opacity=".82"/><rect x="11" y="25.5" width="11.5" height="11.5" rx="3.5" fill="#fff" opacity=".82"/><circle cx="31.2" cy="31.2" r="5.8" fill="#ffd66b"/></svg>';
 function aiShow(v) {
-  ['aiv-home', 'aiv-projects', 'aiv-chat'].forEach(id => $('#' + id).classList.add('hidden'));
+  ['aiv-home', 'aiv-projects', 'aiv-project', 'aiv-chat'].forEach(id => $('#' + id).classList.add('hidden'));
   $('#aiv-' + v).classList.remove('hidden');
 }
 async function openAI(preset) {
@@ -1800,6 +1800,7 @@ async function loadAiHome() {
         <button class="aih-del" data-aimenu="${c.id}" data-atitle="${esc(c.title || '')}" data-aproj="${c.project_id || ''}" data-astar="${c.starred ? 1 : 0}">⋮</button>
       </div>`).join('') : '<p class="empty" style="padding:20px 0">还没有对话，点上面「＋ 新对话」开始。</p>';
     $('#ai-panel')._projects = d.projects;
+    $('#ai-panel')._chats = d.chats;
   } catch (e) { toast(e.message, true); }
 }
 async function aiNewChat(projectId) {
@@ -1829,6 +1830,24 @@ function renderAiProjects() {
     </div>`).join('') : '<p class="empty" style="padding:20px 0">还没有项目。项目=一组对话+自定义指令（比如"申论批改"）。</p>')
     + '<p class="cd-tip" style="margin-top:14px">点项目名在该项目下开新对话，AI 会遵循项目指令。</p>';
 }
+let aiCurProject = null;
+function openAiProject(pid) {
+  const ps = $('#ai-panel')._projects || [];
+  const p = ps.find(x => x.id === pid); if (!p) return;
+  const chats = ($('#ai-panel')._chats || []).filter(c => c.project_id === pid);
+  if (!chats.length) { aiNewChat(pid); return; }   // 空项目：直接开新对话
+  aiCurProject = p;
+  $('#aipd-title').textContent = p.name;
+  $('#aipd-chats').innerHTML = chats.map(c => `
+    <div class="aih-item" data-aichat="${c.id}">
+      <div class="aih-it">${c.starred ? '⭐ ' : ''}${esc(c.title || '（新对话）')}</div>
+      <div class="aih-im">${esc((c.updated_at || '').slice(5, 16))}</div>
+      <button class="aih-del" data-aimenu="${c.id}" data-atitle="${esc(c.title || '')}" data-aproj="${c.project_id || ''}" data-astar="${c.starred ? 1 : 0}">⋮</button>
+    </div>`).join('')
+    + (p.instructions ? `<p class="cd-tip" style="margin-top:12px">📋 项目指令：${esc(p.instructions)}</p>` : '');
+  aiShow('project');
+}
+$('#aipd-new').onclick = () => { if (aiCurProject) aiNewChat(aiCurProject.id); };
 function renderAI() {
   $('#ai-msgs').innerHTML = (aiMsgs.length ? '' : '<div class="ai-msg assistant">我是你的公考 AI 助手 👋 讲知识点、出题、翻译古文、分析错题、聊备考都行。我还能看到你的收录/错题/复习数据。</div>')
     + aiMsgs.map(m =>
@@ -1879,6 +1898,7 @@ $('#ai-panel').addEventListener('click', async e => {
   const back = e.target.closest('[data-aiback]');
   if (back) {
     if (back.dataset.aiback === 'close') $('#ai-panel').classList.add('hidden');
+    else if (back.dataset.aiback === 'projects') { renderAiProjects(); aiShow('projects'); }
     else { aiShow('home'); loadAiHome(); }
     return;
   }
@@ -1898,7 +1918,7 @@ $('#ai-panel').addEventListener('click', async e => {
   const chat = e.target.closest('[data-aichat]');
   if (chat) { aiOpenChat(+chat.dataset.aichat); return; }
   const proj = e.target.closest('[data-aiproj]');
-  if (proj) { aiNewChat(+proj.dataset.aiproj); return; }
+  if (proj) { openAiProject(+proj.dataset.aiproj); return; }
 });
 $('#ai-close').onclick = () => $('#ai-panel').classList.add('hidden');
 $('#ai-text').addEventListener('input', aiGrow);
@@ -3126,7 +3146,8 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     $('#ai-chatmenu').classList.add('hidden');
     try {
       await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: +mv.dataset.acmproj }) });
-      toast('已移动'); loadAiHome();
+      toast('已移动'); await loadAiHome();
+      if (!$('#aiv-project').classList.contains('hidden') && aiCurProject) openAiProject(aiCurProject.id);
     } catch (err) { toast(err.message, true); }
     return;
   }
@@ -3153,7 +3174,8 @@ $('#ai-chatmenu').addEventListener('click', async e => {
       if (!(await appConfirm('删除这个对话？'))) return;
       await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'DELETE' });
     }
-    loadAiHome();
+    await loadAiHome();
+    if (!$('#aiv-project').classList.contains('hidden') && aiCurProject) openAiProject(aiCurProject.id);
   } catch (err) { toast(err.message, true); }
 });
 

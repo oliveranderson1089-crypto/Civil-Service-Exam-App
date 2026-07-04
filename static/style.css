@@ -1296,3 +1296,6 @@ img,svg,video{max-width:100%;}
 .chip.active{box-shadow:0 3px 10px rgba(43,111,214,.3);}
 /* 资料条目 ⋮ */
 .mat-more{font-size:20px;font-weight:700;color:#8b93a1;padding:4px 10px;}
+
+/* 确认/输入弹窗必须盖过 AI 面板与悬浮球 */
+#app-dialog{z-index:150;}
