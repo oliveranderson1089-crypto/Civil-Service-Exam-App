@@ -401,6 +401,10 @@ def init_db():
     for col in ("derivation", "example"):
         if col not in _cols(con, "ci_ai"):
             con.execute("ALTER TABLE ci_ai ADD COLUMN %s TEXT" % col)
+    # 习语金句：补 关键词/申论运用 列
+    for col in ("keyword", "apply"):
+        if col not in _cols(con, "xiyu_items"):
+            con.execute("ALTER TABLE xiyu_items ADD COLUMN %s TEXT" % col)
     # notes 表补充字段：标签 / 附件 / 待办清单
     for col in ("tags", "attachments", "todos"):
         if col not in _cols(con, "notes"):

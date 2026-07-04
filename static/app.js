@@ -2303,10 +2303,12 @@ async function loadXiyu() {
     $('#news-list').innerHTML = d.items.map(it => {
       const head = it.date !== lastDate ? `<div class="sc-day">🗓 ${fmtDay(it.date)}</div>` : '';
       lastDate = it.date;
+      const apply = it.apply || it.note || '';
       return head + `<div class="gk-card">
-        <div class="gk-head"><span class="poly-badge" style="background:${XY_COLOR[it.category] || '#666'}">${esc(it.category)}</span></div>
+        <div class="gk-head"><span class="poly-badge" style="background:${XY_COLOR[it.category] || '#666'}">${esc(it.category)}</span>
+          ${it.keyword ? `<span class="xy-kw">🔑 ${esc(it.keyword)}</span>` : ''}</div>
         <div class="xy-quote">${emKey('“' + it.quote + '”')}</div>
-        ${it.note ? `<div class="xy-note">💡 ${esc(it.note)}</div>` : ''}
+        ${apply ? `<div class="xy-note"><b>申论运用</b> ${esc(apply)}</div>` : ''}
         ${it.source_url ? `<a class="poly-src" href="${esc(it.source_url)}" target="_blank" rel="noopener">讲话原文 ↗</a>` : ''}
       </div>`;
     }).join('');

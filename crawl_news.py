@@ -258,6 +258,10 @@ def gen_xiyu(con):
         id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, category TEXT,
         quote TEXT, note TEXT, source_url TEXT,
         created_at TEXT DEFAULT (datetime('now','localtime')), UNIQUE(quote))""")
+    _cols = {r[1] for r in con.execute("PRAGMA table_info(xiyu_items)")}
+    for _c in ("keyword", "apply"):   # keyword=新提法/关键词标签；apply=申论运用点拨
+        if _c not in _cols:
+            con.execute("ALTER TABLE xiyu_items ADD COLUMN %s TEXT" % _c)
     today = time.strftime("%Y-%m-%d")
     if con.execute("SELECT COUNT(*) FROM xiyu_items WHERE date=?", (today,)).fetchone()[0]:
         print("── 习语金句：今日(%s)已生成，跳过" % today)
@@ -301,11 +305,23 @@ def gen_xiyu(con):
         return
     material = "\n\n".join("【文章%d｜%s】\n%s" % (i + 1, u, b) for i, (u, b) in enumerate(corpus))
     prompt = (
-        "下面是习近平总书记近期讲话/报道的真实原文素材。请从中【逐字摘录】适合公务员申论/面试引用的金句，"
-        "按类别归类：经济、文化、社会、党建、科教、生态、国防、国际（原文没涉及的类别就跳过，宁缺毋滥）。\n"
-        "每条：quote=原文金句（必须逐字出自素材，不得改写编造，20~80字）；category=八类之一；"
-        "note=一句申论运用点拨（30字内）；src=来源文章编号(数字)。\n"
-        '只输出 JSON：{"items":[{"category":"...","quote":"...","note":"...","src":1},...]}\n\n' + material)
+        "下面是习近平总书记近期重要讲话/报道的真实原文素材。请以【公务员申论·面试应试】为目标，"
+        "从中提炼最具备考价值的内容，兼顾时效性（紧扣新文）与应试性（可背可用）。\n"
+        "【优先抓取】①总书记新的重要提法、新概念、新论断与战略部署（如"
+        "新质生产力、乡村振兴战略、粤港澳大湾区、中国式现代化、全过程人民民主、"
+        "高质量发展、共同富裕、全面深化改革等关键词与工程/战略名称）；"
+        "②总书记当前关注的重点领域、工作要求；③可直接引用的书面化金句。\n"
+        "【不要】纯套话、无考点价值的礼节性表述、口语化句子。\n"
+        "按类别归类：经济、文化、社会、党建、科教、生态、国防、国际。\n"
+        "每条输出字段：\n"
+        "quote=原文金句或关键表述（必须逐字出自素材、不得改写编造，15~80字）；\n"
+        "keyword=从中提炼的核心关键词或新提法（4~14字，如\"乡村振兴战略\"\"新质生产力\"，"
+        "若只是普通金句无特定提法则填该句主题词）；\n"
+        "category=八类之一；\n"
+        "apply=申论/面试运用点拨（这条可用于哪类主题、怎么用/怎么套，务实可操作，30~55字）；\n"
+        "src=来源文章编号(数字)。\n"
+        '只输出 JSON：{"items":[{"category":"...","keyword":"...","quote":"...","apply":"...","src":1},...]}\n\n'
+        + material)
     payload = {"model": AI_MODEL, "temperature": 0.3, "max_tokens": 1800,
                "response_format": {"type": "json_object"},
                "messages": [{"role": "system", "content": "你是严谨的公考时政编辑，金句必须逐字摘自给定素材，严格输出 JSON。"},
@@ -328,8 +344,11 @@ def gen_xiyu(con):
             src = corpus[int(it.get("src", 1)) - 1][0]
         except Exception:
             src = corpus[0][0]
-        cur = con.execute("INSERT OR IGNORE INTO xiyu_items(date,category,quote,note,source_url) "
-                          "VALUES(?,?,?,?,?)", (today, cat, quote, (it.get("note") or "").strip(), src))
+        apply_txt = (it.get("apply") or it.get("note") or "").strip()
+        cur = con.execute(
+            "INSERT OR IGNORE INTO xiyu_items(date,category,quote,note,keyword,apply,source_url) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (today, cat, quote, apply_txt, (it.get("keyword") or "").strip(), apply_txt, src))
         n += cur.rowcount
     con.commit()
     print("── 习语金句 +%d 条" % n)

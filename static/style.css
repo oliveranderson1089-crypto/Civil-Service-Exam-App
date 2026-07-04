@@ -1351,3 +1351,5 @@ body.dark .mat-meta,body.dark .aih-im,body.dark .item-py,body.dark .news-date{co
 .theme-opt.on{border-color:var(--blue);color:var(--blue);background:#eef4fb;font-weight:700;}
 body.dark .theme-opt{background:#141b29;color:#aeb7c6;}
 body.dark .theme-opt.on{background:#1c2a45;color:#7fb0ff;border-color:#3a6ad0;}
+.xy-kw{font-size:12px;font-weight:600;color:#b23b2e;background:#f7e6e3;border-radius:6px;padding:2px 9px;}
+.xy-note b{color:var(--blue);font-weight:700;margin-right:5px;}
