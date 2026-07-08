@@ -43,6 +43,7 @@ const IC = {
   wrong: _svg('<path d="M9 11l-2 2 2 2"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="14 3 14 9 20 9"/><path d="M14.5 12.5l3 3M17.5 12.5l-3 3"/>'),
   bulb: _svg('<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.8 10.6c.5.5.8 1 .8 1.9v.5h6v-.5c0-.9.3-1.4.8-1.9A6 6 0 0 0 12 3z"/>'),
   clock: _svg('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>'),
+  check: _svg('<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
   quote: _svg('<path d="M6 17h3l2-4V7H5v6h3z"/><path d="M14 17h3l2-4V7h-6v6h3z"/>'),
 };
 // 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
@@ -74,8 +75,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题', tasks: '任务清单' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -134,7 +135,7 @@ async function init() {
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
     <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
     <div class="home-card" data-go="quiz"><div class="hc-logo">${IC.edit}</div><div class="hc-name">题库</div><div class="hc-desc">四川省考卷面 · 每周自动更新</div></div>
-    <div class="home-card" data-go="review"><div class="hc-logo hc-rev">${IC.clock || IC.bulb}<span class="rev-badge hidden" id="rev-badge"></span></div><div class="hc-name">今日复习</div><div class="hc-desc" id="rev-desc">遗忘曲线 · 该复习的都在这</div></div>`;
+    <div class="home-card" data-go="tasks"><div class="hc-logo">${IC.check || IC.clock}</div><div class="hc-name">任务清单</div><div class="hc-desc">每日任务 · 互监待办</div></div>\n    <div class="home-card" data-go="review"><div class="hc-logo hc-rev">${IC.clock || IC.bulb}<span class="rev-badge hidden" id="rev-badge"></span></div><div class="hc-name">今日复习</div><div class="hc-desc" id="rev-desc">遗忘曲线 · 该复习的都在这</div></div>`;
   goHome();
   refreshReviewBadge();
   hideSplash();
@@ -199,6 +200,7 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'materials') openMaterials();
   else if (g === 'idiom') openIdiom();
   else if (g === 'review') openReview();
+  else if (g === 'tasks') openTasks();
   else if (g === 'quiz') openQuiz();
 });
 function openSection(key) {
@@ -634,8 +636,8 @@ let matBoard = '', matCustomBoards = [];
 async function renderMatFilter() {
   try {
     const d = await api('/api/materials/boards');
-    matCustomBoards = d.boards.filter(b => !ALL_BOARDS.includes(b));
-  } catch (_) { matCustomBoards = []; }
+    (d.boards || []).forEach(b => { if (b && !ALL_BOARDS.includes(b) && !matCustomBoards.includes(b)) matCustomBoards.push(b); });
+  } catch (_) {}
   const all = ALL_BOARDS.concat(matCustomBoards);
   $('#mat-filter').innerHTML = `<button class="chip ${matBoard === '' ? 'active' : ''}" data-mb="">全部</button>` +
     all.map(b => `<button class="chip ${b === matBoard ? 'active' : ''}" data-mb="${esc(b)}">${esc(b)}</button>`).join('') +
@@ -666,6 +668,9 @@ $('#mat-filter').addEventListener('click', async e => {
 async function loadMaterials() {
   try {
     const d = await api('/api/materials' + (matBoard ? '?board=' + encodeURIComponent(matBoard) : ''));
+    let newCat = false;
+    (d.items || []).forEach(m => { const b = m.board; if (b && !ALL_BOARDS.includes(b) && !matCustomBoards.includes(b)) { matCustomBoards.push(b); newCat = true; } });
+    if (newCat) renderMatFilter();
     const box = $('#mat-list');
     if (!d.items.length) { box.innerHTML = ''; $('#mat-empty').classList.remove('hidden'); return; }
     $('#mat-empty').classList.add('hidden');
@@ -720,6 +725,7 @@ const READER_EXT = ['.md', '.markdown', '.txt'];
 let viewerTextUrl = null;
 function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
   ext = (ext || '').toLowerCase();
+  setViewerFull(false);
   $('#viewer-name').textContent = name;
   $('#viewer-dl').href = dlUrl || fileUrl;
   viewerTextUrl = textUrl || null;
@@ -736,6 +742,13 @@ function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
   $('#viewer-mode').classList.toggle('hidden', !canRead);
   $('#viewer-mode').textContent = '阅读模式';
 }
+let _viewerFull = false;
+function setViewerFull(on) {
+  _viewerFull = on;
+  document.body.classList.toggle('viewer-full', on);
+  $('#viewer-full').textContent = on ? '⛶ 退出全屏' : '⛶ 全屏';
+}
+$('#viewer-full').onclick = () => setViewerFull(!_viewerFull);
 $('#viewer-mode').onclick = async () => {
   const reading = !$('#viewer-reader').classList.contains('hidden');
   if (reading) {
@@ -1608,7 +1621,19 @@ function openClassics() {
   clsState = { cat: '', q: '', star: false, page: 1, pages: 1 };
   $('#cls-input').value = '';
   push({ view: 'classics' });
-  loadClsCats(); loadClassics();
+  loadClsCats(); loadClassics(); loadClsDaily();
+}
+async function loadClsDaily() {
+  try {
+    const d = await api('/api/classics/daily');
+    if (!d || d.error) { $('#cls-daily').classList.add('hidden'); return; }
+    $('#cls-daily').innerHTML = `
+      <div class="cd-daily-tag">📖 每日一诗 · 适合申论</div>
+      <div class="cd-daily-title" data-clsopen="${d.id}">${esc(d.title)}<span class="cd-daily-meta">${esc((d.dynasty || '') + ' · ' + (d.author || ''))}</span></div>
+      <div class="cd-daily-line">${esc(d.first_line || '')}</div>
+      ${d.apply ? `<div class="cd-daily-apply"><b>申论运用</b> ${esc(d.apply)}</div>` : ''}`;
+    $('#cls-daily').classList.remove('hidden');
+  } catch (_) { $('#cls-daily').classList.add('hidden'); }
 }
 async function loadClsCats() {
   try {
@@ -1619,6 +1644,9 @@ async function loadClsCats() {
       d.categories.map(c => `<button class="chip" data-cc="${esc(c.name)}">${esc(c.name)} ${c.count}</button>`).join('');
   } catch (e) { toast(e.message, true); }
 }
+$('#cls-daily').addEventListener('click', e => {
+  const t = e.target.closest('[data-clsopen]'); if (t) openClassicDetail(+t.dataset.clsopen);
+});
 $('#cls-cats').addEventListener('click', e => {
   const c = e.target.closest('[data-cc]'); if (!c) return;
   const v = c.dataset.cc;
@@ -1856,22 +1884,60 @@ function renderAI() {
   const box = $('#ai-msgs'); box.scrollTop = box.scrollHeight;
   $('#ai-send').disabled = aiBusy;
 }
+let aiAtts = [];  // [{name, text}]
+function renderAiAtts() {
+  $('#ai-atts').innerHTML = aiAtts.map((a, i) =>
+    `<span class="ai-att">📎 ${esc(a.name)} <button data-aiattdel="${i}">×</button></span>`).join('');
+}
+$('#ai-atts').addEventListener('click', e => {
+  const b = e.target.closest('[data-aiattdel]'); if (!b) return;
+  aiAtts.splice(+b.dataset.aiattdel, 1); renderAiAtts();
+});
+$('#ai-attach').onclick = () => $('#ai-attsheet').classList.remove('hidden');
+$('#ai-attsheet').addEventListener('click', e => {
+  if (e.target.closest('[data-sheet-close]') || e.target.id === 'ai-attsheet') { $('#ai-attsheet').classList.add('hidden'); return; }
+  const b = e.target.closest('[data-aiatt]'); if (!b) return;
+  $('#ai-attsheet').classList.add('hidden');
+  if (b.dataset.aiatt === 'photo') $('#ai-camfile').click();
+  else if (b.dataset.aiatt === 'image') { $('#ai-attfile').accept = 'image/*'; $('#ai-attfile').click(); }
+  else { $('#ai-attfile').accept = '.pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx'; $('#ai-attfile').click(); }
+});
+async function aiHandleAttach(file) {
+  if (!file) return;
+  toast('正在读取附件…');
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const d = await api('/api/ai/extract', { method: 'POST', body: fd });
+    if (d.error) { toast(d.error, true); return; }
+    aiAtts.push({ name: d.name || file.name, text: d.text }); renderAiAtts();
+    toast('已附加，发送时 AI 会读取其内容');
+  } catch (e) { toast(e.message, true); }
+}
+$('#ai-attfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
+$('#ai-camfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
+
 async function aiSend() {
   const t = $('#ai-text').value.trim();
-  if (!t || aiBusy) return;
+  if ((!t && !aiAtts.length) || aiBusy) return;
+  let payload = t, shown = t;
+  if (aiAtts.length) {
+    payload = aiAtts.map(a => '【附件：' + a.name + '】\n' + a.text).join('\n\n') + '\n\n' + (t || '请阅读以上附件内容并帮我分析/讲解。');
+    shown = (t ? t + '\n' : '') + '📎 ' + aiAtts.map(a => a.name).join('、');
+    aiAtts = []; renderAiAtts();
+  }
   if (!aiChatId) {
     try {
       const d = await api('/api/aichat/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: aiProjectId || null }) });
       aiChatId = d.id;
     } catch (e) { toast(e.message, true); return; }
   }
-  aiMsgs.push({ role: 'user', content: t });
+  aiMsgs.push({ role: 'user', content: shown });
   $('#ai-text').value = ''; aiGrow();
   aiBusy = true; renderAI();
   try {
     const d = await api('/api/aichat/chats/' + aiChatId + '/send', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: t })
+      body: JSON.stringify({ content: payload })
     });
     aiMsgs.push({ role: 'assistant', content: d.reply || '（空回复）' });
     if (d.title) $('#aic-title').textContent = d.title;
@@ -1883,6 +1949,30 @@ async function aiSend() {
 function aiGrow() { const t = $('#ai-text'); t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
 $('#ai-send').onclick = aiSend;
 $('#ai-fab').onclick = () => openAI();
+// AI 面板：从上方下滑关闭/返回上一层（替代点右上角✕）
+(function () {
+  const panel = $('#ai-panel'); if (!panel) return;
+  let sy = 0, sx = 0, tracking = false;
+  panel.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    const y = e.touches[0].clientY;
+    // 仅在顶部 140px 区域内（头部/新对话附近）起手，避免和列表滚动冲突
+    tracking = y < 160;
+    sy = y; sx = e.touches[0].clientX;
+  }, { passive: true });
+  panel.addEventListener('touchend', e => {
+    if (!tracking) return; tracking = false;
+    const t = e.changedTouches[0];
+    const dy = t.clientY - sy, dx = Math.abs(t.clientX - sx);
+    if (dy > 70 && dy > dx) {   // 明显下滑
+      const cur = ['home', 'projects', 'project', 'chat'].find(v => !$('#aiv-' + v).classList.contains('hidden'));
+      if (cur === 'home' || !cur) $('#ai-panel').classList.add('hidden');
+      else if (cur === 'project') { renderAiProjects(); aiShow('projects'); }
+      else { aiShow('home'); loadAiHome(); }
+    }
+  }, { passive: true });
+})();
+
 $('#aih-new').onclick = () => aiNewChat();
 $('#aih-projects').onclick = () => { renderAiProjects(); aiShow('projects'); };
 $('#aip-new').onclick = async () => {
@@ -2437,14 +2527,28 @@ async function loadSucai() {
       const head = it.date !== lastDate ? `<div class="sc-day">🗓 ${fmtDay(it.date)}</div>` : '';
       lastDate = it.date;
       const col = SC_COLOR[it.kind] || '#666';
-      return head + `<div class="gk-card">
+      const isLj = it.kind === '衔接表达';
+      const exHtml = it.example
+        ? `<div class="sc-ex"><b>例句</b> ${esc(it.example)}</div>`
+        : (isLj ? `<button class="sc-exbtn" data-scex="${it.id}">✍️ AI 造个例句</button>` : '');
+      return head + `<div class="gk-card" data-scid="${it.id}">
         <div class="gk-head"><span class="poly-badge" style="background:${col}">${esc(it.kind)}</span>
           ${it.topic ? `<span class="gk-topic">${esc(it.topic)}</span>` : ''}</div>
         <div class="sc-body">${emKey(it.content)}</div>
+        ${exHtml}
       </div>`;
     }).join('');
   } catch (e) { $('#sc-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
+$('#sc-list').addEventListener('click', async e => {
+  const b = e.target.closest('[data-scex]'); if (!b) return;
+  b.disabled = true; b.textContent = 'AI 造句中…';
+  try {
+    const d = await api('/api/sucai/' + b.dataset.scex + '/example', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const card = b.closest('.gk-card');
+    b.outerHTML = `<div class="sc-ex"><b>例句</b> ${esc(d.example)}</div>`;
+  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '✍️ AI 造个例句'; }
+});
 function openSucai(kind) {
   scKind = kind || '全部';
   push({ view: 'sucai', title: scKind === '衔接表达' ? '衔接表达' : '素材积累' });
@@ -2454,6 +2558,67 @@ $('#sc-kinds').addEventListener('click', e => {
   const c = e.target.closest('[data-sk]'); if (!c) return;
   scKind = c.dataset.sk; loadSucai();
 });
+
+/* ============= 任务清单（每日任务 + 互监待办） ============= */
+function openTasks() { push({ view: 'tasks', title: '任务清单' }); tkSwitch('daily'); }
+function tkSwitch(t) {
+  document.querySelectorAll('.tk-tab').forEach(x => x.classList.toggle('active', x.dataset.tkt === t));
+  $('#tk-daily').classList.toggle('hidden', t !== 'daily');
+  $('#tk-shared').classList.toggle('hidden', t !== 'shared');
+  if (t === 'daily') loadDaily(); else loadShared();
+}
+$('#view-tasks').addEventListener('click', e => {
+  const tab = e.target.closest('[data-tkt]'); if (tab) tkSwitch(tab.dataset.tkt);
+});
+async function loadDaily() {
+  $('#tk-daily-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/daily_tasks');
+    $('#tk-daily-prog').textContent = d.total ? `今日进度 ${d.done_n} / ${d.total}${d.done_n === d.total ? ' 🎉 全部完成！' : ''}` : '';
+    $('#tk-daily-list').innerHTML = d.items.length ? d.items.map(it => `
+      <div class="tk-item ${it.done ? 'done' : ''}" data-td="${it.id}">
+        <span class="tk-check">${it.done ? '✓' : ''}</span>
+        <span class="tk-text">${esc(it.text)}</span>
+        <button class="tk-del" data-tddel="${it.id}">🗑</button>
+      </div>`).join('') : '<p class="empty">还没有每日任务，下面加一条吧～</p>';
+  } catch (e) { $('#tk-daily-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#tk-daily-list').addEventListener('click', async e => {
+  const del = e.target.closest('[data-tddel]');
+  if (del) { e.stopPropagation(); if (!(await appConfirm('删除这个每日任务？'))) return; try { await api('/api/daily_tasks/templates/' + del.dataset.tddel, { method: 'DELETE' }); loadDaily(); } catch (er) { toast(er.message, true); } return; }
+  const it = e.target.closest('[data-td]'); if (!it) return;
+  try { await api('/api/daily_tasks/' + it.dataset.td + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadDaily(); } catch (er) { toast(er.message, true); }
+});
+$('#tk-daily-add').onclick = async () => {
+  const v = $('#tk-daily-in').value.trim(); if (!v) return;
+  try { await api('/api/daily_tasks/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-daily-in').value = ''; loadDaily(); } catch (e) { toast(e.message, true); }
+};
+$('#tk-daily-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-daily-add').click(); });
+
+async function loadShared() {
+  $('#tk-shared-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/shared_todos');
+    $('#tk-shared-list').innerHTML = d.items.length ? d.items.map(it => `
+      <div class="tk-item ${it.done ? 'done' : ''}" data-ts="${it.id}">
+        <span class="tk-check">${it.done ? '✓' : ''}</span>
+        <span class="tk-text">${esc(it.text)}<span class="tk-who">${it.done ? '✅ ' + esc(shortName(it.done_by)) : '发起 ' + esc(shortName(it.created_by))}</span></span>
+        <button class="tk-del" data-tsdel="${it.id}">🗑</button>
+      </div>`).join('') : '<p class="empty">还没有共享待办，加一条大家一起监督～</p>';
+  } catch (e) { $('#tk-shared-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function shortName(n) { n = n || ''; return n.length > 8 ? n.slice(0, 6) + '…' : n; }
+$('#tk-shared-list').addEventListener('click', async e => {
+  const del = e.target.closest('[data-tsdel]');
+  if (del) { e.stopPropagation(); if (!(await appConfirm('删除这条共享待办？'))) return; try { await api('/api/shared_todos/' + del.dataset.tsdel, { method: 'DELETE' }); loadShared(); } catch (er) { toast(er.message, true); } return; }
+  const it = e.target.closest('[data-ts]'); if (!it) return;
+  try { await api('/api/shared_todos/' + it.dataset.ts + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadShared(); } catch (er) { toast(er.message, true); }
+});
+$('#tk-shared-add').onclick = async () => {
+  const v = $('#tk-shared-in').value.trim(); if (!v) return;
+  try { await api('/api/shared_todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-shared-in').value = ''; loadShared(); } catch (e) { toast(e.message, true); }
+};
+$('#tk-shared-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-shared-add').click(); });
 
 /* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
 const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文' };

@@ -338,6 +338,29 @@ def init_db():
             options TEXT, answer TEXT, explanation TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_qq_set ON quiz_questions(set_id, seq);
+        -- 共享待办（两账号互相监督，全局共享）
+        CREATE TABLE IF NOT EXISTS shared_todos(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT,
+            created_by TEXT, done INTEGER DEFAULT 0, done_by TEXT, done_at TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 每日任务模板（用户自定义，每天生成当日任务）
+        CREATE TABLE IF NOT EXISTS task_templates(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            text TEXT, sort INTEGER DEFAULT 0, active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 每日任务完成记录（按天）
+        CREATE TABLE IF NOT EXISTS task_done(
+            user_id INTEGER NOT NULL, tpl_id INTEGER NOT NULL, date TEXT NOT NULL,
+            done_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, tpl_id, date)
+        );
+        -- 古诗文每日推荐（全局，按日期）
+        CREATE TABLE IF NOT EXISTS classic_daily(
+            date TEXT PRIMARY KEY, classic_id INTEGER, apply TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         CREATE TABLE IF NOT EXISTS quiz_answers(
             user_id INTEGER NOT NULL, set_id INTEGER, qid INTEGER NOT NULL,
             choice TEXT, correct INTEGER,
@@ -405,6 +428,13 @@ def init_db():
     for col in ("keyword", "apply"):
         if col not in _cols(con, "xiyu_items"):
             con.execute("ALTER TABLE xiyu_items ADD COLUMN %s TEXT" % col)
+    # 古诗文考频排序
+    if "freq" not in _cols(con, "classics"):
+        con.execute("ALTER TABLE classics ADD COLUMN freq INTEGER DEFAULT 0")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_cls_freq ON classics(freq)")
+    # 衔接表达例句
+    if "example" not in _cols(con, "sucai_items"):
+        con.execute("ALTER TABLE sucai_items ADD COLUMN example TEXT")
     # notes 表补充字段：标签 / 附件 / 待办清单
     for col in ("tags", "attachments", "todos"):
         if col not in _cols(con, "notes"):
@@ -924,6 +954,37 @@ def _extract_pdf_text(pdf_path):
         return out.stdout.decode("utf-8", "ignore")
     except Exception:
         return ""
+
+
+def _ocr_image(path):
+    """对图片做预处理+tesseract OCR，返回识别文字。供 /api/ocr 与 AI 附件复用。"""
+    proc = path
+    try:
+        from PIL import Image, ImageOps, ImageFilter
+        im = Image.open(path)
+        im = ImageOps.exif_transpose(im).convert("L")
+        w, h = im.size
+        if max(w, h) < 2200:
+            sc = min(3.0, 2200.0 / max(w, h))
+            im = im.resize((int(w * sc), int(h * sc)), Image.LANCZOS)
+        im = ImageOps.autocontrast(im, cutoff=2).filter(ImageFilter.SHARPEN)
+        proc = path + ".png"
+        im.save(proc)
+    except Exception:
+        proc = path
+    text = ""
+    try:
+        out = subprocess.run(["tesseract", proc, "stdout", "-l", "chi_sim+eng", "--oem", "1", "--psm", "6"],
+                             capture_output=True, timeout=120)
+        text = out.stdout.decode("utf-8", "ignore")
+    finally:
+        if proc != path:
+            try:
+                os.remove(proc)
+            except Exception:
+                pass
+    text = re.sub(r"(?<=[一-鿿，。！？；：、（）《》“”])[ \t]+(?=[一-鿿，。！？；：、（）《》“”])", "", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _extract_text(path, ext):
@@ -1788,6 +1849,7 @@ def classics_list():
         page = 1
     size = 10
     db = get_db()
+    _ensure_classic_freq(db)   # 首次访问即按考频给古诗文打分
     where, args = [], []
     join = ""
     if star:
@@ -1800,7 +1862,7 @@ def classics_list():
         like = "%" + q + "%"; args += [like, like, like]
     wsql = (" WHERE " + " AND ".join(where)) if where else ""
     total = db.execute("SELECT COUNT(*) n FROM classics c %s%s" % (join, wsql), args).fetchone()["n"]
-    rows = db.execute("SELECT c.* FROM classics c %s%s ORDER BY c.id LIMIT ? OFFSET ?" % (join, wsql),
+    rows = db.execute("SELECT c.* FROM classics c %s%s ORDER BY c.freq DESC, c.id LIMIT ? OFFSET ?" % (join, wsql),
                       args + [size, (page - 1) * size]).fetchall()
     starred = set(r["classic_id"] for r in
                   db.execute("SELECT classic_id FROM classic_stars WHERE user_id=?", (uid(),)).fetchall())
@@ -1894,7 +1956,7 @@ def _classics_query(category, q, star, ids):
         where.append("(c.content LIKE ? OR c.title LIKE ? OR c.author LIKE ?)")
         like = "%" + q + "%"; args += [like, like, like]
     wsql = (" WHERE " + " AND ".join(where)) if where else ""
-    return db.execute("SELECT c.* FROM classics c %s%s ORDER BY c.id LIMIT 400" % (join, wsql), args).fetchall()
+    return db.execute("SELECT c.* FROM classics c %s%s ORDER BY c.freq DESC, c.id LIMIT 400" % (join, wsql), args).fetchall()
 
 
 def build_classics_pdf(rows, opts):
@@ -2791,6 +2853,218 @@ try:
         _CS_META = json.load(_f)
 except Exception:
     _CS_META = {"tiers": [], "boards": {}}
+
+
+# ---------------------------------------------------------------- 古诗文每日推荐
+# 高频 & 适合申论的古诗文标题池（命中即抬高 freq，并作为每日推荐来源）
+CLASSIC_HOT = [
+    "登鹳雀楼", "望岳", "登高", "行路难", "将进酒", "茅屋为秋风所破歌", "石灰吟", "竹石",
+    "己亥杂诗", "赤壁", "过零丁洋", "题西林壁", "游山西村", "观书有感", "水调歌头", "念奴娇",
+    "满江红", "破阵子", "永遇乐", "定风波", "登飞来峰", "泊船瓜洲", "酬乐天扬州初逢席上见赠",
+    "劝学", "爱莲说", "陋室铭", "岳阳楼记", "醉翁亭记", "出师表", "论语", "孟子", "荀子",
+    "生于忧患死于安乐", "鱼我所欲也", "曹刿论战", "得道多助失道寡助", "赋得古原草送别",
+    "无题", "春望", "闻官军收河南河北", "秋词", "浣溪沙", "卜算子", "青玉案", "沁园春",
+]
+
+
+def _ensure_classic_freq(db):
+    if db.execute("SELECT COUNT(*) FROM classics WHERE freq>0").fetchone()[0]:
+        return
+    # 首次：命中高频标题的抬到高分；其余名家名篇给中分
+    for t in CLASSIC_HOT:
+        db.execute("UPDATE classics SET freq=100 WHERE title LIKE ?", ("%" + t + "%",))
+    hot_authors = ["李白", "杜甫", "白居易", "苏轼", "辛弃疾", "李清照", "王安石", "陆游",
+                   "王维", "孟浩然", "刘禹锡", "杜牧", "李商隐", "范仲淹", "毛泽东"]
+    for a in hot_authors:
+        db.execute("UPDATE classics SET freq=freq+30 WHERE author LIKE ?", ("%" + a + "%",))
+    # 四书五经/蒙学等经典整体抬一档
+    db.execute("UPDATE classics SET freq=freq+20 WHERE category IN ('论语','孟子','大学','中庸','诗经','增广贤文')")
+    db.commit()
+
+
+@app.get("/api/classics/daily")
+def classics_daily():
+    db = get_db()
+    _ensure_classic_freq(db)
+    today = datetime.now().strftime("%Y-%m-%d")
+    row = db.execute("SELECT d.classic_id, d.apply, c.title, c.author, c.dynasty, c.category, c.content "
+                     "FROM classic_daily d JOIN classics c ON c.id=d.classic_id WHERE d.date=?",
+                     (today,)).fetchone()
+    if not row:
+        # 从高频池里按日期确定性选一首（尽量适合申论）
+        pool = db.execute("SELECT id FROM classics WHERE freq>=100 ORDER BY id").fetchall()
+        if not pool:
+            pool = db.execute("SELECT id FROM classics ORDER BY freq DESC, id LIMIT 300").fetchall()
+        if not pool:
+            return jsonify({"error": "暂无"}), 404
+        idx = datetime.now().toordinal() % len(pool)
+        cid = pool[idx]["id"]
+        db.execute("INSERT OR REPLACE INTO classic_daily(date, classic_id) VALUES(?,?)", (today, cid))
+        db.commit()
+        row = db.execute("SELECT d.classic_id, d.apply, c.title, c.author, c.dynasty, c.category, c.content "
+                         "FROM classic_daily d JOIN classics c ON c.id=d.classic_id WHERE d.date=?",
+                         (today,)).fetchone()
+    apply_txt = row["apply"] or ""
+    if not apply_txt and ai_configured():
+        prompt = ("这是《%s》（%s·%s）：\n%s\n\n请用一句话（40字内）点出它可用于申论/面试的哪类主题、"
+                  "怎么引用（如为民情怀、奋斗、改革、生态等）。只输出这句话。" %
+                  (row["title"], row["dynasty"], row["author"], (row["content"] or "")[:200]))
+        rep, err = _ai_call_or_error(
+            [{"role": "system", "content": "你是申论辅导老师，点拨精炼实用。"},
+             {"role": "user", "content": prompt}], temperature=0.5, max_tokens=120)
+        if not err:
+            apply_txt = rep.strip()
+            db.execute("UPDATE classic_daily SET apply=? WHERE date=?", (apply_txt, today))
+            db.commit()
+    return jsonify({"id": row["classic_id"], "title": row["title"], "author": row["author"],
+                    "dynasty": row["dynasty"], "category": row["category"],
+                    "first_line": (row["content"] or "").split("\n")[0], "apply": apply_txt})
+
+
+# ---------------------------------------------------------------- 衔接表达 · 例句
+@app.post("/api/sucai/<int:sid>/example")
+def sucai_example(sid):
+    db = get_db()
+    r = db.execute("SELECT * FROM sucai_items WHERE id=?", (sid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    if r["example"]:
+        return jsonify({"example": r["example"], "cached": True})
+    prompt = ("下面是一句申论写作的衔接表达/万能句式：\n%s\n\n请用它写一个申论语境下的规范例句"
+              "（书面化、紧扣治理/民生/发展类主题，30~60字），只输出例句本身。" % r["content"])
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论写作辅导老师，例句规范、书面化。"},
+         {"role": "user", "content": prompt}], temperature=0.6, max_tokens=200)
+    if err:
+        return err
+    ex = rep.strip()
+    db.execute("UPDATE sucai_items SET example=? WHERE id=?", (ex, sid))
+    db.commit()
+    return jsonify({"example": ex, "cached": False})
+
+
+# ---------------------------------------------------------------- 共享待办（互相监督）
+@app.get("/api/shared_todos")
+def shared_todos_list():
+    rows = get_db().execute(
+        "SELECT * FROM shared_todos ORDER BY done, id DESC LIMIT 200").fetchall()
+    return jsonify({"items": [dict(r) for r in rows], "me": current_user()["username"]})
+
+
+@app.post("/api/shared_todos")
+def shared_todos_add():
+    text = ((request.get_json(silent=True) or {}).get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "请输入内容"}), 400
+    db = get_db()
+    cur = db.execute("INSERT INTO shared_todos(text,created_by) VALUES(?,?)",
+                     (text[:200], current_user()["username"]))
+    db.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+@app.post("/api/shared_todos/<int:tid>/toggle")
+def shared_todos_toggle(tid):
+    db = get_db()
+    r = db.execute("SELECT done FROM shared_todos WHERE id=?", (tid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    if r["done"]:
+        db.execute("UPDATE shared_todos SET done=0, done_by=NULL, done_at=NULL WHERE id=?", (tid,))
+        on = False
+    else:
+        db.execute("UPDATE shared_todos SET done=1, done_by=?, done_at=datetime('now','localtime') WHERE id=?",
+                   (current_user()["username"], tid))
+        on = True
+    db.commit()
+    return jsonify({"done": on})
+
+
+@app.delete("/api/shared_todos/<int:tid>")
+def shared_todos_del(tid):
+    get_db().execute("DELETE FROM shared_todos WHERE id=?", (tid,))
+    get_db().commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 每日任务
+@app.get("/api/daily_tasks")
+def daily_tasks():
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    tpls = db.execute("SELECT * FROM task_templates WHERE user_id=? AND active=1 ORDER BY sort, id",
+                      (uid(),)).fetchall()
+    done = {r["tpl_id"] for r in db.execute(
+        "SELECT tpl_id FROM task_done WHERE user_id=? AND date=?", (uid(), today))}
+    items = [{"id": t["id"], "text": t["text"], "done": t["id"] in done} for t in tpls]
+    return jsonify({"date": today, "items": items, "done_n": len(done), "total": len(tpls)})
+
+
+@app.post("/api/daily_tasks/templates")
+def daily_task_add():
+    text = ((request.get_json(silent=True) or {}).get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "请输入任务"}), 400
+    db = get_db()
+    cur = db.execute("INSERT INTO task_templates(user_id,text) VALUES(?,?)", (uid(), text[:120]))
+    db.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+@app.delete("/api/daily_tasks/templates/<int:tid>")
+def daily_task_del(tid):
+    db = get_db()
+    db.execute("DELETE FROM task_templates WHERE id=? AND user_id=?", (tid, uid()))
+    db.execute("DELETE FROM task_done WHERE tpl_id=? AND user_id=?", (tid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/daily_tasks/<int:tid>/toggle")
+def daily_task_toggle(tid):
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    r = db.execute("SELECT 1 FROM task_done WHERE user_id=? AND tpl_id=? AND date=?",
+                   (uid(), tid, today)).fetchone()
+    if r:
+        db.execute("DELETE FROM task_done WHERE user_id=? AND tpl_id=? AND date=?", (uid(), tid, today))
+        on = False
+    else:
+        db.execute("INSERT OR IGNORE INTO task_done(user_id,tpl_id,date) VALUES(?,?,?)", (uid(), tid, today))
+        on = True
+    db.commit()
+    return jsonify({"done": on})
+
+
+# ---------------------------------------------------------------- AI 附件文本提取（图片OCR/文件抽取）
+@app.post("/api/ai/extract")
+def ai_extract_attachment():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "没有文件"}), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    tmp = os.path.join(tempfile.gettempdir(), "aiatt_" + uuid.uuid4().hex + ext)
+    f.save(tmp)
+    text = ""
+    try:
+        if ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"):
+            text = _ocr_image(tmp)
+        else:
+            text = _extract_text(tmp, ext) or ""
+    except Exception as e:
+        text = ""
+    finally:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+    text = (text or "").strip()
+    if not text:
+        return jsonify({"error": "没能从附件中提取到文字"}), 200
+    return jsonify({"text": text[:6000], "name": f.filename})
+
+
+@app.get("/api/changshi/boards")
 
 
 @app.get("/api/changshi/boards")

@@ -295,6 +295,7 @@
         <button id="rd-theme" title="护眼背景">护眼</button>
         <button id="rd-copy" title="复制全文">复制</button>
       </span>
+      <button id="viewer-full" class="btn" title="全屏">⛶ 全屏</button>
       <button id="viewer-mode" class="btn hidden">阅读模式</button>
       <a id="viewer-dl" class="btn" download>下载</a>
     </div>
@@ -331,6 +332,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input id="cls-input" type="search" placeholder="搜诗文 / 作者 / 名句…" autocomplete="off">
     </div>
+    <div id="cls-daily" class="cls-daily hidden"></div>
     <div class="cls-cats" id="cls-cats"></div>
     <div class="cls-actions"><button class="btn" id="cls-export">导出 PDF</button></div>
     <div id="cls-list" class="cls-list"></div>
@@ -507,6 +509,25 @@
       <button class="chip" data-sk="衔接表达">衔接表达</button>
     </div>
     <div id="sc-list" class="poly-list"></div>
+  </section>
+
+  <!-- ===== 任务清单（每日任务 + 互监待办） ===== -->
+  <section id="view-tasks" class="view hidden">
+    <div class="tk-tabs">
+      <button class="tk-tab active" data-tkt="daily">📋 每日任务</button>
+      <button class="tk-tab" data-tkt="shared">🤝 互监待办</button>
+    </div>
+    <div id="tk-daily" class="tk-pane">
+      <div class="pd-intro">你自定义的每日任务，每天清零重打卡（如"背10个成语""做1篇资料分析"）</div>
+      <div id="tk-daily-prog" class="tk-prog"></div>
+      <div id="tk-daily-list" class="tk-list"></div>
+      <div class="tk-add"><input id="tk-daily-in" placeholder="添加每日任务…"><button class="btn primary" id="tk-daily-add">添加</button></div>
+    </div>
+    <div id="tk-shared" class="tk-pane hidden">
+      <div class="pd-intro">两个账号共享 · 谁都能加、能打勾，完成会显示是谁做的，互相监督💪</div>
+      <div id="tk-shared-list" class="tk-list"></div>
+      <div class="tk-add"><input id="tk-shared-in" placeholder="添加待办（两人可见）…"><button class="btn primary" id="tk-shared-add">添加</button></div>
+    </div>
   </section>
 
   <!-- ===== 今日复习（遗忘曲线 · 墨墨式卡片） ===== -->
@@ -809,9 +830,27 @@
       <button class="ai-x" data-aiback="close">✕</button>
     </div>
     <div id="ai-msgs" class="ai-msgs"></div>
+    <div id="ai-atts" class="ai-atts"></div>
     <div class="ai-input">
-      <textarea id="ai-text" rows="1" placeholder="问点什么…（讲知识点 / 出题 / 翻译古文 / 分析错题）"></textarea>
+      <button id="ai-attach" class="ai-attbtn" title="上传图片/文件">📎</button>
+      <textarea id="ai-text" rows="1" placeholder="问点什么…（可附图片/文件）"></textarea>
       <button id="ai-send" class="ai-sendbtn">发送</button>
+    </div>
+    <input id="ai-attfile" type="file" accept="image/*,.pdf,.doc,.docx,.txt,.md" hidden>
+    <input id="ai-camfile" type="file" accept="image/*" capture="environment" hidden>
+  </div>
+</div>
+
+<!-- AI 附件来源选择 -->
+<div id="ai-attsheet" class="note-sheet hidden" style="z-index:130;">
+  <div class="ns-mask" data-sheet-close></div>
+  <div class="ns-panel">
+    <div class="ns-handle"></div>
+    <div class="ns-title">添加附件（AI 会读取其中文字）</div>
+    <div class="acm-list">
+      <button data-aiatt="photo">📷 拍照</button>
+      <button data-aiatt="image">🖼️ 选图片</button>
+      <button data-aiatt="file">📄 选文件（PDF/Word/文本）</button>
     </div>
   </div>
 </div>

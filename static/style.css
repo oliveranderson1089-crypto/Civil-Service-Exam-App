@@ -1353,3 +1353,97 @@ body.dark .theme-opt{background:#141b29;color:#aeb7c6;}
 body.dark .theme-opt.on{background:#1c2a45;color:#7fb0ff;border-color:#3a6ad0;}
 .xy-kw{font-size:12px;font-weight:600;color:#b23b2e;background:#f7e6e3;border-radius:6px;padding:2px 9px;}
 .xy-note b{color:var(--blue);font-weight:700;margin-right:5px;}
+
+/* PDF 全屏 */
+body.viewer-full .topbar{display:none;}
+body.viewer-full .viewer-bar{position:fixed;top:0;left:0;right:0;z-index:100;
+  background:rgba(26,111,181,.96);}
+body.viewer-full #view-viewer{position:fixed;inset:0;z-index:95;background:#fff;}
+body.viewer-full #viewer-frame{height:100vh;padding-top:44px;}
+#viewer-full{white-space:nowrap;}
+
+/* ===== 夜间模式对比度补强 ===== */
+body.dark{--blue:#5a9be6;}
+/* 卡片内深色标题/正文 → 提亮 */
+body.dark .poly-t,body.dark .gk-topic,body.dark .pd-term,body.dark .cs-tier-name,
+body.dark .rvf-title,body.dark .acct-name,body.dark .item-word,body.dark .mat-name,
+body.dark .aih-it,body.dark h2,body.dark h3,body.dark .cd-title,body.dark .pd-body,
+body.dark .sc-body,body.dark .poly-reader,body.dark .rvb-body,body.dark .cs-ov-body,
+body.dark .cs-kq-row,body.dark .qz-q,body.dark .qz-opt,body.dark .xy-quote,
+body.dark .cd-sec-b,body.dark .bkb-point-c,body.dark .ai-msg.assistant,
+body.dark .poly-genbox .cd-tip,body.dark .rvf-sub,body.dark label,
+body.dark .set-title,body.dark .modal-box h3,body.dark .ad-msg{color:#e2e7ef !important;}
+body.dark .poly-reader .poly-h,body.dark b,body.dark strong,body.dark .emk,
+body.dark .pd-body b,body.dark .sc-body b,body.dark .cs-kq-row>b{color:#f0c674 !important;}
+body.dark .poly-meta,body.dark .news-date,body.dark .cs-date,body.dark .aih-im,
+body.dark .item-py,body.dark .mat-meta,body.dark .xy-note,body.dark .pd-intro,
+body.dark .sc-day,body.dark .rv-meta-row,body.dark .empty,body.dark .cd-meta,
+body.dark .item-sub,body.dark .gk-head .cs-date{color:#9aa4b2 !important;}
+/* 输入框/文本域 暗色 */
+body.dark input,body.dark textarea,body.dark select,body.dark .ad-input,
+body.dark #ai-text,body.dark .pd-search input,body.dark #search-input{
+  background:#1b2231 !important;color:#e2e7ef !important;border-color:#333d52 !important;}
+body.dark .home-search{background:#1b2231 !important;color:#9aa4b2;}
+/* 弹窗/底部面板 暗色 */
+body.dark .modal-box,body.dark .ns-panel,body.dark .ad-box{background:#1a2130 !important;color:#e2e7ef;}
+body.dark .ns-title,body.dark .acm-list button,body.dark .blk-conv-list button{color:#e2e7ef;}
+/* chip 暗色 */
+body.dark .chip{background:#1b2231;color:#aeb7c4;border-color:#333d52;}
+body.dark .chip.active{background:var(--blue);color:#fff;}
+/* AI 面板暗色 */
+body.dark .ai-panel,body.dark .aiv{background:#131926;}
+body.dark .aih-item,body.dark .ai-msg.user{background:#1b2231;}
+body.dark .ai-msg.user{color:#e8ecf2;}
+/* 顶栏保持蓝，不动 */
+
+/* 古诗文每日推荐 */
+.cls-daily{background:linear-gradient(135deg,#0f766e,#12b886);color:#fff;border-radius:14px;
+  padding:15px 17px;margin-bottom:14px;box-shadow:0 6px 16px rgba(15,118,110,.3);}
+.cd-daily-tag{font-size:12px;opacity:.9;margin-bottom:7px;}
+.cd-daily-title{font-size:19px;font-weight:800;cursor:pointer;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;}
+.cd-daily-meta{font-size:12.5px;font-weight:400;opacity:.85;}
+.cd-daily-line{font-family:"Kaiti SC","KaiTi",serif;font-size:15px;margin-top:6px;opacity:.95;}
+.cd-daily-apply{font-size:13px;line-height:1.65;margin-top:9px;background:rgba(255,255,255,.16);
+  border-radius:8px;padding:8px 11px;}
+.cd-daily-apply b{margin-right:5px;}
+body.dark .cls-daily{box-shadow:none;}
+.sc-ex{font-size:14px;line-height:1.7;color:#39414d;margin-top:9px;padding:9px 12px;
+  background:#f4f8ff;border-left:3px solid var(--blue);border-radius:8px;}
+.sc-ex b{color:var(--blue);margin-right:6px;}
+.sc-exbtn{margin-top:9px;font-size:13px;border:1px dashed #a9c6ec;background:#fff;color:var(--blue);
+  border-radius:9px;padding:6px 13px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;}
+body.dark .sc-ex{background:#182338;color:#e2e7ef;}
+
+/* AI 附件 */
+.ai-attbtn{border:none;background:transparent;font-size:20px;cursor:pointer;padding:0 8px;flex:0 0 auto;}
+.ai-atts{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px;max-width:860px;width:100%;margin:0 auto;}
+.ai-att{font-size:12.5px;background:#eaf1fc;color:var(--blue);border-radius:8px;padding:4px 9px;}
+.ai-att button{border:none;background:transparent;color:#8b93a1;cursor:pointer;font-size:14px;margin-left:3px;}
+body.dark .ai-att{background:#1b2231;}
+
+/* 任务清单 */
+#view-tasks{max-width:760px;margin:0 auto;}
+.tk-tabs{display:flex;gap:8px;margin-bottom:14px;}
+.tk-tab{flex:1;padding:11px;border:1px solid var(--line);background:#fff;border-radius:11px;
+  font-size:15px;font-weight:600;color:#5a6270;cursor:pointer;font-family:inherit;
+  -webkit-tap-highlight-color:transparent;}
+.tk-tab.active{background:var(--blue);color:#fff;border-color:var(--blue);}
+.tk-prog{font-size:13.5px;font-weight:600;color:#2b5a9e;background:#eaf3ff;border-radius:10px;
+  padding:10px 14px;margin-bottom:12px;}
+.tk-list{display:flex;flex-direction:column;gap:9px;margin-bottom:14px;}
+.tk-item{display:flex;align-items:center;gap:11px;background:#fff;border:1px solid #eef1f5;
+  border-radius:12px;padding:13px 14px;box-shadow:var(--shadow);cursor:pointer;}
+.tk-check{width:24px;height:24px;flex:0 0 auto;border-radius:7px;border:2px solid #cbd3de;
+  display:grid;place-items:center;color:#fff;font-size:15px;font-weight:800;}
+.tk-item.done .tk-check{background:#12b886;border-color:#12b886;}
+.tk-text{flex:1;font-size:15px;color:#1f2733;line-height:1.5;}
+.tk-item.done .tk-text{color:#9aa4b2;text-decoration:line-through;}
+.tk-who{display:block;font-size:11.5px;color:#9aa4b2;margin-top:3px;text-decoration:none;}
+.tk-del{border:none;background:transparent;color:#c5cad3;font-size:16px;cursor:pointer;flex:0 0 auto;}
+.tk-add{display:flex;gap:8px;}
+.tk-add input{flex:1;border:1.5px solid var(--line);border-radius:10px;padding:11px 13px;
+  font-size:14.5px;font-family:inherit;outline:none;}
+.tk-add input:focus{border-color:var(--blue);}
+body.dark .tk-tab,body.dark .tk-item{background:#1a2130;}
+body.dark .tk-text{color:#e2e7ef;}
+body.dark .tk-prog{background:#182338;color:#8fb4e6;}
