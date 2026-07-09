@@ -2631,26 +2631,33 @@ $('#tk-daily-add').onclick = async () => {
 };
 $('#tk-daily-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-daily-add').click(); });
 
-let tkMembers = [];
+let tkMembers = [], tkMeId = 0;
 async function loadShared() {
   $('#tk-shared-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/shared_todos');
     tkMembers = d.members || [];
-    // 表头：每位互监成员一列打勾位
+    tkMeId = d.me_id;
+    // 表头：每位互监成员一列打勾位；自己那列标「我」，只能由搭档来勾
     $('#tk-shared-head').innerHTML = tkMembers.length
       ? `<span class="tk-hd-text">待办</span><span class="tk-hd-ms">` + tkMembers.map(m =>
-        `<span class="tk-hd-m" title="${esc(m.name)}">${esc(initials(m.name))}</span>`).join('') + `</span>`
+        `<span class="tk-hd-m ${m.id === d.me_id ? 'me' : ''}" title="${esc(m.name)}">${m.id === d.me_id ? '我' : esc(initials(m.name))}</span>`).join('') + `</span>`
       : '';
     $('#tk-shared-list').innerHTML = d.items.length ? d.items.map(it => {
       const ids = it.done_ids || [];
-      const boxes = tkMembers.map(m => `
-        <button class="tk-box ${ids.includes(m.id) ? 'on' : ''} ${m.id === d.me_id ? 'mine' : ''}"
-          data-tsbox="${it.id}" data-tsuser="${m.id}" title="${esc(m.name)}">${ids.includes(m.id) ? '✓' : ''}</button>`).join('');
-      const who = tkMembers.filter(m => ids.includes(m.id)).map(m => shortName(m.name));
+      const byMap = it.done_by_map || {};
+      const boxes = tkMembers.map(m => {
+        const on = ids.includes(m.id), mine = m.id === d.me_id;
+        const tip = on ? `${m.name}（由 ${byMap[m.id] || '?'} 确认）`
+          : (mine ? '自己不能勾自己，等搭档来确认' : `确认 ${m.name} 已完成`);
+        return `<button class="tk-box ${on ? 'on' : ''} ${mine ? 'mine' : ''}"
+          data-tsbox="${it.id}" data-tsuser="${m.id}" title="${esc(tip)}">${on ? '✓' : (mine ? '🔒' : '')}</button>`;
+      }).join('');
+      const who = tkMembers.filter(m => ids.includes(m.id))
+        .map(m => `${shortName(m.name)}（${shortName(byMap[m.id] || '?')} 确认）`);
       const all = tkMembers.length && tkMembers.every(m => ids.includes(m.id));
       return `<div class="tk-item tk-multi ${all ? 'done' : ''}" data-ts="${it.id}">
-        <span class="tk-text">${esc(it.text)}<span class="tk-who">发起 ${esc(shortName(it.created_by))}${all ? ' · 🎉 都完成了' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
+        <span class="tk-text">${esc(it.text)}<span class="tk-who">发起 ${esc(shortName(it.created_by))}${all ? ' · 🎉 双方都已确认' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
         <span class="tk-boxes">${boxes}</span>
         <button class="tk-del" data-tsdel="${it.id}">🗑</button>
       </div>`;
@@ -2664,6 +2671,7 @@ $('#tk-shared-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-tsdel]');
   if (del) { e.stopPropagation(); if (!(await appConfirm('删除这条共享待办？'))) return; try { await api('/api/shared_todos/' + del.dataset.tsdel, { method: 'DELETE' }); loadShared(); } catch (er) { toast(er.message, true); } return; }
   const box = e.target.closest('[data-tsbox]'); if (!box) return;
+  if (+box.dataset.tsuser === tkMeId) { toast('自己不能给自己打勾，等搭档来确认 🤝', true); return; }
   try {
     await api('/api/shared_todos/' + box.dataset.tsbox + '/toggle', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

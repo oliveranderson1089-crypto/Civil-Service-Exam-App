@@ -1466,13 +1466,17 @@ body.dark .tk-prog{background:#182338;color:#8fb4e6;}
 /* 右边距 29px = 删除按钮(18) + 间距(11)，让列名正对下方的勾选框 */
 .tk-hd-ms{display:flex;gap:6px;margin-right:29px;}
 .tk-hd-m{width:28px;text-align:center;white-space:nowrap;font-size:10px;}
+.tk-hd-m.me{color:var(--blue);}
 .tk-item.tk-multi{align-items:center;}
 .tk-boxes{display:flex;gap:6px;margin-left:auto;}
 .tk-box{width:28px;height:28px;border-radius:9px;border:1.6px solid #cfd6e0;background:#fff;
   color:#fff;font-size:15px;font-weight:800;line-height:1;cursor:pointer;flex:none;
   display:grid;place-items:center;transition:background .12s,border-color .12s;}
-.tk-box.mine{border-color:#7fa5d4;}
-.tk-boxes .tk-box:nth-child(2):not(.on){border-color:#e0b48a;}
+/* 自己那一格：锁住，只能由搭档来勾（交叉确认） */
+.tk-box.mine{border-style:dashed;border-color:#d4d9e1;background:#f6f8fa;
+  color:#c2c8d2;font-size:11px;cursor:not-allowed;}
+.tk-box.mine.on{border-style:solid;cursor:default;}
+.tk-box.mine:active{transform:none;}
 .tk-box.on{background:var(--blue);border-color:var(--blue);}
 .tk-box:active{transform:scale(.92);}
 .tk-mem-list{display:flex;flex-direction:column;gap:2px;max-height:46vh;overflow:auto;padding:4px 0;}
@@ -1563,5 +1567,7 @@ body.dark .cls-item{box-shadow:none;}
 /* 待办打勾位 */
 body.dark .tk-box{background:#232c3d;border-color:#3a465c;}
 body.dark .tk-box.on{background:var(--blue);border-color:var(--blue);}
+body.dark .tk-box.mine{background:#1c2331;border-color:#394356;color:#5c6577;}
+body.dark .tk-box.mine.on{background:var(--blue);border-color:var(--blue);}
 body.dark .tk-mem:active{background:#232c3d;}
 body.dark .ns-sub,body.dark .tk-head{color:#8a93a2;}

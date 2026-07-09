@@ -476,6 +476,10 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_th_board ON theory_items(board, topic);
     """)
+    # 互监待办：交叉确认——记录这个勾是谁打的（只能由搭档打）
+    for col, typ in (("by_user", "INTEGER"), ("by_name", "TEXT")):
+        if col not in _cols(con, "shared_todo_done"):
+            con.execute("ALTER TABLE shared_todo_done ADD COLUMN %s %s" % (col, typ))
     # 老数据迁移：shared_todos.done=1 → 记到完成人名下
     try:
         if not con.execute("SELECT COUNT(*) FROM shared_todo_done").fetchone()[0]:
@@ -3105,13 +3109,15 @@ def shared_todos_list():
     db = get_db()
     members = _todo_members(db)
     rows = db.execute("SELECT * FROM shared_todos ORDER BY done, id DESC LIMIT 200").fetchall()
-    marks = {}
-    for r in db.execute("SELECT todo_id, user_id FROM shared_todo_done"):
+    marks, by = {}, {}
+    for r in db.execute("SELECT todo_id, user_id, by_name FROM shared_todo_done"):
         marks.setdefault(r["todo_id"], []).append(r["user_id"])
+        by.setdefault(r["todo_id"], {})[str(r["user_id"])] = r["by_name"] or ""
     items = []
     for r in rows:
         d = dict(r)
         d["done_ids"] = marks.get(r["id"], [])
+        d["done_by_map"] = by.get(r["id"], {})   # {被确认人id: 确认人}
         items.append(d)
     return jsonify({"items": items, "members": members,
                     "me": current_user()["username"], "me_id": uid()})
@@ -3131,28 +3137,39 @@ def shared_todos_add():
 
 @app.post("/api/shared_todos/<int:tid>/toggle")
 def shared_todos_toggle(tid):
-    """body: {user_id} —— 不传则切换自己那一格。"""
+    """body: {user_id} —— 交叉确认：只能给**搭档**打勾，不能给自己打勾。"""
     db = get_db()
     if not db.execute("SELECT 1 FROM shared_todos WHERE id=?", (tid,)).fetchone():
         return jsonify({"error": "未找到"}), 404
     members = _todo_members(db)
     mids = [m["id"] for m in members]
-    who = int((request.get_json(silent=True) or {}).get("user_id") or uid())
+    me = uid()
+    if me not in mids:
+        return jsonify({"error": "你不是互监成员，去「👥 成员」里把自己加进来"}), 403
+    if len(mids) < 2:
+        return jsonify({"error": "互监需要至少两个成员，去「👥 成员」里加上搭档"}), 400
+    who = int((request.get_json(silent=True) or {}).get("user_id") or 0)
     if who not in mids:
         return jsonify({"error": "不是互监成员"}), 400
+    if who == me:
+        return jsonify({"error": "不能给自己打勾，等搭档来确认 🤝"}), 403
     name = next(m["name"] for m in members if m["id"] == who)
-    hit = db.execute("SELECT 1 FROM shared_todo_done WHERE todo_id=? AND user_id=?", (tid, who)).fetchone()
+    hit = db.execute("SELECT by_user FROM shared_todo_done WHERE todo_id=? AND user_id=?",
+                     (tid, who)).fetchone()
     if hit:
+        # 谁确认的谁才能撤销（防止互相把对方的确认取消掉）
+        if hit["by_user"] and hit["by_user"] != me:
+            return jsonify({"error": "这个勾是别人确认的，只有确认人能撤销"}), 403
         db.execute("DELETE FROM shared_todo_done WHERE todo_id=? AND user_id=?", (tid, who))
         on = False
     else:
-        db.execute("INSERT OR IGNORE INTO shared_todo_done(todo_id,user_id,username) VALUES(?,?,?)",
-                   (tid, who, name))
+        db.execute("INSERT OR IGNORE INTO shared_todo_done(todo_id,user_id,username,by_user,by_name) "
+                   "VALUES(?,?,?,?,?)", (tid, who, name, me, current_user()["username"]))
         on = True
     _sync_todo_done(db, tid, mids)
     db.commit()
-    done_ids = [r[0] for r in db.execute("SELECT user_id FROM shared_todo_done WHERE todo_id=?", (tid,))]
-    return jsonify({"done": on, "user_id": who, "done_ids": done_ids})
+    rows = db.execute("SELECT user_id, by_name FROM shared_todo_done WHERE todo_id=?", (tid,)).fetchall()
+    return jsonify({"done": on, "user_id": who, "done_ids": [r["user_id"] for r in rows]})
 
 
 @app.delete("/api/shared_todos/<int:tid>")
