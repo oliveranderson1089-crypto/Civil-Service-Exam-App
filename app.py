@@ -15,6 +15,7 @@ import secrets
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -72,6 +73,8 @@ INLINE_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
 OFFICE_EXT = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
               ".odt", ".ods", ".odp", ".rtf"}
 TEXT_EXT = {".txt", ".md", ".csv", ".json"}
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif",
+             ".heic", ".heif", ".tif", ".tiff", ".avif"}
 
 
 # ---------------------------------------------------------------- 配置（仅密钥）
@@ -435,6 +438,54 @@ def init_db():
     # 衔接表达例句
     if "example" not in _cols(con, "sucai_items"):
         con.execute("ALTER TABLE sucai_items ADD COLUMN example TEXT")
+    # 每日一诗：常识判断考点
+    if "common" not in _cols(con, "classic_daily"):
+        con.execute("ALTER TABLE classic_daily ADD COLUMN common TEXT")
+    con.executescript("""
+        -- 互监待办：每人独立打勾（旧 shared_todos.done 保留兼容）
+        CREATE TABLE IF NOT EXISTS shared_todo_done(
+            todo_id INTEGER NOT NULL, user_id INTEGER NOT NULL, username TEXT,
+            done_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(todo_id, user_id)
+        );
+        CREATE TABLE IF NOT EXISTS todo_members(
+            user_id INTEGER PRIMARY KEY,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 常考（高频考点合集）
+        CREATE TABLE IF NOT EXISTS changkao_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            board TEXT, title TEXT, content TEXT, note TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(board, title)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ck_board ON changkao_items(board);
+        -- 上位词积累（逻辑填空「概括词/上位词」提示）
+        CREATE TABLE IF NOT EXISTS hyper_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hyper TEXT UNIQUE, subs TEXT, note TEXT, example TEXT,
+            source TEXT DEFAULT 'ai',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        -- 理论基础（马原/毛中特/习思想…）
+        CREATE TABLE IF NOT EXISTS theory_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            board TEXT, topic TEXT, title TEXT, content TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(board, title)
+        );
+        CREATE INDEX IF NOT EXISTS idx_th_board ON theory_items(board, topic);
+    """)
+    # 老数据迁移：shared_todos.done=1 → 记到完成人名下
+    try:
+        if not con.execute("SELECT COUNT(*) FROM shared_todo_done").fetchone()[0]:
+            for r in con.execute("SELECT id, done_by, done_at FROM shared_todos WHERE done=1").fetchall():
+                u = con.execute("SELECT id FROM users WHERE username=?", (r[1],)).fetchone()
+                if u:
+                    con.execute("INSERT OR IGNORE INTO shared_todo_done(todo_id,user_id,username,done_at) "
+                                "VALUES(?,?,?,?)", (r[0], u[0], r[1], r[2]))
+    except Exception:
+        pass
     # notes 表补充字段：标签 / 附件 / 待办清单
     for col in ("tags", "attachments", "todos"):
         if col not in _cols(con, "notes"):
@@ -956,35 +1007,64 @@ def _extract_pdf_text(pdf_path):
         return ""
 
 
+def _clean_ocr(text):
+    text = re.sub(r"(?<=[一-鿿，。！？；：、（）《》“”])[ \t]+(?=[一-鿿，。！？；：、（）《》“”])", "", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _tess(img_path, psm):
+    try:
+        out = subprocess.run(["tesseract", img_path, "stdout", "-l", "chi_sim+eng",
+                              "--oem", "1", "--psm", str(psm)], capture_output=True, timeout=150)
+        return _clean_ocr(out.stdout.decode("utf-8", "ignore"))
+    except Exception:
+        return ""
+
+
 def _ocr_image(path):
-    """对图片做预处理+tesseract OCR，返回识别文字。供 /api/ocr 与 AI 附件复用。"""
-    proc = path
+    """预处理+tesseract OCR。兼容 HEIC/RGBA/超大图；单一版面识别不到时换 psm 重试。"""
+    proc = None
     try:
         from PIL import Image, ImageOps, ImageFilter
+        try:                                   # iPhone HEIC / HEIF
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except Exception:
+            pass
         im = Image.open(path)
-        im = ImageOps.exif_transpose(im).convert("L")
+        im.load()                              # 多帧 GIF/TIFF 只取第一帧
+        im = ImageOps.exif_transpose(im)
+        if im.mode in ("RGBA", "LA", "P"):     # 透明底 → 铺白，否则变全黑
+            im = im.convert("RGBA")
+            bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+            im = Image.alpha_composite(bg, im)
+        im = im.convert("L")
         w, h = im.size
-        if max(w, h) < 2200:
+        if max(w, h) < 2200:                   # 太小 → 放大，提升小字识别率
             sc = min(3.0, 2200.0 / max(w, h))
             im = im.resize((int(w * sc), int(h * sc)), Image.LANCZOS)
+        elif max(w, h) > 5000:                 # 太大 → 缩小，避免 tesseract 超时
+            sc = 5000.0 / max(w, h)
+            im = im.resize((int(w * sc), int(h * sc)), Image.LANCZOS)
         im = ImageOps.autocontrast(im, cutoff=2).filter(ImageFilter.SHARPEN)
-        proc = path + ".png"
+        proc = path + ".ocr.png"
         im.save(proc)
     except Exception:
-        proc = path
-    text = ""
+        proc = None
+    src = proc or path
     try:
-        out = subprocess.run(["tesseract", proc, "stdout", "-l", "chi_sim+eng", "--oem", "1", "--psm", "6"],
-                             capture_output=True, timeout=120)
-        text = out.stdout.decode("utf-8", "ignore")
+        text = _tess(src, 6)                   # 统一版面（题目/文档截图）
+        if len(text) < 8:
+            text = _tess(src, 3) or text       # 自动分栏
+        if len(text) < 8:
+            text = _tess(src, 11) or text      # 稀疏文字（照片/海报）
+        return text
     finally:
-        if proc != path:
+        if proc:
             try:
                 os.remove(proc)
             except Exception:
                 pass
-    text = re.sub(r"(?<=[一-鿿，。！？；：、（）《》“”])[ \t]+(?=[一-鿿，。！？；：、（）《》“”])", "", text)
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _extract_text(path, ext):
@@ -2592,6 +2672,42 @@ def _sucai_import(db):
         changed = True
     if changed:
         db.commit()
+        _spawn_fill_examples()   # 新导入的衔接表达后台补例句，用户不用挨个点
+
+
+_FILL_RUNNING = False
+
+
+def _spawn_fill_examples():
+    """后台线程给缺例句的「衔接表达」补 AI 例句（每天素材更新后自动跑一次）。"""
+    global _FILL_RUNNING
+    if _FILL_RUNNING or not ai_configured():
+        return
+    _FILL_RUNNING = True
+
+    def run():
+        global _FILL_RUNNING
+        try:
+            con = sqlite3.connect(DB, timeout=30)
+            rows = con.execute("SELECT id, content FROM sucai_items WHERE kind='衔接表达' "
+                               "AND (example IS NULL OR example='') ORDER BY id DESC LIMIT 20").fetchall()
+            for sid, content in rows:
+                prompt = ("下面是一句申论写作的衔接表达/万能句式：\n%s\n\n请用它写一个申论语境下的规范例句"
+                          "（书面化、紧扣治理/民生/发展类主题，30~60字），只输出例句本身。" % content)
+                try:
+                    rep = ai_chat([{"role": "system", "content": "你是申论写作辅导老师，例句规范、书面化。"},
+                                   {"role": "user", "content": prompt}], temperature=0.6, max_tokens=200)
+                    con.execute("UPDATE sucai_items SET example=? WHERE id=?", (rep.strip(), sid))
+                    con.commit()
+                except Exception:
+                    continue
+            con.close()
+        except Exception:
+            pass
+        finally:
+            _FILL_RUNNING = False
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 @app.get("/api/sucai")
@@ -2887,9 +3003,9 @@ def classics_daily():
     db = get_db()
     _ensure_classic_freq(db)
     today = datetime.now().strftime("%Y-%m-%d")
-    row = db.execute("SELECT d.classic_id, d.apply, c.title, c.author, c.dynasty, c.category, c.content "
-                     "FROM classic_daily d JOIN classics c ON c.id=d.classic_id WHERE d.date=?",
-                     (today,)).fetchone()
+    sel = ("SELECT d.classic_id, d.apply, d.common, c.title, c.author, c.dynasty, c.category, c.content "
+           "FROM classic_daily d JOIN classics c ON c.id=d.classic_id WHERE d.date=?")
+    row = db.execute(sel, (today,)).fetchone()
     if not row:
         # 从高频池里按日期确定性选一首（尽量适合申论）
         pool = db.execute("SELECT id FROM classics WHERE freq>=100 ORDER BY id").fetchall()
@@ -2901,24 +3017,31 @@ def classics_daily():
         cid = pool[idx]["id"]
         db.execute("INSERT OR REPLACE INTO classic_daily(date, classic_id) VALUES(?,?)", (today, cid))
         db.commit()
-        row = db.execute("SELECT d.classic_id, d.apply, c.title, c.author, c.dynasty, c.category, c.content "
-                         "FROM classic_daily d JOIN classics c ON c.id=d.classic_id WHERE d.date=?",
-                         (today,)).fetchone()
-    apply_txt = row["apply"] or ""
-    if not apply_txt and ai_configured():
-        prompt = ("这是《%s》（%s·%s）：\n%s\n\n请用一句话（40字内）点出它可用于申论/面试的哪类主题、"
-                  "怎么引用（如为民情怀、奋斗、改革、生态等）。只输出这句话。" %
+        row = db.execute(sel, (today,)).fetchone()
+    apply_txt, common_txt = row["apply"] or "", row["common"] or ""
+    if (not apply_txt or not common_txt) and ai_configured():
+        prompt = ("这是《%s》（%s·%s）：\n%s\n\n请输出 JSON："
+                  '{"apply":"一句话40字内，说明它适合申论/面试的哪类主题、怎么引用",'
+                  '"common":"一句话60字内，本篇在行测常识判断里的常考点：作者朝代/文学地位/名句出处/'
+                  '所属文体或流派/易混淆点，任选最可能考的写"}。只输出 JSON。' %
                   (row["title"], row["dynasty"], row["author"], (row["content"] or "")[:200]))
         rep, err = _ai_call_or_error(
-            [{"role": "system", "content": "你是申论辅导老师，点拨精炼实用。"},
-             {"role": "user", "content": prompt}], temperature=0.5, max_tokens=120)
+            [{"role": "system", "content": "你是公考辅导老师，兼顾申论运用与常识判断考点，精炼实用。"},
+             {"role": "user", "content": prompt}], temperature=0.5, max_tokens=260, json_mode=True)
         if not err:
-            apply_txt = rep.strip()
-            db.execute("UPDATE classic_daily SET apply=? WHERE date=?", (apply_txt, today))
-            db.commit()
+            try:
+                d = json.loads(rep)
+                apply_txt = (d.get("apply") or apply_txt).strip()
+                common_txt = (d.get("common") or common_txt).strip()
+                db.execute("UPDATE classic_daily SET apply=?, common=? WHERE date=?",
+                           (apply_txt, common_txt, today))
+                db.commit()
+            except Exception:
+                pass
     return jsonify({"id": row["classic_id"], "title": row["title"], "author": row["author"],
                     "dynasty": row["dynasty"], "category": row["category"],
-                    "first_line": (row["content"] or "").split("\n")[0], "apply": apply_txt})
+                    "first_line": (row["content"] or "").split("\n")[0],
+                    "apply": apply_txt, "common": common_txt})
 
 
 # ---------------------------------------------------------------- 衔接表达 · 例句
@@ -2928,13 +3051,16 @@ def sucai_example(sid):
     r = db.execute("SELECT * FROM sucai_items WHERE id=?", (sid,)).fetchone()
     if not r:
         return jsonify({"error": "未找到"}), 404
-    if r["example"]:
+    force = bool((request.get_json(silent=True) or {}).get("force"))
+    if r["example"] and not force:
         return jsonify({"example": r["example"], "cached": True})
     prompt = ("下面是一句申论写作的衔接表达/万能句式：\n%s\n\n请用它写一个申论语境下的规范例句"
               "（书面化、紧扣治理/民生/发展类主题，30~60字），只输出例句本身。" % r["content"])
+    if force and r["example"]:
+        prompt += "\n注意：换一个主题和角度，不要写成：" + r["example"]
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论写作辅导老师，例句规范、书面化。"},
-         {"role": "user", "content": prompt}], temperature=0.6, max_tokens=200)
+         {"role": "user", "content": prompt}], temperature=0.85, max_tokens=200)
     if err:
         return err
     ex = rep.strip()
@@ -2943,12 +3069,52 @@ def sucai_example(sid):
     return jsonify({"example": ex, "cached": False})
 
 
-# ---------------------------------------------------------------- 共享待办（互相监督）
+# ---------------------------------------------------------------- 共享待办（互相监督，每人独立打勾）
+def _todo_members(db):
+    """互监成员：未设置时自动选出最活跃的两个账号。"""
+    rows = db.execute("SELECT m.user_id, u.username FROM todo_members m "
+                      "JOIN users u ON u.id=m.user_id ORDER BY m.user_id").fetchall()
+    if not rows:
+        pick = db.execute("""
+            SELECT u.id, u.username,
+                   (SELECT COUNT(*) FROM entries e WHERE e.user_id=u.id)
+                 + (SELECT COUNT(*) FROM wrong_questions w WHERE w.user_id=u.id)
+                 + (SELECT COUNT(*) FROM task_templates t WHERE t.user_id=u.id)
+                 + (SELECT COUNT(*) FROM ai_chats c WHERE c.user_id=u.id) act
+            FROM users u ORDER BY act DESC, u.id LIMIT 2""").fetchall()
+        for p in pick:
+            db.execute("INSERT OR IGNORE INTO todo_members(user_id) VALUES(?)", (p["id"],))
+        db.commit()
+        rows = db.execute("SELECT m.user_id, u.username FROM todo_members m "
+                          "JOIN users u ON u.id=m.user_id ORDER BY m.user_id").fetchall()
+    return [{"id": r["user_id"], "name": r["username"]} for r in rows]
+
+
+def _sync_todo_done(db, tid, member_ids):
+    """所有成员都打勾 → 整条标记完成（推送脚本与排序依赖 done 字段）。"""
+    got = {r[0] for r in db.execute("SELECT user_id FROM shared_todo_done WHERE todo_id=?", (tid,))}
+    all_done = bool(member_ids) and set(member_ids) <= got
+    if all_done:
+        db.execute("UPDATE shared_todos SET done=1, done_at=datetime('now','localtime') WHERE id=?", (tid,))
+    else:
+        db.execute("UPDATE shared_todos SET done=0, done_at=NULL WHERE id=?", (tid,))
+
+
 @app.get("/api/shared_todos")
 def shared_todos_list():
-    rows = get_db().execute(
-        "SELECT * FROM shared_todos ORDER BY done, id DESC LIMIT 200").fetchall()
-    return jsonify({"items": [dict(r) for r in rows], "me": current_user()["username"]})
+    db = get_db()
+    members = _todo_members(db)
+    rows = db.execute("SELECT * FROM shared_todos ORDER BY done, id DESC LIMIT 200").fetchall()
+    marks = {}
+    for r in db.execute("SELECT todo_id, user_id FROM shared_todo_done"):
+        marks.setdefault(r["todo_id"], []).append(r["user_id"])
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["done_ids"] = marks.get(r["id"], [])
+        items.append(d)
+    return jsonify({"items": items, "members": members,
+                    "me": current_user()["username"], "me_id": uid()})
 
 
 @app.post("/api/shared_todos")
@@ -2965,26 +3131,63 @@ def shared_todos_add():
 
 @app.post("/api/shared_todos/<int:tid>/toggle")
 def shared_todos_toggle(tid):
+    """body: {user_id} —— 不传则切换自己那一格。"""
     db = get_db()
-    r = db.execute("SELECT done FROM shared_todos WHERE id=?", (tid,)).fetchone()
-    if not r:
+    if not db.execute("SELECT 1 FROM shared_todos WHERE id=?", (tid,)).fetchone():
         return jsonify({"error": "未找到"}), 404
-    if r["done"]:
-        db.execute("UPDATE shared_todos SET done=0, done_by=NULL, done_at=NULL WHERE id=?", (tid,))
+    members = _todo_members(db)
+    mids = [m["id"] for m in members]
+    who = int((request.get_json(silent=True) or {}).get("user_id") or uid())
+    if who not in mids:
+        return jsonify({"error": "不是互监成员"}), 400
+    name = next(m["name"] for m in members if m["id"] == who)
+    hit = db.execute("SELECT 1 FROM shared_todo_done WHERE todo_id=? AND user_id=?", (tid, who)).fetchone()
+    if hit:
+        db.execute("DELETE FROM shared_todo_done WHERE todo_id=? AND user_id=?", (tid, who))
         on = False
     else:
-        db.execute("UPDATE shared_todos SET done=1, done_by=?, done_at=datetime('now','localtime') WHERE id=?",
-                   (current_user()["username"], tid))
+        db.execute("INSERT OR IGNORE INTO shared_todo_done(todo_id,user_id,username) VALUES(?,?,?)",
+                   (tid, who, name))
         on = True
+    _sync_todo_done(db, tid, mids)
     db.commit()
-    return jsonify({"done": on})
+    done_ids = [r[0] for r in db.execute("SELECT user_id FROM shared_todo_done WHERE todo_id=?", (tid,))]
+    return jsonify({"done": on, "user_id": who, "done_ids": done_ids})
 
 
 @app.delete("/api/shared_todos/<int:tid>")
 def shared_todos_del(tid):
-    get_db().execute("DELETE FROM shared_todos WHERE id=?", (tid,))
-    get_db().commit()
+    db = get_db()
+    db.execute("DELETE FROM shared_todo_done WHERE todo_id=?", (tid,))
+    db.execute("DELETE FROM shared_todos WHERE id=?", (tid,))
+    db.commit()
     return jsonify({"ok": True})
+
+
+@app.get("/api/todo_members")
+def todo_members_get():
+    db = get_db()
+    members = _todo_members(db)
+    users = [{"id": r["id"], "name": r["username"]}
+             for r in db.execute("SELECT id, username FROM users ORDER BY id")]
+    return jsonify({"members": members, "users": users})
+
+
+@app.post("/api/todo_members")
+def todo_members_set():
+    ids = (request.get_json(silent=True) or {}).get("user_ids") or []
+    ids = [int(i) for i in ids][:6]
+    if not ids:
+        return jsonify({"error": "至少选一个成员"}), 400
+    db = get_db()
+    db.execute("DELETE FROM todo_members")
+    for i in ids:
+        db.execute("INSERT OR IGNORE INTO todo_members(user_id) VALUES(?)", (i,))
+    # 成员变了，重算每条待办的整体完成状态
+    for r in db.execute("SELECT id FROM shared_todos").fetchall():
+        _sync_todo_done(db, r[0], ids)
+    db.commit()
+    return jsonify({"members": _todo_members(db)})
 
 
 # ---------------------------------------------------------------- 每日任务
@@ -3036,6 +3239,160 @@ def daily_task_toggle(tid):
     return jsonify({"done": on})
 
 
+# ---------------------------------------------------------------- 常考（高频考点合集）
+CK_BOARDS = [
+    {"key": "成语", "name": "高频成语", "icon": "quote", "desc": "近十年真题高频 + 易混辨析"},
+    {"key": "实词", "name": "高频实词", "icon": "edit", "desc": "逻辑填空高频实词 · 辨析搭配"},
+    {"key": "上位词", "name": "上位词", "icon": "layers", "desc": "概括词提示 · 下位词归类"},
+    {"key": "古诗文", "name": "高频古诗文", "icon": "book", "desc": "按考频排序的名篇名句"},
+    {"key": "常识", "name": "高频常识", "icon": "bulb", "desc": "常识判断反复出现的考点"},
+    {"key": "提法", "name": "高频提法", "icon": "feather", "desc": "时政新提法 · 申论高频表述"},
+]
+
+
+@app.get("/api/changkao/boards")
+def changkao_boards():
+    db = get_db()
+    counts = {r["board"]: r["c"] for r in
+              db.execute("SELECT board, COUNT(*) c FROM changkao_items GROUP BY board")}
+    counts["古诗文"] = db.execute("SELECT COUNT(*) FROM classics WHERE freq>=100").fetchone()[0]
+    counts["上位词"] = db.execute("SELECT COUNT(*) FROM hyper_items").fetchone()[0]
+    return jsonify({"boards": [dict(b, count=counts.get(b["key"], 0)) for b in CK_BOARDS]})
+
+
+@app.get("/api/changkao/items")
+def changkao_items():
+    board = (request.args.get("board") or "成语").strip()
+    db = get_db()
+    if board == "古诗文":
+        _ensure_classic_freq(db)
+        rows = db.execute("SELECT id, title, author, dynasty, content FROM classics "
+                          "WHERE freq>=100 ORDER BY freq DESC, id LIMIT 300").fetchall()
+        return jsonify({"board": board, "kind": "classic", "items": [
+            {"id": r["id"], "title": r["title"],
+             "content": (r["content"] or "").split("\n")[0][:60],
+             "note": ((r["dynasty"] or "") + " · " + (r["author"] or "")).strip(" ·")} for r in rows]})
+    if board == "上位词":
+        rows = db.execute("SELECT id, hyper, subs, note FROM hyper_items ORDER BY id DESC LIMIT 300").fetchall()
+        return jsonify({"board": board, "kind": "hyper", "items": [
+            {"id": r["id"], "title": r["hyper"], "content": r["subs"], "note": r["note"]} for r in rows]})
+    rows = db.execute("SELECT id, title, content, note FROM changkao_items WHERE board=? "
+                      "ORDER BY id LIMIT 400", (board,)).fetchall()
+    return jsonify({"board": board, "kind": "text", "items": [dict(r) for r in rows]})
+
+
+# ---------------------------------------------------------------- 上位词积累
+@app.get("/api/hyper")
+def hyper_list():
+    q = (request.args.get("q") or "").strip()
+    db = get_db()
+    if q:
+        rows = db.execute("SELECT * FROM hyper_items WHERE hyper LIKE ? OR subs LIKE ? "
+                          "ORDER BY id DESC LIMIT 200", ("%" + q + "%", "%" + q + "%")).fetchall()
+    else:
+        rows = db.execute("SELECT * FROM hyper_items ORDER BY id DESC LIMIT 200").fetchall()
+    return jsonify({"items": [dict(r) for r in rows],
+                    "total": db.execute("SELECT COUNT(*) FROM hyper_items").fetchone()[0]})
+
+
+@app.get("/api/hyper/daily")
+def hyper_daily():
+    """每日推荐 3 组：按日期确定性轮换，全站一致。"""
+    db = get_db()
+    ids = [r[0] for r in db.execute("SELECT id FROM hyper_items ORDER BY id")]
+    if not ids:
+        return jsonify({"items": []})
+    start = (datetime.now().toordinal() * 3) % len(ids)
+    pick = [ids[(start + i) % len(ids)] for i in range(min(3, len(ids)))]
+    rows = db.execute("SELECT * FROM hyper_items WHERE id IN (%s)" %
+                      ",".join("?" * len(pick)), pick).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.post("/api/hyper/ai")
+def hyper_ai():
+    """输入一个词/一组词 → AI 给出上位词、同类下位词、辨析与例句，并收录。"""
+    word = ((request.get_json(silent=True) or {}).get("word") or "").strip()
+    if not word:
+        return jsonify({"error": "请输入词语"}), 400
+    db = get_db()
+    hit = db.execute("SELECT * FROM hyper_items WHERE hyper=?", (word,)).fetchone()
+    if hit:
+        return jsonify(dict(hit, cached=True))
+    prompt = ("公考「逻辑填空」中，题干出现一个类别名词（上位词），空格要填该类别下的具体成员（下位词）。\n"
+              "示范：戏曲 → 京剧、越剧、黄梅戏、豫剧、昆曲；文房四宝 → 笔、墨、纸、砚。\n"
+              "注意 hyper 必须是可数的类别名词，subs 必须是具体事物名称，不能是形容词。\n\n"
+              "给定词语：%s\n请输出 JSON：\n"
+              '{"hyper":"它所属的类别名词（若它本身就是类别名词，则原样输出）",'
+              '"subs":"该类别下常见的具体成员，用顿号分隔，6~10个",'
+              '"note":"一句话说明题干出现这个类别词时答案该选什么（40字内）",'
+              '"example":"一个含空格的逻辑填空式例句，用____表示空（30~50字）"}\n只输出 JSON。' % word)
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是公考言语理解老师，熟悉逻辑填空的上下文提示逻辑。"},
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=400, json_mode=True)
+    if err:
+        return err
+    try:
+        d = json.loads(rep)
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常"}), 502
+    hyper = (d.get("hyper") or word).strip()
+    db.execute("INSERT OR REPLACE INTO hyper_items(hyper,subs,note,example,source) VALUES(?,?,?,?,?)",
+               (hyper, (d.get("subs") or "").strip(), (d.get("note") or "").strip(),
+                (d.get("example") or "").strip(), "ai"))
+    db.commit()
+    r = db.execute("SELECT * FROM hyper_items WHERE hyper=?", (hyper,)).fetchone()
+    return jsonify(dict(r, cached=False))
+
+
+@app.delete("/api/hyper/<int:hid>")
+def hyper_del(hid):
+    db = get_db()
+    db.execute("DELETE FROM hyper_items WHERE id=?", (hid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 理论基础（马原/毛中特/习思想）
+TH_BOARDS = [
+    {"name": "马克思主义基本原理", "short": "马原", "icon": "compass",
+     "desc": "唯物论 · 辩证法 · 认识论 · 唯物史观 · 政治经济学"},
+    {"name": "毛泽东思想", "short": "毛概", "icon": "flag",
+     "desc": "新民主主义革命 · 社会主义改造 · 活的灵魂"},
+    {"name": "中国特色社会主义理论体系", "short": "中特", "icon": "layers",
+     "desc": "邓小平理论 · 三个代表 · 科学发展观"},
+    {"name": "习近平新时代中国特色社会主义思想", "short": "习思想", "icon": "star",
+     "desc": "十个明确 · 十四个坚持 · 十三个方面成就"},
+]
+
+
+@app.get("/api/theory/boards")
+def theory_boards():
+    db = get_db()
+    counts = {r["board"]: r["c"] for r in
+              db.execute("SELECT board, COUNT(*) c FROM theory_items GROUP BY board")}
+    return jsonify({"boards": [dict(b, count=counts.get(b["name"], 0)) for b in TH_BOARDS]})
+
+
+@app.get("/api/theory/items")
+def theory_items():
+    board = (request.args.get("board") or "").strip()
+    if not board:
+        return jsonify({"error": "缺少板块"}), 400
+    rows = get_db().execute("SELECT id, topic, title, content FROM theory_items WHERE board=? "
+                            "ORDER BY id", (board,)).fetchall()
+    groups, order = {}, []
+    for r in rows:
+        t = r["topic"] or "其他"
+        if t not in groups:
+            groups[t] = []
+            order.append(t)
+        groups[t].append({"id": r["id"], "title": r["title"], "content": r["content"]})
+    meta = next((b for b in TH_BOARDS if b["name"] == board), {"name": board, "desc": ""})
+    return jsonify({"board": board, "desc": meta.get("desc", ""), "count": len(rows),
+                    "topics": [{"name": t, "items": groups[t]} for t in order]})
+
+
 # ---------------------------------------------------------------- AI 附件文本提取（图片OCR/文件抽取）
 @app.post("/api/ai/extract")
 def ai_extract_attachment():
@@ -3043,16 +3400,25 @@ def ai_extract_attachment():
     if not f or not f.filename:
         return jsonify({"error": "没有文件"}), 400
     ext = os.path.splitext(f.filename)[1].lower()
+    mime = (f.mimetype or "").lower()
+    # 拍照/粘贴的图片常常没有扩展名，按 MIME 兜底判断
+    is_img = mime.startswith("image/") or ext in IMAGE_EXT
+    if is_img and ext not in IMAGE_EXT:
+        ext = "." + (mime.split("/")[-1].split("+")[0] or "png")
     tmp = os.path.join(tempfile.gettempdir(), "aiatt_" + uuid.uuid4().hex + ext)
     f.save(tmp)
-    text = ""
+    text, err = "", ""
     try:
-        if ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"):
+        if is_img:
             text = _ocr_image(tmp)
+            if not text.strip():
+                err = "图片里没识别出文字（可能是纯图形、字太小或太模糊，可放大后重拍）"
         else:
             text = _extract_text(tmp, ext) or ""
+            if not text.strip():
+                err = "这个格式（%s）暂时提取不出文字，可先转成 PDF 或截图上传" % (ext or "未知")
     except Exception as e:
-        text = ""
+        err = "解析失败：%s" % e
     finally:
         try:
             os.remove(tmp)
@@ -3060,11 +3426,8 @@ def ai_extract_attachment():
             pass
     text = (text or "").strip()
     if not text:
-        return jsonify({"error": "没能从附件中提取到文字"}), 200
+        return jsonify({"error": err or "没能从附件中提取到文字"}), 200
     return jsonify({"text": text[:6000], "name": f.filename})
-
-
-@app.get("/api/changshi/boards")
 
 
 @app.get("/api/changshi/boards")
@@ -3153,6 +3516,18 @@ def _review_due(db, u, today):
             "title": r["t"], "sub": r["a"] or "古诗文", "body": (r["ct"] or "").split("\n")[0][:44],
             "front": r["t"], "front_sub": ((r["dy"] or "") + " · " + (r["a"] or "")).strip(" ·"),
             "back": back or "（无内容）"})
+    # 议论文素材（全局每日更新，人人都要背）：最近 60 天的进入复习轮
+    for r in db.execute("SELECT * FROM sucai_items WHERE date >= date('now','localtime','-60 day') "
+                        "ORDER BY id DESC LIMIT 300"):
+        body = (r["content"] or "").strip()
+        back = body + (("\n\n【例句】" + r["example"]) if r["example"] else "")
+        front = (r["topic"] or "").strip() or (r["kind"] or "素材")
+        if r["kind"] == "衔接表达":          # 句式类：正面给用途，背面给句式本身
+            front, back = "衔接表达 · 回忆句式", body + (("\n\n【例句】" + r["example"]) if r["example"] else "")
+        check("sucai", r["id"], r["created_at"], {
+            "title": (r["topic"] or r["kind"] or "素材")[:36], "sub": r["kind"] or "素材",
+            "body": body[:90], "front": front, "front_sub": (r["kind"] or "素材") + " · " + (r["date"] or ""),
+            "back": back or "（无内容）"})
     return due
 
 
@@ -3160,7 +3535,7 @@ def _review_due(db, u, today):
 def review_today():
     today = datetime.now().strftime("%Y-%m-%d")
     due = _review_due(get_db(), uid(), today)
-    order = {"entry": 0, "wrongq": 1, "classic": 2}
+    order = {"entry": 0, "wrongq": 1, "classic": 2, "sucai": 3}
     due.sort(key=lambda x: (order.get(x["kind"], 9), x["id"]))
     return jsonify({"today": today, "count": len(due), "items": due})
 
@@ -3170,7 +3545,7 @@ def review_done():
     data = request.get_json(silent=True) or {}
     kind, rid = (data.get("kind") or "").strip(), int(data.get("id") or 0)
     result = (data.get("result") or "know").strip()  # know认识 / fuzzy模糊 / forget忘记
-    if kind not in ("entry", "wrongq", "classic") or not rid:
+    if kind not in ("entry", "wrongq", "classic", "sucai") or not rid:
         return jsonify({"error": "参数错误"}), 400
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")

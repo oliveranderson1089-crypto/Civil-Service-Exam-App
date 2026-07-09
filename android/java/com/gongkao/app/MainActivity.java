@@ -167,6 +167,11 @@ public class MainActivity extends Activity {
                 } catch (Exception ignored) { }
                 return false;
             }
+
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                pushSysTheme();   // WebView 的 prefers-color-scheme 不跟随系统，由原生告知网页
+            }
         });
 
         web.setDownloadListener(new DownloadListener() {
@@ -234,7 +239,52 @@ public class MainActivity extends Activity {
         });
     }
 
+    /** 系统当前是否深色模式。 */
+    private boolean sysDarkNow() {
+        int mode = getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    /** 把系统深色状态写进网页的 window.__sysDark，并触发主题重算。 */
+    private void pushSysTheme() {
+        final boolean dark = sysDarkNow();
+        runOnUiThread(() -> {
+            if (web == null) return;
+            web.evaluateJavascript("window.__sysDark=" + dark
+                    + ";window.__onSysTheme&&window.__onSysTheme(" + dark + ")", null);
+        });
+    }
+
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration cfg) {
+        super.onConfigurationChanged(cfg);
+        pushSysTheme();   // 系统在 19:00 切到夜间时，App 立刻跟着变
+    }
+
+    /** 沉浸式全屏：隐藏状态栏/导航栏（PDF 全屏阅读）。 */
+    private void setFullscreenUi(boolean on) {
+        android.view.View d = getWindow().getDecorView();
+        if (on) {
+            d.setSystemUiVisibility(
+                    android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        } else {
+            d.setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_VISIBLE);
+        }
+    }
+
     public class Bridge {
+        @android.webkit.JavascriptInterface
+        public boolean sysDark() { return sysDarkNow(); }
+
+        @android.webkit.JavascriptInterface
+        public void fullscreen(boolean on) { runOnUiThread(() -> setFullscreenUi(on)); }
+
         @android.webkit.JavascriptInterface
         public void changeServer() { runOnUiThread(() -> promptUrl(false)); }
 

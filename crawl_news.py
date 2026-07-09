@@ -304,27 +304,36 @@ def gen_xiyu(con):
         print("── 习语：没有抓到讲话原文")
         return
     material = "\n\n".join("【文章%d｜%s】\n%s" % (i + 1, u, b) for i, (u, b) in enumerate(corpus))
+    # 近 90 天已收录的金句，交给 AI 去重（避免天天摘同几句套话）
+    had = [r[0] for r in con.execute(
+        "SELECT quote FROM xiyu_items WHERE date >= date('now','localtime','-90 day') ORDER BY id DESC LIMIT 60")]
+    avoid = ("\n【已收录，不要重复】\n" + "\n".join("・" + q[:30] for q in had)) if had else ""
     prompt = (
         "下面是习近平总书记近期重要讲话/报道的真实原文素材。请以【公务员申论·面试应试】为目标，"
-        "从中提炼最具备考价值的内容，兼顾时效性（紧扣新文）与应试性（可背可用）。\n"
-        "【优先抓取】①总书记新的重要提法、新概念、新论断与战略部署（如"
-        "新质生产力、乡村振兴战略、粤港澳大湾区、中国式现代化、全过程人民民主、"
-        "高质量发展、共同富裕、全面深化改革等关键词与工程/战略名称）；"
-        "②总书记当前关注的重点领域、工作要求；③可直接引用的书面化金句。\n"
-        "【不要】纯套话、无考点价值的礼节性表述、口语化句子。\n"
+        "从中摘录 8~12 条最具背诵价值的金句。\n"
+        "【什么是金句】一句话即可独立成立、含判断或主张、书面化、可以直接抄进申论文章。例如：\n"
+        "  ✓「江山就是人民，人民就是江山。」\n"
+        "  ✓「绿水青山就是金山银山。」\n"
+        "  ✓「科技创新是发展新质生产力的核心要素。」\n"
+        "【什么不是金句·必须排除】\n"
+        "  ✗ 工作部署流水句：「要深入学习贯彻……，聚焦……，把……贯穿全过程。」\n"
+        "  ✗ 会议报道、礼节性表述、纯口语句、没有观点的动员令。\n"
+        "  ✗ 超过 70 字的整段话——只摘其中最凝练的一句，不要整段照搬。\n"
+        "【优先】含新提法/新概念/新论断的句子（新质生产力、乡村振兴战略、粤港澳大湾区、"
+        "中国式现代化、全过程人民民主、共同富裕、高质量发展等），以及总书记当前关注的重点领域。\n"
         "按类别归类：经济、文化、社会、党建、科教、生态、国防、国际。\n"
-        "每条输出字段：\n"
-        "quote=原文金句或关键表述（必须逐字出自素材、不得改写编造，15~80字）；\n"
-        "keyword=从中提炼的核心关键词或新提法（4~14字，如\"乡村振兴战略\"\"新质生产力\"，"
-        "若只是普通金句无特定提法则填该句主题词）；\n"
+        "每条字段：\n"
+        "quote=金句原文（必须逐字出自素材、不得改写编造；15~70字；是一个完整句子，最多一个句号）；\n"
+        "keyword=其中的新提法或核心关键词（4~14字）；\n"
         "category=八类之一；\n"
-        "apply=申论/面试运用点拨（这条可用于哪类主题、怎么用/怎么套，务实可操作，30~55字）；\n"
+        "note=出处与背景（这句话在什么场合、针对什么问题讲的，25字内，不要与 apply 重复）；\n"
+        "apply=申论/面试怎么用（可用于哪类主题、放在文章什么位置，30~55字，不要与 note 重复）；\n"
         "src=来源文章编号(数字)。\n"
-        '只输出 JSON：{"items":[{"category":"...","keyword":"...","quote":"...","apply":"...","src":1},...]}\n\n'
-        + material)
-    payload = {"model": AI_MODEL, "temperature": 0.3, "max_tokens": 1800,
+        '只输出 JSON：{"items":[{"category":"...","keyword":"...","quote":"...","note":"...","apply":"...","src":1},...]}'
+        + avoid + "\n\n" + material)
+    payload = {"model": AI_MODEL, "temperature": 0.3, "max_tokens": 2800,
                "response_format": {"type": "json_object"},
-               "messages": [{"role": "system", "content": "你是严谨的公考时政编辑，金句必须逐字摘自给定素材，严格输出 JSON。"},
+               "messages": [{"role": "system", "content": "你是严谨的公考时政编辑，金句必须逐字摘自给定素材，宁缺毋滥，严格输出 JSON。"},
                             {"role": "user", "content": prompt}]}
     req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
                                  headers={"Authorization": "Bearer " + AI_KEY, "Content-Type": "application/json"})
@@ -337,18 +346,24 @@ def gen_xiyu(con):
     n = 0
     for it in items:
         cat = (it.get("category") or "").strip()
-        quote = (it.get("quote") or "").strip()
-        if cat not in XIYU_CATS or len(quote) < 10:
+        quote = (it.get("quote") or "").strip().strip("“”\"'")
+        # 质量闸门：太短没信息量，太长是整段部署句；句号过多说明摘了一整段
+        if cat not in XIYU_CATS or not (12 <= len(quote) <= 90):
+            continue
+        if quote.count("。") > 1 or quote.startswith(("要深入", "要聚焦", "要坚持不懈地把")):
             continue
         try:
             src = corpus[int(it.get("src", 1)) - 1][0]
         except Exception:
             src = corpus[0][0]
-        apply_txt = (it.get("apply") or it.get("note") or "").strip()
+        note = (it.get("note") or "").strip()
+        apply_txt = (it.get("apply") or "").strip()
+        if note == apply_txt:          # 两栏重复 → 背景栏留空，前端只显示运用
+            note = ""
         cur = con.execute(
             "INSERT OR IGNORE INTO xiyu_items(date,category,quote,note,keyword,apply,source_url) "
             "VALUES(?,?,?,?,?,?,?)",
-            (today, cat, quote, apply_txt, (it.get("keyword") or "").strip(), apply_txt, src))
+            (today, cat, quote, note, (it.get("keyword") or "").strip(), apply_txt, src))
         n += cur.rowcount
     con.commit()
     print("── 习语金句 +%d 条" % n)

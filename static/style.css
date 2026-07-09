@@ -1354,13 +1354,22 @@ body.dark .theme-opt.on{background:#1c2a45;color:#7fb0ff;border-color:#3a6ad0;}
 .xy-kw{font-size:12px;font-weight:600;color:#b23b2e;background:#f7e6e3;border-radius:6px;padding:2px 9px;}
 .xy-note b{color:var(--blue);font-weight:700;margin-right:5px;}
 
-/* PDF 全屏 */
-body.viewer-full .topbar{display:none;}
-body.viewer-full .viewer-bar{position:fixed;top:0;left:0;right:0;z-index:100;
-  background:rgba(26,111,181,.96);}
+/* PDF 全屏：顶栏、工具条、悬浮球全部让位，只留一个退出按钮 */
+body.viewer-full .topbar,
+body.viewer-full .viewer-bar,
+body.viewer-full #ai-fab{display:none !important;}
+body.viewer-full main{padding:0;}
 body.viewer-full #view-viewer{position:fixed;inset:0;z-index:95;background:#fff;}
-body.viewer-full #viewer-frame{height:100vh;padding-top:44px;}
+body.viewer-full #viewer-frame{width:100%;height:100%;border:0;padding:0;}
+body.viewer-full #viewer-reader{height:100%;overflow:auto;padding:14px 16px;}
 #viewer-full{white-space:nowrap;}
+/* 退出全屏：右下角半透明圆钮，不挡 PDF 工具条 */
+#viewer-exit{display:none;position:fixed;right:14px;bottom:18px;z-index:120;
+  width:44px;height:44px;border:0;border-radius:50%;cursor:pointer;
+  background:rgba(20,26,38,.62);color:#fff;font-size:18px;line-height:44px;text-align:center;
+  box-shadow:0 3px 12px rgba(0,0,0,.35);backdrop-filter:blur(3px);}
+body.viewer-full #viewer-exit{display:block;}
+body.viewer-full #viewer-exit:active{background:rgba(20,26,38,.85);}
 
 /* ===== 夜间模式对比度补强 ===== */
 body.dark{--blue:#5a9be6;}
@@ -1447,3 +1456,112 @@ body.dark .ai-att{background:#1b2231;}
 body.dark .tk-tab,body.dark .tk-item{background:#1a2130;}
 body.dark .tk-text{color:#e2e7ef;}
 body.dark .tk-prog{background:#182338;color:#8fb4e6;}
+
+/* ===================== 批次32 新增样式 ===================== */
+
+/* —— 互监待办：每人一个打勾位 —— */
+.tk-head{display:flex;align-items:center;padding:0 14px 7px;
+  font-size:11px;font-weight:700;color:#8a93a2;letter-spacing:.2px;}
+.tk-hd-text{flex:1;}
+/* 右边距 29px = 删除按钮(18) + 间距(11)，让列名正对下方的勾选框 */
+.tk-hd-ms{display:flex;gap:6px;margin-right:29px;}
+.tk-hd-m{width:28px;text-align:center;white-space:nowrap;font-size:10px;}
+.tk-item.tk-multi{align-items:center;}
+.tk-boxes{display:flex;gap:6px;margin-left:auto;}
+.tk-box{width:28px;height:28px;border-radius:9px;border:1.6px solid #cfd6e0;background:#fff;
+  color:#fff;font-size:15px;font-weight:800;line-height:1;cursor:pointer;flex:none;
+  display:grid;place-items:center;transition:background .12s,border-color .12s;}
+.tk-box.mine{border-color:#7fa5d4;}
+.tk-boxes .tk-box:nth-child(2):not(.on){border-color:#e0b48a;}
+.tk-box.on{background:var(--blue);border-color:var(--blue);}
+.tk-box:active{transform:scale(.92);}
+.tk-mem-list{display:flex;flex-direction:column;gap:2px;max-height:46vh;overflow:auto;padding:4px 0;}
+.tk-mem{display:flex;align-items:center;gap:10px;padding:11px 6px;border-radius:9px;font-size:15px;}
+.tk-mem:active{background:#f2f5f9;}
+.tk-mem input{width:18px;height:18px;accent-color:var(--blue);}
+.tk-mem-btns{display:flex;gap:10px;justify-content:flex-end;padding-top:12px;}
+.ns-sub{font-size:12.5px;color:#8a93a2;margin:-6px 0 10px;}
+.btn.tiny{padding:3px 9px;font-size:12px;border-radius:8px;margin-left:8px;vertical-align:middle;
+  float:right;margin-top:-2px;}
+
+/* —— 每日一诗：常识考点 —— */
+.cd-daily-common b{color:#ffe9a8 !important;}
+
+/* —— 习语：出处背景 —— */
+.xy-bg{font-size:13px;color:#7c8797;line-height:1.6;margin-top:6px;}
+.xy-bg b{color:#8a93a2;font-weight:700;margin-right:5px;}
+
+/* —— 衔接表达：例句 + 换一句 —— */
+.sc-exwrap{margin-top:8px;}
+.sc-exbtn.regen{margin-top:6px;font-size:12px;padding:4px 10px;opacity:.85;}
+
+/* —— 常考 —— */
+.hc-ck{background:linear-gradient(135deg,#e8590c,#ff922b);}
+.hc-th{background:linear-gradient(135deg,#c92a2a,#e8590c);}
+.home-card[data-go="changkao"] .hc-logo{background:linear-gradient(135deg,#e8590c,#ff922b);}
+.ck-daily{background:linear-gradient(135deg,#0b7285,#1098ad);border-radius:14px;
+  padding:14px 16px;margin-bottom:14px;color:#fff;cursor:pointer;}
+.ckd-tag{font-size:12px;font-weight:700;opacity:.92;margin-bottom:8px;letter-spacing:.4px;}
+.ckd-item{background:rgba(255,255,255,.13);border-radius:10px;padding:9px 11px;margin-bottom:7px;}
+.ckd-item:last-child{margin-bottom:0;}
+.ckd-h{font-size:15px;font-weight:800;margin-bottom:3px;}
+.ckd-s{font-size:13px;line-height:1.6;opacity:.94;}
+.ckd-n{font-size:12px;line-height:1.55;opacity:.8;margin-top:4px;}
+.ckb-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+.ckb-n{font-size:12px;font-weight:700;color:var(--blue);background:#eef4fb;
+  padding:3px 9px;border-radius:8px;}
+.ckb-tip{font-size:12.5px;color:#8a93a2;}
+.ckb-tools{display:flex;gap:8px;margin-bottom:12px;}
+.ckb-tools input{flex:1;padding:9px 12px;border:1px solid #dde3ea;border-radius:10px;
+  font-size:14.5px;font-family:inherit;outline:none;background:#fff;}
+.ckb-tools input:focus{border-color:var(--blue);}
+.ckb-list{display:flex;flex-direction:column;gap:10px;}
+.cki-t{font-size:15.5px;font-weight:800;color:#1f2733;display:flex;align-items:center;gap:8px;}
+.cki-del{margin-left:auto;background:none;border:0;font-size:14px;opacity:.45;cursor:pointer;}
+.cki-del:active{opacity:1;}
+.cki-c{font-size:14px;color:#37424f;line-height:1.75;margin-top:5px;}
+.cki-n{font-size:12.5px;color:#8a93a2;line-height:1.6;margin-top:6px;}
+.ck-item[data-cki]{cursor:pointer;}
+
+/* —— 理论基础 —— */
+.th-topic{margin-bottom:20px;}
+.th-tname{font-size:13px;font-weight:800;color:#6b7280;margin:0 0 10px;
+  display:flex;align-items:center;gap:7px;}
+.th-tname::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--blue);}
+.th-item{margin-bottom:10px;}
+.thb-title{font-size:17px;font-weight:800;color:#1f2733;width:100%;}
+.thb-desc{font-size:12.5px;color:#8a93a2;width:100%;margin-top:-4px;}
+
+/* ===================== 夜间模式：统一压暗（补全此前逐个打补丁的遗漏） ===================== */
+/* 卡片/面板/输入类浅色底 */
+body.dark .cls-item,body.dark .note-card,body.dark .note-editor,body.dark .notes-sidebar,
+body.dark .ns-group,body.dark .doc-top,body.dark .reader,body.dark .search-bar,
+body.dark .cls-search,body.dark .pd-chip,body.dark .tagchip,body.dark .sc-exbtn,
+body.dark #wqa-board,body.dark #notes-msearch-input,body.dark .blk-file-card,
+body.dark .fc-file,body.dark .cp-file,body.dark .nb-node,body.dark .bkb-point,
+body.dark .ckb-tools input,body.dark .acct-sec input,body.dark .acct-sec select{
+  background:#1a2130 !important;border-color:#2a3345 !important;color:#e2e7ef !important;}
+body.dark .btn:not(.primary){background:#1f2836 !important;border-color:#333d52 !important;color:#cfd6e2 !important;}
+body.dark .viewer-bar{background:#141a26 !important;border-color:#2a3345 !important;}
+/* 强调框：浅蓝/浅黄底 → 深底亮字 */
+body.dark .gk-sent,body.dark .rv-summary,body.dark .cd-sec.cd-ai,body.dark .qz-mat-t,
+body.dark .item-note,body.dark .pv-ai,body.dark .pd-recite-btn,body.dark .blk.sel,
+body.dark .blk.table td,body.dark .sc-ex,body.dark .ckb-n{
+  background:#182338 !important;color:#dbe3f0 !important;border-color:#31405c !important;}
+body.dark .gk-sent{border-left-color:var(--blue) !important;}
+body.dark .reader code,body.dark .ai-msg.assistant code,body.dark .reader .md-table th,
+body.dark .item-cat,body.dark .hc-count,body.dark #aih-pcount,body.dark .ns-item,
+body.dark .reader-tools button,body.dark .iconbtn,body.dark .dtb,body.dark .doc-iconbtn{
+  background:#232c3d !important;color:#cfd6e2 !important;}
+/* 诗句/常考/理论 卡片内文字 */
+body.dark .cls-title,body.dark .cls-line,body.dark .cki-t,body.dark .cki-c,
+body.dark .th-tname,body.dark .thb-title,body.dark .nc-title,body.dark .gk-sent{
+  color:#e6ebf3 !important;}
+body.dark .cls-meta,body.dark .cki-n,body.dark .thb-desc,body.dark .ckb-tip,
+body.dark .gk-tip,body.dark .gk-raw,body.dark .xy-bg{color:#98a2b3 !important;}
+body.dark .cls-item{box-shadow:none;}
+/* 待办打勾位 */
+body.dark .tk-box{background:#232c3d;border-color:#3a465c;}
+body.dark .tk-box.on{background:var(--blue);border-color:var(--blue);}
+body.dark .tk-mem:active{background:#232c3d;}
+body.dark .ns-sub,body.dark .tk-head{color:#8a93a2;}

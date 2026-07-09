@@ -45,6 +45,11 @@ const IC = {
   clock: _svg('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>'),
   check: _svg('<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
   quote: _svg('<path d="M6 17h3l2-4V7H5v6h3z"/><path d="M14 17h3l2-4V7h-6v6h3z"/>'),
+  target: _svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/>'),
+  layers: _svg('<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>'),
+  compass: _svg('<circle cx="12" cy="12" r="9"/><polygon points="16.2 7.8 14.1 14.1 7.8 16.2 9.9 9.9 16.2 7.8"/>'),
+  flag: _svg('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V4s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'),
+  star: _svg('<polygon points="12 2.5 15 9 22 9.8 16.8 14.4 18.3 21.4 12 17.8 5.7 21.4 7.2 14.4 2 9.8 9 9 12 2.5"/>'),
 };
 // 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
 const BOARD_FEATURES = {
@@ -53,11 +58,13 @@ const BOARD_FEATURES = {
   ],
   '言语理解与表达': [
     { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
+    { key: 'hyper', name: '上位词积累', desc: '逻辑填空概括词提示 · 每日推荐', icon: 'layers' },
   ],
   '政治理论': [
     { key: 'news', name: '每日时政', desc: '每天自动更新 · AI 摘要+考点', icon: 'feather' },
     { key: 'policydoc', name: '时政要文库', desc: '二十大·十五五·两会报告 全文+AI解读', icon: 'book' },
     { key: 'partydict', name: '党的创新理论学习词典', desc: '两个确立·四个意识… 12371 术语速查', icon: 'book' },
+    { key: 'theory', name: '理论基础', desc: '马原 · 毛概 · 中特 · 习思想 考点速记', icon: 'compass' },
   ],
   '应用文': [
     { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
@@ -75,8 +82,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题', tasks: '任务清单' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -86,6 +93,8 @@ function render() {
   document.querySelector('.topbar').classList.toggle('hidden', st.view === 'doc');
   // 切换视图时停止朗读
   if (window.Reader && Reader.playing) Reader.stop();
+  // 离开阅读页必须退出全屏，否则状态栏一直藏着
+  if (st.view !== 'viewer' && document.body.classList.contains('viewer-full')) setViewerFull(false);
 }
 function push(state) { stack.push(state); render(); }
 function back() { if (stack.length > 1) { stack.pop(); render(); } }
@@ -130,6 +139,7 @@ async function init() {
         <div class="hc-name">${esc(s.name)}</div>
         <div class="hc-desc">${esc(s.desc)}</div>
       </div>`).join('') + `
+    <div class="home-card" data-go="changkao"><div class="hc-logo hc-ck">${IC.target || IC.bulb}</div><div class="hc-name">常考</div><div class="hc-desc">高频成语/实词/上位词/常识/提法</div></div>
     <div class="home-card" data-go="notes"><div class="hc-logo">${IC.feather}</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 标签归类</div></div>
     <div class="home-card" data-go="kb"><div class="hc-logo">${IC.book}</div><div class="hc-name">知识库</div><div class="hc-desc">笔记本 · 文档 · 分组整理</div></div>
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
@@ -202,6 +212,7 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'review') openReview();
   else if (g === 'tasks') openTasks();
   else if (g === 'quiz') openQuiz();
+  else if (g === 'changkao') openChangkao();
 });
 function openSection(key) {
   const sec = SECTIONS.find(s => s.key === key); if (!sec) return;
@@ -259,6 +270,8 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'lianjie') openSucai('衔接表达');
   else if (c.dataset.feat === 'changshi') openChangshi();
   else if (c.dataset.feat === 'works') openWorks();
+  else if (c.dataset.feat === 'theory') openTheory();
+  else if (c.dataset.feat === 'hyper') openCkBoard('上位词');
 });
 $('#nav-back').onclick = back;
 
@@ -747,8 +760,13 @@ function setViewerFull(on) {
   _viewerFull = on;
   document.body.classList.toggle('viewer-full', on);
   $('#viewer-full').textContent = on ? '⛶ 退出全屏' : '⛶ 全屏';
+  // 让原生壳一起隐藏状态栏/导航栏（沉浸式），否则「全屏」只全屏了网页那一半
+  try {
+    if (window.GongkaoNative && typeof GongkaoNative.fullscreen === 'function') GongkaoNative.fullscreen(on);
+  } catch (_) {}
 }
 $('#viewer-full').onclick = () => setViewerFull(!_viewerFull);
+$('#viewer-exit').onclick = () => setViewerFull(false);
 $('#viewer-mode').onclick = async () => {
   const reading = !$('#viewer-reader').classList.contains('hidden');
   if (reading) {
@@ -1628,10 +1646,11 @@ async function loadClsDaily() {
     const d = await api('/api/classics/daily');
     if (!d || d.error) { $('#cls-daily').classList.add('hidden'); return; }
     $('#cls-daily').innerHTML = `
-      <div class="cd-daily-tag">📖 每日一诗 · 适合申论</div>
+      <div class="cd-daily-tag">📖 每日一诗 · 申论 + 常识</div>
       <div class="cd-daily-title" data-clsopen="${d.id}">${esc(d.title)}<span class="cd-daily-meta">${esc((d.dynasty || '') + ' · ' + (d.author || ''))}</span></div>
       <div class="cd-daily-line">${esc(d.first_line || '')}</div>
-      ${d.apply ? `<div class="cd-daily-apply"><b>申论运用</b> ${esc(d.apply)}</div>` : ''}`;
+      ${d.apply ? `<div class="cd-daily-apply"><b>申论运用</b> ${esc(d.apply)}</div>` : ''}
+      ${d.common ? `<div class="cd-daily-apply cd-daily-common"><b>常识考点</b> ${esc(d.common)}</div>` : ''}`;
     $('#cls-daily').classList.remove('hidden');
   } catch (_) { $('#cls-daily').classList.add('hidden'); }
 }
@@ -2058,6 +2077,9 @@ function hl(text, q) {
 const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能' };
 // 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
 const FEATURES = [
+  { name: '常考', desc: '高频成语/实词/上位词/古诗文/常识/提法', kw: '常考高频考点成语实词上位词提法', open: () => openChangkao() },
+  { name: '上位词积累', desc: '常考 · 逻辑填空概括词提示', kw: '上位词概括词下位词逻辑填空', open: () => openCkBoard('上位词') },
+  { name: '理论基础', desc: '政治理论 · 马原/毛概/中特/习思想', kw: '理论马原马克思毛概毛泽东思想邓小平三个代表科学发展观习近平新时代中特公基', open: () => openTheory() },
   { name: '每日时政', desc: '政治理论 · 每天自动更新 AI 三行式', kw: '时政新闻党内国内四川国际', open: () => openNews() },
   { name: '时政要文库', desc: '政治理论 · 重要文件全文+AI解读', kw: '要文二十大报告十五五规划政府工作报告一号文件讲话', open: () => openPolicyDocs() },
   { name: '党的创新理论学习词典', desc: '政治理论 · 12371 术语速查+背诵', kw: '词典理论两个确立四个意识党章党史', open: () => openPartyDict() },
@@ -2394,10 +2416,12 @@ async function loadXiyu() {
       const head = it.date !== lastDate ? `<div class="sc-day">🗓 ${fmtDay(it.date)}</div>` : '';
       lastDate = it.date;
       const apply = it.apply || it.note || '';
+      const bg = (it.note && it.note !== apply) ? it.note : '';
       return head + `<div class="gk-card">
         <div class="gk-head"><span class="poly-badge" style="background:${XY_COLOR[it.category] || '#666'}">${esc(it.category)}</span>
           ${it.keyword ? `<span class="xy-kw">🔑 ${esc(it.keyword)}</span>` : ''}</div>
         <div class="xy-quote">${emKey('“' + it.quote + '”')}</div>
+        ${bg ? `<div class="xy-bg"><b>出处背景</b> ${esc(bg)}</div>` : ''}
         ${apply ? `<div class="xy-note"><b>申论运用</b> ${esc(apply)}</div>` : ''}
         ${it.source_url ? `<a class="poly-src" href="${esc(it.source_url)}" target="_blank" rel="noopener">讲话原文 ↗</a>` : ''}
       </div>`;
@@ -2529,7 +2553,8 @@ async function loadSucai() {
       const col = SC_COLOR[it.kind] || '#666';
       const isLj = it.kind === '衔接表达';
       const exHtml = it.example
-        ? `<div class="sc-ex"><b>例句</b> ${esc(it.example)}</div>`
+        ? `<div class="sc-exwrap"><div class="sc-ex"><b>例句</b> ${esc(it.example)}</div>
+             <button class="sc-exbtn regen" data-scex="${it.id}" data-force="1">🔄 换个例句</button></div>`
         : (isLj ? `<button class="sc-exbtn" data-scex="${it.id}">✍️ AI 造个例句</button>` : '');
       return head + `<div class="gk-card" data-scid="${it.id}">
         <div class="gk-head"><span class="poly-badge" style="background:${col}">${esc(it.kind)}</span>
@@ -2542,12 +2567,23 @@ async function loadSucai() {
 }
 $('#sc-list').addEventListener('click', async e => {
   const b = e.target.closest('[data-scex]'); if (!b) return;
-  b.disabled = true; b.textContent = 'AI 造句中…';
+  const force = b.dataset.force === '1';
+  const label = b.textContent;
+  b.disabled = true; b.textContent = force ? '换句中…' : 'AI 造句中…';
   try {
-    const d = await api('/api/sucai/' + b.dataset.scex + '/example', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    const card = b.closest('.gk-card');
-    b.outerHTML = `<div class="sc-ex"><b>例句</b> ${esc(d.example)}</div>`;
-  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '✍️ AI 造个例句'; }
+    const d = await api('/api/sucai/' + b.dataset.scex + '/example', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force })
+    });
+    if (force) {                    // 原地替换例句文本，按钮留着可再换
+      const ex = b.parentElement.querySelector('.sc-ex');
+      if (ex) ex.innerHTML = `<b>例句</b> ${esc(d.example)}`;
+      b.disabled = false; b.textContent = label;
+    } else {
+      b.outerHTML = `<div class="sc-exwrap"><div class="sc-ex"><b>例句</b> ${esc(d.example)}</div>
+        <button class="sc-exbtn regen" data-scex="${b.dataset.scex}" data-force="1">🔄 换个例句</button></div>`;
+    }
+  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = label; }
 });
 function openSucai(kind) {
   scKind = kind || '全部';
@@ -2595,30 +2631,198 @@ $('#tk-daily-add').onclick = async () => {
 };
 $('#tk-daily-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-daily-add').click(); });
 
+let tkMembers = [];
 async function loadShared() {
   $('#tk-shared-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/shared_todos');
-    $('#tk-shared-list').innerHTML = d.items.length ? d.items.map(it => `
-      <div class="tk-item ${it.done ? 'done' : ''}" data-ts="${it.id}">
-        <span class="tk-check">${it.done ? '✓' : ''}</span>
-        <span class="tk-text">${esc(it.text)}<span class="tk-who">${it.done ? '✅ ' + esc(shortName(it.done_by)) : '发起 ' + esc(shortName(it.created_by))}</span></span>
+    tkMembers = d.members || [];
+    // 表头：每位互监成员一列打勾位
+    $('#tk-shared-head').innerHTML = tkMembers.length
+      ? `<span class="tk-hd-text">待办</span><span class="tk-hd-ms">` + tkMembers.map(m =>
+        `<span class="tk-hd-m" title="${esc(m.name)}">${esc(initials(m.name))}</span>`).join('') + `</span>`
+      : '';
+    $('#tk-shared-list').innerHTML = d.items.length ? d.items.map(it => {
+      const ids = it.done_ids || [];
+      const boxes = tkMembers.map(m => `
+        <button class="tk-box ${ids.includes(m.id) ? 'on' : ''} ${m.id === d.me_id ? 'mine' : ''}"
+          data-tsbox="${it.id}" data-tsuser="${m.id}" title="${esc(m.name)}">${ids.includes(m.id) ? '✓' : ''}</button>`).join('');
+      const who = tkMembers.filter(m => ids.includes(m.id)).map(m => shortName(m.name));
+      const all = tkMembers.length && tkMembers.every(m => ids.includes(m.id));
+      return `<div class="tk-item tk-multi ${all ? 'done' : ''}" data-ts="${it.id}">
+        <span class="tk-text">${esc(it.text)}<span class="tk-who">发起 ${esc(shortName(it.created_by))}${all ? ' · 🎉 都完成了' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
+        <span class="tk-boxes">${boxes}</span>
         <button class="tk-del" data-tsdel="${it.id}">🗑</button>
-      </div>`).join('') : '<p class="empty">还没有共享待办，加一条大家一起监督～</p>';
+      </div>`;
+    }).join('') : '<p class="empty">还没有共享待办，加一条大家一起监督～</p>';
   } catch (e) { $('#tk-shared-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
-function shortName(n) { n = n || ''; return n.length > 8 ? n.slice(0, 6) + '…' : n; }
+function shortName(n) { n = n || ''; n = n.split('@')[0]; return n.length > 6 ? n.slice(0, 5) + '…' : n; }
+// 表头列宽只有一个勾选框那么宽，用 2 个字符当列名（完整名在 title 与成员面板里）
+function initials(n) { n = (n || '').split('@')[0]; return n.slice(0, 4); }
 $('#tk-shared-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-tsdel]');
   if (del) { e.stopPropagation(); if (!(await appConfirm('删除这条共享待办？'))) return; try { await api('/api/shared_todos/' + del.dataset.tsdel, { method: 'DELETE' }); loadShared(); } catch (er) { toast(er.message, true); } return; }
-  const it = e.target.closest('[data-ts]'); if (!it) return;
-  try { await api('/api/shared_todos/' + it.dataset.ts + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadShared(); } catch (er) { toast(er.message, true); }
+  const box = e.target.closest('[data-tsbox]'); if (!box) return;
+  try {
+    await api('/api/shared_todos/' + box.dataset.tsbox + '/toggle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: +box.dataset.tsuser })
+    });
+    loadShared();
+  } catch (er) { toast(er.message, true); }
 });
+/* 互监成员选择 */
+$('#tk-members').onclick = async () => {
+  try {
+    const d = await api('/api/todo_members');
+    const cur = new Set(d.members.map(m => m.id));
+    $('#tk-mem-list').innerHTML = d.users.map(u =>
+      `<label class="tk-mem"><input type="checkbox" value="${u.id}" ${cur.has(u.id) ? 'checked' : ''}><span>${esc(u.name)}</span></label>`).join('');
+    $('#tk-memsheet').classList.remove('hidden');
+  } catch (e) { toast(e.message, true); }
+};
+$('#tk-mem-cancel').onclick = () => $('#tk-memsheet').classList.add('hidden');
+$('#tk-mem-save').onclick = async () => {
+  const ids = [...$('#tk-mem-list').querySelectorAll('input:checked')].map(i => +i.value);
+  if (!ids.length) return toast('至少选一个成员', true);
+  try {
+    await api('/api/todo_members', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_ids: ids }) });
+    $('#tk-memsheet').classList.add('hidden'); loadShared(); toast('成员已更新');
+  } catch (e) { toast(e.message, true); }
+};
 $('#tk-shared-add').onclick = async () => {
   const v = $('#tk-shared-in').value.trim(); if (!v) return;
   try { await api('/api/shared_todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-shared-in').value = ''; loadShared(); } catch (e) { toast(e.message, true); }
 };
 $('#tk-shared-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-shared-add').click(); });
+$('#tk-memsheet').addEventListener('click', e => {
+  if (e.target.closest('[data-sheet-close]')) $('#tk-memsheet').classList.add('hidden');
+});
+
+/* ================= 常考（高频考点合集） + 上位词 ================= */
+async function openChangkao() {
+  push({ view: 'changkao', title: '常考' });
+  loadCkBoards();
+  loadHyperDaily();
+}
+async function loadCkBoards() {
+  $('#ck-boards').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/changkao/boards');
+    $('#ck-boards').innerHTML = '<div class="home-cards cs-cards">' + d.boards.map(b => `
+      <div class="home-card ck-card" data-ckb="${esc(b.key)}">
+        <div class="hc-logo hc-ck">${IC[b.icon] || IC.bulb}</div>
+        <div class="hc-name">${esc(b.name)}</div>
+        <div class="hc-desc">${b.count} 条 · ${esc(b.desc)}</div>
+      </div>`).join('') + '</div>';
+  } catch (e) { $('#ck-boards').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#ck-boards').addEventListener('click', e => {
+  const c = e.target.closest('[data-ckb]'); if (c) openCkBoard(c.dataset.ckb);
+});
+async function loadHyperDaily() {
+  try {
+    const d = await api('/api/hyper/daily');
+    if (!d.items || !d.items.length) { $('#ck-daily').classList.add('hidden'); return; }
+    $('#ck-daily').innerHTML = `<div class="ckd-tag">🎯 今日推荐 · 上位词</div>` +
+      d.items.map(it => `<div class="ckd-item" data-ckd="${it.id}">
+        <div class="ckd-h">${esc(it.hyper)}</div>
+        <div class="ckd-s">${esc(it.subs || '')}</div>
+        ${it.note ? `<div class="ckd-n">${esc(it.note)}</div>` : ''}
+      </div>`).join('');
+    $('#ck-daily').classList.remove('hidden');
+  } catch (_) { $('#ck-daily').classList.add('hidden'); }
+}
+$('#ck-daily').addEventListener('click', () => openCkBoard('上位词'));
+
+let ckBoard = '', ckItems = [], ckKind = 'text';
+async function openCkBoard(key) {
+  ckBoard = key;
+  push({ view: 'ckboard', title: key === '上位词' ? '上位词积累' : '常考 · ' + key });
+  $('#ckb-search').value = '';
+  $('#ckb-ai').classList.toggle('hidden', key !== '上位词');
+  $('#ckb-head').innerHTML = '';
+  $('#ckb-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/changkao/items?board=' + encodeURIComponent(key));
+    ckItems = d.items; ckKind = d.kind;
+    $('#ckb-head').innerHTML = `<span class="ckb-n">${d.items.length} 条</span>` +
+      (key === '上位词' ? '<span class="ckb-tip">逻辑填空里题干出现上位词，答案必须与它同类</span>' : '');
+    renderCkList();
+  } catch (e) { $('#ckb-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function renderCkList() {
+  const q = $('#ckb-search').value.trim();
+  const list = q ? ckItems.filter(it =>
+    (it.title || '').includes(q) || (it.content || '').includes(q) || (it.note || '').includes(q)) : ckItems;
+  if (!list.length) { $('#ckb-list').innerHTML = '<p class="empty">没有匹配的内容</p>'; return; }
+  $('#ckb-list').innerHTML = list.map(it => `
+    <div class="gk-card ck-item" data-cki="${it.id}">
+      <div class="cki-t">${esc(it.title)}${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
+      ${it.content ? `<div class="cki-c">${esc(it.content)}</div>` : ''}
+      ${it.note ? `<div class="cki-n">${ckKind === 'classic' ? esc(it.note) : '💡 ' + esc(it.note)}</div>` : ''}
+    </div>`).join('');
+}
+$('#ckb-search').addEventListener('input', renderCkList);
+$('#ckb-list').addEventListener('click', async e => {
+  const del = e.target.closest('[data-ckdel]');
+  if (del) {
+    e.stopPropagation();
+    if (!(await appConfirm('从上位词库中删除这一组？'))) return;
+    try { await api('/api/hyper/' + del.dataset.ckdel, { method: 'DELETE' }); openCkBoard('上位词'); }
+    catch (er) { toast(er.message, true); }
+    return;
+  }
+  const it = e.target.closest('[data-cki]');
+  if (it && ckKind === 'classic') openClassicDetail(+it.dataset.cki);
+});
+$('#ckb-ai').onclick = async () => {
+  const w = await appPrompt('AI 补充上位词', '输入一个词（如「戏曲」或「京剧」），AI 会归纳它的上位词与同类下位词');
+  if (!w || !w.trim()) return;
+  toast('AI 分析中…');
+  try {
+    const d = await api('/api/hyper/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: w.trim() }) });
+    toast(d.cached ? '已在库中：' + d.hyper : '已收录：' + d.hyper);
+    openCkBoard('上位词');
+  } catch (e) { toast(e.message, true); }
+};
+
+/* ================= 理论基础（马原/毛概/中特/习思想） ================= */
+async function openTheory() {
+  push({ view: 'theory', title: '理论基础' });
+  $('#th-boards').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/theory/boards');
+    $('#th-boards').innerHTML = '<div class="home-cards cs-cards">' + d.boards.map(b => `
+      <div class="home-card ck-card" data-thb="${esc(b.name)}">
+        <div class="hc-logo hc-th">${IC[b.icon] || IC.book}</div>
+        <div class="hc-name">${esc(b.short)}</div>
+        <div class="hc-desc">${b.count} 条 · ${esc(b.desc)}</div>
+      </div>`).join('') + '</div>';
+  } catch (e) { $('#th-boards').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#th-boards').addEventListener('click', e => {
+  const c = e.target.closest('[data-thb]'); if (c) openThBoard(c.dataset.thb);
+});
+async function openThBoard(name) {
+  push({ view: 'thboard', title: name.length > 10 ? name.slice(0, 9) + '…' : name });
+  $('#thb-head').innerHTML = ''; $('#thb-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/theory/items?board=' + encodeURIComponent(name));
+    $('#thb-head').innerHTML = `<div class="thb-title">${esc(name)}</div>
+      <div class="thb-desc">${esc(d.desc || '')}</div><span class="ckb-n">${d.count} 个考点</span>`;
+    if (!d.topics.length) { $('#thb-list').innerHTML = '<p class="empty">内容生成中，稍后再来～</p>'; return; }
+    $('#thb-list').innerHTML = d.topics.map(t => `
+      <div class="th-topic"><div class="th-tname">${esc(t.name)}</div>
+        ${t.items.map(it => `<div class="gk-card th-item">
+          <div class="cki-t">${esc(it.title)}</div>
+          <div class="cki-c">${emKey(it.content || '')}</div>
+        </div>`).join('')}
+      </div>`).join('');
+  } catch (e) { $('#thb-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+
 
 /* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
 const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文' };
@@ -3431,14 +3635,25 @@ $('#mat-menu').addEventListener('click', async e => {
 
 /* ================= 主题：日间 / 夜间 / 跟随系统 ================= */
 const _themeMedia = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+/* Android WebView 里 prefers-color-scheme 恒为 light（除非 app 显式开启），
+   所以「跟随系统」在 APK 中失灵。原生壳会把系统夜间状态写进 window.__sysDark，优先采信它。 */
+function sysIsDark() {
+  if (typeof window.__sysDark === 'boolean') return window.__sysDark;
+  try {
+    if (window.GongkaoNative && typeof GongkaoNative.sysDark === 'function') return !!GongkaoNative.sysDark();
+  } catch (_) {}
+  return !!(_themeMedia && _themeMedia.matches);
+}
 function applyTheme() {
   const mode = localStorage.getItem('theme') || 'auto';
-  const dark = mode === 'dark' || (mode === 'auto' && _themeMedia && _themeMedia.matches);
+  const dark = mode === 'dark' || (mode === 'auto' && sysIsDark());
   document.body.classList.toggle('dark', dark);
   document.querySelectorAll('.theme-opt').forEach(b => b.classList.toggle('on', b.dataset.theme === mode));
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = dark ? '#0f141e' : '#1a6fb5';
 }
+// 原生壳在系统深色模式切换时调用
+window.__onSysTheme = function (dark) { window.__sysDark = !!dark; applyTheme(); };
 document.addEventListener('click', e => {
   const b = e.target.closest('.theme-opt'); if (!b) return;
   localStorage.setItem('theme', b.dataset.theme);
@@ -3449,6 +3664,8 @@ if (_themeMedia) {
   try { _themeMedia.addEventListener('change', applyTheme); }
   catch (_) { _themeMedia.addListener(applyTheme); }  // 旧 WebView
 }
+// 回到前台时系统可能已切到夜间（跟随系统模式下重新判定一次）
+document.addEventListener('visibilitychange', () => { if (!document.hidden) applyTheme(); });
 applyTheme();
 
 /* ================= AI 面板分层返回（返回上一级而非直接关闭） ================= */

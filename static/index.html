@@ -301,6 +301,7 @@
     </div>
     <div id="viewer-reader" class="reader hidden"></div>
     <iframe id="viewer-frame" title="文件预览"></iframe>
+    <button id="viewer-exit" title="退出全屏">✕</button>
   </section>
 
   <!-- ===== 全文搜索 ===== -->
@@ -511,6 +512,31 @@
     <div id="sc-list" class="poly-list"></div>
   </section>
 
+  <!-- ===== 常考（高频考点合集） ===== -->
+  <section id="view-changkao" class="view hidden">
+    <div class="pd-intro">近十年真题里反复出现的高频考点，考前只看这里也够用。</div>
+    <div id="ck-daily" class="ck-daily hidden"></div>
+    <div id="ck-boards" class="cs-boards"></div>
+  </section>
+  <section id="view-ckboard" class="view hidden">
+    <div id="ckb-head" class="ckb-head"></div>
+    <div class="ckb-tools">
+      <input id="ckb-search" placeholder="在本板块内搜索…">
+      <button class="btn" id="ckb-ai" title="AI 补充">✨ AI 补充</button>
+    </div>
+    <div id="ckb-list" class="ckb-list"></div>
+  </section>
+
+  <!-- ===== 理论基础（马原/毛概/中特/习思想） ===== -->
+  <section id="view-theory" class="view hidden">
+    <div class="pd-intro">公基与常识判断的理论底盘：概念、地位、首次提出的会议与文件，按考点整理。</div>
+    <div id="th-boards" class="cs-boards"></div>
+  </section>
+  <section id="view-thboard" class="view hidden">
+    <div id="thb-head" class="ckb-head"></div>
+    <div id="thb-list" class="ckb-list"></div>
+  </section>
+
   <!-- ===== 任务清单（每日任务 + 互监待办） ===== -->
   <section id="view-tasks" class="view hidden">
     <div class="tk-tabs">
@@ -524,11 +550,28 @@
       <div class="tk-add"><input id="tk-daily-in" placeholder="添加每日任务…"><button class="btn primary" id="tk-daily-add">添加</button></div>
     </div>
     <div id="tk-shared" class="tk-pane hidden">
-      <div class="pd-intro">两个账号共享 · 谁都能加、能打勾，完成会显示是谁做的，互相监督💪</div>
+      <div class="pd-intro">同一条待办每人一个勾 · 两人都打勾才算全部完成，互相监督💪
+        <button class="btn tiny" id="tk-members">👥 成员</button></div>
+      <div id="tk-shared-head" class="tk-head"></div>
       <div id="tk-shared-list" class="tk-list"></div>
       <div class="tk-add"><input id="tk-shared-in" placeholder="添加待办（两人可见）…"><button class="btn primary" id="tk-shared-add">添加</button></div>
     </div>
   </section>
+
+  <!-- 互监成员选择 -->
+  <div id="tk-memsheet" class="note-sheet hidden" style="z-index:130;">
+    <div class="ns-mask" data-sheet-close></div>
+    <div class="ns-panel">
+      <div class="ns-handle"></div>
+      <div class="ns-title">选择互监成员</div>
+      <div class="ns-sub">被选中的账号会在每条待办上各有一个打勾位</div>
+      <div id="tk-mem-list" class="tk-mem-list"></div>
+      <div class="tk-mem-btns">
+        <button class="btn" id="tk-mem-cancel">取消</button>
+        <button class="btn primary" id="tk-mem-save">保存</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ===== 今日复习（遗忘曲线 · 墨墨式卡片） ===== -->
   <section id="view-review" class="view hidden">
