@@ -116,32 +116,60 @@ public class MainActivity extends Activity {
                 if (wantCam && acceptsImage(params.getAcceptTypes()) && launchCamera()) {
                     return true;
                 }
-                // 手动构造意图：尊重 accept 类型 + 支持多选
+
+                // accept 里可能写的是扩展名（.pdf）而不是 MIME。扩展名塞进 setType()
+                // 会让系统挑选器退化成「只能选最近的图片」，所以先统一转成 MIME。
                 String[] types = params.getAcceptTypes();
-                String primary = "*/*";
-                if (types != null && types.length > 0 && types[0] != null && !types[0].isEmpty()) {
-                    primary = types[0];
+                java.util.ArrayList<String> mimes = new java.util.ArrayList<>();
+                boolean unresolved = false, allImage = true;
+                if (types != null) {
+                    for (String t : types) {
+                        if (t == null || t.trim().isEmpty()) continue;
+                        String m = toMime(t);
+                        if (m == null) { unresolved = true; continue; }
+                        if (!mimes.contains(m)) mimes.add(m);
+                        if (!m.startsWith("image/")) allImage = false;
+                    }
                 }
-                boolean imageOnly = primary.startsWith("image");
+                if (mimes.isEmpty()) allImage = false;
+
                 boolean multiple = false;
                 try { multiple = params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE; } catch (Exception ignore) {}
-                // 图片走相册(ACTION_GET_CONTENT)；其它文件走系统文档界面(ACTION_OPEN_DOCUMENT)——能可靠多选
-                Intent intent = new Intent(imageOnly ? Intent.ACTION_GET_CONTENT : Intent.ACTION_OPEN_DOCUMENT);
-                intent.addCategory(Intent.CATEGORY_OPENABLE);
-                intent.setType(primary);
-                if (types != null && types.length > 1) {
-                    java.util.ArrayList<String> mt = new java.util.ArrayList<>();
-                    for (String t : types) if (t != null && !t.isEmpty()) mt.add(t);
-                    if (!mt.isEmpty()) intent.putExtra(Intent.EXTRA_MIME_TYPES, mt.toArray(new String[0]));
+
+                Intent intent;
+                boolean chooser;
+                if (allImage && !unresolved) {
+                    // 纯图片：走相册，体验最好
+                    intent = new Intent(Intent.ACTION_GET_CONTENT);
+                    intent.setType("image/*");
+                    chooser = true;
+                } else {
+                    // 含 PDF/Word/PPT 或混合类型：走系统文档界面，能浏览文件夹、可靠多选
+                    intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.setType("*/*");
+                    // 只有全部 accept 都能解析成 MIME 才加过滤，否则宁可全都显示出来
+                    if (!mimes.isEmpty() && !unresolved) {
+                        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimes.toArray(new String[0]));
+                    }
+                    chooser = false;
                 }
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
                 if (multiple) intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+
                 try {
-                    // ACTION_OPEN_DOCUMENT 是系统活动，不用 createChooser；GET_CONTENT 用 chooser 方便选相册
-                    startActivityForResult(imageOnly ? Intent.createChooser(intent, "选择图片") : intent, FILE_REQ);
+                    startActivityForResult(chooser ? Intent.createChooser(intent, "选择图片") : intent, FILE_REQ);
                 } catch (ActivityNotFoundException e) {
-                    filePathCallback = null;
-                    Toast.makeText(MainActivity.this, "没有可用的文件选择器", Toast.LENGTH_LONG).show();
-                    return false;
+                    try {   // 个别机型没有 DocumentsUI，退回 GET_CONTENT
+                        Intent fb = new Intent(Intent.ACTION_GET_CONTENT);
+                        fb.addCategory(Intent.CATEGORY_OPENABLE);
+                        fb.setType("*/*");
+                        if (multiple) fb.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                        startActivityForResult(Intent.createChooser(fb, "选择文件"), FILE_REQ);
+                    } catch (Exception e2) {
+                        filePathCallback = null;
+                        Toast.makeText(MainActivity.this, "没有可用的文件选择器", Toast.LENGTH_LONG).show();
+                        return false;
+                    }
                 }
                 return true;
             }
@@ -479,6 +507,25 @@ public class MainActivity extends Activity {
                 catch (Exception ignored) { }
             });
         }
+    }
+
+    /** accept 里可能是 "image/*" 也可能是 ".pdf"，统一转成 MIME；转不出来返回 null。 */
+    private static String toMime(String t) {
+        if (t == null) return null;
+        t = t.trim();
+        if (t.isEmpty()) return null;
+        if (t.contains("/")) return t;                      // 本来就是 MIME
+        String ext = (t.startsWith(".") ? t.substring(1) : t).toLowerCase(Locale.US);
+        // MimeTypeMap 在部分机型上认不出 docx/pptx，这里先兜住常用的
+        if (ext.equals("pdf")) return "application/pdf";
+        if (ext.equals("doc")) return "application/msword";
+        if (ext.equals("docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if (ext.equals("ppt")) return "application/vnd.ms-powerpoint";
+        if (ext.equals("pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        if (ext.equals("xls")) return "application/vnd.ms-excel";
+        if (ext.equals("xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        if (ext.equals("txt") || ext.equals("md")) return "text/plain";
+        return android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
     }
 
     private boolean acceptsImage(String[] types) {

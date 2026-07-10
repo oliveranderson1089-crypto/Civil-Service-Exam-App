@@ -4,7 +4,7 @@
 从「成语词语积累」起步，现已扩展成集**每日时政、常识/理论积累、申论 AI 逐点批改、遗忘曲线复习、题库、笔记与资料管理**于一体的备考工作台，并带微信推送。
 
 > 在线体验（作者自部署）：**https://gk.gongkaopei2026.click**
-> 安卓包：**https://gk.gongkaopei2026.click/apk**（免登录直下，当前 **v2.5**）
+> 安卓包：**https://gk.gongkaopei2026.click/apk**（免登录直下，当前 **v2.6**）
 
 ---
 
@@ -200,7 +200,7 @@ systemctl --user list-timers 'gongkao-*'
 
 ## 四、安卓 APK
 
-当前 **v2.5**（versionCode 16，已签名，安卓 5.0+）。
+当前 **v2.6**（versionCode 17，已签名，安卓 5.0+）。
 
 **安装**
 1. 手机浏览器打开 **https://gk.gongkaopei2026.click/apk**（免登录）。
@@ -209,6 +209,13 @@ systemctl --user list-timers 'gongkao-*'
 4. **以后升级不用再下载**：新版会在应用内弹框提示，点「立即更新」自动下载并安装。
 
 **原生能力**：禁双指缩放、拍照/选图/多选附件、原生 TTS 朗读、外链走系统浏览器、微信分享进/出、沉浸式全屏、跟随系统夜间、应用内更新、**手机通知栏推送**。
+
+> **文件选择器的坑**：网页 `<input accept>` 里写的是扩展名（`.pdf`），不是 MIME。
+> 早期实现直接把 `accept[0]` 塞进 `intent.setType()`，扩展名不是合法 MIME，
+> 系统挑选器就退化成「只能选最近的图片」——上传真题/讲义/AI 附件都中招，
+> 而没写 accept 的资料库反而正常。现在统一把扩展名转成 MIME：
+> 全是图片 → 相册（`ACTION_GET_CONTENT`）；含 PDF/Word/PPT 或混合 → 系统文档界面
+> （`ACTION_OPEN_DOCUMENT` + `EXTRA_MIME_TYPES`），可以浏览文件夹；有任何一个扩展名认不出来就不加过滤，宁可全部显示。
 
 ### 手机通知栏推送
 
