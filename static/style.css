@@ -1734,3 +1734,50 @@ body.dark .upd-notes{color:#e2e7ef;}
 .slr-pct.good{color:#12813f;} .slr-pct.ok{color:#b7791f;} .slr-pct.bad{color:#c0392b;}
 /* 常考条目底部给朗读/分享按钮让位，别压住释义 */
 .ck-item{padding-bottom:44px;position:relative;}
+
+/* ===================== 申论：真题卷 / 字数 / 四页签 ===================== */
+.sl-hist-head .btn.tiny{float:none;margin:0;}
+.slp-mat-box{background:#fff;border:1px solid #eef1f5;border-radius:12px;padding:12px 14px;
+  box-shadow:var(--shadow);margin-bottom:6px;}
+.slp-mat-box summary{font-size:13.5px;font-weight:700;color:#37424f;cursor:pointer;outline:none;}
+.slp-mat-text{font-size:13.5px;color:#4a5563;line-height:1.9;margin-top:10px;
+  white-space:pre-wrap;max-height:44vh;overflow:auto;}
+.slp-qs{display:flex;flex-direction:column;gap:11px;}
+.slq{background:#fff;border:1px solid #eef1f5;border-radius:12px;padding:12px 14px;
+  box-shadow:var(--shadow);cursor:pointer;}
+.slq:active{background:#f6f8fb;}
+.slq-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;}
+.slq-no{width:22px;height:22px;border-radius:7px;background:var(--blue);color:#fff;
+  font-size:12px;font-weight:800;display:grid;place-items:center;flex:none;}
+.slq-type{font-size:13px;font-weight:800;color:#1f2733;}
+.slq-meta{font-size:11.5px;color:#9aa4b2;}
+.slq-score{margin-left:auto;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;}
+.slq-score.good{color:#12813f;} .slq-score.ok{color:#b7791f;} .slq-score.bad{color:#c0392b;}
+.slq-todo{margin-left:auto;font-size:11.5px;color:#9aa4b2;}
+.slq-stem{font-size:13.5px;color:#4a5563;line-height:1.75;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.slq-view{margin-top:9px;border:1px dashed #cfd6e0;background:none;border-radius:8px;
+  padding:4px 11px;font-size:12px;color:#6b7280;cursor:pointer;}
+
+.slg-fixed{background:#f6f8fb;border-radius:12px;padding:12px 14px;margin-bottom:6px;}
+.slf-stem{font-size:14.5px;color:#1f2733;line-height:1.8;white-space:pre-wrap;}
+.slf-meta{font-size:12px;color:#8a93a2;margin-top:8px;}
+.slg-count{font-size:12.5px;font-weight:700;margin-top:7px;text-align:right;color:#9aa4b2;}
+.slg-count.ok{color:#12813f;} .slg-count.low{color:#b7791f;} .slg-count.high{color:#c0392b;}
+.slr-w{margin-left:auto;font-size:11.5px;color:#6b7280;}
+.slr-w.warn{color:#c0392b;font-weight:700;}
+.slr-wtag{display:inline-block;font-size:11.5px;font-weight:700;color:#12813f;
+  background:#e6f4ea;border-radius:8px;padding:3px 9px;margin-bottom:9px;}
+.slr-wtag.warn{color:#c0392b;background:#fdecea;}
+.slr-mat{max-height:52vh;overflow:auto;font-size:13.5px;color:#4a5563;}
+.slr-tabs{overflow-x:auto;}
+.slr-tabs .tk-tab{white-space:nowrap;padding-left:14px;padding-right:14px;}
+
+body.dark .slp-mat-box,body.dark .slq{background:#1a2130 !important;border-color:#2a3345 !important;}
+body.dark .slq:active{background:#232c3d !important;}
+body.dark .slg-fixed{background:#1a2130 !important;}
+body.dark .slp-mat-text,body.dark .slq-stem,body.dark .slf-stem,body.dark .slr-mat{color:#c3cad6 !important;}
+body.dark .slq-type,body.dark .slp-mat-box summary{color:#e2e7ef !important;}
+body.dark .slr-wtag{background:#14301f !important;}
+body.dark .slr-wtag.warn{background:#301616 !important;}
+body.dark .slq-view{border-color:#3a465c;color:#98a2b3;}

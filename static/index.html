@@ -530,10 +530,26 @@
 
   <!-- ===== 申论（四大题型讲义 + AI 逐点批改） ===== -->
   <section id="view-shenlun" class="view hidden">
-    <div class="pd-intro">对照教材知识导图掌握题型，再用 AI 逐点批改自己的答案——每一分都说得清来源。</div>
+    <div class="pd-intro">上传真题自动拆题，逐题作答、AI 逐点批改——每一分都说得清来源。</div>
+    <div class="sl-hist-head"><span>我的真题卷</span>
+      <button class="btn tiny" id="sl-upload">📄 上传真题</button></div>
+    <div id="sl-papers" class="sl-hist"></div>
+    <div class="sl-hist-head"><span>题型讲义</span></div>
     <div id="sl-types" class="home-cards cs-cards"></div>
     <div class="sl-hist-head"><span>批改记录</span><span id="sl-hist-n"></span></div>
     <div id="sl-hist" class="sl-hist"></div>
+    <input id="sl-file" type="file" accept=".pdf,.doc,.docx,.txt,.md,image/*" class="hidden">
+  </section>
+
+  <!-- 真题卷详情：材料 + 题目列表 -->
+  <section id="view-slpaper" class="view hidden">
+    <div id="slp-head" class="slt-head"></div>
+    <details id="slp-mat" class="slp-mat-box">
+      <summary>给定资料（点击展开）</summary>
+      <div id="slp-mat-text" class="slp-mat-text"></div>
+    </details>
+    <div class="slt-sec">作答要求</div>
+    <div id="slp-qs" class="slp-qs"></div>
   </section>
 
   <section id="view-sltype" class="view hidden">
@@ -545,28 +561,48 @@
 
   <section id="view-slgrade" class="view hidden">
     <div id="slg-type" class="slg-type"></div>
-    <label class="slg-lb">题干 <span>（必填，把题目要求原样贴进来）</span></label>
-    <textarea id="slg-q" rows="3" placeholder="如：请根据给定资料，概括冯教授团队振兴乡村文明的做法。"></textarea>
-    <label class="slg-lb">给定资料 <span>（强烈建议贴上，AI 才能对照采分点）</span></label>
-    <textarea id="slg-m" rows="6" placeholder="把材料原文粘贴到这里…"></textarea>
-    <label class="slg-lb">我的答案 <span>（必填）</span></label>
-    <textarea id="slg-a" rows="8" placeholder="写下你的作答…"></textarea>
+    <div id="slg-fixed" class="slg-fixed hidden"></div>
+    <div id="slg-manual">
+      <label class="slg-lb">题干 <span>（必填，把题目要求原样贴进来）</span></label>
+      <textarea id="slg-q" rows="3" placeholder="如：请根据给定资料，概括冯教授团队振兴乡村文明的做法。"></textarea>
+      <label class="slg-lb">给定资料 <span>（强烈建议贴上，AI 才能对照采分点）</span></label>
+      <textarea id="slg-m" rows="6" placeholder="把材料原文粘贴到这里…"></textarea>
+    </div>
+    <label class="slg-lb">我的答案 <span id="slg-req"></span></label>
+    <textarea id="slg-a" rows="9" placeholder="写下你的作答…"></textarea>
+    <div id="slg-count" class="slg-count"></div>
     <div class="slg-row">
-      <label class="slg-lb2">满分 <input id="slg-full" type="number" min="5" max="60" value="15"></label>
+      <label class="slg-lb2" id="slg-fullwrap">满分 <input id="slg-full" type="number" min="5" max="60" value="15"></label>
       <button class="btn primary" id="slg-go">开始批改</button>
     </div>
-    <p class="slg-tip">批改会消耗一次 AI 调用，通常 20~40 秒。</p>
+    <p class="slg-tip">批改会消耗 AI 调用（批注 + 参考范文各一次），通常 30~60 秒。</p>
   </section>
 
   <section id="view-slresult" class="view hidden">
     <div id="slr-score" class="slr-score"></div>
     <div class="tk-tabs slr-tabs">
-      <button class="tk-tab active" data-slrt="points">逐点批改</button>
-      <button class="tk-tab" data-slrt="ref">参考答案</button>
+      <button class="tk-tab active" data-slrt="points">维度评分</button>
+      <button class="tk-tab" data-slrt="ref">参考范文</button>
+      <button class="tk-tab" data-slrt="orig">原题 / 材料</button>
+      <button class="tk-tab" data-slrt="mine">作答原文</button>
     </div>
     <div id="slr-points" class="slr-pane"></div>
     <div id="slr-ref" class="slr-pane hidden"></div>
+    <div id="slr-orig" class="slr-pane hidden"></div>
+    <div id="slr-mine" class="slr-pane hidden"></div>
   </section>
+
+  <!-- 做完一题：提示继续下一题 -->
+  <div id="sl-next" class="modal hidden">
+    <div class="modal-box">
+      <h3 id="sln-title">本题已批改</h3>
+      <div id="sln-body" class="upd-notes"></div>
+      <div class="modal-actions">
+        <button class="btn" id="sln-stay">查看批改</button>
+        <button class="btn primary" id="sln-go">继续下一题</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ===== 常考（高频考点合集） ===== -->
   <section id="view-changkao" class="view hidden">

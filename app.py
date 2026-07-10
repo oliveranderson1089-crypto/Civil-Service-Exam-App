@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -483,7 +484,25 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_sl_user ON shenlun_grade(user_id, id DESC);
+        -- 上传的申论真题卷（材料 + 各小题）
+        CREATE TABLE IF NOT EXISTS shenlun_papers(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            title TEXT, material TEXT, source TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS shenlun_questions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id INTEGER NOT NULL,
+            seq INTEGER, qtype TEXT, type_name TEXT, stem TEXT, requirement TEXT,
+            full INTEGER, word_min INTEGER, word_max INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_slq_paper ON shenlun_questions(paper_id, seq);
     """)
+    # 批改记录挂到真题卷上，并记下字数与题目要求的字数区间
+    for col, typ in (("paper_id", "INTEGER"), ("question_id", "INTEGER"),
+                     ("words", "INTEGER"), ("word_min", "INTEGER"), ("word_max", "INTEGER"),
+                     ("requirement", "TEXT")):
+        if col not in _cols(con, "shenlun_grade"):
+            con.execute("ALTER TABLE shenlun_grade ADD COLUMN %s %s" % (col, typ))
     # 互监待办：交叉确认——记录这个勾是谁打的（只能由搭档打）
     for col, typ in (("by_user", "INTEGER"), ("by_name", "TEXT")):
         if col not in _cols(con, "shared_todo_done"):
@@ -3379,32 +3398,323 @@ def shenlun_type(key):
     return jsonify(t)
 
 
+# ---------------------------------------------------------------- 申论真题卷：上传 → 自动拆题
+def _sl_words(t):
+    """申论字数：不含空白，标点计入（与考试口径一致）。"""
+    return len(re.sub(r"\s+", "", t or ""))
+
+
+def _pdf_text_or_ocr(path, ext):
+    """先按文本抽取；扫描件抽不出字就逐页 OCR（最多 30 页）。"""
+    txt = (_extract_text(path, ext) or "").strip()
+    if len(txt) >= 200 or ext != ".pdf":
+        return txt
+    tmp = tempfile.mkdtemp(prefix="slocr_")
+    try:
+        subprocess.run(["pdftoppm", "-r", "200", "-gray", "-png", "-l", "30", path,
+                        os.path.join(tmp, "p")], check=True, timeout=900, capture_output=True)
+        out = []
+        for f in sorted(x for x in os.listdir(tmp) if x.endswith(".png")):
+            out.append(_ocr_image(os.path.join(tmp, f)))
+        return "\n".join(out).strip()
+    except Exception:
+        return txt
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# 「给定资料」「作答要求」在注意事项里也会被提一嘴，所以优先认独占一行的大标题
+_SL_TITLE_MAT = re.compile(r"^[ \t]*(?:[二2][、.．]\s*)?给\s*定\s*资\s*料[ \t]*$", re.M)
+_SL_TITLE_REQ = re.compile(r"^[ \t]*(?:[三3][、.．]\s*)?作\s*答\s*(?:要\s*求|任\s*务)[ \t]*$", re.M)
+_SL_HEAD_MAT = re.compile(r"给\s*定\s*资\s*料")
+_SL_HEAD_REQ = re.compile(r"作\s*答\s*要\s*求|作\s*答\s*任\s*务")
+_SL_MAT_1 = re.compile(r"^[ \t]*(?:给定)?材\s*料\s*[一1][ \t]*$|^[ \t]*(?:给定)?材\s*料\s*[一1][：:，,]", re.M)
+# 题号形式：第一题 / 1. / （2） / 三、  —— 只在「作答要求」之后的文本里找，不会误伤材料
+_SL_Q_HEAD = re.compile(
+    r"^[ \t]*(?:第\s*([一二三四五六七八九十\d]+)\s*题[.、．:：]?"
+    r"|[（(]?\s*(\d{1,2})\s*[.、．)）]"
+    r"|([一二三四五六七八九十]{1,3})\s*[、.．])\s*", re.M)
+_SL_SCORE = re.compile(r"[（(]\s*(\d{1,2})\s*分\s*[）)]")
+_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def _sl_word_range(text):
+    """从「字数1000-1200字」「不超过200字」这类要求里读出字数区间。"""
+    m = re.search(r"(\d{2,4})\s*[-~—－至]\s*(\d{2,4})\s*字", text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(r"不\s*超\s*过\s*(\d{2,4})\s*字", text)
+    if m:
+        n = int(m.group(1))
+        return int(n * 0.8), n
+    m = re.search(r"不\s*少\s*于\s*(\d{2,4})\s*字", text)
+    if m:
+        n = int(m.group(1))
+        return n, int(n * 1.3)
+    m = re.search(r"(\d{2,4})\s*字\s*(?:左右|以内|以下)", text)
+    if m:
+        n = int(m.group(1))
+        return int(n * 0.85), n
+    return None, None
+
+
+def _sl_sections(text):
+    """定位材料段起点与作答要求起点。独立成行的大标题最可信；退一步用「材料1」；再退一步宽松匹配。"""
+    req = None
+    tr = list(_SL_TITLE_REQ.finditer(text))
+    if tr:
+        req = tr[-1]
+    else:
+        loose = list(_SL_HEAD_REQ.finditer(text))
+        if loose:
+            req = loose[-1]          # 注意事项里那次在前，真正的标题在后
+    req_start = req.start() if req else max(0, len(text) - 3000)
+    req_end = req.end() if req else req_start
+
+    mat_start = 0
+    tm = [m for m in _SL_TITLE_MAT.finditer(text) if m.end() < req_start]
+    if tm:
+        mat_start = tm[-1].end()
+    m1 = _SL_MAT_1.search(text[:req_start])
+    if m1 and (not tm or m1.start() >= mat_start):
+        mat_start = m1.start()       # 直接从「材料1」开始，把注意事项甩掉
+    if not tm and not m1:
+        lm = [m for m in _SL_HEAD_MAT.finditer(text) if m.end() < req_start]
+        if lm:
+            mat_start = lm[-1].end()
+    return mat_start, req_start, req_end
+
+
+def _split_paper(text):
+    """本地切分：材料段 / 作答要求段 / 各小题。AI 只负责判题型，省钱也更稳。"""
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    mat_start, req_start, req_end = _sl_sections(text)
+    material = text[mat_start:req_start].strip()
+    if len(material) < 60:           # 切歪了，宁可把作答要求之前的全文当材料
+        material = text[:req_start].strip()
+    qtext = text[req_end:].strip()
+
+    heads = list(_SL_Q_HEAD.finditer(qtext))
+    qs = []
+    for i, h in enumerate(heads):
+        cn = h.group(1) or h.group(3) or ""
+        seq = _CN_NUM.get(cn, 0) or (int(h.group(2)) if h.group(2) else 0)
+        body = qtext[h.end(): heads[i + 1].start() if i + 1 < len(heads) else len(qtext)].strip()
+        if len(body) < 15:            # 误命中列表项
+            continue
+        qs.append({"seq": seq or (len(qs) + 1), "body": body})
+    # 题号乱了就按出现顺序重编
+    if not qs or len({q["seq"] for q in qs}) != len(qs):
+        for i, q in enumerate(qs, 1):
+            q["seq"] = i
+    return material, qtext, qs
+
+
+def _classify_questions(qs):
+    """一次 AI 调用给所有小题定题型（题干短，很便宜）。"""
+    lines = ["%d. %s" % (q["seq"], q["body"][:300].replace("\n", " ")) for q in qs]
+    prompt = ("下面是一份申论真题的各道小题。请判断每题的题型，只能从这五个里选：\n"
+              "guina=归纳概括题，zonghe=综合分析题，duice=提出对策题，guanche=贯彻执行题（要写公文/文书），"
+              "zuowen=文章写作（大作文）。\n"
+              "同时给出这道题的满分（题干里有「（X分）」就用它），以及题目要求的字数区间"
+              "（题干里有「1000-1200字」「不超过200字」就照抄成 word_min/word_max，没有就填 0）。\n"
+              '只输出 JSON：{"items":[{"seq":1,"qtype":"guina","full":15,"word_min":150,"word_max":200}]}\n\n'
+              + "\n\n".join(lines))
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论教研老师，熟悉各题型的判别特征，严格输出 JSON。"},
+         {"role": "user", "content": prompt}], temperature=0.1, max_tokens=1200, json_mode=True)
+    if err:
+        return {}
+    try:
+        return {int(x["seq"]): x for x in json.loads(rep).get("items", [])}
+    except Exception:
+        return {}
+
+
+@app.post("/api/shenlun/paper/upload")
+def shenlun_paper_upload():
+    """上传真题（PDF/Word/图片/文本）→ 拆出给定资料与各小题，自动判题型和字数要求。"""
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "请选择文件"}), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    mime = (f.mimetype or "").lower()
+    tmp = os.path.join(tempfile.gettempdir(), "slpaper_" + uuid.uuid4().hex + ext)
+    f.save(tmp)
+    try:
+        if mime.startswith("image/") or ext in IMAGE_EXT:
+            text = _ocr_image(tmp)
+        else:
+            text = _pdf_text_or_ocr(tmp, ext)
+    except Exception as e:
+        text = ""
+    finally:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+    text = (text or "").strip()
+    if len(text) < 200:
+        return jsonify({"error": "没能从文件里读到足够的文字（扫描件太糊或是纯图片）"}), 400
+
+    material, qtext, qs = _split_paper(text)
+    if not qs:
+        return jsonify({"error": "没识别出题目。请确认文件里有「作答要求」部分"}), 400
+    cls = _classify_questions(qs)
+
+    title = (request.form.get("title") or "").strip() or os.path.splitext(f.filename)[0][:60]
+    db = get_db()
+    cur = db.execute("INSERT INTO shenlun_papers(user_id,title,material,source) VALUES(?,?,?,?)",
+                     (uid(), title, material[:60000], f.filename))
+    pid = cur.lastrowid
+    for q in qs:
+        c = cls.get(q["seq"], {})
+        key = c.get("qtype") if c.get("qtype") in _SL_TYPES else "guina"
+        t = _SL_TYPES[key]
+        lo, hi = _sl_word_range(q["body"])
+        lo = lo or int(c.get("word_min") or 0) or t["word_min"]
+        hi = hi or int(c.get("word_max") or 0) or t["word_max"]
+        m = _SL_SCORE.search(q["body"])
+        full = int(m.group(1)) if m else int(c.get("full") or t["full"])
+        db.execute("INSERT INTO shenlun_questions(paper_id,seq,qtype,type_name,stem,requirement,"
+                   "full,word_min,word_max) VALUES(?,?,?,?,?,?,?,?,?)",
+                   (pid, q["seq"], key, t["name"], q["body"][:3000], "", full, lo, hi))
+    db.commit()
+    return jsonify(_paper_detail(db, pid)), 201
+
+
+def _paper_detail(db, pid):
+    p = db.execute("SELECT * FROM shenlun_papers WHERE id=? AND user_id=?", (pid, uid())).fetchone()
+    if not p:
+        return None
+    qs = db.execute("SELECT * FROM shenlun_questions WHERE paper_id=? ORDER BY seq", (pid,)).fetchall()
+    best = {}
+    for r in db.execute("SELECT question_id, id, score, full FROM shenlun_grade "
+                        "WHERE user_id=? AND paper_id=? ORDER BY id", (uid(), pid)):
+        best[r["question_id"]] = {"grade_id": r["id"], "score": r["score"], "full": r["full"]}
+    return {"id": p["id"], "title": p["title"], "material": p["material"],
+            "created_at": p["created_at"],
+            "questions": [dict(q, done=best.get(q["id"])) for q in map(dict, qs)]}
+
+
+@app.get("/api/shenlun/papers")
+def shenlun_papers():
+    rows = get_db().execute(
+        "SELECT p.id, p.title, p.created_at,"
+        "(SELECT COUNT(*) FROM shenlun_questions q WHERE q.paper_id=p.id) total,"
+        "(SELECT COUNT(DISTINCT g.question_id) FROM shenlun_grade g "
+        " WHERE g.paper_id=p.id AND g.user_id=p.user_id) done "
+        "FROM shenlun_papers p WHERE p.user_id=? ORDER BY p.id DESC LIMIT 40", (uid(),)).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/shenlun/paper/<int:pid>")
+def shenlun_paper(pid):
+    d = _paper_detail(get_db(), pid)
+    return (jsonify(d), 200) if d else (jsonify({"error": "未找到"}), 404)
+
+
+@app.delete("/api/shenlun/paper/<int:pid>")
+def shenlun_paper_del(pid):
+    db = get_db()
+    if not db.execute("SELECT 1 FROM shenlun_papers WHERE id=? AND user_id=?", (pid, uid())).fetchone():
+        return jsonify({"error": "未找到"}), 404
+    db.execute("DELETE FROM shenlun_questions WHERE paper_id=?", (pid,))
+    db.execute("DELETE FROM shenlun_papers WHERE id=?", (pid,))
+    db.execute("UPDATE shenlun_grade SET paper_id=NULL, question_id=NULL WHERE paper_id=?", (pid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+def _gen_reference(t, question, material, wmin, wmax, tries=2):
+    """单独生成参考范文，按题目要求的字数区间严格校验，超/欠就让它重写。
+    塞进批改那个 JSON 里是行不通的——模型为了不把 JSON 撑爆，总会把范文写短。"""
+    target = wmin + int((wmax - wmin) * 0.4)      # 目标压在区间偏下，模型习惯性写多
+    is_essay = t["key"] == "zuowen"
+    frame = ("按「开头点题 — 分论点1 — 分论点2 — 分论点3 — 结尾升华」写一篇完整议论文，自拟标题。"
+             if is_essay else "按该题型的规范答案框架分条作答，要点齐全、语言书面化。")
+    mat = ("【给定资料】\n" + material[:9000]) if material else ""
+    base = ("你是申论阅卷老师，现在写一份可以拿满分的参考答案。\n\n【题干】\n%s\n\n%s\n\n"
+            "%s\n题目要求字数 %d~%d 字，请写到 %d 字左右——字数是硬性要求，宁可略少也不要超。\n"
+            "只输出答案正文：不要 Markdown 记号（不要 ** ##），不要任何解释、标注或字数统计。" %
+            (question[:2000], mat, frame, wmin, wmax, target))
+    msgs = [{"role": "system", "content": "你是资深申论老师，参考答案规范、切题、字数精准。"},
+            {"role": "user", "content": base}]
+    best, budget = "", max(1200, int(wmax * 2.2))
+    for _ in range(tries + 1):
+        rep, err = _ai_call_or_error(msgs, temperature=0.4, max_tokens=budget, timeout=300)
+        if err:
+            break
+        ref = re.sub(r"[*#`]+", "", rep).strip()
+        n = _sl_words(ref)
+        if wmin <= n <= wmax:
+            return ref
+        # 留着离区间最近的那版兜底
+        if not best or _sl_gap(n, wmin, wmax) < _sl_gap(_sl_words(best), wmin, wmax):
+            best = ref
+        how = "扩写到" if n < wmin else "压缩到"
+        msgs = msgs[:1] + [
+            {"role": "user", "content": base},
+            {"role": "assistant", "content": ref},
+            {"role": "user", "content": "这份答案 %d 字，不符合要求。请%s %d~%d 字（目标 %d 字），"
+                                        "保持要点与结构，只输出答案正文。" % (n, how, wmin, wmax, target)}]
+    return best
+
+
+def _sl_gap(n, lo, hi):
+    return 0 if lo <= n <= hi else (lo - n if n < lo else n - hi)
+
+
+# 大作文固定四维（与主流阅卷口径一致，合计 35 分）
+_SL_DIMS = [("立意", 10), ("结构", 7), ("论证与材料运用", 10), ("语言", 8)]
+
 SL_SYS = ("你是阅卷经验丰富的申论老师，严格对照给定资料的采分点批改，只认材料里有的要点，"
           "不编造材料里没有的内容。评分克制、有依据，严格输出 JSON。")
 
 
 @app.post("/api/shenlun/grade")
 def shenlun_grade():
-    """逐点批改：像阅卷老师一样对照采分点，逐条说清答到没答到、错在哪、怎么补。"""
+    """逐点批改：像阅卷老师一样对照采分点，逐条说清答到没答到、错在哪、怎么补。
+    传 question_id 时，题干/材料/满分/字数要求都从真题卷里取，批完顺带告诉前端下一题是哪道。"""
     d = request.get_json(silent=True) or {}
-    key = (d.get("type") or "").strip()
+    db = get_db()
+
+    qrow = None
+    qid = int(d.get("question_id") or 0)
+    if qid:
+        qrow = db.execute(
+            "SELECT q.*, p.material, p.id pid FROM shenlun_questions q "
+            "JOIN shenlun_papers p ON p.id=q.paper_id WHERE q.id=? AND p.user_id=?",
+            (qid, uid())).fetchone()
+        if not qrow:
+            return jsonify({"error": "题目不存在"}), 404
+
+    key = (qrow["qtype"] if qrow else (d.get("type") or "")).strip()
     t = _SL_TYPES.get(key)
     if not t:
         return jsonify({"error": "请选择题型"}), 400
-    question = (d.get("question") or "").strip()
-    material = (d.get("material") or "").strip()
+
+    question = (qrow["stem"] if qrow else (d.get("question") or "")).strip()
+    material = (qrow["material"] if qrow else (d.get("material") or "")).strip()
     answer = (d.get("answer") or "").strip()
     if not question:
         return jsonify({"error": "请填写题干"}), 400
     if len(answer) < 10:
         return jsonify({"error": "请填写你的答案（至少 10 个字）"}), 400
-    full = int(d.get("full") or t.get("full") or 15)
+
+    full = int((qrow["full"] if qrow else 0) or d.get("full") or t["full"])
+    wmin = int((qrow["word_min"] if qrow else 0) or d.get("word_min") or t["word_min"])
+    wmax = int((qrow["word_max"] if qrow else 0) or d.get("word_max") or t["word_max"])
+    words = _sl_words(answer)
 
     is_essay = key == "zuowen"
     if is_essay:
-        rubric = ("按「立意 / 结构 / 论证 / 语言」四个维度打分，points 里每个维度一条：\n"
+        dims = "、".join("%s（0-%d 分）" % (n, m) for n, m in _SL_DIMS)
+        rubric = ("按固定的四个维度打分，points 里每个维度一条，顺序不变：%s。\n"
+                  "（若本题满分不是 35 分，请按比例折算各维度满分。）\n"
                   'name=维度名，max=该维度满分，got=实际得分，yours=引用考生原文中最能体现该维度的一句，\n'
-                  'hits=做得好的地方，misses=扣分点，material=（留空字符串）。')
+                  'hits=做得好的地方，misses=扣分点，material=（留空字符串）。' % dims)
     else:
         rubric = ("先从给定资料中提炼出这道题的采分点（每个采分点一条），再逐条对照考生答案：\n"
                   'name=采分点名（如「总领」「接近、启发村民」），max=该点分值，got=实际得分，\n'
@@ -3412,22 +3722,26 @@ def shenlun_grade():
                   'hits=已写到的要点，misses=未写到的要点，partial=部分写到的要点，\n'
                   'material=支撑这个采分点的给定资料原文（务必逐字摘自材料）。')
 
+    # 字数是硬性要求，超/欠都要在「语言」或总分上体现
+    wtip = ("本题要求 %d~%d 字，考生实际写了 %d 字。%s\n" %
+            (wmin, wmax, words,
+             "字数达标。" if wmin <= words <= wmax else
+             ("字数不足，请在评分与建议中指出。" if words < wmin else "字数超出，请在评分与建议中指出。")))
+
     mat = ("【给定资料】\n" + material[:9000]) if material else "（考生没有提供给定资料，请基于题干与常识判断，material 一律留空）"
     prompt = (
-        "题型：%s（满分 %d 分）\n\n【题干】\n%s\n\n%s\n\n【考生答案】\n%s\n\n"
+        "题型：%s（满分 %d 分）\n\n【题干】\n%s\n\n%s\n\n%s\n【考生答案】（%d 字）\n%s\n\n"
         "%s\n\n"
-        "另外给出 reference（参考答案全文，%d 字以内，符合该题型的答案框架）、"
-        "advice（不超过 3 条、具体可操作的改进建议）、level（优秀/达标/待提升）。\n"
-        "points 不超过 6 条，每条 material 摘录不超过 80 字。\n"
+        "另外给出 advice（不超过 3 条、具体可操作的改进建议）、level（优秀/达标/待提升）。\n"
+        "points 不超过 6 条，每条 material 摘录不超过 80 字。不要输出参考答案。\n"
         '严格只输出这个结构的 JSON：{"score":9,"full":%d,"level":"优秀","points":[{"name":"","max":2,"got":1,'
-        '"yours":"","hits":[],"misses":[],"partial":[],"material":""}],"reference":"","advice":[]}'
-        % (t["name"], full, question[:2000], mat, answer[:6000], rubric,
-           700 if is_essay else 350, full))
+        '"yours":"","hits":[],"misses":[],"partial":[],"material":""}],"advice":[]}'
+        % (t["name"], full, question[:2000], mat, wtip, words, answer[:8000], rubric, full))
 
     msgs = [{"role": "system", "content": SL_SYS}, {"role": "user", "content": prompt}]
     res = None
     for attempt in range(2):
-        rep, err = _ai_call_or_error(msgs, temperature=0.2, max_tokens=7000,
+        rep, err = _ai_call_or_error(msgs, temperature=0.2, max_tokens=4000,
                                      timeout=300, json_mode=True)
         if err:
             return err
@@ -3435,13 +3749,14 @@ def shenlun_grade():
             res = json.loads(rep)
             break
         except Exception:
-            # 输出超长被截断 → 让它压缩后再来一次
             msgs = msgs[:2] + [
                 {"role": "assistant", "content": rep[:200]},
-                {"role": "user", "content": "上次的 JSON 没有输出完整。请重新输出完整、合法的 JSON，"
-                                            "把 reference 压到 200 字以内，points 不超过 5 条。"}]
+                {"role": "user", "content": "上次的 JSON 没有输出完整。请重新输出完整、合法的 JSON："
+                                            "points 精简到 4 条、每条 hits/misses 各不超过 2 句、material 不超过 40 字。"}]
     if res is None:
         return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+    # 参考范文单独生成：塞进同一个 JSON 里，模型为了不超长会把范文写短，字数根本压不住
+    res["reference"] = _gen_reference(t, question, material, wmin, wmax)
 
     res["full"] = full
     try:
@@ -3452,29 +3767,48 @@ def shenlun_grade():
     res["hit_n"] = sum(1 for p in pts if not (p.get("misses") or p.get("partial")))
     res["part_n"] = sum(1 for p in pts if p.get("partial"))
     res["miss_n"] = sum(1 for p in pts if p.get("misses") and not p.get("yours"))
+    res.update({"words": words, "word_min": wmin, "word_max": wmax,
+                "ref_words": _sl_words(res.get("reference") or ""),
+                "question": question, "material": material, "answer": answer,
+                "type_name": t["name"], "qtype": key})
 
-    db = get_db()
     cur = db.execute(
-        "INSERT INTO shenlun_grade(user_id,qtype,type_name,question,material,answer,score,full,result) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO shenlun_grade(user_id,qtype,type_name,question,material,answer,score,full,result,"
+        "paper_id,question_id,words,word_min,word_max) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (uid(), key, t["name"], question, material, answer, res["score"], full,
-         json.dumps(res, ensure_ascii=False)))
+         json.dumps(res, ensure_ascii=False),
+         qrow["pid"] if qrow else None, qid or None, words, wmin, wmax))
     db.commit()
     res["id"] = cur.lastrowid
+
+    # 做完一题，告诉前端下一题是哪道
+    if qrow:
+        nx = db.execute("SELECT id, seq, type_name, full FROM shenlun_questions "
+                        "WHERE paper_id=? AND seq>? ORDER BY seq LIMIT 1",
+                        (qrow["pid"], qrow["seq"])).fetchone()
+        res["paper_id"] = qrow["pid"]
+        res["seq"] = qrow["seq"]
+        res["next"] = dict(nx) if nx else None
     return jsonify(res)
 
 
 @app.get("/api/shenlun/history")
 def shenlun_history():
     rows = get_db().execute(
-        "SELECT id, qtype, type_name, substr(question,1,60) question, score, full, created_at "
-        "FROM shenlun_grade WHERE user_id=? ORDER BY id DESC LIMIT 60", (uid(),)).fetchall()
+        "SELECT g.id, g.qtype, g.type_name, substr(g.question,1,60) question, g.score, g.full, "
+        "g.words, g.word_min, g.word_max, g.created_at, g.paper_id, g.question_id, "
+        "p.title paper_title, q.seq "
+        "FROM shenlun_grade g "
+        "LEFT JOIN shenlun_papers p ON p.id=g.paper_id "
+        "LEFT JOIN shenlun_questions q ON q.id=g.question_id "
+        "WHERE g.user_id=? ORDER BY g.id DESC LIMIT 60", (uid(),)).fetchall()
     return jsonify({"items": [dict(r) for r in rows]})
 
 
 @app.get("/api/shenlun/record/<int:rid>")
 def shenlun_record(rid):
-    r = get_db().execute("SELECT * FROM shenlun_grade WHERE id=? AND user_id=?", (rid, uid())).fetchone()
+    db = get_db()
+    r = db.execute("SELECT * FROM shenlun_grade WHERE id=? AND user_id=?", (rid, uid())).fetchone()
     if not r:
         return jsonify({"error": "未找到"}), 404
     d = dict(r)
@@ -3482,6 +3816,22 @@ def shenlun_record(rid):
         d["result"] = json.loads(d["result"])
     except Exception:
         d["result"] = {}
+    # 老记录的 result 里没有原题/材料/作答原文，从行里补上，保证回看时四个页签都有内容
+    res = d["result"]
+    res.setdefault("question", d["question"])
+    res.setdefault("material", d["material"])
+    res.setdefault("answer", d["answer"])
+    res.setdefault("type_name", d["type_name"])
+    res.setdefault("words", d.get("words") or _sl_words(d["answer"]))
+    res.setdefault("word_min", d.get("word_min"))
+    res.setdefault("word_max", d.get("word_max"))
+    res["id"] = d["id"]
+    if d.get("question_id"):
+        nx = db.execute("SELECT id, seq, type_name, full FROM shenlun_questions WHERE paper_id=? AND seq>"
+                        "(SELECT seq FROM shenlun_questions WHERE id=?) ORDER BY seq LIMIT 1",
+                        (d["paper_id"], d["question_id"])).fetchone()
+        res["paper_id"] = d["paper_id"]
+        res["next"] = dict(nx) if nx else None
     return jsonify(d)
 
 
