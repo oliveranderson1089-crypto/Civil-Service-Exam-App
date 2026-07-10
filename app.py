@@ -475,6 +475,14 @@ def init_db():
             UNIQUE(board, title)
         );
         CREATE INDEX IF NOT EXISTS idx_th_board ON theory_items(board, topic);
+        -- 申论 AI 逐点批改记录
+        CREATE TABLE IF NOT EXISTS shenlun_grade(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            qtype TEXT, type_name TEXT, question TEXT, material TEXT, answer TEXT,
+            score REAL, full INTEGER, result TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sl_user ON shenlun_grade(user_id, id DESC);
     """)
     # 互监待办：交叉确认——记录这个勾是谁打的（只能由搭档打）
     for col, typ in (("by_user", "INTEGER"), ("by_name", "TEXT")):
@@ -543,7 +551,7 @@ def is_admin():
 _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
                  "/forgot", "/api/forgot/question", "/api/forgot/reset",
                  "/api/sec_questions",
-                 "/apk", "/download/gongkao.apk",
+                 "/apk", "/download/gongkao.apk", "/api/app/version",
                  "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
 
@@ -1127,6 +1135,36 @@ def _inject_tts(html_txt):
     return _TTS_POLYFILL + html_txt
 
 
+def _cacheable(resp, days=30):
+    """文件内容不可变（stored_name 是 uuid），让浏览器长期本地缓存。
+    用 private：不进 CDN 边缘，避免带登录态的资料被别人按 URL 命中。"""
+    resp.headers["Cache-Control"] = "private, max-age=%d" % (days * 86400)
+    resp.headers.pop("Expires", None)
+    return resp
+
+
+def _linearized(pdf):
+    """线性化（Fast Web View）：xref 前置，配合 Range 让阅读器先出首页再拉后面。
+    服务器在家里、上行只有一百多 KB/s，这个优化对大 PDF 是决定性的。"""
+    web = os.path.splitext(pdf)[0] + ".web.pdf"
+    if os.path.exists(web) and os.path.getmtime(web) >= os.path.getmtime(pdf):
+        return web
+    try:
+        subprocess.run(["qpdf", "--linearize", pdf, web], timeout=180, capture_output=True)
+    except Exception:
+        return pdf
+    return web if os.path.exists(web) and os.path.getsize(web) > 0 else pdf
+
+
+def _material_pdf(m, path):
+    """拿到这份资料对应的 PDF（office 先转换），失败返回 None。"""
+    if m["ext"] == ".pdf":
+        return path
+    if m["ext"] in OFFICE_EXT:
+        return _office_to_pdf(path)
+    return None
+
+
 @app.get("/api/materials/<int:mid>/view")
 def material_view(mid):
     m = _get_material(mid)
@@ -1140,7 +1178,7 @@ def material_view(mid):
         pdf = _office_to_pdf(path)
         if not pdf:
             return "文档转换失败，请下载查看", 500
-        return send_file(pdf, mimetype="application/pdf", as_attachment=False)
+        return _cacheable(send_file(_linearized(pdf), mimetype="application/pdf", as_attachment=False))
     if ext in (".html", ".htm"):
         with open(path, "rb") as fp:
             html_txt = fp.read().decode("utf-8", "ignore")
@@ -1148,9 +1186,68 @@ def material_view(mid):
     if ext in TEXT_EXT:
         with open(path, "rb") as fp:
             return Response(fp.read(), mimetype="text/plain; charset=utf-8")
-    # pdf / 图片等：浏览器内联打开
-    return send_file(path, as_attachment=False,
-                     download_name=m["orig_name"])
+    if ext == ".pdf":
+        return _cacheable(send_file(_linearized(path), mimetype="application/pdf",
+                                    as_attachment=False, download_name=m["orig_name"]))
+    # 图片等：浏览器内联打开
+    return _cacheable(send_file(path, as_attachment=False, download_name=m["orig_name"]))
+
+
+# ---------------------------------------------------------------- 幻灯片播放（PPT/PDF 逐页出图）
+def _pages_dir(m):
+    d = os.path.join(UPLOADS, str(uid()), ".pages", os.path.splitext(m["stored_name"])[0])
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+@app.get("/api/materials/<int:mid>/pages")
+def material_pages(mid):
+    """返回总页数；PPT/PDF 才支持幻灯片播放。"""
+    m = _get_material(mid)
+    if not m:
+        return jsonify({"error": "未找到"}), 404
+    path = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    pdf = _material_pdf(m, path) if os.path.exists(path) else None
+    if not pdf:
+        return jsonify({"pages": 0, "slides": False})
+    try:
+        out = subprocess.run(["pdfinfo", pdf], capture_output=True, timeout=60)
+        txt = out.stdout.decode("utf-8", "ignore")
+        n = int(re.search(r"Pages:\s+(\d+)", txt).group(1))
+    except Exception:
+        return jsonify({"pages": 0, "slides": False})
+    return jsonify({"pages": n, "slides": True,
+                    "ppt": m["ext"] in (".ppt", ".pptx", ".odp")})
+
+
+@app.get("/api/materials/<int:mid>/page/<int:n>")
+def material_page(mid, n):
+    """单页渲染成 JPEG（约 100~200KB），比整份 PDF 小两个数量级，首屏立刻可见。"""
+    m = _get_material(mid)
+    if not m:
+        return "未找到", 404
+    if n < 1 or n > 3000:
+        return "页码越界", 400
+    path = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    if not os.path.exists(path):
+        return "文件丢失", 404
+    pdf = _material_pdf(m, path)
+    if not pdf:
+        return "该格式不支持逐页预览", 400
+    dpi = 110 if request.args.get("hd") else 90
+    cache = os.path.join(_pages_dir(m), "p%04d_%d.jpg" % (n, dpi))
+    if not os.path.exists(cache):
+        prefix = cache[:-4]
+        try:
+            subprocess.run(["pdftoppm", "-jpeg", "-jpegopt", "quality=72",
+                            "-r", str(dpi), "-f", str(n), "-l", str(n),
+                            "-singlefile", pdf, prefix],
+                           check=True, timeout=120, capture_output=True)
+        except Exception:
+            return "渲染失败", 500
+    if not os.path.exists(cache):
+        return "页码超出范围", 404
+    return _cacheable(send_file(cache, mimetype="image/jpeg"))
 
 
 @app.get("/api/materials/<int:mid>/download")
@@ -3256,10 +3353,150 @@ def daily_task_toggle(tid):
     return jsonify({"done": on})
 
 
+# ---------------------------------------------------------------- 申论（四大题型讲义 + AI 逐点批改）
+try:
+    with open(os.path.join(BASE, "shenlun_meta.json"), encoding="utf-8") as _fp:
+        _SL_META = json.load(_fp)
+except Exception:
+    _SL_META = {"types": []}
+
+_SL_TYPES = {t["key"]: t for t in _SL_META.get("types", [])}
+
+
+@app.get("/api/shenlun/types")
+def shenlun_types():
+    db = get_db()
+    n = db.execute("SELECT COUNT(*) FROM shenlun_grade WHERE user_id=?", (uid(),)).fetchone()[0]
+    return jsonify({"types": [{k: v for k, v in t.items() if k != "map"} for t in _SL_META["types"]],
+                    "graded": n})
+
+
+@app.get("/api/shenlun/type/<key>")
+def shenlun_type(key):
+    t = _SL_TYPES.get(key)
+    if not t:
+        return jsonify({"error": "没有这个题型"}), 404
+    return jsonify(t)
+
+
+SL_SYS = ("你是阅卷经验丰富的申论老师，严格对照给定资料的采分点批改，只认材料里有的要点，"
+          "不编造材料里没有的内容。评分克制、有依据，严格输出 JSON。")
+
+
+@app.post("/api/shenlun/grade")
+def shenlun_grade():
+    """逐点批改：像阅卷老师一样对照采分点，逐条说清答到没答到、错在哪、怎么补。"""
+    d = request.get_json(silent=True) or {}
+    key = (d.get("type") or "").strip()
+    t = _SL_TYPES.get(key)
+    if not t:
+        return jsonify({"error": "请选择题型"}), 400
+    question = (d.get("question") or "").strip()
+    material = (d.get("material") or "").strip()
+    answer = (d.get("answer") or "").strip()
+    if not question:
+        return jsonify({"error": "请填写题干"}), 400
+    if len(answer) < 10:
+        return jsonify({"error": "请填写你的答案（至少 10 个字）"}), 400
+    full = int(d.get("full") or t.get("full") or 15)
+
+    is_essay = key == "zuowen"
+    if is_essay:
+        rubric = ("按「立意 / 结构 / 论证 / 语言」四个维度打分，points 里每个维度一条：\n"
+                  'name=维度名，max=该维度满分，got=实际得分，yours=引用考生原文中最能体现该维度的一句，\n'
+                  'hits=做得好的地方，misses=扣分点，material=（留空字符串）。')
+    else:
+        rubric = ("先从给定资料中提炼出这道题的采分点（每个采分点一条），再逐条对照考生答案：\n"
+                  'name=采分点名（如「总领」「接近、启发村民」），max=该点分值，got=实际得分，\n'
+                  'yours=考生答案里对应这一点的原文（没写到就填空字符串），\n'
+                  'hits=已写到的要点，misses=未写到的要点，partial=部分写到的要点，\n'
+                  'material=支撑这个采分点的给定资料原文（务必逐字摘自材料）。')
+
+    mat = ("【给定资料】\n" + material[:9000]) if material else "（考生没有提供给定资料，请基于题干与常识判断，material 一律留空）"
+    prompt = (
+        "题型：%s（满分 %d 分）\n\n【题干】\n%s\n\n%s\n\n【考生答案】\n%s\n\n"
+        "%s\n\n"
+        "另外给出 reference（参考答案全文，%d 字以内，符合该题型的答案框架）、"
+        "advice（不超过 3 条、具体可操作的改进建议）、level（优秀/达标/待提升）。\n"
+        "points 不超过 6 条，每条 material 摘录不超过 80 字。\n"
+        '严格只输出这个结构的 JSON：{"score":9,"full":%d,"level":"优秀","points":[{"name":"","max":2,"got":1,'
+        '"yours":"","hits":[],"misses":[],"partial":[],"material":""}],"reference":"","advice":[]}'
+        % (t["name"], full, question[:2000], mat, answer[:6000], rubric,
+           700 if is_essay else 350, full))
+
+    msgs = [{"role": "system", "content": SL_SYS}, {"role": "user", "content": prompt}]
+    res = None
+    for attempt in range(2):
+        rep, err = _ai_call_or_error(msgs, temperature=0.2, max_tokens=7000,
+                                     timeout=300, json_mode=True)
+        if err:
+            return err
+        try:
+            res = json.loads(rep)
+            break
+        except Exception:
+            # 输出超长被截断 → 让它压缩后再来一次
+            msgs = msgs[:2] + [
+                {"role": "assistant", "content": rep[:200]},
+                {"role": "user", "content": "上次的 JSON 没有输出完整。请重新输出完整、合法的 JSON，"
+                                            "把 reference 压到 200 字以内，points 不超过 5 条。"}]
+    if res is None:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+
+    res["full"] = full
+    try:
+        res["score"] = max(0, min(full, float(res.get("score") or 0)))
+    except Exception:
+        res["score"] = 0
+    pts = res.get("points") or []
+    res["hit_n"] = sum(1 for p in pts if not (p.get("misses") or p.get("partial")))
+    res["part_n"] = sum(1 for p in pts if p.get("partial"))
+    res["miss_n"] = sum(1 for p in pts if p.get("misses") and not p.get("yours"))
+
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO shenlun_grade(user_id,qtype,type_name,question,material,answer,score,full,result) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (uid(), key, t["name"], question, material, answer, res["score"], full,
+         json.dumps(res, ensure_ascii=False)))
+    db.commit()
+    res["id"] = cur.lastrowid
+    return jsonify(res)
+
+
+@app.get("/api/shenlun/history")
+def shenlun_history():
+    rows = get_db().execute(
+        "SELECT id, qtype, type_name, substr(question,1,60) question, score, full, created_at "
+        "FROM shenlun_grade WHERE user_id=? ORDER BY id DESC LIMIT 60", (uid(),)).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/shenlun/record/<int:rid>")
+def shenlun_record(rid):
+    r = get_db().execute("SELECT * FROM shenlun_grade WHERE id=? AND user_id=?", (rid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    d = dict(r)
+    try:
+        d["result"] = json.loads(d["result"])
+    except Exception:
+        d["result"] = {}
+    return jsonify(d)
+
+
+@app.delete("/api/shenlun/record/<int:rid>")
+def shenlun_record_del(rid):
+    db = get_db()
+    db.execute("DELETE FROM shenlun_grade WHERE id=? AND user_id=?", (rid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 # ---------------------------------------------------------------- 常考（高频考点合集）
 CK_BOARDS = [
-    {"key": "成语", "name": "高频成语", "icon": "quote", "desc": "近十年真题高频 + 易混辨析"},
-    {"key": "实词", "name": "高频实词", "icon": "edit", "desc": "逻辑填空高频实词 · 辨析搭配"},
+    {"key": "成语", "name": "高频成语", "icon": "quote", "desc": "老师讲义 · 按真题考频排序"},
+    {"key": "实词", "name": "实词搭配", "icon": "edit", "desc": "老师讲义 · 常见动宾搭配"},
     {"key": "上位词", "name": "上位词", "icon": "layers", "desc": "概括词提示 · 下位词归类"},
     {"key": "古诗文", "name": "高频古诗文", "icon": "book", "desc": "按考频排序的名篇名句"},
     {"key": "常识", "name": "高频常识", "icon": "bulb", "desc": "常识判断反复出现的考点"},
@@ -3293,8 +3530,9 @@ def changkao_items():
         rows = db.execute("SELECT id, hyper, subs, note FROM hyper_items ORDER BY id DESC LIMIT 300").fetchall()
         return jsonify({"board": board, "kind": "hyper", "items": [
             {"id": r["id"], "title": r["hyper"], "content": r["subs"], "note": r["note"]} for r in rows]})
-    rows = db.execute("SELECT id, title, content, note FROM changkao_items WHERE board=? "
-                      "ORDER BY id LIMIT 400", (board,)).fetchall()
+    # 成语/实词来自老师讲义，插入顺序就是考频从高到低的顺序
+    rows = db.execute("SELECT id, title, content, note, freq FROM changkao_items WHERE board=? "
+                      "ORDER BY id LIMIT 1000", (board,)).fetchall()
     return jsonify({"board": board, "kind": "text", "items": [dict(r) for r in rows]})
 
 
@@ -3548,13 +3786,21 @@ def _review_due(db, u, today):
     return due
 
 
+# 复习分组：词语句子 / 每日积累 / 错题，分开背，不混在一副牌里
+RV_GROUP = {"entry": "word", "classic": "word", "sucai": "daily", "wrongq": "wrongq"}
+
+
 @app.get("/api/review/today")
 def review_today():
     today = datetime.now().strftime("%Y-%m-%d")
     due = _review_due(get_db(), uid(), today)
-    order = {"entry": 0, "wrongq": 1, "classic": 2, "sucai": 3}
+    order = {"entry": 0, "classic": 1, "sucai": 2, "wrongq": 3}
     due.sort(key=lambda x: (order.get(x["kind"], 9), x["id"]))
-    return jsonify({"today": today, "count": len(due), "items": due})
+    groups = {"word": 0, "daily": 0, "wrongq": 0}
+    for it in due:
+        it["group"] = RV_GROUP.get(it["kind"], "wrongq")
+        groups[it["group"]] += 1
+    return jsonify({"today": today, "count": len(due), "items": due, "groups": groups})
 
 
 @app.post("/api/review/done")
@@ -3665,7 +3911,32 @@ def policydocs_ai(did):
     return jsonify({"content": reply, "cached": False})
 
 
-# ---------------------------------------------------------------- 安卓包下载
+# ---------------------------------------------------------------- 安卓包下载 / 应用内更新
+def _apk_meta():
+    """从 dist/apk.json 读当前发布的版本信息（构建脚本生成）。"""
+    p = os.path.join(BASE, "dist", "apk.json")
+    try:
+        with open(p, encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception:
+        return {}
+
+
+@app.get("/api/app/version")
+def app_version():
+    """APP 启动时来问一次：有没有新版本。"""
+    apk = os.path.join(BASE, "dist", "gongkao.apk")
+    meta = _apk_meta()
+    return jsonify({
+        "version_code": int(meta.get("version_code") or 0),
+        "version_name": meta.get("version_name") or "",
+        "notes": meta.get("notes") or "",
+        "size": os.path.getsize(apk) if os.path.exists(apk) else 0,
+        "url": "/download/gongkao.apk",
+        "available": os.path.exists(apk),
+    })
+
+
 @app.get("/apk")
 @app.get("/download/gongkao.apk")
 def download_apk():

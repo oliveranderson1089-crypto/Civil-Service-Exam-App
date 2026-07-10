@@ -51,6 +51,15 @@ fi
 "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
   --out "$DIST/gongkao.apk" "$OUT/aligned.apk"
 
+# 发布元数据：APP 启动时拉 /api/app/version 比对 versionCode，决定要不要提示更新
+MF="$(dirname "$0")/AndroidManifest.xml"
+VC=$(grep -o 'android:versionCode="[0-9]*"' "$MF" | grep -o '[0-9]*')
+VN=$(grep -o 'android:versionName="[^"]*"' "$MF" | cut -d'"' -f2)
+NOTES="${APK_NOTES:-修复问题、优化体验。}"
+printf '{\n  "version_code": %s,\n  "version_name": "%s",\n  "notes": "%s"\n}\n' \
+  "$VC" "$VN" "$NOTES" > "$DIST/apk.json"
+echo "apk.json -> $VN ($VC)"
+
 echo "==== 完成 ===="
 "$BT/apksigner" verify --print-certs "$DIST/gongkao.apk" | head -2
 ls -lh "$DIST/gongkao.apk"

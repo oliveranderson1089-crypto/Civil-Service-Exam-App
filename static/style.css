@@ -1571,3 +1571,166 @@ body.dark .tk-box.mine{background:#1c2331;border-color:#394356;color:#5c6577;}
 body.dark .tk-box.mine.on{background:var(--blue);border-color:var(--blue);}
 body.dark .tk-mem:active{background:#232c3d;}
 body.dark .ns-sub,body.dark .tk-head{color:#8a93a2;}
+
+/* ===================== 批次34 ===================== */
+
+/* —— 上传进度 —— */
+.up-prog{margin:2px 0 12px;}
+.up-bar{height:6px;border-radius:4px;background:#e8edf3;overflow:hidden;}
+.up-bar i{display:block;height:100%;width:0;background:var(--blue);border-radius:4px;transition:width .2s;}
+.up-txt{display:block;font-size:12px;color:#8a93a2;margin-top:5px;word-break:break-all;}
+body.dark .up-bar{background:#232c3d;}
+
+/* —— 幻灯片播放 —— */
+body.ss-open{overflow:hidden;}
+#slideshow{position:fixed;inset:0;z-index:200;background:#0b0d10;
+  display:flex;align-items:center;justify-content:center;}
+#ss-img{max-width:100%;max-height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none;}
+.ss-load{position:absolute;color:#cfd6e2;font-size:14px;letter-spacing:1px;}
+.ss-bar{position:absolute;bottom:0;left:0;right:0;z-index:2;
+  display:flex;align-items:center;justify-content:center;gap:14px;
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  background:linear-gradient(to top,rgba(0,0,0,.72),rgba(0,0,0,0));}
+.ss-bar button{width:40px;height:40px;border:0;border-radius:50%;cursor:pointer;
+  background:rgba(255,255,255,.14);color:#fff;font-size:20px;line-height:1;}
+.ss-bar button:active{background:rgba(255,255,255,.3);}
+#ss-page{color:#e6ebf3;font-size:14px;min-width:86px;text-align:center;font-variant-numeric:tabular-nums;}
+#ss-close{font-size:16px;}
+/* 左右各留一条点击翻页区，中间留白给缩放/长按 */
+.ss-hit{position:absolute;top:0;bottom:64px;width:28%;z-index:1;}
+.ss-hit-l{left:0;} .ss-hit-r{right:0;}
+
+/* —— 常考·成语 考频徽章 —— */
+.cki-freq{margin-left:auto;flex:none;font-size:11px;font-weight:800;color:#e8590c;
+  background:#fff2e8;border-radius:7px;padding:2px 7px;}
+body.dark .cki-freq{background:#33240f;color:#ffa94d;}
+
+/* —— 复习分组 tab —— */
+.rv-tabs{margin-bottom:14px;}
+.rv-tabs .rv-n{font-variant-numeric:tabular-nums;}
+.tk-tab.rv-empty-tab{opacity:.45;}
+
+/* ===== 夜间模式：小记 / 错题本 / 搜索结果 等剩余深色文字 ===== */
+body.dark .nc-text,body.dark .wq-q,body.dark .fc-text,body.dark .cls-body,
+body.dark .blk-edit,body.dark .nb-ntitle,body.dark .cp-mhead .cp-mtitle,
+body.dark .blk-ins-grid button,body.dark .ns-cancel,body.dark .opt.checks label,
+body.dark .wqa-lb,body.dark .welcome,body.dark .cs-ov-head,body.dark .rv-body,
+body.dark .cs-kq-row b,body.dark .cs-kq-row .sc-body b{color:#e2e7ef !important;}
+body.dark .nc-time,body.dark .wq-board,body.dark .fc-tag,body.dark .sr-snip,
+body.dark .nb-nicon,body.dark .cp-tool,body.dark .ns-count,body.dark .tk-tab,
+body.dark .blk-acts button,body.dark .blk-ins-grid .bi,
+body.dark .blk-conv-list button .ci{color:#98a2b3 !important;}
+body.dark .tk-tab.active{color:#fff !important;}
+body.dark .poly-reader b,body.dark .xy-quote b,body.dark .xy-kw{color:#f0c674 !important;}
+body.dark .xy-kw{background:#332a26 !important;}
+/* 搜索结果的来源标签：浅色底 → 深色底，保持各自色相 */
+body.dark [class^="sr-type"],body.dark [class*=" sr-type"]{
+  background:#232c3d !important;filter:brightness(1.75);}
+body.dark .blk.callout .blk-edit{color:#f0c674 !important;}
+body.dark .blk.quote .blk-edit,body.dark .blk.code .blk-edit{color:#c3cad6 !important;}
+
+/* ===================== 申论：题型讲义 + 逐点批改 ===================== */
+.home-card[data-go="shenlun"] .hc-logo,.hc-sl{background:linear-gradient(135deg,#c92a2a,#f06595);}
+
+.sl-hist-head{display:flex;justify-content:space-between;align-items:baseline;
+  margin:22px 0 10px;font-size:13px;font-weight:800;color:#6b7280;}
+.sl-hist{display:flex;flex-direction:column;gap:9px;}
+.sl-hi{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #eef1f5;
+  border-radius:12px;padding:11px 13px;box-shadow:var(--shadow);cursor:pointer;}
+.sl-hi-main{flex:1;min-width:0;}
+.sl-hi-t{font-size:14px;color:#1f2733;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sl-hi-m{font-size:11.5px;color:#9aa4b2;margin-top:3px;}
+.sl-hi-s{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums;flex:none;}
+.sl-hi-s span{font-size:12px;font-weight:600;color:#9aa4b2;}
+.sl-hi-s.good{color:#12813f;} .sl-hi-s.ok{color:#b7791f;} .sl-hi-s.bad{color:#c0392b;}
+.sl-hi-del{border:0;background:none;color:#c5cad3;font-size:15px;cursor:pointer;flex:none;}
+
+.slt-head{margin-bottom:14px;}
+.slt-title{font-size:19px;font-weight:800;color:#1f2733;border-left:4px solid var(--blue);padding-left:10px;}
+.slt-desc{font-size:12.5px;color:#8a93a2;margin-top:6px;padding-left:14px;}
+.slt-sec{font-size:13px;font-weight:800;color:#6b7280;margin:18px 0 10px;
+  display:flex;align-items:center;gap:7px;}
+.slt-sec::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--blue);}
+.slt-goals ul,.slr-advice ul{margin:0;padding-left:20px;}
+.slt-goals li,.slr-advice li{font-size:14px;color:#37424f;line-height:1.85;}
+.slm-group{background:#fff;border:1px solid #eef1f5;border-radius:12px;overflow:hidden;
+  margin-bottom:12px;box-shadow:var(--shadow);}
+.slm-gname{color:#fff;font-size:13.5px;font-weight:800;padding:9px 13px;}
+.slm-row{display:flex;gap:10px;padding:11px 13px;border-top:1px solid #f1f4f8;}
+.slm-name{flex:0 0 74px;font-size:13.5px;font-weight:800;color:#1f2733;}
+.slm-cells{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;}
+.slm-cell{font-size:13px;color:#4a5563;line-height:1.7;}
+.slm-cell b{color:#8a93a2;font-weight:700;margin-right:6px;font-size:12px;}
+.slt-go{width:100%;margin:18px 0 8px;padding:13px;font-size:15px;}
+
+.slg-type{margin-bottom:14px;}
+.slg-badge{display:inline-block;color:#fff;font-size:12px;font-weight:700;padding:4px 11px;border-radius:8px;}
+.slg-lb{display:block;font-size:13.5px;font-weight:700;color:#37424f;margin:14px 0 6px;}
+.slg-lb span{font-weight:400;font-size:11.5px;color:#9aa4b2;}
+#view-slgrade textarea{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:11px 12px;
+  font-size:14.5px;font-family:inherit;line-height:1.7;outline:none;resize:vertical;background:#fff;}
+#view-slgrade textarea:focus{border-color:var(--blue);}
+.slg-row{display:flex;align-items:center;gap:12px;margin-top:16px;}
+.slg-lb2{font-size:13.5px;color:#37424f;flex:1;}
+.slg-lb2 input{width:66px;margin-left:8px;border:1.5px solid var(--line);border-radius:8px;
+  padding:7px 9px;font-size:14px;outline:none;}
+.slg-tip{font-size:11.5px;color:#9aa4b2;margin-top:10px;}
+
+.slr-score{background:#fff;border:1px solid #eef1f5;border-radius:14px;padding:16px;
+  box-shadow:var(--shadow);display:grid;grid-template-columns:auto 1fr auto;gap:8px 14px;align-items:center;}
+.slr-num{font-size:34px;font-weight:800;color:#1f2733;line-height:1;}
+.slr-num span{font-size:15px;font-weight:600;color:#9aa4b2;}
+.slr-pct{font-size:19px;font-weight:800;color:#12813f;text-align:right;}
+.slr-stat{grid-column:1/3;font-size:12.5px;color:#6b7280;display:flex;align-items:center;gap:5px;}
+.slr-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-left:9px;}
+.slr-dot:first-child{margin-left:0;}
+.slr-dot.good{background:#12813f;} .slr-dot.ok{background:#b7791f;} .slr-dot.bad{background:#c0392b;}
+.slr-lv{grid-column:3;grid-row:2;font-size:12px;font-weight:800;padding:3px 10px;border-radius:8px;}
+.slr-lv.good{background:#e6f4ea;color:#12813f;} .slr-lv.ok{background:#fdf3e0;color:#b7791f;}
+.slr-lv.bad{background:#fdecea;color:#c0392b;}
+.slr-tabs{margin:16px 0 14px;}
+.slr-pane{display:flex;flex-direction:column;gap:12px;}
+.slp{background:#fff;border:1px solid #eef1f5;border-left:4px solid #12813f;border-radius:12px;
+  padding:13px 14px;box-shadow:var(--shadow);}
+.slp.ok{border-left-color:#b7791f;background:#fffcf5;}
+.slp.bad{border-left-color:#c0392b;background:#fff8f7;}
+.slp-head{display:flex;align-items:center;gap:9px;margin-bottom:9px;}
+.slp-no{width:22px;height:22px;border-radius:7px;background:#12813f;color:#fff;
+  font-size:12px;font-weight:800;display:grid;place-items:center;flex:none;}
+.slp.ok .slp-no{background:#b7791f;} .slp.bad .slp-no{background:#c0392b;}
+.slp-name{font-size:15px;font-weight:800;color:#1f2733;flex:1;}
+.slp-score{font-size:15px;font-weight:800;color:#1f2733;font-variant-numeric:tabular-nums;}
+.slp-score i{font-size:12px;font-style:normal;color:#9aa4b2;}
+.slp-yours{font-size:13.5px;color:#37424f;line-height:1.75;margin-bottom:8px;}
+.slp-yours b{color:#6b7280;font-weight:700;}
+.slp-none{color:#c0392b;font-style:italic;}
+.slp-li{font-size:13px;line-height:1.75;padding-left:2px;}
+.slp-li.hit{color:#12813f;} .slp-li.part{color:#b7791f;} .slp-li.miss{color:#c0392b;}
+.slp-mat{font-size:12.5px;color:#6b7280;line-height:1.7;margin-top:9px;padding:9px 11px;
+  background:#f6f8fb;border-radius:8px;}
+.slp-mat b{color:#8a93a2;}
+.slr-advice{margin-top:6px;}
+.slr-reftext{font-size:14.5px;color:#37424f;line-height:1.95;background:#fff;border:1px solid #eef1f5;
+  border-radius:12px;padding:14px 15px;box-shadow:var(--shadow);}
+
+/* —— 更新提示 —— */
+.upd-notes{font-size:14px;color:#37424f;line-height:1.7;margin:6px 0 8px;white-space:pre-wrap;}
+.upd-size{font-size:12px;color:#9aa4b2;margin-bottom:6px;}
+
+/* —— 夜间 —— */
+body.dark .sl-hi,body.dark .slm-group,body.dark .slr-score,body.dark .slp,
+body.dark .slr-reftext,body.dark #view-slgrade textarea,body.dark .slg-lb2 input{
+  background:#1a2130 !important;border-color:#2a3345 !important;}
+body.dark .slp.ok{background:#241f14 !important;} body.dark .slp.bad{background:#251616 !important;}
+body.dark .sl-hi-t,body.dark .slt-title,body.dark .slp-name,body.dark .slp-score,
+body.dark .slr-num,body.dark .slm-name,body.dark .slt-goals li,body.dark .slr-advice li,
+body.dark .slr-reftext,body.dark .slp-yours,body.dark .slm-cell{color:#e2e7ef !important;}
+body.dark .slt-desc,body.dark .sl-hi-m,body.dark .slp-mat,body.dark .slg-tip,
+body.dark .slm-cell b,body.dark .slp-yours b{color:#98a2b3 !important;}
+body.dark .slp-mat{background:#232c3d !important;}
+body.dark .upd-notes{color:#e2e7ef;}
+
+/* 分数百分比按档位变色，别一律绿 */
+.slr-pct.good{color:#12813f;} .slr-pct.ok{color:#b7791f;} .slr-pct.bad{color:#c0392b;}
+/* 常考条目底部给朗读/分享按钮让位，别压住释义 */
+.ck-item{padding-bottom:44px;position:relative;}

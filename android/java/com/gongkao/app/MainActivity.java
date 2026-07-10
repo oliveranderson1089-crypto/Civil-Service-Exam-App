@@ -319,6 +319,57 @@ public class MainActivity extends Activity {
             });
         }
 
+        /** 当前安装包的 versionCode，网页据此判断有没有新版。 */
+        @android.webkit.JavascriptInterface
+        public int appVersion() {
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        /** 下载新版 APK 并唤起系统安装界面（不用再去浏览器点链接）。 */
+        @android.webkit.JavascriptInterface
+        public void updateApp(String url) {
+            new Thread(() -> {
+                try {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "正在下载新版…", Toast.LENGTH_SHORT).show());
+                    File dir = new File(getCacheDir(), "share");   // CamProvider 已开放这个目录
+                    dir.mkdirs();
+                    File out = new File(dir, "gongkao-update.apk");
+                    HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+                    String cookie = CookieManager.getInstance().getCookie(url);
+                    if (cookie != null) conn.setRequestProperty("Cookie", cookie);
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(300000);
+                    InputStream in = conn.getInputStream();
+                    java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+                    fo.close(); in.close(); conn.disconnect();
+                    if (out.length() < 10000) throw new Exception("下载不完整");
+                    final Uri apk = Uri.parse("content://" + CamProvider.AUTH + "/share/gongkao-update.apk");
+                    runOnUiThread(() -> {
+                        Intent i = new Intent(Intent.ACTION_VIEW);
+                        i.setDataAndType(apk, "application/vnd.android.package-archive");
+                        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                        try {
+                            startActivity(i);
+                        } catch (Exception e) {
+                            Toast.makeText(MainActivity.this,
+                                    "请在系统设置里允许「公考助手」安装应用", Toast.LENGTH_LONG).show();
+                        }
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "更新失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
+                }
+            }).start();
+        }
+
         @android.webkit.JavascriptInterface
         public void shareFile(String url, String name) {
             new Thread(() -> {

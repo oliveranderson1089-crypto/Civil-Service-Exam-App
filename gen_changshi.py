@@ -102,11 +102,14 @@ def cmd_seed(con, only_board=None):
 
 
 def cmd_daily(con):
-    """人文/科技 每日为「每个专题」各新增 2 条（去重），保证每天各板块都有当日新内容。"""
+    """一梯队（人文/科技/法律）每日为「每个专题」各新增 2 条（去重）。
+    法律的「其他新出法律」不在这里生成——真实新法交给每周 newlaw 从新闻源抓，避免编造。"""
     total = 0
-    for board in ("人文常识", "科技常识"):
+    for board in ("人文常识", "科技常识", "法律常识"):
         meta = META["boards"][board]
         for tm in meta["topics"]:
+            if board == "法律常识" and tm["name"] == "其他新出法律":
+                continue
             avoid = [r[0] for r in con.execute(
                 "SELECT title FROM changshi_items WHERE board=? AND topic=? ORDER BY id DESC LIMIT 120",
                 (board, tm["name"]))]

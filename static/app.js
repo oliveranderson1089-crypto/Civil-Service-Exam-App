@@ -68,11 +68,13 @@ const BOARD_FEATURES = {
   ],
   '应用文': [
     { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
+    { key: 'shenlun', name: '题型与批改', desc: '归纳概括/综合分析/提出对策/贯彻执行', icon: 'edit' },
   ],
   '议论文': [
     { key: 'sucai', name: '素材积累', desc: '每日更新 · 人物/事例/理论论据', icon: 'clip' },
     { key: 'lianjie', name: '衔接表达', desc: '过渡/转折/万能句式 不口语不重复', icon: 'quote' },
     { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
+    { key: 'shenlun', name: '大作文批改', desc: '立意/结构/论证/语言 四维评分', icon: 'feather' },
   ],
 };
 // 大板块（行测/申论）下的功能模块（预留，可扩展）
@@ -82,8 +84,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'sltype', 'slgrade', 'slresult'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '申论', sltype: '', slgrade: '', slresult: '批改结果' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -101,6 +103,8 @@ function back() { if (stack.length > 1) { stack.pop(); render(); } }
 function goHome() { stack = [{ view: 'home' }]; render(); }
 // 供安卓原生「返回/侧滑」调用：能退则退并返回 true，已在首页返回 false
 window.appBack = function () {
+  // 幻灯片播放优先退出
+  if (!$('#slideshow').classList.contains('hidden')) { closeSlideshow(); return true; }
   // AI 面板
   const aip = $('#ai-panel');
   if (aip && !aip.classList.contains('hidden')) { return aiBack(); }
@@ -140,6 +144,7 @@ async function init() {
         <div class="hc-desc">${esc(s.desc)}</div>
       </div>`).join('') + `
     <div class="home-card" data-go="changkao"><div class="hc-logo hc-ck">${IC.target || IC.bulb}</div><div class="hc-name">常考</div><div class="hc-desc">高频成语/实词/上位词/常识/提法</div></div>
+    <div class="home-card" data-go="shenlun"><div class="hc-logo hc-sl">${IC.edit}</div><div class="hc-name">申论</div><div class="hc-desc">四大题型讲义 · AI 逐点批改</div></div>
     <div class="home-card" data-go="notes"><div class="hc-logo">${IC.feather}</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 标签归类</div></div>
     <div class="home-card" data-go="kb"><div class="hc-logo">${IC.book}</div><div class="hc-name">知识库</div><div class="hc-desc">笔记本 · 文档 · 分组整理</div></div>
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
@@ -213,6 +218,7 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'tasks') openTasks();
   else if (g === 'quiz') openQuiz();
   else if (g === 'changkao') openChangkao();
+  else if (g === 'shenlun') openShenlun();
 });
 function openSection(key) {
   const sec = SECTIONS.find(s => s.key === key); if (!sec) return;
@@ -271,6 +277,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'changshi') openChangshi();
   else if (c.dataset.feat === 'works') openWorks();
   else if (c.dataset.feat === 'theory') openTheory();
+  else if (c.dataset.feat === 'shenlun') openShenlun();
   else if (c.dataset.feat === 'hyper') openCkBoard('上位词');
 });
 $('#nav-back').onclick = back;
@@ -754,7 +761,72 @@ function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
   const canRead = (ext === '.pdf' || OFFICE_EXT.includes(ext)) && viewerTextUrl;
   $('#viewer-mode').classList.toggle('hidden', !canRead);
   $('#viewer-mode').textContent = '阅读模式';
+  probeSlides(fileUrl);
 }
+
+/* ================= 幻灯片播放（逐页出图） =================
+   整份 PDF 十几 MB，家里上行只有一百多 KB/s，打开要一分多钟；
+   单页 JPEG 只有 100KB 上下，所以按需逐页拉图，翻到哪拉到哪。 */
+let ssMid = 0, ssTotal = 0, ssPage = 1;
+function probeSlides(fileUrl) {
+  $('#viewer-play').classList.add('hidden');
+  const m = /\/api\/materials\/(\d+)\/view/.exec(fileUrl || '');
+  if (!m) { ssMid = 0; return; }
+  const mid = +m[1];
+  api('/api/materials/' + mid + '/pages').then(d => {
+    if (!d.slides || !d.pages) return;
+    ssMid = mid; ssTotal = d.pages;
+    $('#viewer-play').textContent = d.ppt ? '▶ 播放' : '▶ 逐页看';
+    $('#viewer-play').classList.remove('hidden');
+  }).catch(() => {});
+}
+function ssUrl(n) { return '/api/materials/' + ssMid + '/page/' + n; }
+function ssPrefetch(n) { if (n >= 1 && n <= ssTotal) new Image().src = ssUrl(n); }
+function ssShow(n) {
+  if (!ssMid || n < 1 || n > ssTotal) return;
+  ssPage = n;
+  $('#ss-page').textContent = n + ' / ' + ssTotal;
+  $('#ss-load').classList.remove('hidden');
+  const img = $('#ss-img');
+  img.onload = () => { $('#ss-load').classList.add('hidden'); ssPrefetch(n + 1); ssPrefetch(n - 1); };
+  img.onerror = () => { $('#ss-load').textContent = '这一页加载失败'; };
+  img.src = ssUrl(n);
+}
+function openSlideshow() {
+  if (!ssMid || !ssTotal) return;
+  $('#slideshow').classList.remove('hidden');
+  document.body.classList.add('ss-open');
+  try { if (window.GongkaoNative && GongkaoNative.fullscreen) GongkaoNative.fullscreen(true); } catch (_) {}
+  ssShow(1);
+}
+function closeSlideshow() {
+  $('#slideshow').classList.add('hidden');
+  document.body.classList.remove('ss-open');
+  $('#ss-img').src = '';
+  try { if (window.GongkaoNative && GongkaoNative.fullscreen) GongkaoNative.fullscreen(false); } catch (_) {}
+}
+$('#viewer-play').onclick = openSlideshow;
+$('#ss-close').onclick = closeSlideshow;
+$('#ss-prev').onclick = () => ssShow(ssPage - 1);
+$('#ss-next').onclick = () => ssShow(ssPage + 1);
+$('#ss-hl').onclick = () => ssShow(ssPage - 1);
+$('#ss-hr').onclick = () => ssShow(ssPage + 1);
+document.addEventListener('keydown', e => {
+  if ($('#slideshow').classList.contains('hidden')) return;
+  if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') ssShow(ssPage + 1);
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') ssShow(ssPage - 1);
+  else if (e.key === 'Escape') closeSlideshow();
+});
+(function ssSwipe() {
+  let x0 = 0, y0 = 0;
+  const el = $('#slideshow');
+  el.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy)) ssShow(ssPage + (dx < 0 ? 1 : -1));
+    else if (dy > 90 && Math.abs(dy) > Math.abs(dx)) closeSlideshow();   // 下滑退出
+  }, { passive: true });
+})();
 let _viewerFull = false;
 function setViewerFull(on) {
   _viewerFull = on;
@@ -891,22 +963,61 @@ $('#upload-btn').onclick = () => {
 };
 $('#up-cancel').onclick = () => $('#upload-modal').classList.add('hidden');
 $('#upload-modal').addEventListener('click', e => { if (e.target.id === 'upload-modal') $('#upload-modal').classList.add('hidden'); });
+/* 带进度 + 断网重试的上传：服务器在家里，上行只有一百多 KB/s，
+   fetch 没有进度事件、一断就整个失败，所以这里用 XHR。 */
+function uploadXhr(fd, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/materials');
+    xhr.timeout = 15 * 60 * 1000;              // 大文件慢，给足时间
+    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(JSON.parse(xhr.responseText || '{}'));
+      let msg = '上传失败（' + xhr.status + '）';
+      try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {}
+      reject(new Error(msg));
+    };
+    xhr.onerror = () => reject(new Error('网络中断'));
+    xhr.ontimeout = () => reject(new Error('上传超时'));
+    xhr.send(fd);
+  });
+}
+function upProg(show, pct, txt) {
+  $('#up-prog').classList.toggle('hidden', !show);
+  if (!show) return;
+  $('#up-prog').querySelector('i').style.width = Math.round(pct * 100) + '%';
+  $('#up-prog').querySelector('.up-txt').textContent = txt;
+}
 $('#up-go').onclick = async () => {
   const files = [...$('#up-file').files];
   if (!files.length) { toast('请选择文件', true); return; }
   const board = $('#up-board').value, title = $('#up-title').value.trim();
   $('#up-go').disabled = true; $('#up-go').textContent = '上传中…';
+  $('#up-cancel').disabled = true;
   let ok = 0;
-  for (const file of files) {
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('board', board);
-    fd.append('section', '');
-    fd.append('title', files.length === 1 ? title : '');  // 多个文件各用文件名
-    try { await api('/api/materials', { method: 'POST', body: fd }); ok++; }
-    catch (e) { toast(file.name + '：' + e.message, true); }
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const label = files.length > 1 ? `(${i + 1}/${files.length}) ${file.name}` : file.name;
+    let done = false;
+    for (let attempt = 1; attempt <= 3 && !done; attempt++) {   // 网络抖动自动重试
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('board', board);
+      fd.append('section', '');
+      fd.append('title', files.length === 1 ? title : '');       // 多个文件各用文件名
+      try {
+        await uploadXhr(fd, p => upProg(true, p,
+          `${label} ${Math.round(p * 100)}%${attempt > 1 ? ' · 第' + attempt + '次尝试' : ''}`));
+        ok++; done = true;
+      } catch (e) {
+        if (attempt === 3) { toast(file.name + '：' + e.message, true); }
+        else { upProg(true, 0, label + ' 重试中…'); await new Promise(r => setTimeout(r, 1500)); }
+      }
+    }
   }
+  upProg(false);
   $('#up-go').disabled = false; $('#up-go').textContent = '上传';
+  $('#up-cancel').disabled = false;
   if (ok) { toast('上传成功 ' + ok + ' 个'); $('#upload-modal').classList.add('hidden'); loadMaterials(); }
 };
 /* 资料库拍照直接上传 */
@@ -1657,8 +1768,9 @@ async function loadClsDaily() {
 async function loadClsCats() {
   try {
     const d = await api('/api/classics/categories');
+    const total = (d.categories || []).reduce((a, c) => a + c.count, 0);
     $('#cls-cats').innerHTML =
-      `<button class="chip active" data-cc="">全部</button>` +
+      `<button class="chip active" data-cc="">全部${total ? ' ' + total : ''}</button>` +
       `<button class="chip" data-cc="__star">★ 收藏${d.star_count ? ' ' + d.star_count : ''}</button>` +
       d.categories.map(c => `<button class="chip" data-cc="${esc(c.name)}">${esc(c.name)} ${c.count}</button>`).join('');
   } catch (e) { toast(e.message, true); }
@@ -2077,6 +2189,7 @@ function hl(text, q) {
 const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能' };
 // 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
 const FEATURES = [
+  { name: '申论', desc: '四大题型讲义 · AI 逐点批改', kw: '申论归纳概括综合分析提出对策贯彻执行大作文批改阅卷采分点', open: () => openShenlun() },
   { name: '常考', desc: '高频成语/实词/上位词/古诗文/常识/提法', kw: '常考高频考点成语实词上位词提法', open: () => openChangkao() },
   { name: '上位词积累', desc: '常考 · 逻辑填空概括词提示', kw: '上位词概括词下位词逻辑填空', open: () => openCkBoard('上位词') },
   { name: '理论基础', desc: '政治理论 · 马原/毛概/中特/习思想', kw: '理论马原马克思毛概毛泽东思想邓小平三个代表科学发展观习近平新时代中特公基', open: () => openTheory() },
@@ -2708,6 +2821,155 @@ $('#tk-memsheet').addEventListener('click', e => {
   if (e.target.closest('[data-sheet-close]')) $('#tk-memsheet').classList.add('hidden');
 });
 
+/* ================= 申论：四大题型讲义 + AI 逐点批改 ================= */
+let slType = null, slResult = null;
+
+async function openShenlun() {
+  push({ view: 'shenlun', title: '申论' });
+  $('#sl-types').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/shenlun/types');
+    $('#sl-types').innerHTML = d.types.map(t => `
+      <div class="home-card" data-slt="${esc(t.key)}">
+        <div class="hc-logo" style="background:${t.color}">${IC[t.icon] || IC.edit}</div>
+        <div class="hc-name">${esc(t.name)}</div>
+        <div class="hc-desc">${esc(t.desc)}</div>
+      </div>`).join('');
+    loadSlHistory();
+  } catch (e) { $('#sl-types').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#sl-types').addEventListener('click', e => {
+  const c = e.target.closest('[data-slt]'); if (c) openSlType(c.dataset.slt);
+});
+
+async function loadSlHistory() {
+  try {
+    const d = await api('/api/shenlun/history');
+    $('#sl-hist-n').textContent = d.items.length ? d.items.length + ' 次' : '';
+    $('#sl-hist').innerHTML = d.items.length ? d.items.map(it => {
+      const pct = it.full ? it.score / it.full : 0;
+      const lv = pct >= 0.8 ? '优秀' : pct >= 0.6 ? '达标' : '待提升';
+      return `<div class="sl-hi" data-slr="${it.id}">
+        <div class="sl-hi-main">
+          <div class="sl-hi-t">${esc(it.type_name)} · ${esc(it.question)}</div>
+          <div class="sl-hi-m">${esc(it.created_at.slice(5, 16))} · ${lv}</div>
+        </div>
+        <div class="sl-hi-s ${pct >= 0.8 ? 'good' : pct >= 0.6 ? 'ok' : 'bad'}">${it.score}<span>/${it.full}</span></div>
+        <button class="sl-hi-del" data-sldel="${it.id}">🗑</button>
+      </div>`;
+    }).join('') : '<p class="empty">还没有批改记录，挑一个题型练一题吧～</p>';
+  } catch (_) {}
+}
+$('#sl-hist').addEventListener('click', async e => {
+  const del = e.target.closest('[data-sldel]');
+  if (del) {
+    e.stopPropagation();
+    if (!(await appConfirm('删除这条批改记录？'))) return;
+    try { await api('/api/shenlun/record/' + del.dataset.sldel, { method: 'DELETE' }); loadSlHistory(); }
+    catch (er) { toast(er.message, true); }
+    return;
+  }
+  const it = e.target.closest('[data-slr]');
+  if (it) openSlRecord(+it.dataset.slr);
+});
+
+async function openSlType(key) {
+  try {
+    const t = await api('/api/shenlun/type/' + key);
+    slType = t;
+    push({ view: 'sltype', title: t.name });
+    $('#slt-head').innerHTML = `<div class="slt-title" style="border-left-color:${t.color}">${esc(t.name)}</div>
+      <div class="slt-desc">${esc(t.desc)} · 满分参考 ${t.full} 分</div>`;
+    $('#slt-goals').innerHTML = `<div class="slt-sec">学习目标</div><ul>`
+      + t.goals.map(g => `<li>${esc(g)}</li>`).join('') + `</ul>`;
+    $('#slt-map').innerHTML = `<div class="slt-sec">本章知识导图</div>` + t.map.map(g => `
+      <div class="slm-group">
+        <div class="slm-gname" style="background:${t.color}">${esc(g.group)}</div>
+        ${g.rows.map(r => `<div class="slm-row">
+          <div class="slm-name">${esc(r.name)}</div>
+          <div class="slm-cells">${Object.keys(r).filter(k => k !== 'name').map(k =>
+            `<div class="slm-cell"><b>${esc(k)}</b>${esc(r[k])}</div>`).join('')}</div>
+        </div>`).join('')}
+      </div>`).join('');
+  } catch (e) { toast(e.message, true); }
+}
+$('#slt-go').onclick = () => { if (slType) openSlGrade(slType); };
+
+function openSlGrade(t) {
+  push({ view: 'slgrade', title: t.name + ' · 批改' });
+  $('#slg-type').innerHTML = `<span class="slg-badge" style="background:${t.color}">${esc(t.name)}</span>`;
+  $('#slg-full').value = t.full;
+  ['#slg-q', '#slg-m', '#slg-a'].forEach(id => { $(id).value = ''; });
+}
+$('#slg-go').onclick = async () => {
+  if (!slType) return;
+  const question = $('#slg-q').value.trim(), material = $('#slg-m').value.trim(), answer = $('#slg-a').value.trim();
+  if (!question) return toast('请填写题干', true);
+  if (answer.length < 10) return toast('请填写你的答案', true);
+  const btn = $('#slg-go');
+  btn.disabled = true; btn.textContent = '阅卷中…（20~40 秒）';
+  try {
+    const d = await api('/api/shenlun/grade', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: slType.key, question, material, answer, full: +$('#slg-full').value })
+    });
+    slResult = d;
+    renderSlResult(d, slType.name);
+    loadSlHistory();
+  } catch (e) { toast(e.message, true); }
+  btn.disabled = false; btn.textContent = '开始批改';
+};
+
+async function openSlRecord(rid) {
+  try {
+    const d = await api('/api/shenlun/record/' + rid);
+    renderSlResult(d.result, d.type_name);
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderSlResult(r, typeName) {
+  push({ view: 'slresult', title: '批改结果' });
+  const pct = r.full ? r.score / r.full : 0;
+  const lv = r.level || (pct >= 0.8 ? '优秀' : pct >= 0.6 ? '达标' : '待提升');
+  const grade = pct >= 0.8 ? 'good' : pct >= 0.6 ? 'ok' : 'bad';
+  $('#slr-score').innerHTML = `
+    <div class="slr-num"><b>${r.score}</b><span>/${r.full}</span></div>
+    <div class="slr-pct ${grade}">${Math.round(pct * 100)}%</div>
+    <div class="slr-stat">
+      <span class="slr-dot good"></span>命中 ${r.hit_n || 0}
+      <span class="slr-dot ok"></span>部分 ${r.part_n || 0}
+      <span class="slr-dot bad"></span>未中 ${r.miss_n || 0}
+    </div>
+    <div class="slr-lv ${grade}">${esc(lv)}</div>`;
+  $('#slr-points').innerHTML = (r.points || []).map((p, i) => {
+    const state = (p.misses && p.misses.length && !p.yours) ? 'bad'
+      : ((p.partial && p.partial.length) || (p.misses && p.misses.length)) ? 'ok' : 'good';
+    return `<div class="slp ${state}">
+      <div class="slp-head"><span class="slp-no">${i + 1}</span>
+        <span class="slp-name">${esc(p.name || '')}</span>
+        <span class="slp-score">${p.got}<i>/${p.max}</i></span></div>
+      ${p.yours ? `<div class="slp-yours"><b>你的：</b>${esc(p.yours)}</div>`
+      : `<div class="slp-yours slp-none">这一点没有作答</div>`}
+      ${(p.hits || []).map(h => `<div class="slp-li hit">✓ ${esc(h)}</div>`).join('')}
+      ${(p.partial || []).map(h => `<div class="slp-li part">— ${esc(h)}</div>`).join('')}
+      ${(p.misses || []).map(h => `<div class="slp-li miss">✕ ${esc(h)}</div>`).join('')}
+      ${p.material ? `<div class="slp-mat"><b>对照材料：</b>${esc(p.material)}</div>` : ''}
+    </div>`;
+  }).join('') + ((r.advice || []).length ? `<div class="slr-advice"><div class="slt-sec">改进建议</div><ul>`
+    + r.advice.map(a => `<li>${esc(a)}</li>`).join('') + `</ul></div>` : '');
+  $('#slr-ref').innerHTML = `<div class="slt-sec">参考答案（${esc(typeName || '')}）</div>
+    <div class="slr-reftext">${esc(r.reference || '（AI 未给出参考答案）').replace(/\n/g, '<br>')}</div>`;
+  slrTab('points');
+}
+function slrTab(t) {
+  document.querySelectorAll('.slr-tabs .tk-tab').forEach(x => x.classList.toggle('active', x.dataset.slrt === t));
+  $('#slr-points').classList.toggle('hidden', t !== 'points');
+  $('#slr-ref').classList.toggle('hidden', t !== 'ref');
+}
+document.querySelector('.slr-tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-slrt]'); if (b) slrTab(b.dataset.slrt);
+});
+
 /* ================= 常考（高频考点合集） + 上位词 ================= */
 async function openChangkao() {
   push({ view: 'changkao', title: '常考' });
@@ -2765,12 +3027,15 @@ function renderCkList() {
   const list = q ? ckItems.filter(it =>
     (it.title || '').includes(q) || (it.content || '').includes(q) || (it.note || '').includes(q)) : ckItems;
   if (!list.length) { $('#ckb-list').innerHTML = '<p class="empty">没有匹配的内容</p>'; return; }
-  $('#ckb-list').innerHTML = list.map(it => `
-    <div class="gk-card ck-item" data-cki="${it.id}">
-      <div class="cki-t">${esc(it.title)}${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
+  $('#ckb-list').innerHTML = list.map(it => {
+    const freq = it.freq && ckBoard === '成语' ? `<span class="cki-freq">考频 ${it.freq}</span>` : '';
+    const note = (it.note || '').replace(/^考频 \d+ 次(\s·\s)?/, '');   // 考频已单独成徽章
+    return `<div class="gk-card ck-item" data-cki="${it.id}">
+      <div class="cki-t">${esc(it.title)}${freq}${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
       ${it.content ? `<div class="cki-c">${esc(it.content)}</div>` : ''}
-      ${it.note ? `<div class="cki-n">${ckKind === 'classic' ? esc(it.note) : '💡 ' + esc(it.note)}</div>` : ''}
-    </div>`).join('');
+      ${note ? `<div class="cki-n">${ckKind === 'classic' ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
+    </div>`;
+  }).join('');
 }
 $('#ckb-search').addEventListener('input', renderCkList);
 $('#ckb-list').addEventListener('click', async e => {
@@ -2837,16 +3102,44 @@ const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文' 
 const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e' };
 const RV_INTERVALS = [1, 2, 4, 7, 15, 30, 60];
 let rvQueue = [], rvTotal = 0, rvDoneN = 0;
+/* 词语句子 / 每日积累 / 错题 各背各的，不混成一副牌 */
+let rvAll = [], rvGroup = 'word';
+const RV_GROUP_NAME = { word: '词语句子', daily: '每日积累', wrongq: '错题' };
 async function loadReview() {
   ['rv-empty', 'rv-card-wrap', 'rv-done'].forEach(id => $('#' + id).classList.add('hidden'));
   try {
     const d = await api('/api/review/today');
-    rvQueue = d.items; rvTotal = d.items.length; rvDoneN = 0;
-    if (!rvTotal) { $('#rv-empty').classList.remove('hidden'); refreshReviewBadge(); return; }
-    $('#rv-card-wrap').classList.remove('hidden');
-    rvShow();
+    rvAll = d.items || [];
+    const g = d.groups || {};
+    document.querySelectorAll('[data-rvg]').forEach(b => {
+      const n = g[b.dataset.rvg] || 0;
+      b.querySelector('.rv-n').textContent = n ? ' ' + n : '';
+      b.classList.toggle('rv-empty-tab', !n);
+    });
+    if (!rvAll.length) { $('#rv-empty').classList.remove('hidden'); refreshReviewBadge(); return; }
+    // 默认停在第一个有内容的板块
+    if (!(g[rvGroup] > 0)) rvGroup = ['word', 'daily', 'wrongq'].find(k => g[k] > 0) || 'word';
+    rvSelect(rvGroup);
   } catch (e) { toast(e.message, true); }
 }
+function rvSelect(group) {
+  rvGroup = group;
+  document.querySelectorAll('[data-rvg]').forEach(b => b.classList.toggle('active', b.dataset.rvg === group));
+  rvQueue = rvAll.filter(it => it.group === group);
+  rvTotal = rvQueue.length; rvDoneN = 0;
+  $('#rv-done').classList.add('hidden');
+  if (!rvTotal) {
+    $('#rv-card-wrap').classList.add('hidden');
+    $('#rv-empty').classList.remove('hidden');
+    return;
+  }
+  $('#rv-empty').classList.add('hidden');
+  $('#rv-card-wrap').classList.remove('hidden');
+  rvShow();
+}
+$('#rv-tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-rvg]'); if (b) rvSelect(b.dataset.rvg);
+});
 function openReview() { push({ view: 'review', title: '今日复习' }); loadReview(); }
 function rvShow() {
   if (!rvQueue.length) {
@@ -2884,8 +3177,20 @@ async function rvAnswer(result) {
     await api('/api/review/done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, result }) });
   } catch (e) { toast(e.message, true); rvQueue.unshift(it); return; }
   if (result === 'forget') { it.stage = 0; rvQueue.push(it); }   // 忘记：今日重现（排到队尾）
-  else rvDoneN++;
+  else {
+    rvDoneN++;
+    const i = rvAll.indexOf(it);
+    if (i >= 0) rvAll.splice(i, 1);            // 从总表里去掉，各板块的角标才会跟着减
+    rvUpdateCounts();
+  }
   rvShow();
+}
+function rvUpdateCounts() {
+  document.querySelectorAll('[data-rvg]').forEach(b => {
+    const n = rvAll.filter(x => x.group === b.dataset.rvg).length;
+    b.querySelector('.rv-n').textContent = n ? ' ' + n : '';
+    b.classList.toggle('rv-empty-tab', !n);
+  });
 }
 $('#rv-know').onclick = () => rvAnswer('know');
 $('#rv-fuzzy').onclick = () => rvAnswer('fuzzy');
@@ -3691,3 +3996,36 @@ function aiBack() {
   $('#ai-panel').classList.add('hidden');
   return true;
 }
+
+/* ================= 应用内更新（APK 直接下载并唤起安装） ================= */
+async function checkUpdate(manual) {
+  const native = window.GongkaoNative && typeof GongkaoNative.appVersion === 'function';
+  if (!native) { if (manual) toast('网页版会自动更新，无需手动升级'); return; }
+  let cur = 0;
+  try { cur = GongkaoNative.appVersion(); } catch (_) { return; }
+  let d;
+  try { d = await api('/api/app/version'); } catch (_) { if (manual) toast('检查更新失败', true); return; }
+  if (!d.available || !d.version_code || d.version_code <= cur) {
+    if (manual) toast('已是最新版本 (v' + (d.version_name || cur) + ')');
+    return;
+  }
+  if (!manual && localStorage.getItem('skipUpdate') === String(d.version_code)) return;  // 这一版说过「以后再说」
+  $('#upd-ver').textContent = 'v' + (d.version_name || d.version_code);
+  $('#upd-notes').textContent = d.notes || '修复问题、优化体验。';
+  $('#upd-size').textContent = d.size
+    ? '安装包 ' + (d.size >= 1048576 ? (d.size / 1048576).toFixed(1) + ' MB' : Math.round(d.size / 1024) + ' KB')
+    : '';
+  $('#upd-modal').classList.remove('hidden');
+  $('#upd-later').onclick = () => {
+    localStorage.setItem('skipUpdate', String(d.version_code));
+    $('#upd-modal').classList.add('hidden');
+  };
+  $('#upd-go').onclick = () => {
+    $('#upd-modal').classList.add('hidden');
+    try { GongkaoNative.updateApp(location.origin + d.url); }
+    catch (_) { toast('更新失败，请到浏览器下载', true); }
+  };
+}
+$('#acct-update').onclick = () => checkUpdate(true);
+setTimeout(() => checkUpdate(false), 3500);   // 启动后台静默检查一次
+window.checkUpdate = checkUpdate;
