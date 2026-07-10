@@ -1832,3 +1832,37 @@ body.dark .dqd-f.primary{border-color:var(--blue) !important;color:#7fb3e8 !impo
 body.dark .dq-opt{color:#98a2b3 !important;}
 body.dark .dq-bar{background:#232c3d;}
 .slp-mat b{margin-right:4px;}
+
+/* ===================== 备考规划 ===================== */
+.pl-setup select,.pl-setup input{width:100%;border:1.5px solid var(--line);border-radius:10px;
+  padding:11px 12px;font-size:14.5px;font-family:inherit;outline:none;background:#fff;}
+.pl-setup select:focus,.pl-setup input:focus{border-color:var(--blue);}
+.pl-setup .slt-go{margin-top:20px;}
+
+.pl-head{background:linear-gradient(135deg,#1a6fb5,#4bb0f0);border-radius:14px;
+  padding:15px 16px;color:#fff;margin-bottom:12px;}
+.pl-days{font-size:16px;font-weight:700;}
+.pl-days b{font-size:26px;font-weight:800;margin:0 3px;font-variant-numeric:tabular-nums;}
+.pl-meta{font-size:12.5px;opacity:.9;margin-top:5px;}
+.pl-summary{background:#eef4fb;border-radius:10px;padding:11px 13px;font-size:13.5px;
+  color:#1f2733;line-height:1.7;margin-bottom:12px;}
+.pl-item{align-items:flex-start;}
+.pl-item .tk-check{margin-top:2px;}
+.pl-title{display:block;font-size:15px;color:#1f2733;line-height:1.55;}
+.pl-item.done .pl-title{color:#9aa4b2;text-decoration:line-through;}
+.pl-tags{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:6px;}
+.pl-mod{font-style:normal;font-size:11px;font-weight:700;color:#fff;border-radius:7px;padding:2px 8px;}
+.pl-min{font-style:normal;font-size:11.5px;color:#8a93a2;font-variant-numeric:tabular-nums;}
+.pl-go{font-style:normal;font-size:11.5px;font-weight:700;color:var(--blue);
+  background:#eef4fb;border-radius:7px;padding:2px 8px;cursor:pointer;}
+.pl-go:active{background:#dbe7f5;}
+.pl-acts{display:flex;align-items:center;gap:10px;margin:16px 0 14px;}
+.pl-acts .btn.primary{flex:1;padding:12px;font-size:15px;}
+.pl-acts .btn.tiny{float:none;margin:0;flex:none;}
+
+body.dark .pl-setup select,body.dark .pl-setup input{background:#1a2130 !important;
+  border-color:#2a3345 !important;color:#e2e7ef !important;}
+body.dark .pl-summary{background:#182338 !important;color:#dbe3f0 !important;}
+body.dark .pl-title{color:#e2e7ef !important;}
+body.dark .pl-go{background:#232c3d !important;color:#7fb3e8 !important;}
+body.dark .pl-min{color:#98a2b3 !important;}

@@ -2198,6 +2198,7 @@ function hl(text, q) {
 const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能' };
 // 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
 const FEATURES = [
+  { name: '备考规划', desc: '任务清单 · AI 按你的学情排当天计划', kw: '规划助手备考计划学习计划每日计划安排时间距考试', open: () => { openTasks(); setTimeout(() => tkSwitch('plan'), 60); } },
   { name: '范文推荐', desc: '申论 · 热门话题仿真卷 + 全套参考答案', kw: '范文推荐大作文议论文应用文参考答案话题基层治理科技创新乡村振兴', open: () => openEssays() },
   { name: '题目解析', desc: '题库 · 上传讲义让 AI 解出没答案的例题', kw: '题目解析讲义识题答案解析上传pdfword副本', open: () => openDocqa() },
   { name: '真题批改', desc: '申论 · 四大题型讲义 + AI 逐点批改', kw: '申论真题批改归纳概括综合分析提出对策贯彻执行大作文阅卷采分点范文', open: () => openShenlun() },
@@ -2720,15 +2721,137 @@ $('#sc-kinds').addEventListener('click', e => {
 });
 
 /* ============= 任务清单（每日任务 + 互监待办） ============= */
-function openTasks() { push({ view: 'tasks', title: '任务清单' }); tkSwitch('daily'); }
+function openTasks() { push({ view: 'tasks', title: '任务清单' }); tkSwitch('plan'); }
 function tkSwitch(t) {
-  document.querySelectorAll('.tk-tab').forEach(x => x.classList.toggle('active', x.dataset.tkt === t));
-  $('#tk-daily').classList.toggle('hidden', t !== 'daily');
-  $('#tk-shared').classList.toggle('hidden', t !== 'shared');
-  if (t === 'daily') loadDaily(); else loadShared();
+  // 必须限定在本视图内：.tk-tab 这个类名被范文/批改/复习那几组页签复用，
+  // 全局 querySelectorAll 会把它们的高亮一起清掉
+  document.querySelectorAll('#view-tasks .tk-tab').forEach(x => x.classList.toggle('active', x.dataset.tkt === t));
+  ['plan', 'daily', 'shared'].forEach(k => $('#tk-' + k).classList.toggle('hidden', k !== t));
+  if (t === 'plan') loadPlan(); else if (t === 'daily') loadDaily(); else loadShared();
 }
 $('#view-tasks').addEventListener('click', e => {
   const tab = e.target.closest('[data-tkt]'); if (tab) tkSwitch(tab.dataset.tkt);
+});
+
+/* ================= 备考规划：AI 按真实学情排当天计划 ================= */
+const PL_MOD_COLOR = {
+  '复习': '#12b886', '错题': '#c0392b', '申论': '#c92a2a', '常识判断': '#e8590c',
+  '言语理解': '#2b6fd6', '数量关系': '#7a5cc0', '资料分析': '#0b7285', '判断推理': '#5b6cf0',
+  '政治理论': '#b7791f',
+};
+let plProfile = null, plEditing = false;
+
+async function loadPlan() {
+  try {
+    const d = await api('/api/plan/today');
+    plProfile = d.profile;
+    const has = !!plProfile;
+    if (has) renderPlan(d);
+    if (plEditing) return;          // 用户正在改备考信息，别把设置页收起来
+    $('#pl-setup').classList.toggle('hidden', has);
+    $('#pl-main').classList.toggle('hidden', !has);
+    if (!has) await fillPlanExams();
+  } catch (e) { toast(e.message, true); }
+}
+async function fillPlanExams() {
+  try {
+    const d = await api('/api/plan/profile');
+    $('#pl-exam').innerHTML = d.exams.map(x => `<option>${esc(x)}</option>`).join('');
+    if (d.profile) {
+      $('#pl-exam').value = d.profile.exam || '';
+      $('#pl-date').value = d.profile.exam_date || '';
+      $('#pl-min').value = d.profile.minutes || 120;
+      $('#pl-weak').value = d.profile.weak || '';
+      $('#pl-note').value = d.profile.note || '';
+    }
+  } catch (_) {}
+}
+function renderPlan(d) {
+  const p = d.profile;
+  const days = p.days_left;
+  const dayTag = days === null ? '未设考试日期'
+    : days < 0 ? '已考完' : days === 0 ? '就是今天！' : `距${esc(p.exam)}还有 <b>${days}</b> 天`;
+  $('#pl-head').innerHTML = `<div class="pl-days">${dayTag}</div>
+    <div class="pl-meta">今天可学 ${p.minutes} 分钟${p.weak ? ' · 薄弱：' + esc(p.weak) : ''}</div>`;
+
+  if (d.summary) {
+    $('#pl-summary').innerHTML = `💡 ${esc(d.summary)}`;
+    $('#pl-summary').classList.remove('hidden');
+  } else $('#pl-summary').classList.add('hidden');
+
+  $('#pl-prog').textContent = d.total
+    ? `今日进度 ${d.done_n} / ${d.total} · ${d.minutes_done} / ${d.minutes_total} 分钟${d.done_n === d.total ? ' 🎉 全部完成！' : ''}`
+    : '';
+
+  $('#pl-list').innerHTML = d.items.length ? d.items.map(it => {
+    const col = PL_MOD_COLOR[it.module] || '#6b7280';
+    return `<div class="tk-item pl-item ${it.done ? 'done' : ''}" data-pl="${it.id}">
+      <span class="tk-check">${it.done ? '✓' : ''}</span>
+      <span class="tk-text">
+        <span class="pl-title">${esc(it.title)}</span>
+        <span class="pl-tags">
+          ${it.module ? `<i class="pl-mod" style="background:${col}">${esc(it.module)}</i>` : ''}
+          <i class="pl-min">${it.minutes} 分钟</i>
+          ${it.link ? `<i class="pl-go" data-plgo="${esc(it.link)}">去做 ›</i>` : ''}
+        </span>
+        ${it.reason ? `<span class="tk-who">${esc(it.reason)}</span>` : ''}
+      </span>
+      <button class="tk-del" data-pldel="${it.id}">🗑</button>
+    </div>`;
+  }).join('') : '<p class="empty">今天还没有计划。点下面的按钮，规划助手会看着你的复习进度和错题给你排一份。</p>';
+}
+$('#pl-save').onclick = async () => {
+  const body = {
+    exam: $('#pl-exam').value, exam_date: $('#pl-date').value,
+    minutes: +$('#pl-min').value || 120,
+    weak: $('#pl-weak').value.trim(), note: $('#pl-note').value.trim(),
+  };
+  try {
+    await api('/api/plan/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    plEditing = false;
+    toast('已保存');
+    loadPlan();
+  } catch (e) { toast(e.message, true); }
+};
+$('#pl-edit').onclick = async () => {
+  plEditing = true;
+  await fillPlanExams();
+  $('#pl-setup').classList.remove('hidden');
+  $('#pl-main').classList.add('hidden');
+};
+$('#pl-gen').onclick = async () => {
+  const b = $('#pl-gen');
+  b.disabled = true; b.textContent = '规划助手思考中…';
+  try {
+    const d = await api('/api/plan/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    plProfile = d.profile;
+    renderPlan(d);
+    toast('已排好 ' + d.total + ' 条');
+  } catch (e) { toast(e.message, true); }
+  b.disabled = false; b.textContent = '✨ 让规划助手排今天的计划';
+};
+$('#pl-add').onclick = async () => {
+  const v = $('#pl-in').value.trim(); if (!v) return;
+  try {
+    await api('/api/plan/item', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) });
+    $('#pl-in').value = ''; loadPlan();
+  } catch (e) { toast(e.message, true); }
+};
+$('#pl-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#pl-add').click(); });
+$('#pl-list').addEventListener('click', async e => {
+  const go = e.target.closest('[data-plgo]');
+  if (go) { e.stopPropagation(); ntfGo(go.dataset.plgo); return; }   // 复用消息中心那套跳转
+  const del = e.target.closest('[data-pldel]');
+  if (del) {
+    e.stopPropagation();
+    if (!(await appConfirm('删除这条计划？'))) return;
+    try { await api('/api/plan/' + del.dataset.pldel, { method: 'DELETE' }); loadPlan(); }
+    catch (er) { toast(er.message, true); }
+    return;
+  }
+  const it = e.target.closest('[data-pl]'); if (!it) return;
+  try { await api('/api/plan/' + it.dataset.pl + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadPlan(); }
+  catch (er) { toast(er.message, true); }
 });
 async function loadDaily() {
   $('#tk-daily-list').innerHTML = '<p class="empty">加载中…</p>';
@@ -4193,7 +4316,7 @@ window.checkUpdate = checkUpdate;
 /* ================= 消息中心：有新内容就提醒，点开直达对应位置 ================= */
 const NTF_ICON = {
   changshi: '💡', newlaw: '⚖️', news: '📰', xiyu: '✒️', sucai: '📎',
-  gaikuo: '📝', review: '⏰', tasks: '📋', quiz: '🧩',
+  gaikuo: '📝', review: '⏰', tasks: '📋', quiz: '🧩', plan: '📅',
 };
 /* link 形如 "changshi" 或 "changshi:法律常识" */
 let _ntfTries = 0;

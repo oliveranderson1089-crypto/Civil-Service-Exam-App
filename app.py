@@ -535,7 +535,27 @@ def init_db():
             answer TEXT, explain TEXT, qtype TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_dq_task ON doc_questions(task_id, page, seq);
+        -- 备考规划：一份个人档案 + 每天一份 AI 排的学习计划
+        CREATE TABLE IF NOT EXISTS plan_profile(
+            user_id INTEGER PRIMARY KEY,
+            exam TEXT, exam_date TEXT, minutes INTEGER DEFAULT 120,
+            weak TEXT, note TEXT,
+            summary TEXT, summary_date TEXT,
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS plan_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            date TEXT NOT NULL, seq INTEGER, title TEXT, module TEXT,
+            minutes INTEGER, reason TEXT, link TEXT,
+            done INTEGER DEFAULT 0, done_at TEXT, source TEXT DEFAULT 'ai',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_plan_user ON plan_items(user_id, date, seq);
     """)
+    # 备考规划：把 AI 给出的今日重点存下来，刷新后还能看到
+    for col in ("summary", "summary_date"):
+        if col not in _cols(con, "plan_profile"):
+            con.execute("ALTER TABLE plan_profile ADD COLUMN %s TEXT" % col)
     # 批改记录挂到真题卷上，并记下字数与题目要求的字数区间
     for col, typ in (("paper_id", "INTEGER"), ("question_id", "INTEGER"),
                      ("words", "INTEGER"), ("word_min", "INTEGER"), ("word_max", "INTEGER"),
@@ -3803,6 +3823,244 @@ def docqa_task_del(tid):
     return jsonify({"ok": True})
 
 
+# ---------------------------------------------------------------- 备考规划（AI 按你的真实学习数据排当天计划）
+PLAN_EXAMS = ["四川省考", "国考", "事业单位", "其他"]
+
+# 计划条目可以直达 App 里的对应功能，和消息中心用同一套 link 约定
+PLAN_LINKS = ["review", "quiz", "changshi", "news", "sucai", "gaikuo",
+              "wrongq", "idiom", "changkao", "shenlun", "classics", "theory", ""]
+
+
+def _plan_days_left(exam_date):
+    if not exam_date:
+        return None
+    try:
+        d = datetime.strptime(exam_date[:10], "%Y-%m-%d").date()
+        return (d - datetime.now().date()).days
+    except Exception:
+        return None
+
+
+def _plan_stats(db, today):
+    """给 AI 的「学情快照」：全部来自真实数据，不让它凭空想象。"""
+    st = {}
+    due = _review_due(db, uid(), today)
+    g = {"word": 0, "daily": 0, "wrongq": 0}
+    for it in due:
+        g[RV_GROUP.get(it["kind"], "wrongq")] += 1
+    st["review_due"] = len(due)
+    st["review_groups"] = g
+
+    st["wrong_by_board"] = {r["board"]: r["c"] for r in db.execute(
+        "SELECT COALESCE(NULLIF(board,''),'未分类') board, COUNT(*) c FROM wrong_questions "
+        "WHERE user_id=? GROUP BY board ORDER BY c DESC", (uid(),))}
+
+    st["quiz_undone"] = db.execute(
+        "SELECT COUNT(*) FROM quiz_sets s WHERE NOT EXISTS("
+        " SELECT 1 FROM quiz_answers a JOIN quiz_questions q ON q.id=a.qid "
+        " WHERE q.set_id=s.id AND a.user_id=?)", (uid(),)).fetchone()[0]
+
+    st["new_today"] = {
+        "常识积累": db.execute("SELECT COUNT(*) FROM changshi_items WHERE date=?", (today,)).fetchone()[0],
+        "每日时政": db.execute("SELECT COUNT(*) FROM news_items WHERE date(created_at)=?", (today,)).fetchone()[0],
+        "议论文素材": db.execute("SELECT COUNT(*) FROM sucai_items WHERE date=?", (today,)).fetchone()[0],
+        "概括句": db.execute("SELECT COUNT(*) FROM gaikuo_items WHERE date=?", (today,)).fetchone()[0],
+    }
+    st["entries"] = db.execute("SELECT COUNT(*) FROM entries WHERE user_id=?", (uid(),)).fetchone()[0]
+    st["daily_tasks"] = [r["text"] for r in db.execute(
+        "SELECT text FROM task_templates WHERE user_id=? AND active=1 ORDER BY sort,id", (uid(),))]
+    st["graded"] = db.execute("SELECT COUNT(*) FROM shenlun_grade WHERE user_id=?", (uid(),)).fetchone()[0]
+    return st
+
+
+@app.get("/api/plan/profile")
+def plan_profile_get():
+    r = get_db().execute("SELECT * FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    d = dict(r) if r else None
+    if d:
+        d["days_left"] = _plan_days_left(d.get("exam_date"))
+    return jsonify({"profile": d, "exams": PLAN_EXAMS})
+
+
+@app.post("/api/plan/profile")
+def plan_profile_set():
+    d = request.get_json(silent=True) or {}
+    exam = (d.get("exam") or "").strip() or "四川省考"
+    exam_date = (d.get("exam_date") or "").strip()
+    try:
+        minutes = max(20, min(720, int(d.get("minutes") or 120)))
+    except Exception:
+        minutes = 120
+    db = get_db()
+    db.execute("INSERT INTO plan_profile(user_id,exam,exam_date,minutes,weak,note,updated_at) "
+               "VALUES(?,?,?,?,?,?,datetime('now','localtime')) "
+               "ON CONFLICT(user_id) DO UPDATE SET exam=excluded.exam, exam_date=excluded.exam_date, "
+               "minutes=excluded.minutes, weak=excluded.weak, note=excluded.note, "
+               "updated_at=excluded.updated_at",
+               (uid(), exam, exam_date, minutes,
+                (d.get("weak") or "").strip()[:120], (d.get("note") or "").strip()[:200]))
+    db.commit()
+    return plan_profile_get()
+
+
+@app.get("/api/plan/today")
+def plan_today():
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    p = db.execute("SELECT * FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    prof = dict(p) if p else None
+    if prof:
+        prof["days_left"] = _plan_days_left(prof.get("exam_date"))
+    rows = db.execute("SELECT * FROM plan_items WHERE user_id=? AND date=? ORDER BY seq, id",
+                      (uid(), today)).fetchall()
+    items = [dict(r) for r in rows]
+    # 重点只属于生成它的那一天，隔天不再显示
+    summary = (prof or {}).get("summary") if (prof or {}).get("summary_date") == today else ""
+    return jsonify({
+        "date": today, "profile": prof, "items": items, "summary": summary or "",
+        "done_n": sum(1 for x in items if x["done"]),
+        "total": len(items),
+        "minutes_total": sum(x["minutes"] or 0 for x in items),
+        "minutes_done": sum((x["minutes"] or 0) for x in items if x["done"]),
+        "stats": _plan_stats(db, today),
+    })
+
+
+PLAN_SYS = ("你是公考备考规划师。只根据给出的「学情快照」排计划，不编造学生没有的数据；"
+            "任务要具体到可执行（写清做什么、做多少），总时长贴近可用时间。严格输出 JSON。")
+
+
+@app.post("/api/plan/generate")
+def plan_generate():
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    p = db.execute("SELECT * FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    if not p:
+        return jsonify({"error": "请先填写备考信息（考试、日期、每天可学时长）"}), 400
+
+    days = _plan_days_left(p["exam_date"])
+    st = _plan_stats(db, today)
+    minutes = p["minutes"] or 120
+
+    phase = "基础打底"
+    if days is None:
+        phase = "常规推进"
+    elif days <= 14:
+        phase = "冲刺（以真题、错题、时政为主，少上新知识）"
+    elif days <= 45:
+        phase = "强化（模块专项 + 套卷训练）"
+    elif days <= 120:
+        phase = "提高（补短板 + 积累）"
+
+    prompt = (
+        "【备考信息】\n考试：%s\n距考试：%s\n今天可学习：%d 分钟\n薄弱环节：%s\n备注：%s\n阶段：%s\n\n"
+        "【学情快照·今天】\n"
+        "· 遗忘曲线到期需复习：%d 条（词语句子 %d / 每日积累 %d / 错题 %d）\n"
+        "· 错题分布：%s\n"
+        "· 题库里还没做过的套卷：%d 套\n"
+        "· 今天新增内容：常识 %d 条、时政 %d 条、议论文素材 %d 条、概括句 %d 条\n"
+        "· 已收录成语词语：%d 条；申论批改记录：%d 次\n"
+        "· 用户已有的每日固定打卡：%s\n\n"
+        "请为今天排一份学习计划：\n"
+        "· 4~6 条任务，总时长控制在 %d 分钟上下（可 ±10%%）；\n"
+        "· 到期复习和错题优先安排，其次补薄弱环节，再安排当天新增内容的积累；\n"
+        "· 不要和「已有的每日固定打卡」重复；\n"
+        "· 每条写清楚做什么、做多少（如「做 15 道图形推理并订正」）；\n"
+        "· reason 一句话说明为什么现在做这件事（引用上面的数字）；\n"
+        "· link 从这个列表里选一个最相关的，选不出就填空字符串：%s\n"
+        "· module 填所属模块（如「言语理解」「常识判断」「申论」「复习」「错题」）。\n"
+        '只输出 JSON：{"summary":"一句话today的重点","items":[{"title":"","module":"","minutes":30,"reason":"","link":""}]}'
+        % (p["exam"], ("%d 天" % days) if days is not None else "未设置考试日期",
+           minutes, p["weak"] or "未填写", p["note"] or "无", phase,
+           st["review_due"], st["review_groups"]["word"], st["review_groups"]["daily"],
+           st["review_groups"]["wrongq"],
+           (", ".join("%s %d 道" % (k, v) for k, v in st["wrong_by_board"].items()) or "暂无错题"),
+           st["quiz_undone"],
+           st["new_today"]["常识积累"], st["new_today"]["每日时政"],
+           st["new_today"]["议论文素材"], st["new_today"]["概括句"],
+           st["entries"], st["graded"],
+           ("、".join(st["daily_tasks"]) or "无"),
+           minutes, "/".join(x for x in PLAN_LINKS if x)))
+
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": PLAN_SYS}, {"role": "user", "content": prompt}],
+        temperature=0.4, max_tokens=2000, timeout=180, json_mode=True)
+    if err:
+        return err
+    try:
+        d = json.loads(rep)
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+
+    items = [x for x in (d.get("items") or []) if (x.get("title") or "").strip()][:8]
+    if not items:
+        return jsonify({"error": "AI 没有排出计划，请重试"}), 502
+
+    # 重排会覆盖今天「AI 排的」那部分，手动加的条目保留
+    db.execute("DELETE FROM plan_items WHERE user_id=? AND date=? AND source='ai'", (uid(), today))
+    base = db.execute("SELECT COALESCE(MAX(seq),0) FROM plan_items WHERE user_id=? AND date=?",
+                      (uid(), today)).fetchone()[0]
+    for i, x in enumerate(items, 1):
+        link = (x.get("link") or "").strip()
+        if link not in PLAN_LINKS:
+            link = ""
+        try:
+            mins = max(5, min(300, int(x.get("minutes") or 20)))
+        except Exception:
+            mins = 20
+        db.execute("INSERT INTO plan_items(user_id,date,seq,title,module,minutes,reason,link,source) "
+                   "VALUES(?,?,?,?,?,?,?,?,'ai')",
+                   (uid(), today, base + i, (x.get("title") or "").strip()[:120],
+                    (x.get("module") or "").strip()[:20], mins,
+                    (x.get("reason") or "").strip()[:200], link))
+    db.execute("UPDATE plan_profile SET summary=?, summary_date=? WHERE user_id=?",
+               ((d.get("summary") or "").strip()[:200], today, uid()))
+    db.commit()
+    return jsonify(plan_today().get_json())
+
+
+@app.post("/api/plan/item")
+def plan_item_add():
+    d = request.get_json(silent=True) or {}
+    title = (d.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "请输入任务"}), 400
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    seq = db.execute("SELECT COALESCE(MAX(seq),0)+1 FROM plan_items WHERE user_id=? AND date=?",
+                     (uid(), today)).fetchone()[0]
+    try:
+        mins = max(5, min(300, int(d.get("minutes") or 20)))
+    except Exception:
+        mins = 20
+    db.execute("INSERT INTO plan_items(user_id,date,seq,title,module,minutes,reason,link,source) "
+               "VALUES(?,?,?,?,?,?,'','','manual')",
+               (uid(), today, seq, title[:120], (d.get("module") or "").strip()[:20], mins))
+    db.commit()
+    return jsonify({"ok": True}), 201
+
+
+@app.post("/api/plan/<int:pid>/toggle")
+def plan_toggle(pid):
+    db = get_db()
+    r = db.execute("SELECT done FROM plan_items WHERE id=? AND user_id=?", (pid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    on = not r["done"]
+    db.execute("UPDATE plan_items SET done=?, done_at=CASE WHEN ? THEN datetime('now','localtime') END "
+               "WHERE id=?", (1 if on else 0, 1 if on else 0, pid))
+    db.commit()
+    return jsonify({"done": on})
+
+
+@app.delete("/api/plan/<int:pid>")
+def plan_del(pid):
+    db = get_db()
+    db.execute("DELETE FROM plan_items WHERE id=? AND user_id=?", (pid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
 # ---------------------------------------------------------------- 消息中心（有新内容就提醒，点开直达）
 def _n(db, kind, dkey, title, body, link):
     """写一条通知；同一个用户、同一类、同一天只会有一条。"""
@@ -3861,6 +4119,18 @@ def _gen_notifications(db):
             g[RV_GROUP.get(it["kind"], "wrongq")] += 1
         _n(db, "review", today, "今天有 %d 条要复习" % len(due),
            "词语句子 %d · 每日积累 %d · 错题 %d" % (g["word"], g["daily"], g["wrongq"]), "review")
+
+    # 今日学习计划
+    pl = db.execute("SELECT COUNT(*) n, SUM(done) d, SUM(minutes) m FROM plan_items "
+                    "WHERE user_id=? AND date=?", (uid(), today)).fetchone()
+    if pl and pl["n"]:
+        undone = pl["n"] - (pl["d"] or 0)
+        if undone:
+            _n(db, "plan", today, "今日计划还剩 %d 项" % undone,
+               "共 %d 项 · %d 分钟，已完成 %d 项" % (pl["n"], pl["m"] or 0, pl["d"] or 0), "tasks")
+    elif db.execute("SELECT 1 FROM plan_profile WHERE user_id=?", (uid(),)).fetchone():
+        _n(db, "plan", today, "今天还没有学习计划",
+           "让规划助手看着你的复习进度和错题排一份", "tasks")
 
     # 每日任务未打卡
     tpls = db.execute("SELECT COUNT(*) FROM task_templates WHERE user_id=? AND active=1", (uid(),)).fetchone()[0]

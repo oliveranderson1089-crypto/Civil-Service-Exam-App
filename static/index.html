@@ -672,10 +672,42 @@
   <!-- ===== 任务清单（每日任务 + 互监待办） ===== -->
   <section id="view-tasks" class="view hidden">
     <div class="tk-tabs">
-      <button class="tk-tab active" data-tkt="daily">📋 每日任务</button>
+      <button class="tk-tab active" data-tkt="plan">📅 备考规划</button>
+      <button class="tk-tab" data-tkt="daily">📋 每日任务</button>
       <button class="tk-tab" data-tkt="shared">🤝 互监待办</button>
     </div>
-    <div id="tk-daily" class="tk-pane">
+
+    <div id="tk-plan" class="tk-pane">
+      <!-- 没填备考信息时先填 -->
+      <div id="pl-setup" class="pl-setup hidden">
+        <div class="pd-intro">告诉规划助手几件事，它会结合你的复习进度、错题分布、当天新增内容，排出今天该学什么。</div>
+        <label class="slg-lb">考什么 <span></span></label>
+        <select id="pl-exam"></select>
+        <label class="slg-lb">考试日期 <span>（用来判断你处在哪个备考阶段）</span></label>
+        <input id="pl-date" type="date">
+        <label class="slg-lb">今天能学多久 <span>（分钟）</span></label>
+        <input id="pl-min" type="number" min="20" max="720" step="10" value="120">
+        <label class="slg-lb">薄弱环节 <span>（选填，如：数量关系、资料分析）</span></label>
+        <input id="pl-weak" type="text" placeholder="哪些模块最没把握？">
+        <label class="slg-lb">备注 <span>（选填，如：只有晚上能学）</span></label>
+        <input id="pl-note" type="text" placeholder="有什么要规划助手注意的？">
+        <button class="btn primary slt-go" id="pl-save">保存并开始规划</button>
+      </div>
+
+      <!-- 已有档案 -->
+      <div id="pl-main" class="hidden">
+        <div id="pl-head" class="pl-head"></div>
+        <div id="pl-summary" class="pl-summary hidden"></div>
+        <div id="pl-prog" class="tk-prog"></div>
+        <div id="pl-list" class="tk-list"></div>
+        <div class="pl-acts">
+          <button class="btn primary" id="pl-gen">✨ 让规划助手排今天的计划</button>
+          <button class="btn tiny" id="pl-edit">⚙️ 备考信息</button>
+        </div>
+        <div class="tk-add"><input id="pl-in" placeholder="自己加一条…"><button class="btn primary" id="pl-add">添加</button></div>
+      </div>
+    </div>
+    <div id="tk-daily" class="tk-pane hidden">
       <div class="pd-intro">你自定义的每日任务，每天清零重打卡（如"背10个成语""做1篇资料分析"）</div>
       <div id="tk-daily-prog" class="tk-prog"></div>
       <div id="tk-daily-list" class="tk-list"></div>
