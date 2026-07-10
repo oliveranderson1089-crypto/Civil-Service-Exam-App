@@ -27,6 +27,7 @@
     <span id="top-title">公考助手</span>
   </div>
   <div class="topbar-actions">
+    <button id="notify-btn" class="logout notify-btn" title="消息">🔔<span id="notify-dot" class="notify-dot hidden"></span></button>
     <button id="home-btn" class="logout" title="回到首页">首页</button>
     <button id="account-btn" class="logout" title="账户 / 个人信息">账户</button>
     <button id="admin-btn" class="logout hidden" title="管理后台">后台</button>
@@ -526,6 +527,18 @@
       <button class="chip" data-sk="衔接表达">衔接表达</button>
     </div>
     <div id="sc-list" class="poly-list"></div>
+  </section>
+
+  <!-- ===== 消息中心 ===== -->
+  <section id="view-notify" class="view hidden">
+    <div class="ntf-head">
+      <span class="pd-intro">内容库更新、复习到点、任务未打卡，都会在这里提醒，点一下直接进去。</span>
+      <div class="ntf-acts">
+        <button class="btn tiny" id="ntf-readall">全部已读</button>
+        <button class="btn tiny" id="ntf-clear">清理已读</button>
+      </div>
+    </div>
+    <div id="ntf-list" class="ntf-list"></div>
   </section>
 
   <!-- ===== 申论（四大题型讲义 + AI 逐点批改） ===== -->

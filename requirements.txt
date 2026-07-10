@@ -3,6 +3,7 @@ flask
 waitress
 pypinyin
 reportlab
+pillow          # OCR 前的图像预处理（灰度 / 放大 / 去噪 / 透明底铺白）
+pillow-heif     # iPhone 的 HEIC / HEIF 图片
 # 仅构建时用到（生成图标 / 校验字体覆盖），运行可不装
-pillow
 fonttools

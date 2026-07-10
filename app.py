@@ -496,6 +496,15 @@ def init_db():
             full INTEGER, word_min INTEGER, word_max INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_slq_paper ON shenlun_questions(paper_id, seq);
+        -- 站内消息：内容库有更新、复习/任务到点，都在这里提醒，点开直达
+        CREATE TABLE IF NOT EXISTS notifications(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            kind TEXT, dkey TEXT, title TEXT, body TEXT, link TEXT,
+            read INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, kind, dkey)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ntf_user ON notifications(user_id, read, id DESC);
     """)
     # 批改记录挂到真题卷上，并记下字数与题目要求的字数区间
     for col, typ in (("paper_id", "INTEGER"), ("question_id", "INTEGER"),
@@ -3396,6 +3405,127 @@ def shenlun_type(key):
     if not t:
         return jsonify({"error": "没有这个题型"}), 404
     return jsonify(t)
+
+
+# ---------------------------------------------------------------- 消息中心（有新内容就提醒，点开直达）
+def _n(db, kind, dkey, title, body, link):
+    """写一条通知；同一个用户、同一类、同一天只会有一条。"""
+    db.execute("INSERT OR IGNORE INTO notifications(user_id,kind,dkey,title,body,link) "
+               "VALUES(?,?,?,?,?,?)", (uid(), kind, dkey, title, body, link))
+
+
+def _topic_brief(rows, n=3):
+    """把「板块·专题」列成一句人话：人文常识·文学常识、科技常识·物理常识 等"""
+    parts = ["%s·%s" % (r["board"], r["topic"]) for r in rows[:n]]
+    return "、".join(parts) + ("　等" if len(rows) > n else "")
+
+
+def _gen_notifications(db):
+    """按各内容库的当日数据现算通知——不用改那一堆定时脚本，也不会漏。"""
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # 常识积累（人文/科技/法律 每天新增）
+    rows = db.execute("SELECT board, topic, COUNT(*) c FROM changshi_items WHERE date=? "
+                      "GROUP BY board, topic ORDER BY c DESC", (today,)).fetchall()
+    if rows:
+        total = sum(r["c"] for r in rows)
+        _n(db, "changshi", today, "常识积累更新了 %d 条" % total,
+           _topic_brief(rows), "changshi")
+
+    # 新出法律单独提醒（考前一年新法是必考点）
+    nl = db.execute("SELECT title FROM changshi_items WHERE date=? AND board='法律常识' "
+                    "AND topic='其他新出法律'", (today,)).fetchall()
+    if nl:
+        _n(db, "newlaw", today, "新增 %d 部新法要点" % len(nl),
+           "、".join(r["title"] for r in nl[:3]), "changshi:法律常识")
+
+    # 每日时政
+    c = db.execute("SELECT COUNT(*) FROM news_items WHERE date(created_at)=?", (today,)).fetchone()[0]
+    if c:
+        _n(db, "news", today, "每日时政更新了 %d 条" % c, "党内 / 国内 / 四川 / 国际", "news")
+
+    # 习语金句
+    c = db.execute("SELECT COUNT(*) FROM xiyu_items WHERE date=?", (today,)).fetchone()[0]
+    if c:
+        _n(db, "xiyu", today, "习语金句更新了 %d 条" % c, "总书记重要讲话金句 + 申论运用", "xiyu")
+
+    # 议论文素材 / 概括句
+    c = db.execute("SELECT COUNT(*) FROM sucai_items WHERE date=?", (today,)).fetchone()[0]
+    if c:
+        _n(db, "sucai", today, "议论文素材更新了 %d 条" % c, "人物事例 / 具体事例 / 理论论据 / 衔接表达", "sucai")
+    c = db.execute("SELECT COUNT(*) FROM gaikuo_items WHERE date=?", (today,)).fetchone()[0]
+    if c:
+        _n(db, "gaikuo", today, "概括句积累更新了 %d 条" % c, "材料表述 → 规范概括句", "gaikuo")
+
+    # 今日复习（遗忘曲线到期）
+    due = _review_due(db, uid(), today)
+    if due:
+        g = {"word": 0, "daily": 0, "wrongq": 0}
+        for it in due:
+            g[RV_GROUP.get(it["kind"], "wrongq")] += 1
+        _n(db, "review", today, "今天有 %d 条要复习" % len(due),
+           "词语句子 %d · 每日积累 %d · 错题 %d" % (g["word"], g["daily"], g["wrongq"]), "review")
+
+    # 每日任务未打卡
+    tpls = db.execute("SELECT COUNT(*) FROM task_templates WHERE user_id=? AND active=1", (uid(),)).fetchone()[0]
+    if tpls:
+        done = db.execute("SELECT COUNT(*) FROM task_done WHERE user_id=? AND date=?", (uid(), today)).fetchone()[0]
+        if done < tpls:
+            _n(db, "tasks", today, "今日任务还剩 %d 项" % (tpls - done),
+               "已完成 %d / %d，别断卡" % (done, tpls), "tasks")
+
+    # 题库新卷
+    q = db.execute("SELECT name FROM quiz_sets WHERE date(created_at)=? ORDER BY id DESC", (today,)).fetchall()
+    if q:
+        _n(db, "quiz", today, "题库新增 %d 套卷" % len(q), q[0]["name"], "quiz")
+
+    db.commit()
+
+
+@app.get("/api/notifications")
+def notifications_list():
+    db = get_db()
+    try:
+        _gen_notifications(db)
+    except Exception:
+        pass                       # 生成失败不能影响读消息
+    rows = db.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY read, id DESC LIMIT 60",
+                      (uid(),)).fetchall()
+    unread = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read=0",
+                        (uid(),)).fetchone()[0]
+    return jsonify({"items": [dict(r) for r in rows], "unread": unread})
+
+
+@app.get("/api/notifications/unread")
+def notifications_unread():
+    """轻量角标：只数未读，不触发生成。"""
+    n = get_db().execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read=0",
+                         (uid(),)).fetchone()[0]
+    return jsonify({"unread": n})
+
+
+@app.post("/api/notifications/<int:nid>/read")
+def notification_read(nid):
+    db = get_db()
+    db.execute("UPDATE notifications SET read=1 WHERE id=? AND user_id=?", (nid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/notifications/read_all")
+def notifications_read_all():
+    db = get_db()
+    db.execute("UPDATE notifications SET read=1 WHERE user_id=?", (uid(),))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/notifications")
+def notifications_clear():
+    db = get_db()
+    db.execute("DELETE FROM notifications WHERE user_id=? AND read=1", (uid(),))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------- 申论真题卷：上传 → 自动拆题

@@ -68,24 +68,26 @@ const BOARD_FEATURES = {
   ],
   '应用文': [
     { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
-    { key: 'shenlun', name: '题型与批改', desc: '归纳概括/综合分析/提出对策/贯彻执行', icon: 'edit' },
   ],
   '议论文': [
     { key: 'sucai', name: '素材积累', desc: '每日更新 · 人物/事例/理论论据', icon: 'clip' },
     { key: 'lianjie', name: '衔接表达', desc: '过渡/转折/万能句式 不口语不重复', icon: 'quote' },
     { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
-    { key: 'shenlun', name: '大作文批改', desc: '立意/结构/论证/语言 四维评分', icon: 'feather' },
   ],
 };
 // 大板块（行测/申论）下的功能模块（预留，可扩展）
 const SECTION_FEATURES = {};
+// 挂在大板块底部、但不属于「资料分类」的入口（所以不写进 SECTIONS.boards）
+const SECTION_EXTRA = {
+  shenlun: [{ name: '真题批改', badge: 'AI 逐点批改', go: 'shenlun' }],
+};
 
 let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '申论', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -100,7 +102,7 @@ function render() {
 }
 function push(state) { stack.push(state); render(); }
 function back() { if (stack.length > 1) { stack.pop(); render(); } }
-function goHome() { stack = [{ view: 'home' }]; render(); }
+function goHome() { stack = [{ view: 'home' }]; render(); if (window.refreshNtfDot) refreshNtfDot(); }
 // 供安卓原生「返回/侧滑」调用：能退则退并返回 true，已在首页返回 false
 window.appBack = function () {
   // 幻灯片播放优先退出
@@ -144,7 +146,6 @@ async function init() {
         <div class="hc-desc">${esc(s.desc)}</div>
       </div>`).join('') + `
     <div class="home-card" data-go="changkao"><div class="hc-logo hc-ck">${IC.target || IC.bulb}</div><div class="hc-name">常考</div><div class="hc-desc">高频成语/实词/上位词/常识/提法</div></div>
-    <div class="home-card" data-go="shenlun"><div class="hc-logo hc-sl">${IC.edit}</div><div class="hc-name">申论</div><div class="hc-desc">四大题型讲义 · AI 逐点批改</div></div>
     <div class="home-card" data-go="notes"><div class="hc-logo">${IC.feather}</div><div class="hc-name">小记</div><div class="hc-desc">随手记 · 标签归类</div></div>
     <div class="home-card" data-go="kb"><div class="hc-logo">${IC.book}</div><div class="hc-name">知识库</div><div class="hc-desc">笔记本 · 文档 · 分组整理</div></div>
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
@@ -218,7 +219,6 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'tasks') openTasks();
   else if (g === 'quiz') openQuiz();
   else if (g === 'changkao') openChangkao();
-  else if (g === 'shenlun') openShenlun();
 });
 function openSection(key) {
   const sec = SECTIONS.find(s => s.key === key); if (!sec) return;
@@ -235,10 +235,18 @@ function openSection(key) {
       <span class="bc-name">${esc(b)}</span>
       ${b === IDIOM_BOARD ? '<span class="bc-badge">成语词语</span>' : ''}
       <span class="bc-arrow">›</span>
+    </div>`).join('')
+    + (SECTION_EXTRA[sec.key] || []).map(x => `
+    <div class="board-card" data-secgo="${esc(x.go)}">
+      <span class="bc-name">${esc(x.name)}</span>
+      <span class="bc-badge">${esc(x.badge)}</span>
+      <span class="bc-arrow">›</span>
     </div>`).join('');
   push({ view: 'section', title: sec.name });
 }
 $('#board-grid').addEventListener('click', e => {
+  const x = e.target.closest('[data-secgo]');
+  if (x) { if (x.dataset.secgo === 'shenlun') openShenlun(); return; }
   const c = e.target.closest('[data-board]'); if (!c) return;
   openBoard(c.dataset.board);
 });
@@ -277,7 +285,6 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'changshi') openChangshi();
   else if (c.dataset.feat === 'works') openWorks();
   else if (c.dataset.feat === 'theory') openTheory();
-  else if (c.dataset.feat === 'shenlun') openShenlun();
   else if (c.dataset.feat === 'hyper') openCkBoard('上位词');
 });
 $('#nav-back').onclick = back;
@@ -2189,7 +2196,7 @@ function hl(text, q) {
 const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能' };
 // 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
 const FEATURES = [
-  { name: '申论', desc: '四大题型讲义 · AI 逐点批改', kw: '申论归纳概括综合分析提出对策贯彻执行大作文批改阅卷采分点', open: () => openShenlun() },
+  { name: '真题批改', desc: '申论 · 四大题型讲义 + AI 逐点批改', kw: '申论真题批改归纳概括综合分析提出对策贯彻执行大作文阅卷采分点范文', open: () => openShenlun() },
   { name: '常考', desc: '高频成语/实词/上位词/古诗文/常识/提法', kw: '常考高频考点成语实词上位词提法', open: () => openChangkao() },
   { name: '上位词积累', desc: '常考 · 逻辑填空概括词提示', kw: '上位词概括词下位词逻辑填空', open: () => openCkBoard('上位词') },
   { name: '理论基础', desc: '政治理论 · 马原/毛概/中特/习思想', kw: '理论马原马克思毛概毛泽东思想邓小平三个代表科学发展观习近平新时代中特公基', open: () => openTheory() },
@@ -2825,7 +2832,7 @@ $('#tk-memsheet').addEventListener('click', e => {
 let slType = null, slQuestion = null, slPaper = null, slResult = null;
 
 async function openShenlun() {
-  push({ view: 'shenlun', title: '申论' });
+  push({ view: 'shenlun', title: '真题批改' });
   $('#sl-types').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/shenlun/types');
@@ -4192,3 +4199,74 @@ async function checkUpdate(manual) {
 $('#acct-update').onclick = () => checkUpdate(true);
 setTimeout(() => checkUpdate(false), 3500);   // 启动后台静默检查一次
 window.checkUpdate = checkUpdate;
+
+/* ================= 消息中心：有新内容就提醒，点开直达对应位置 ================= */
+const NTF_ICON = {
+  changshi: '💡', newlaw: '⚖️', news: '📰', xiyu: '✒️', sucai: '📎',
+  gaikuo: '📝', review: '⏰', tasks: '📋', quiz: '🧩',
+};
+/* link 形如 "changshi" 或 "changshi:法律常识" */
+function ntfGo(link) {
+  const [k, arg] = (link || '').split(':');
+  const go = {
+    changshi: () => { openChangshi(); if (arg) setTimeout(() => openCsBoard(arg), 260); },
+    news: () => openNews(),
+    xiyu: () => { openNews(); setTimeout(() => { const b = document.querySelector('#news-boards [data-nb="习语"]'); if (b) b.click(); }, 260); },
+    sucai: () => openSucai('全部'),
+    gaikuo: () => openGaikuo(),
+    review: () => openReview(),
+    tasks: () => openTasks(),
+    quiz: () => openQuiz(),
+  }[k];
+  if (go) go(); else toast('这条消息没有可跳转的位置');
+}
+function openNotify() { push({ view: 'notify', title: '消息' }); loadNotify(); }
+$('#notify-btn').onclick = openNotify;
+
+async function loadNotify() {
+  $('#ntf-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/notifications');
+    setNtfDot(d.unread);
+    $('#ntf-list').innerHTML = d.items.length ? d.items.map(it => `
+      <div class="ntf ${it.read ? '' : 'unread'}" data-ntf="${it.id}" data-link="${esc(it.link || '')}">
+        <span class="ntf-ico">${NTF_ICON[it.kind] || '🔔'}</span>
+        <div class="ntf-main">
+          <div class="ntf-t">${esc(it.title)}</div>
+          ${it.body ? `<div class="ntf-b">${esc(it.body)}</div>` : ''}
+          <div class="ntf-m">${esc(it.created_at.slice(5, 16))}</div>
+        </div>
+        ${it.read ? '' : '<span class="ntf-new"></span>'}
+      </div>`).join('') : '<p class="empty">暂时没有新消息。内容库每天早上更新后会出现在这里。</p>';
+  } catch (e) { $('#ntf-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#ntf-list').addEventListener('click', async e => {
+  const n = e.target.closest('[data-ntf]'); if (!n) return;
+  if (n.classList.contains('unread')) {
+    n.classList.remove('unread');
+    const nb = n.querySelector('.ntf-new'); if (nb) nb.remove();   // 老 WebView 不支持 ?.
+    api('/api/notifications/' + n.dataset.ntf + '/read', { method: 'POST' })
+      .then(refreshNtfDot).catch(() => {});
+  }
+  ntfGo(n.dataset.link);
+});
+$('#ntf-readall').onclick = async () => {
+  try { await api('/api/notifications/read_all', { method: 'POST' }); loadNotify(); }
+  catch (e) { toast(e.message, true); }
+};
+$('#ntf-clear').onclick = async () => {
+  if (!(await appConfirm('清理所有已读消息？'))) return;
+  try { await api('/api/notifications', { method: 'DELETE' }); loadNotify(); }
+  catch (e) { toast(e.message, true); }
+};
+
+function setNtfDot(n) {
+  const dot = $('#notify-dot');
+  dot.textContent = n > 99 ? '99+' : (n || '');
+  dot.classList.toggle('hidden', !n);
+}
+async function refreshNtfDot() {
+  try { setNtfDot((await api('/api/notifications/unread')).unread); } catch (_) {}
+}
+/* 启动时生成一次当天的消息并点亮角标；之后每次回首页只数未读 */
+setTimeout(() => { api('/api/notifications').then(d => setNtfDot(d.unread)).catch(() => {}); }, 1200);
