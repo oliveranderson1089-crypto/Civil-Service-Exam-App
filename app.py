@@ -505,6 +505,36 @@ def init_db():
             UNIQUE(user_id, kind, dkey)
         );
         CREATE INDEX IF NOT EXISTS idx_ntf_user ON notifications(user_id, read, id DESC);
+        -- 后台长任务（文档识题解析、范文生成）：前端轮询进度
+        CREATE TABLE IF NOT EXISTS bg_tasks(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            kind TEXT, title TEXT, status TEXT DEFAULT 'running',
+            progress INTEGER DEFAULT 0, total INTEGER DEFAULT 0,
+            message TEXT, result_id INTEGER, extra TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_bg_user ON bg_tasks(user_id, id DESC);
+        -- 范文推荐：一套仿真卷（材料按真题字数规格） + 各题完整参考答案
+        CREATE TABLE IF NOT EXISTS essay_papers(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT UNIQUE, spec TEXT, title TEXT, material TEXT, words INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS essays(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id INTEGER NOT NULL,
+            seq INTEGER, qtype TEXT, type_name TEXT, stem TEXT,
+            full INTEGER, word_min INTEGER, word_max INTEGER,
+            answer TEXT, answer_words INTEGER, outline TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_essay_paper ON essays(paper_id, seq);
+        -- 文档识题：从讲义/资料里抽出的例题 + AI 答案解析
+        CREATE TABLE IF NOT EXISTS doc_questions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL,
+            page INTEGER, seq INTEGER, stem TEXT, options TEXT,
+            answer TEXT, explain TEXT, qtype TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_dq_task ON doc_questions(task_id, page, seq);
     """)
     # 批改记录挂到真题卷上，并记下字数与题目要求的字数区间
     for col, typ in (("paper_id", "INTEGER"), ("question_id", "INTEGER"),
@@ -3405,6 +3435,372 @@ def shenlun_type(key):
     if not t:
         return jsonify({"error": "没有这个题型"}), 404
     return jsonify(t)
+
+
+# ---------------------------------------------------------------- 范文推荐（仿真卷 + 全套参考答案）
+@app.get("/api/essays/topics")
+def essays_topics():
+    db = get_db()
+    rows = db.execute("SELECT p.id, p.topic, p.spec, p.title, p.words, "
+                      "(SELECT COUNT(*) FROM essays e WHERE e.paper_id=p.id) n "
+                      "FROM essay_papers p ORDER BY p.id").fetchall()
+    specs = _SL_META.get("specs", {})
+    return jsonify({"papers": [dict(r, spec_name=specs.get(r["spec"], {}).get("name", "")) for r in rows]})
+
+
+@app.get("/api/essays")
+def essays_list():
+    """kind=zuowen 只看大作文范文；kind=yingyong 看应用文/小题的完整题目+参考答案。"""
+    kind = (request.args.get("kind") or "").strip()
+    topic = (request.args.get("topic") or "").strip()
+    w, args = [], []
+    if kind == "zuowen":
+        w.append("e.qtype='zuowen'")
+    elif kind == "yingyong":
+        w.append("e.qtype<>'zuowen'")
+    if topic:
+        w.append("p.topic=?")
+        args.append(topic)
+    sql = ("SELECT e.id, e.seq, e.qtype, e.type_name, e.stem, e.full, e.word_min, e.word_max, "
+           "e.answer_words, e.outline, p.topic, p.title paper_title, p.id paper_id "
+           "FROM essays e JOIN essay_papers p ON p.id=e.paper_id "
+           + ("WHERE " + " AND ".join(w) if w else "") +
+           " ORDER BY p.id, e.seq")
+    rows = get_db().execute(sql, args).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/essays/<int:eid>")
+def essay_detail(eid):
+    db = get_db()
+    r = db.execute("SELECT e.*, p.topic, p.material, p.title paper_title, p.spec, p.words material_words "
+                   "FROM essays e JOIN essay_papers p ON p.id=e.paper_id WHERE e.id=?", (eid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    d = dict(r)
+    d["spec_name"] = _SL_META.get("specs", {}).get(d["spec"], {}).get("name", "")
+    return jsonify(d)
+
+
+@app.post("/api/essays/paper/<int:pid>/practice")
+def essay_practice(pid):
+    """把这套仿真卷复制成一份「我的真题卷」，直接进入逐题作答 + AI 批改。"""
+    db = get_db()
+    p = db.execute("SELECT * FROM essay_papers WHERE id=?", (pid,)).fetchone()
+    if not p:
+        return jsonify({"error": "未找到"}), 404
+    old = db.execute("SELECT id FROM shenlun_papers WHERE user_id=? AND title=?",
+                     (uid(), p["title"])).fetchone()
+    if old:
+        return jsonify({"id": old["id"], "existed": True})
+    cur = db.execute("INSERT INTO shenlun_papers(user_id,title,material,source) VALUES(?,?,?,?)",
+                     (uid(), p["title"], p["material"], "范文推荐"))
+    npid = cur.lastrowid
+    for e in db.execute("SELECT * FROM essays WHERE paper_id=? ORDER BY seq", (pid,)):
+        db.execute("INSERT INTO shenlun_questions(paper_id,seq,qtype,type_name,stem,requirement,"
+                   "full,word_min,word_max) VALUES(?,?,?,?,?,'',?,?,?)",
+                   (npid, e["seq"], e["qtype"], e["type_name"], e["stem"],
+                    e["full"], e["word_min"], e["word_max"]))
+    db.commit()
+    return jsonify({"id": npid, "existed": False}), 201
+
+
+# ---------------------------------------------------------------- 文档识题：抽出例题 → AI 解答 → 回填成副本
+def _bg_new(db, kind, title, total=0):
+    cur = db.execute("INSERT INTO bg_tasks(user_id,kind,title,total) VALUES(?,?,?,?)",
+                     (uid(), kind, title, total))
+    db.commit()
+    return cur.lastrowid
+
+
+def _bg_set(con, tid, **kw):
+    if not kw:
+        return
+    cols = ", ".join("%s=?" % k for k in kw)
+    con.execute("UPDATE bg_tasks SET %s, updated_at=datetime('now','localtime') WHERE id=?" % cols,
+                list(kw.values()) + [tid])
+    con.commit()
+
+
+# 有「（　）」「A．」「下列…正确的是」这类特征的页面才值得送去问 AI，省一大笔调用
+_Q_HINT = re.compile(r"[（(]\s{0,6}[）)]|[ABCD][．.、]\s|下列|以下|不属于|正确的是|错误的是|"
+                     r"填入划?横线|依次填入|最恰当的|说法正确|说法错误")
+
+
+def _page_text(pdf, n):
+    try:
+        out = subprocess.run(["pdftotext", "-layout", "-enc", "UTF-8", "-f", str(n), "-l", str(n), pdf, "-"],
+                             capture_output=True, timeout=60)
+        return out.stdout.decode("utf-8", "ignore")
+    except Exception:
+        return ""
+
+
+def _pdf_pages(pdf):
+    try:
+        out = subprocess.run(["pdfinfo", pdf], capture_output=True, timeout=60)
+        return int(re.search(r"Pages:\s+(\d+)", out.stdout.decode("utf-8", "ignore")).group(1))
+    except Exception:
+        return 0
+
+
+DOCQA_SYS = ("你是公考各科目的资深讲师。只处理文档里真实存在的例题，绝不虚构题目；"
+             "答案要有把握，解析要讲清怎么想、为什么排除其他选项。严格输出 JSON。")
+
+
+def _ask_questions(chunk):
+    """chunk = [(页码, 该页文字)]，返回这几页里的题目及答案解析。"""
+    body = "\n\n".join("【第 %d 页】\n%s" % (p, t[:3500]) for p, t in chunk)
+    prompt = (
+        "下面是一份公考讲义/资料中连续几页的文字（OCR 或 PDF 抽取，可能有断行和错字）。\n"
+        "请找出其中的【例题】——有题干、通常带 A/B/C/D 选项，或是填空/判断题。\n"
+        "对每一道题：\n"
+        "· 若原文已给出答案，answer 用原文答案，并补写解析；\n"
+        "· 若原文没有答案（这是常见情况），请你作答，给出正确答案与解析。\n"
+        "· stem 要写清题干（可精简断行，但不要改意思）；options 按原文照抄，没有选项就给空数组。\n"
+        "· explain 要说清解题思路，并简要说明其他选项为什么不选。\n"
+        "· qtype 写题目所属模块，如「言语理解-逻辑填空」「判断推理-图形推理」「常识判断-法律」。\n"
+        "文档里没有题目就返回空数组，不要编造。\n"
+        '只输出 JSON：{"items":[{"page":12,"stem":"","options":["A. …"],"answer":"B","explain":"","qtype":""}]}\n\n'
+        + body)
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": DOCQA_SYS}, {"role": "user", "content": prompt}],
+        temperature=0.2, max_tokens=6000, timeout=300, json_mode=True)
+    if err:
+        return []
+    try:
+        return json.loads(rep).get("items", []) or []
+    except Exception:
+        return []
+
+
+def _ans_pdf(out_path, page_no, items):
+    """给某一页生成配套的「答案解析」页，插在原页之后。"""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+
+    font = ensure_pdf_font()
+    doc = SimpleDocTemplate(out_path, pagesize=A4,
+                            leftMargin=18 * mm, rightMargin=18 * mm,
+                            topMargin=16 * mm, bottomMargin=16 * mm,
+                            title="第%d页 答案解析" % page_no)
+    h = ParagraphStyle("h", fontName=font, fontSize=13, leading=19, spaceAfter=8,
+                       textColor=colors.HexColor("#1a6fb5"))
+    lab = ParagraphStyle("lab", fontName=font, fontSize=10.5, leading=17, spaceAfter=3,
+                         textColor=colors.HexColor("#6b7280"))
+    body = ParagraphStyle("b", fontName=font, fontSize=11, leading=18, spaceAfter=6)
+    ans = ParagraphStyle("a", fontName=font, fontSize=11.5, leading=18, spaceAfter=4,
+                         textColor=colors.HexColor("#12813f"))
+
+    def esc(t):
+        return (t or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    flow = [Paragraph("第 %d 页 · 答案与解析（AI 生成）" % page_no, h)]
+    for i, it in enumerate(items, 1):
+        flow.append(Paragraph("%d. %s" % (i, esc(it.get("stem", ""))[:400]), body))
+        for o in (it.get("options") or [])[:6]:
+            flow.append(Paragraph(esc(o)[:200], lab))
+        flow.append(Paragraph("【答案】%s" % esc(it.get("answer", "")), ans))
+        flow.append(Paragraph("【解析】%s" % esc(it.get("explain", "")), body))
+        if it.get("qtype"):
+            flow.append(Paragraph("【模块】%s" % esc(it["qtype"]), lab))
+        flow.append(Spacer(1, 6))
+    doc.build(flow)
+    return out_path
+
+
+def _merge_interleaved(src, page_ans, out):
+    """qpdf 按 原页1, 解析页1, 原页2, … 的顺序拼成副本，原版式一页不动。"""
+    args = ["qpdf", "--empty", "--pages"]
+    total = _pdf_pages(src)
+    for p in range(1, total + 1):
+        args += [src, str(p)]
+        if p in page_ans:
+            args += [page_ans[p], "1-z"]
+    args += ["--", out]
+    subprocess.run(args, check=True, timeout=600, capture_output=True)
+    return out
+
+
+DOCQA_MAX_PAGES = int(os.environ.get("GONGKAO_DOCQA_MAX_PAGES", "80"))
+
+
+def _docqa_run(tid, user_id, mid, orig_name, board):
+    con = sqlite3.connect(DB, timeout=60)
+    con.row_factory = sqlite3.Row
+    tmpdir = tempfile.mkdtemp(prefix="docqa_")
+    try:
+        m = con.execute("SELECT * FROM materials WHERE id=?", (mid,)).fetchone()
+        path = os.path.join(UPLOADS, str(user_id), m["stored_name"])
+        pdf = path if m["ext"] == ".pdf" else _office_to_pdf(path)
+        if not pdf or not os.path.exists(pdf):
+            raise RuntimeError("这个格式转不成 PDF，暂时只支持 PDF / Word / PPT")
+
+        total = _pdf_pages(pdf)
+        if not total:
+            raise RuntimeError("读不出页数")
+        scan = min(total, DOCQA_MAX_PAGES)
+        _bg_set(con, tid, total=scan, message="正在读取文字…")
+
+        # 先本地筛出「像有题目」的页，只把这些页送去问 AI
+        texts, cand = {}, []
+        for p in range(1, scan + 1):
+            t = _page_text(pdf, p)
+            if len(re.sub(r"\s", "", t)) < 20:      # 扫描件：这一页没有文字层
+                t = _ocr_image_page(pdf, p, tmpdir)
+            texts[p] = t
+            if _Q_HINT.search(t):
+                cand.append(p)
+            _bg_set(con, tid, progress=p, message="读取第 %d/%d 页" % (p, scan))
+        if not cand:
+            raise RuntimeError("没在文档里找到像题目的内容（前 %d 页）" % scan)
+
+        _bg_set(con, tid, progress=0, total=len(cand), message="AI 解题中…")
+        found, done = [], 0
+        for i in range(0, len(cand), 3):            # 三页一批，省调用
+            chunk = [(p, texts[p]) for p in cand[i:i + 3]]
+            for it in _ask_questions(chunk):
+                try:
+                    it["page"] = int(it.get("page") or chunk[0][0])
+                except Exception:
+                    it["page"] = chunk[0][0]
+                if it.get("stem") and it.get("answer"):
+                    found.append(it)
+            done = min(len(cand), i + 3)
+            _bg_set(con, tid, progress=done, message="AI 解题中… 已找到 %d 题" % len(found))
+        if not found:
+            raise RuntimeError("AI 没能从中识别出可解答的题目")
+
+        # 每页一张解析页，插到原页后面
+        by_page = {}
+        for it in found:
+            by_page.setdefault(it["page"], []).append(it)
+        _bg_set(con, tid, message="正在生成副本…")
+        page_ans = {}
+        for p, items in sorted(by_page.items()):
+            ap = os.path.join(tmpdir, "ans_%03d.pdf" % p)
+            page_ans[p] = _ans_pdf(ap, p, items)
+
+        stored = uuid.uuid4().hex + ".pdf"
+        out = os.path.join(_user_dir(user_id), stored)
+        _merge_interleaved(pdf, page_ans, out)
+
+        base = os.path.splitext(orig_name)[0]
+        title = base + " · 含答案解析"
+        cur = con.execute(
+            "INSERT INTO materials(user_id,section,board,title,orig_name,stored_name,ext,mime,size) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (user_id, "", board, title, title + ".pdf", stored, ".pdf", "application/pdf",
+             os.path.getsize(out)))
+        new_mid = cur.lastrowid
+        for seq, it in enumerate(found, 1):
+            con.execute("INSERT INTO doc_questions(task_id,page,seq,stem,options,answer,explain,qtype) "
+                        "VALUES(?,?,?,?,?,?,?,?)",
+                        (tid, it["page"], seq, it.get("stem", ""),
+                         json.dumps(it.get("options") or [], ensure_ascii=False),
+                         it.get("answer", ""), it.get("explain", ""), it.get("qtype", "")))
+        _bg_set(con, tid, status="done", result_id=new_mid, progress=len(cand),
+                message="识别 %d 道题，已生成副本" % len(found),
+                extra=json.dumps({"src_mid": mid, "out_mid": new_mid, "n": len(found)}))
+        con.commit()
+    except Exception as e:
+        try:
+            _bg_set(con, tid, status="error", message=str(e)[:200])
+            # 解析失败就把刚上传的原件也收走，别在资料库里留一堆没用的文件
+            row = con.execute("SELECT stored_name FROM materials WHERE id=?", (mid,)).fetchone()
+            if row:
+                con.execute("DELETE FROM materials WHERE id=?", (mid,))
+                con.commit()
+                try:
+                    os.remove(os.path.join(UPLOADS, str(user_id), row["stored_name"]))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        con.close()
+
+
+def _ocr_image_page(pdf, p, tmpdir):
+    """没有文字层的页（扫描件）走 OCR。"""
+    try:
+        pre = os.path.join(tmpdir, "sc_%d" % p)
+        subprocess.run(["pdftoppm", "-r", "200", "-gray", "-png", "-f", str(p), "-l", str(p),
+                        "-singlefile", pdf, pre], check=True, timeout=180, capture_output=True)
+        return _ocr_image(pre + ".png")
+    except Exception:
+        return ""
+
+
+@app.post("/api/docqa/upload")
+def docqa_upload():
+    """上传讲义 → 后台识题解题 → 生成「含答案解析」副本，原件保留。"""
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "请选择文件"}), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in (".pdf",) and ext not in OFFICE_EXT:
+        return jsonify({"error": "只支持 PDF / Word / PPT"}), 400
+    board = (request.form.get("board") or "").strip()
+
+    stored = uuid.uuid4().hex + ext
+    path = os.path.join(_user_dir(uid()), stored)
+    f.save(path)
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO materials(user_id,section,board,title,orig_name,stored_name,ext,mime,size) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (uid(), "", board, f.filename, f.filename, stored, ext, f.mimetype or "",
+         os.path.getsize(path)))
+    mid = cur.lastrowid
+    db.commit()
+
+    tid = _bg_new(db, "docqa", f.filename)
+    threading.Thread(target=_docqa_run, args=(tid, uid(), mid, f.filename, board), daemon=True).start()
+    return jsonify({"task_id": tid, "material_id": mid}), 201
+
+
+@app.get("/api/docqa/tasks")
+def docqa_tasks():
+    rows = get_db().execute(
+        "SELECT * FROM bg_tasks WHERE user_id=? AND kind='docqa' ORDER BY id DESC LIMIT 30",
+        (uid(),)).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/docqa/task/<int:tid>")
+def docqa_task(tid):
+    db = get_db()
+    t = db.execute("SELECT * FROM bg_tasks WHERE id=? AND user_id=?", (tid, uid())).fetchone()
+    if not t:
+        return jsonify({"error": "未找到"}), 404
+    d = dict(t)
+    d["questions"] = []
+    for r in db.execute("SELECT * FROM doc_questions WHERE task_id=? ORDER BY page, seq", (tid,)):
+        q = dict(r)
+        try:
+            q["options"] = json.loads(q["options"] or "[]")
+        except Exception:
+            q["options"] = []
+        d["questions"].append(q)
+    try:
+        d["extra"] = json.loads(d["extra"] or "{}")
+    except Exception:
+        d["extra"] = {}
+    return jsonify(d)
+
+
+@app.delete("/api/docqa/task/<int:tid>")
+def docqa_task_del(tid):
+    db = get_db()
+    db.execute("DELETE FROM doc_questions WHERE task_id=?", (tid,))
+    db.execute("DELETE FROM bg_tasks WHERE id=? AND user_id=?", (tid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------- 消息中心（有新内容就提醒，点开直达）

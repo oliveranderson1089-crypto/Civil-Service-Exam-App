@@ -315,5 +315,41 @@
       "word_min": 1000,
       "word_max": 1200
     }
-  ]
+  ],
+  "specs": {
+    "guokao": {
+      "name": "国考（地市级）",
+      "material_words": [
+        6000,
+        8000
+      ],
+      "passages": [
+        4,
+        6
+      ],
+      "passage_words": [
+        1200,
+        1800
+      ],
+      "questions": 5,
+      "note": "给定资料 4~6 则，总量 6000~8000 字；5 道题，合计 100 分。"
+    },
+    "sichuan": {
+      "name": "四川省考",
+      "material_words": [
+        5000,
+        7000
+      ],
+      "passages": [
+        4,
+        6
+      ],
+      "passage_words": [
+        1100,
+        1600
+      ],
+      "questions": 4,
+      "note": "给定资料 4~6 则，总量 5000~7000 字；4 道题，合计 100 分。"
+    }
+  }
 }

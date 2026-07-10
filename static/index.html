@@ -544,6 +544,7 @@
   <!-- ===== 申论（四大题型讲义 + AI 逐点批改） ===== -->
   <section id="view-shenlun" class="view hidden">
     <div class="pd-intro">上传真题自动拆题，逐题作答、AI 逐点批改——每一分都说得清来源。</div>
+    <div class="sl-quick"><button class="btn primary" id="sl-essays">📚 范文推荐</button></div>
     <div class="sl-hist-head"><span>我的真题卷</span>
       <button class="btn tiny" id="sl-upload">📄 上传真题</button></div>
     <div id="sl-papers" class="sl-hist"></div>
@@ -552,6 +553,30 @@
     <div class="sl-hist-head"><span>批改记录</span><span id="sl-hist-n"></span></div>
     <div id="sl-hist" class="sl-hist"></div>
     <input id="sl-file" type="file" accept=".pdf,.doc,.docx,.txt,.md,image/*" class="hidden">
+  </section>
+
+  <!-- ===== 范文推荐 ===== -->
+  <section id="view-essays" class="view hidden">
+    <div class="pd-intro">按热门话题命制的仿真卷：给定资料严格按真题字数规格，每道题都配完整参考答案。</div>
+    <div class="tk-tabs" id="es-tabs">
+      <button class="tk-tab active" data-esk="zuowen">大作文范文</button>
+      <button class="tk-tab" data-esk="yingyong">应用文·小题</button>
+    </div>
+    <div id="es-topics" class="date-strip"></div>
+    <div id="es-list" class="sl-hist"></div>
+  </section>
+
+  <section id="view-essayd" class="view hidden">
+    <div id="esd-head" class="slt-head"></div>
+    <div class="tk-tabs slr-tabs" id="esd-tabs">
+      <button class="tk-tab active" data-esd="q">题目</button>
+      <button class="tk-tab" data-esd="m">给定资料</button>
+      <button class="tk-tab" data-esd="a">参考答案</button>
+    </div>
+    <div id="esd-q" class="slr-pane"></div>
+    <div id="esd-m" class="slr-pane hidden"></div>
+    <div id="esd-a" class="slr-pane hidden"></div>
+    <button class="btn primary slt-go" id="esd-practice">✍️ 用这套卷练习（进批改）</button>
   </section>
 
   <!-- 真题卷详情：材料 + 题目列表 -->
@@ -724,8 +749,33 @@
 
   <!-- ===== 题库（套卷列表） ===== -->
   <section id="view-quiz" class="view hidden">
+    <div class="pd-intro">按四川省考卷面自动出卷；也可以把讲义丢进来，让 AI 把里面没答案的例题解出来。</div>
+    <div id="qz-entries" class="home-cards cs-cards"></div>
+  </section>
+
+  <!-- ===== 题库 · 模拟卷 ===== -->
+  <section id="view-quizsets" class="view hidden">
     <div class="pd-intro">按四川省考卷面：行测100题（常识15/言语30/数量10/判断30/资料15）+ 申论4题 · 每周二/五自动更新</div>
     <div id="qz-list" class="poly-list"></div>
+  </section>
+
+  <!-- ===== 题库 · 题目解析（文档识题） ===== -->
+  <section id="view-docqa" class="view hidden">
+    <div class="pd-intro">上传讲义/资料（PDF、Word、PPT）→ AI 找出里面<b>没有答案的例题</b>，逐题给出答案与解析，
+      并生成一份「含答案解析」副本（原页排版不动，解析插在该页之后）。原件与副本都会留在资料库，方便对比。</div>
+    <div class="dq-up">
+      <button class="btn primary" id="dq-upload">📄 上传讲义识题</button>
+      <input id="dq-file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" class="hidden">
+    </div>
+    <div id="dq-list" class="sl-hist"></div>
+  </section>
+
+  <!-- ===== 题目解析 · 详情 ===== -->
+  <section id="view-docqad" class="view hidden">
+    <div id="dqd-head" class="slt-head"></div>
+    <div id="dqd-files" class="dqd-files"></div>
+    <div class="slt-sec">识别到的题目</div>
+    <div id="dqd-qs" class="slr-pane"></div>
   </section>
 
   <!-- ===== 题库 · 做题 ===== -->

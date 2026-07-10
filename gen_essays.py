@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""申论范文推荐：按热门话题生成「仿真卷 + 全套参考答案」。
+
+给定资料严格按真题规格（国考 6000~8000 字 / 四川省考 5000~7000 字，4~6 则），
+不是随手写几百字。材料分则生成，题目一次生成，参考答案逐题生成并校验字数。
+
+用法:
+  python3 gen_essays.py                # 按热门顺序补齐还没生成的话题（默认最多 3 套）
+  python3 gen_essays.py 6              # 最多补 6 套
+  python3 gen_essays.py --topic 乡村振兴 # 只生成某个话题
+  python3 gen_essays.py --list         # 看已生成/待生成
+"""
+import os, re, sys, json, sqlite3, time, urllib.request
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
+CFG_PATH = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
+os.environ.setdefault("NO_PROXY", "*")
+
+CFG = json.load(open(CFG_PATH, encoding="utf-8")) if os.path.exists(CFG_PATH) else {}
+AI_BASE = (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/")
+AI_MODEL = CFG.get("ai_model") or "deepseek-chat"
+AI_KEY = CFG.get("ai_key") or os.environ.get("GONGKAO_AI_KEY", "")
+AI_URL = AI_BASE if AI_BASE.endswith("/chat/completions") else (
+    AI_BASE + "/chat/completions" if AI_BASE.endswith("/v1") else AI_BASE + "/v1/chat/completions")
+
+META = json.load(open(os.path.join(BASE, "shenlun_meta.json"), encoding="utf-8"))
+SPECS = META["specs"]
+TYPES = {t["key"]: t for t in META["types"]}
+
+# 热门在前，话题尽量覆盖申论常考主题
+TOPICS = [
+    ("基层治理", "sichuan"), ("科技创新", "guokao"), ("乡村振兴", "guokao"),
+    ("文化自信", "sichuan"), ("生态文明", "guokao"), ("民生保障", "sichuan"),
+    ("法治政府", "guokao"), ("营商环境", "sichuan"), ("数字治理", "guokao"),
+    ("青年成长", "sichuan"), ("共同富裕", "guokao"), ("城乡融合", "sichuan"),
+]
+
+SYS = "你是命制过多年申论真题的教研专家，材料真实可信、题目规范、参考答案能拿高分。"
+
+
+def _words(t):
+    return len(re.sub(r"\s+", "", t or ""))
+
+
+def ai(messages, max_tokens=4000, temperature=0.6, json_mode=False, retry=2):
+    payload = {"model": AI_MODEL, "temperature": temperature, "max_tokens": max_tokens,
+               "messages": messages}
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    last = None
+    for i in range(retry + 1):
+        try:
+            req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
+                                         headers={"Authorization": "Bearer " + AI_KEY,
+                                                  "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=420) as resp:
+                j = json.loads(resp.read().decode("utf-8"))
+            txt = j["choices"][0]["message"]["content"].strip()
+            return json.loads(txt) if json_mode else txt
+        except Exception as e:
+            last = e
+            time.sleep(3 + 4 * i)
+    raise last
+
+
+def fit_words(base_prompt, lo, hi, tries=2, temperature=0.6, target=None):
+    """生成一段文字并把字数收进 [lo, hi]。超/欠就带着上一稿让它重写。
+    模型对「多少字」很不敏感，只说一次基本管不住，必须实测后返工。"""
+    target = target or (lo + int((hi - lo) * 0.35))
+    msgs = [{"role": "system", "content": SYS}, {"role": "user", "content": base_prompt}]
+    best = ""
+    for _ in range(tries + 1):
+        txt = re.sub(r"[*#`]+", "", ai(msgs, max_tokens=max(1500, int(hi * 2.4)),
+                                       temperature=temperature)).strip()
+        n = _words(txt)
+        if lo <= n <= hi:
+            return txt
+        if not best or abs(n - target) < abs(_words(best) - target):
+            best = txt
+        how = "扩写到" if n < lo else "压缩到"
+        msgs = msgs[:1] + [
+            {"role": "user", "content": base_prompt},
+            {"role": "assistant", "content": txt},
+            {"role": "user", "content": "这一稿 %d 字，不符合要求。请%s %d~%d 字（目标 %d 字），"
+                                        "保持内容与结构，只输出正文。" % (n, how, lo, hi, target)}]
+    return best
+
+
+def gen_material(topic, spec, n_passages, per_words, total_words):
+    """逐则生成给定资料，凑够真题的总字数。一次生成全部会被 max_tokens 截断。"""
+    lo, hi = per_words
+    tlo, thi = total_words
+    passages, sofar = [], []
+    angles = ["现象与成效（具体地区、具体做法、具体数据）",
+              "存在的问题与困难（基层声音、群众抱怨）",
+              "典型经验（一个县/乡/企业的完整案例，有人物有细节）",
+              "专家观点与政策依据（引用文件、学者论述）",
+              "他山之石或反面案例（可对比借鉴）",
+              "一段讲话或评论（可作为大作文立意来源）"]
+    for i in range(n_passages):
+        angle = angles[i % len(angles)]
+        avoid = ("已经写过的材料主旨：" + "；".join(sofar)) if sofar else ""
+        prompt = ("请命制一份申论试卷的「给定资料 %d」，主题：%s。\n"
+                  "本则材料的角度：%s\n%s\n"
+                  "要求：字数 %d~%d 字（硬性要求，不得超出）；像真题材料那样有具体地名、人名、数据、对话；"
+                  "不要出现「材料%d」以外的标题，不要 Markdown 记号，直接输出正文。" %
+                  (i + 1, topic, angle, avoid, lo, hi, i + 1))
+        txt = fit_words(prompt, lo, hi, temperature=0.75)
+        n = _words(txt)
+        passages.append(txt)
+        sofar.append(txt[:40])
+        print("    材料%d：%d 字 %s" % (i + 1, n, "✅" if lo <= n <= hi else "⚠️"), flush=True)
+
+    # 单则都合格了总量仍可能越界（真题给定资料 4~6 则，这个范围里可以调整则数）
+    while len(passages) > 4 and sum(_words(x) for x in passages) > thi:
+        drop = passages.pop()
+        print("    总量超上限，去掉最后一则（%d 字）" % _words(drop), flush=True)
+    return "\n\n".join("材料%d\n%s" % (i + 1, t) for i, t in enumerate(passages))
+
+
+def gen_questions(topic, spec, material):
+    n = SPECS[spec]["questions"]
+    kinds = (["guina", "zonghe", "duice", "guanche", "zuowen"] if n >= 5
+             else ["guina", "zonghe", "guanche", "zuowen"])
+    lines = []
+    for i, k in enumerate(kinds, 1):
+        t = TYPES[k]
+        lines.append("第%d题：%s，%d 分，%d~%d 字" % (i, t["name"], t["full"], t["word_min"], t["word_max"]))
+    prompt = ("下面是一份申论试卷的给定资料（主题：%s）。请据此命制 %d 道题，题型与分值如下：\n%s\n\n"
+              "每道题的 stem 要写成真题的样子：交代作答任务、限定资料范围、写清要求与字数。\n"
+              "大作文要给出一句引言（出自材料）并要求自拟题目。\n"
+              '只输出 JSON：{"items":[{"seq":1,"qtype":"guina","stem":"...","full":15,"word_min":150,"word_max":200}]}\n\n'
+              "【给定资料】\n%s" % (topic, n, "\n".join(lines), material[:12000]))
+    d = ai([{"role": "system", "content": SYS}, {"role": "user", "content": prompt}],
+           max_tokens=2500, temperature=0.4, json_mode=True)
+    out = []
+    for it in d.get("items", [])[:n]:
+        k = it.get("qtype") if it.get("qtype") in TYPES else kinds[len(out)]
+        t = TYPES[k]
+        out.append({"seq": len(out) + 1, "qtype": k, "type_name": t["name"],
+                    "stem": (it.get("stem") or "").strip(),
+                    "full": int(it.get("full") or t["full"]),
+                    "word_min": int(it.get("word_min") or t["word_min"]),
+                    "word_max": int(it.get("word_max") or t["word_max"])})
+    return out
+
+
+def gen_answer(q, material):
+    """参考答案 / 范文，字数严格落在题目要求区间。"""
+    is_essay = q["qtype"] == "zuowen"
+    lo, hi = q["word_min"], q["word_max"]
+    target = lo + int((hi - lo) * 0.35)
+    frame = ("按「开头点题—分论点1—分论点2—分论点3—结尾升华」写完整议论文，第一行是自拟标题。"
+             if is_essay else "按该题型的规范答案框架分条作答，要点齐全、语言书面化。")
+    base = ("请为下面这道申论题写一份能拿满分的参考答案。\n\n【题目】\n%s\n\n【给定资料】\n%s\n\n"
+            "%s\n字数 %d~%d 字（硬性要求，写到 %d 字左右；绝不能超过 %d 字）。\n"
+            "只输出答案正文：不要 Markdown 记号，不要解释和字数统计。" %
+            (q["stem"], material[:12000], frame, lo, hi, target, hi))
+    return fit_words(base, lo, hi, tries=3, temperature=0.5, target=target)
+
+
+def gen_outline(q, answer):
+    if q["qtype"] != "zuowen":
+        return ""
+    prompt = ("下面是一篇申论大作文范文。请用三行提炼它的写作思路：\n"
+              "第一行「总论点：…」，第二行「分论点：…／…／…」，第三行「亮点：…」。\n"
+              "只输出这三行。\n\n" + answer[:2500])
+    try:
+        return ai([{"role": "system", "content": SYS}, {"role": "user", "content": prompt}],
+                  max_tokens=400, temperature=0.3).strip()
+    except Exception:
+        return ""
+
+
+def build_topic(con, topic, spec):
+    if con.execute("SELECT 1 FROM essay_papers WHERE topic=?", (topic,)).fetchone():
+        print("  「%s」已存在，跳过" % topic)
+        return 0
+    sp = SPECS[spec]
+    lo, hi = sp["material_words"]
+    n_pass = sp["passages"][0] + 1                      # 取 5 则，落在 4~6 之间
+    per = sp["passage_words"]
+    print("→ %s（%s，目标材料 %d~%d 字，%d 则，%d 题）"
+          % (topic, sp["name"], lo, hi, n_pass, sp["questions"]), flush=True)
+
+    material = gen_material(topic, spec, n_pass, per, (lo, hi))
+    mw = _words(material)
+    print("  材料合计 %d 字 %s" % (mw, "✅" if lo <= mw <= hi else "⚠️ 偏离规格"), flush=True)
+
+    qs = gen_questions(topic, spec, material)
+    print("  命制 %d 道题" % len(qs), flush=True)
+
+    cur = con.execute("INSERT INTO essay_papers(topic,spec,title,material,words) VALUES(?,?,?,?,?)",
+                      (topic, spec, "%s · %s仿真卷" % (topic, sp["name"]), material, mw))
+    pid = cur.lastrowid
+    for q in qs:
+        ans = gen_answer(q, material)
+        aw = _words(ans)
+        ok = "✅" if q["word_min"] <= aw <= q["word_max"] else "⚠️"
+        print("    第%d题 %s 参考答案 %d 字（要求 %d-%d）%s"
+              % (q["seq"], q["type_name"], aw, q["word_min"], q["word_max"], ok), flush=True)
+        con.execute("INSERT INTO essays(paper_id,seq,qtype,type_name,stem,full,word_min,word_max,"
+                    "answer,answer_words,outline) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (pid, q["seq"], q["qtype"], q["type_name"], q["stem"], q["full"],
+                     q["word_min"], q["word_max"], ans, aw, gen_outline(q, ans)))
+        con.commit()
+    con.commit()
+    return 1
+
+
+def main():
+    if not AI_KEY:
+        sys.exit("未配置 ai_key")
+    con = sqlite3.connect(DB, timeout=60)
+    have = {r[0] for r in con.execute("SELECT topic FROM essay_papers")}
+
+    if "--list" in sys.argv:
+        for t, s in TOPICS:
+            print("  %s %-8s %s" % ("✅" if t in have else "⬜", t, SPECS[s]["name"]))
+        return
+    if "--topic" in sys.argv:
+        t = sys.argv[sys.argv.index("--topic") + 1]
+        spec = dict(TOPICS).get(t, "guokao")
+        build_topic(con, t, spec)
+        return
+
+    limit = 3
+    for a in sys.argv[1:]:
+        if a.isdigit():
+            limit = int(a)
+    n = 0
+    for t, spec in TOPICS:
+        if n >= limit:
+            break
+        if t in have:
+            continue
+        try:
+            n += build_topic(con, t, spec)
+        except Exception as e:
+            print("  ✗ %s 失败：%s" % (t, e))
+    print("\n本次新增 %d 套，库内共 %d 套"
+          % (n, con.execute("SELECT COUNT(*) FROM essay_papers").fetchone()[0]))
+
+
+if __name__ == "__main__":
+    main()
