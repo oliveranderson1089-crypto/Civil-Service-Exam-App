@@ -55,8 +55,11 @@ public class MainActivity extends Activity {
     private static final int FILE_REQ = 1001;
     private static final int CAMERA_REQ = 1002;
     private static final String KEY = "server_url";
+    private static final int NOTIFY_PERM_REQ = 1003;
+    private volatile boolean pageReady = false;      // 网页加载完才能执行 ntfGo()
+    private String pendingNotifyLink = null;         // 通知点进来时要跳转的位置
     // 默认地址：固定公网网址（命名隧道，重启不变）；在家也可在 APP 内改成局域网 IP 提速
-    private static final String DEF = "https://gk.gongkaopei2026.click";
+    static final String DEF = "https://gk.gongkaopei2026.click";
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -171,6 +174,8 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView v, String url) {
                 pushSysTheme();   // WebView 的 prefers-color-scheme 不跟随系统，由原生告知网页
+                pageReady = true;
+                consumeNotifyLink();
             }
         });
 
@@ -199,6 +204,12 @@ public class MainActivity extends Activity {
         });
 
         handleShareIntent(getIntent());  // 冷启动即处理「分享到公考助手」
+
+        Notifier.ensureChannel(this);
+        askNotifyPermission();
+        NotifyReceiver.schedule(this);           // 定时把服务器的新消息弹到通知栏
+        Notifier.fetchAndNotify(this, false);    // 打开时也顺便查一次
+        takeNotifyLink(getIntent());
 
         String url = prefs.getString(KEY, "");
         if (url.isEmpty()) {
@@ -237,6 +248,34 @@ public class MainActivity extends Activity {
             if (web != null) web.evaluateJavascript(
                 "window.__ttsEvent&&window.__ttsEvent('" + id + "','end')", null);
         });
+    }
+
+    /** Android 13+ 需要运行时申请通知权限，否则弹了也看不见。 */
+    private void askNotifyPermission() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return;
+        try {
+            if (checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, NOTIFY_PERM_REQ);
+            }
+        } catch (Exception ignored) { }
+    }
+
+    /** 从通知的 Intent 里取出要跳转的位置，等网页就绪后再执行。 */
+    private void takeNotifyLink(Intent intent) {
+        if (intent == null) return;
+        String link = intent.getStringExtra(Notifier.EXTRA_LINK);
+        if (link == null || link.isEmpty()) return;
+        pendingNotifyLink = link;
+        consumeNotifyLink();
+    }
+
+    private void consumeNotifyLink() {
+        if (!pageReady || pendingNotifyLink == null || web == null) return;
+        final String link = pendingNotifyLink;
+        pendingNotifyLink = null;
+        runOnUiThread(() -> web.evaluateJavascript(
+                "window.ntfGo && ntfGo('" + link.replace("'", "\\'") + "')", null));
     }
 
     /** 系统当前是否深色模式。 */
@@ -279,6 +318,31 @@ public class MainActivity extends Activity {
     }
 
     public class Bridge {
+        /** 手机通知栏推送：是否已开启。 */
+        @android.webkit.JavascriptInterface
+        public boolean notifyEnabled() { return Notifier.enabled(MainActivity.this); }
+
+        /** 打开/关闭手机通知栏推送（同时启停定时拉取）。 */
+        @android.webkit.JavascriptInterface
+        public void setNotify(boolean on) {
+            Notifier.prefs(MainActivity.this).edit().putBoolean(Notifier.KEY_ENABLED, on).apply();
+            if (on) {
+                runOnUiThread(MainActivity.this::askNotifyPermission);
+                NotifyReceiver.schedule(MainActivity.this);
+                Notifier.fetchAndNotify(MainActivity.this, false);
+            } else {
+                NotifyReceiver.cancel(MainActivity.this);
+            }
+        }
+
+        /** 立刻去服务器拉一次新消息（网页里「立即检查」用）。 */
+        @android.webkit.JavascriptInterface
+        public void notifyCheck() { Notifier.fetchAndNotify(MainActivity.this, true); }
+
+        /** 发一条测试通知，验证通知权限有没有被系统挡掉。 */
+        @android.webkit.JavascriptInterface
+        public void notifyTest() { Notifier.showTest(MainActivity.this); }
+
         @android.webkit.JavascriptInterface
         public boolean sysDark() { return sysDarkNow(); }
 
@@ -486,6 +550,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onNewIntent(Intent intent) {
+        takeNotifyLink(intent);
         super.onNewIntent(intent);
         setIntent(intent);
         handleShareIntent(intent);

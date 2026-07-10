@@ -3825,6 +3825,7 @@ async function openAccount() {
     $('#acct-secq').innerHTML = qs.map(q => `<option ${q === d.sec_question ? 'selected' : ''}>${esc(q)}</option>`).join('');
     $('#acct-oldpw').value = ''; $('#acct-newpw').value = ''; $('#acct-seca').value = '';
     $('#acct-app').classList.toggle('hidden', !IN_APP);
+    refreshNotifyBtn();
   } catch (e) { toast(e.message, true); }
 }
 $('#brand-logo').onclick = openAccount;
@@ -4195,7 +4196,11 @@ const NTF_ICON = {
   gaikuo: '📝', review: '⏰', tasks: '📋', quiz: '🧩',
 };
 /* link 形如 "changshi" 或 "changshi:法律常识" */
+let _ntfTries = 0;
 function ntfGo(link) {
+  // 原生通知点进来时 SPA 可能还没启动完，等它把 ME 拉到再跳
+  if (!ME && _ntfTries < 20) { _ntfTries++; setTimeout(() => ntfGo(link), 400); return; }
+  _ntfTries = 0;
   const [k, arg] = (link || '').split(':');
   const go = {
     changshi: () => { openChangshi(); if (arg) setTimeout(() => openCsBoard(arg), 260); },
@@ -4455,3 +4460,31 @@ $('#dqd-files').addEventListener('click', e => {
   const [mid, name] = b.dataset.dqopen.split('|');
   openViewerUrl('/api/materials/' + mid + '/view', name, '.pdf', '/api/materials/' + mid + '/download');
 });
+
+/* ================= 手机通知栏推送（APK 内由原生定时拉取并弹通知） ================= */
+function nativeNotify() {
+  return window.GongkaoNative && typeof GongkaoNative.notifyEnabled === 'function' ? GongkaoNative : null;
+}
+function refreshNotifyBtn() {
+  const n = nativeNotify();
+  const b = $('#acct-notify');
+  if (!b) return;
+  if (!n) { b.textContent = '手机通知（需安装 App）'; return; }
+  try { b.textContent = '手机通知：' + (n.notifyEnabled() ? '已开启 ✓' : '已关闭'); } catch (_) {}
+}
+$('#acct-notify').onclick = () => {
+  const n = nativeNotify();
+  if (!n) return toast('网页版看不到系统通知，请安装安卓 App', true);
+  try {
+    const on = !n.notifyEnabled();
+    n.setNotify(on);
+    refreshNotifyBtn();
+    toast(on ? '已开启：新消息会推到手机通知栏' : '已关闭手机通知');
+  } catch (e) { toast('设置失败', true); }
+};
+$('#acct-notifytest').onclick = () => {
+  const n = nativeNotify();
+  if (!n) return toast('网页版看不到系统通知，请安装安卓 App', true);
+  try { n.notifyTest(); toast('已发送，下拉通知栏看看'); }
+  catch (e) { toast('发送失败', true); }
+};

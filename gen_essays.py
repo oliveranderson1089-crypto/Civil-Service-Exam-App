@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """申论范文推荐：按热门话题生成「仿真卷 + 全套参考答案」。
 
-给定资料严格按真题规格（国考 6000~8000 字 / 四川省考 5000~7000 字，4~6 则），
-不是随手写几百字。材料分则生成，题目一次生成，参考答案逐题生成并校验字数。
+给定资料按真题规格（国考 6000~8000 字 / 四川省考 5000~7000 字，4~6 则）分则生成，
+每则都校验字数；总量以 9000 字为硬上限，但绝不丢弃整则材料（宁可长，不可残）。
+题目一次生成，参考答案逐题生成并校验字数。
 
 用法:
   python3 gen_essays.py                # 按热门顺序补齐还没生成的话题（默认最多 3 套）
@@ -38,6 +39,9 @@ TOPICS = [
 ]
 
 SYS = "你是命制过多年申论真题的教研专家，材料真实可信、题目规范、参考答案能拿高分。"
+
+# 给定资料的硬上限：真题规格只是目标，超一点没关系，但不能为了压字数把整则材料砍掉
+HARD_MAX = int(os.environ.get("GONGKAO_ESSAY_MAX_WORDS", "9000"))
 
 
 def _words(t):
@@ -113,10 +117,12 @@ def gen_material(topic, spec, n_passages, per_words, total_words):
         sofar.append(txt[:40])
         print("    材料%d：%d 字 %s" % (i + 1, n, "✅" if lo <= n <= hi else "⚠️"), flush=True)
 
-    # 单则都合格了总量仍可能越界（真题给定资料 4~6 则，这个范围里可以调整则数）
-    while len(passages) > 4 and sum(_words(x) for x in passages) > thi:
-        drop = passages.pop()
-        print("    总量超上限，去掉最后一则（%d 字）" % _words(drop), flush=True)
+    # 不再丢弃最后一则——材料是一个整体，少一则就残缺了。
+    # 单则字数已经收敛过，总量落在真题区间~9000 字之间都可接受。
+    total = sum(_words(x) for x in passages)
+    if total > HARD_MAX:
+        print("    ⚠️ 总量 %d 字超过 %d 字的上限，但保留全部 %d 则（宁可长，不可残）"
+              % (total, HARD_MAX, len(passages)), flush=True)
     return "\n\n".join("材料%d\n%s" % (i + 1, t) for i, t in enumerate(passages))
 
 
@@ -187,7 +193,13 @@ def build_topic(con, topic, spec):
 
     material = gen_material(topic, spec, n_pass, per, (lo, hi))
     mw = _words(material)
-    print("  材料合计 %d 字 %s" % (mw, "✅" if lo <= mw <= hi else "⚠️ 偏离规格"), flush=True)
+    if lo <= mw <= hi:
+        tag = "✅ 符合真题规格"
+    elif mw <= HARD_MAX:
+        tag = "✅ 略高于规格但在 %d 字以内，可接受" % HARD_MAX
+    else:
+        tag = "⚠️ 超过 %d 字" % HARD_MAX
+    print("  材料合计 %d 字（%d 则）%s" % (mw, n_pass, tag), flush=True)
 
     qs = gen_questions(topic, spec, material)
     print("  命制 %d 道题" % len(qs), flush=True)
