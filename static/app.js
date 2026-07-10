@@ -2768,10 +2768,7 @@ async function fillPlanExams() {
 }
 function renderPlan(d) {
   const p = d.profile;
-  const days = p.days_left;
-  const dayTag = days === null ? '未设考试日期'
-    : days < 0 ? '已考完' : days === 0 ? '就是今天！' : `距${esc(p.exam)}还有 <b>${days}</b> 天`;
-  $('#pl-head').innerHTML = `<div class="pl-days">${dayTag}</div>
+  $('#pl-head').innerHTML = `<div class="pl-days">${esc(p.exam || '备考规划')}</div>
     <div class="pl-meta">今天可学 ${p.minutes} 分钟${p.weak ? ' · 薄弱：' + esc(p.weak) : ''}</div>`;
 
   if (d.summary) {
