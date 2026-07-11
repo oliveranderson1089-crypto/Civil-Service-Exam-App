@@ -1929,3 +1929,55 @@ body.dark .hw-cand{background:#161b24 !important;border-color:#2a3345 !important
 body.dark .hw-cand:first-child{background:#182333 !important;border-color:#3a6ea5 !important;}
 body.dark .hw-btn{background:#161b24 !important;border-color:#2a3345 !important;color:#c4cdda !important;}
 body.dark .hw-btn.hw-done{background:#1a6fb5 !important;color:#fff !important;}
+
+/* ============ 备考信息头部（返回 / 撤回） + 计划记录 / 分析 ============ */
+.pl-setup-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.pl-setup-title{font-size:15.5px;font-weight:700;color:#1f2733;}
+.pl-back,.pl-undo{border:none;background:none;font-size:14px;cursor:pointer;padding:5px 6px;}
+.pl-back{color:#1a6fb5;font-weight:600;}
+.pl-undo{color:#c2671f;}
+.pl-links{display:flex;gap:10px;margin:2px 0 12px;}
+.pl-link-btn{flex:1;border:1.5px solid #dbe6f2;background:#f3f8fd;color:#1a6fb5;border-radius:10px;
+  padding:10px;font-size:14px;font-weight:600;cursor:pointer;}
+.pl-link-btn:active{background:#e6f0fa;}
+body.dark .pl-setup-title{color:#e6ebf2 !important;}
+body.dark .pl-link-btn{background:#172234 !important;border-color:#26405f !important;color:#7fb3e8 !important;}
+
+.plh-top{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;}
+.plh-top .btn{width:100%;}
+.plh-tip{font-size:12px;color:#8a93a3;text-align:center;}
+.plh-analysis{background:#f3f8fd;border:1px solid #dbe8f5;border-radius:13px;padding:14px;margin-bottom:14px;}
+.plh-ov{font-size:14px;line-height:1.7;color:#1f2733;font-weight:600;}
+.plh-stat{font-size:12px;color:#6b7280;margin:6px 0 4px;}
+.plh-sec{margin-top:11px;}
+.plh-sec h4{font-size:13.5px;margin:0 0 5px;color:#33415c;}
+.plh-sec ul{margin:0;padding-left:18px;}
+.plh-sec li{font-size:13px;line-height:1.7;color:#33415c;margin-bottom:3px;}
+.plh-sec.neg li{color:#c0392b;}
+.plh-sec.sug li{color:#0b7285;}
+.plh-list{display:flex;flex-direction:column;gap:14px;}
+.plh-day{background:#fff;border:1px solid #eef1f5;border-radius:13px;padding:12px 13px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+.plh-dhead{display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap;}
+.plh-dhead b{font-size:15px;color:#1f2733;}
+.plh-today{font-size:11px;background:#1a6fb5;color:#fff;border-radius:6px;padding:1px 7px;}
+.plh-prog{font-size:12px;color:#6b7280;margin-left:auto;}
+.plh-item{display:flex;gap:9px;align-items:flex-start;padding:5px 0;}
+.plh-item.done .plh-title{color:#98a2b3;text-decoration:line-through;}
+.plh-dot{flex:none;width:19px;height:19px;border-radius:50%;border:1.5px solid #cdd5e0;font-size:12px;
+  display:grid;place-items:center;color:#12b886;margin-top:1px;}
+.plh-item.done .plh-dot{background:#e6f7ef;border-color:#12b886;}
+.plh-itxt{flex:1;display:flex;flex-direction:column;gap:4px;}
+.plh-title{font-size:13.5px;color:#28313f;line-height:1.5;}
+.plh-arch{margin-top:9px;border-top:1px dashed #e6e9ef;padding-top:8px;}
+.plh-arch summary{font-size:12.5px;color:#6b7280;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.plh-restore{margin-left:auto;border:1px solid #cfe0f0;background:#eef5fc;color:#1a6fb5;border-radius:7px;
+  padding:3px 9px;font-size:12px;cursor:pointer;}
+.plh-sum{font-size:12.5px;color:#6b7280;margin:7px 0 4px;line-height:1.6;}
+body.dark .plh-analysis{background:#141d2b !important;border-color:#22344a !important;}
+body.dark .plh-ov{color:#e6ebf2 !important;}
+body.dark .plh-sec h4,body.dark .plh-sec li{color:#c4cdda !important;}
+body.dark .plh-sec.neg li{color:#ef9a9a !important;}
+body.dark .plh-sec.sug li{color:#7fd4e0 !important;}
+body.dark .plh-day{background:#161b24 !important;border-color:#242c39 !important;}
+body.dark .plh-dhead b,body.dark .plh-title{color:#e2e7ef !important;}
+body.dark .plh-restore{background:#172234 !important;border-color:#26405f !important;color:#7fb3e8 !important;}

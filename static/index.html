@@ -694,6 +694,11 @@
     <div id="tk-plan" class="tk-pane">
       <!-- 没填备考信息时先填 -->
       <div id="pl-setup" class="pl-setup hidden">
+        <div class="pl-setup-bar">
+          <button class="pl-back" id="pl-back" hidden>‹ 返回</button>
+          <span class="pl-setup-title">备考信息</span>
+          <button class="pl-undo" id="pl-undo" hidden>↶ 撤回</button>
+        </div>
         <div class="pd-intro">告诉规划助手几件事，它会结合你的复习进度、错题分布、当天新增内容，排出今天该学什么。</div>
         <label class="slg-lb">考什么 <span></span></label>
         <select id="pl-exam"></select>
@@ -718,6 +723,10 @@
           <button class="btn primary" id="pl-gen">✨ 让规划助手排今天的计划</button>
           <button class="btn tiny" id="pl-edit">⚙️ 备考信息</button>
         </div>
+        <div class="pl-links">
+          <button class="pl-link-btn" id="pl-hist">📆 计划记录</button>
+          <button class="pl-link-btn" id="pl-analyze">📊 分析进度</button>
+        </div>
         <div class="tk-add"><input id="pl-in" placeholder="自己加一条…"><button class="btn primary" id="pl-add">添加</button></div>
       </div>
     </div>
@@ -734,6 +743,16 @@
       <div id="tk-shared-list" class="tk-list"></div>
       <div class="tk-add"><input id="tk-shared-in" placeholder="添加待办（两人可见）…"><button class="btn primary" id="tk-shared-add">添加</button></div>
     </div>
+  </section>
+
+  <!-- 备考计划记录 + 进度分析 -->
+  <section id="view-planlog" class="view hidden">
+    <div class="plh-top">
+      <button class="btn primary" id="plh-analyze-btn">📊 分析我的备考进度</button>
+      <span class="plh-tip">看看每天完成了多少、哪些模块被冷落了</span>
+    </div>
+    <div id="plh-analysis" class="plh-analysis hidden"></div>
+    <div id="plh-list" class="plh-list"></div>
   </section>
 
   <!-- 应用内更新提示 -->
@@ -1157,6 +1176,7 @@
     <textarea id="ad-input" class="ad-input hidden" rows="3"></textarea>
     <div class="modal-actions">
       <button class="btn" id="ad-cancel">取消</button>
+      <button class="btn" id="ad-alt" hidden></button>
       <button class="btn primary" id="ad-ok">确定</button>
     </div>
   </div>

@@ -87,8 +87,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -182,16 +182,23 @@ function _dialog(o) {
     if (o.input) { inp.value = o.val || ''; inp.placeholder = o.placeholder || ''; }
     $('#ad-ok').textContent = o.okText || '确定';
     $('#ad-ok').classList.toggle('danger', !!o.danger);
+    const alt = $('#ad-alt');
+    if (o.altText) { alt.hidden = false; alt.textContent = o.altText; alt.classList.toggle('danger', !!o.altDanger); }
+    else alt.hidden = true;
+    $('#ad-okval') && ($('#ad-okval').value = '');
+    _adOkVal = o.okVal;
     $('#app-dialog').classList.remove('hidden');
     if (o.input) setTimeout(() => inp.focus(), 80);
   });
 }
+let _adOkVal;
 function _adDone(v) {
   $('#app-dialog').classList.add('hidden');
   const r = _adResolve; _adResolve = null;
   if (r) r(v);
 }
-$('#ad-ok').onclick = () => _adDone($('#ad-input').classList.contains('hidden') ? true : $('#ad-input').value);
+$('#ad-ok').onclick = () => _adDone($('#ad-input').classList.contains('hidden') ? (_adOkVal !== undefined ? _adOkVal : true) : $('#ad-input').value);
+$('#ad-alt').onclick = () => _adDone('alt');
 $('#ad-cancel').onclick = () => _adDone($('#ad-input').classList.contains('hidden') ? false : null);
 $('#app-dialog').addEventListener('click', e => { if (e.target.id === 'app-dialog') $('#ad-cancel').click(); });
 function appConfirm(msg, opts) {
@@ -2982,25 +2989,59 @@ function renderPlan(d) {
     </div>`;
   }).join('') : '<p class="empty">今天还没有计划。点下面的按钮，规划助手会看着你的复习进度和错题给你排一份。</p>';
 }
-$('#pl-save').onclick = async () => {
-  const body = {
+// 备考信息：记下打开时的原值，用来判断"有没有改过" + 撤回
+let plFormBase = null;
+function plReadForm() {
+  return {
     exam: $('#pl-exam').value, exam_date: $('#pl-date').value,
     minutes: +$('#pl-min').value || 120,
     weak: $('#pl-weak').value.trim(), note: $('#pl-note').value.trim(),
   };
+}
+function plWriteForm(v) {
+  if (!v) return;
+  $('#pl-exam').value = v.exam || ''; $('#pl-date').value = v.exam_date || '';
+  $('#pl-min').value = v.minutes || 120; $('#pl-weak').value = v.weak || ''; $('#pl-note').value = v.note || '';
+  plSyncUndo();
+}
+function plDirty() { return plFormBase && JSON.stringify(plReadForm()) !== JSON.stringify(plFormBase); }
+function plSyncUndo() { const u = $('#pl-undo'); if (u) u.hidden = !plDirty(); }
+['pl-exam', 'pl-date', 'pl-min', 'pl-weak', 'pl-note'].forEach(id =>
+  $('#' + id).addEventListener('input', plSyncUndo));
+
+async function plSave() {
   try {
-    await api('/api/plan/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    plEditing = false;
+    const d = await api('/api/plan/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plReadForm()) });
+    plEditing = false; plFormBase = null;
     toast('已保存');
-    loadPlan();
-  } catch (e) { toast(e.message, true); }
-};
+    return true;
+  } catch (e) { toast(e.message, true); return false; }
+}
+$('#pl-save').onclick = async () => { if (await plSave()) loadPlan(); };
 $('#pl-edit').onclick = async () => {
   plEditing = true;
   await fillPlanExams();
+  plFormBase = plReadForm();      // 记下原值
+  $('#pl-back').hidden = !plProfile;   // 已有档案才有"上一页"可回
+  $('#pl-undo').hidden = true;
   $('#pl-setup').classList.remove('hidden');
   $('#pl-main').classList.add('hidden');
 };
+$('#pl-undo').onclick = () => { plWriteForm(plFormBase); toast('已撤回修改'); };
+// 返回：改过就问，保存 / 不保存 / 继续编辑
+async function plLeaveSetup() {
+  if (!plProfile) return;   // 首次填写没有"上一页"
+  if (plDirty()) {
+    const r = await appConfirm('备考信息有未保存的修改，怎么处理？',
+      { title: '未保存的修改', okText: '保存并返回', altText: '不保存', okVal: 'save' });
+    if (r === false) return;                 // 取消 = 继续编辑
+    if (r === 'save') { if (!(await plSave())) return; }
+    // r === 'alt'（不保存）：直接丢弃
+  }
+  plEditing = false; plFormBase = null;
+  loadPlan();
+}
+$('#pl-back').onclick = plLeaveSetup;
 $('#pl-gen').onclick = async () => {
   const b = $('#pl-gen');
   b.disabled = true; b.textContent = '规划助手思考中…';
@@ -3035,6 +3076,74 @@ $('#pl-list').addEventListener('click', async e => {
   try { await api('/api/plan/' + it.dataset.pl + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadPlan(); }
   catch (er) { toast(er.message, true); }
 });
+
+/* ---------------- 备考计划记录 + 进度分析 ---------------- */
+$('#pl-hist').onclick = () => openPlanLog();
+$('#pl-analyze').onclick = () => openPlanLog(true);
+function openPlanLog(runAnalyze) {
+  push({ view: 'planlog', title: '计划记录' });
+  $('#plh-analysis').classList.add('hidden'); $('#plh-analysis').innerHTML = '';
+  loadPlanLog();
+  if (runAnalyze) setTimeout(plhAnalyze, 200);
+}
+function plItemsHtml(items, checkable, pid) {
+  return items.map(it => {
+    const col = PL_MOD_COLOR[it.module] || '#6b7280';
+    return `<div class="plh-item ${it.done ? 'done' : ''}">
+      <span class="plh-dot">${it.done ? '✓' : ''}</span>
+      <span class="plh-itxt"><span class="plh-title">${esc(it.title)}</span>
+        <span class="pl-tags">${it.module ? `<i class="pl-mod" style="background:${col}">${esc(it.module)}</i>` : ''}<i class="pl-min">${it.minutes || 0} 分钟</i></span>
+      </span></div>`;
+  }).join('');
+}
+async function loadPlanLog() {
+  $('#plh-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/plan/history');
+    if (!d.days.length) { $('#plh-list').innerHTML = '<p class="empty">还没有计划记录。让规划助手排几天计划，这里就会留下每天的完成情况。</p>'; return; }
+    $('#plh-list').innerHTML = d.days.map(day => {
+      const arch = (day.archived || []).map(a => `
+        <details class="plh-arch">
+          <summary>${a.summary && a.summary.indexOf('【找回】') === 0 ? '🛟 找回的上一版' : '🕓 旧版本'} · ${esc((a.created_at || '').slice(5, 16))} · ${a.total} 条 / ${a.minutes_total} 分钟
+            ${day.is_today ? `<button class="plh-restore" data-restore="${a.id}">恢复为今天</button>` : ''}</summary>
+          ${a.summary ? `<div class="plh-sum">💡 ${esc(a.summary.replace('【找回】', ''))}</div>` : ''}
+          ${plItemsHtml(a.items || [])}
+        </details>`).join('');
+      return `<div class="plh-day">
+        <div class="plh-dhead"><b>${esc(day.date)}</b>${day.is_today ? ' <span class="plh-today">今天</span>' : ''}
+          <span class="plh-prog">${day.total ? `完成 ${day.done_n}/${day.total} · ${day.minutes_done}/${day.minutes_total} 分钟` : '当天无计划'}</span></div>
+        ${day.total ? plItemsHtml(day.items) : ''}
+        ${arch}
+      </div>`;
+    }).join('');
+  } catch (e) { $('#plh-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#plh-list').addEventListener('click', async e => {
+  const r = e.target.closest('[data-restore]'); if (!r) return;
+  e.preventDefault();
+  if (!(await appConfirm('把这一版恢复成今天的计划？当前这版会先存进历史。'))) return;
+  try { await api('/api/plan/restore/' + r.dataset.restore, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); toast('已恢复'); loadPlanLog(); }
+  catch (er) { toast(er.message, true); }
+});
+$('#plh-analyze-btn').onclick = plhAnalyze;
+async function plhAnalyze() {
+  const box = $('#plh-analysis'); const btn = $('#plh-analyze-btn');
+  box.classList.remove('hidden');
+  box.innerHTML = '<p class="empty">规划助手正在翻你的计划记录…</p>';
+  btn.disabled = true;
+  try {
+    const d = await api('/api/plan/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const sec = (title, arr, cls) => arr && arr.length ? `<div class="plh-sec ${cls}"><h4>${title}</h4><ul>${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+    box.innerHTML = `
+      <div class="plh-ov">${esc(d.overview || '')}</div>
+      <div class="plh-stat">近 ${d.days} 天 · 共 ${d.total} 条 · 完成 ${d.done} 条</div>
+      ${sec('✅ 坚持得不错', d.keep, 'keep')}
+      ${sec('⚠️ 被冷落 / 长期没安排', d.neglected, 'neg')}
+      ${sec('👉 接下来建议', d.suggestions, 'sug')}`;
+  } catch (e) { box.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  btn.disabled = false;
+}
+
 async function loadDaily() {
   $('#tk-daily-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
@@ -4178,6 +4287,7 @@ const SYNC_REFRESH = {
   news: () => loadNews(),
   gaikuo: () => loadGaikuo(),
   gongwen: () => loadGongwen($('#gw-q').value.trim()),
+  planlog: () => loadPlanLog(),
   partydict: () => loadPartyDict(),
   sucai: () => loadSucai(),
   review: () => loadReview(),

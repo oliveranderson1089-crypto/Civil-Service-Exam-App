@@ -660,6 +660,14 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_plan_user ON plan_items(user_id, date, seq);
+        -- 每日计划快照：重排/换天前把旧计划存一份，方便回看和被覆盖后还能找回
+        CREATE TABLE IF NOT EXISTS plan_log(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            date TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now','localtime')),
+            summary TEXT, minutes_total INTEGER, done_n INTEGER, total INTEGER,
+            items_json TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_plan_log ON plan_log(user_id, date DESC, id DESC);
     """)
     # 备考规划：把 AI 给出的今日重点存下来，刷新后还能看到
     for col in ("summary", "summary_date"):
@@ -4063,6 +4071,23 @@ def plan_today():
     })
 
 
+def _plan_snapshot(db, date, note=""):
+    """把某天当前的计划存一份进 plan_log（重排/覆盖前调用，避免旧版丢失）。"""
+    rows = db.execute("SELECT seq,title,module,minutes,reason,link,source,done FROM plan_items "
+                      "WHERE user_id=? AND date=? ORDER BY seq, id", (uid(), date)).fetchall()
+    if not rows:
+        return
+    items = [dict(r) for r in rows]
+    prof = db.execute("SELECT summary, summary_date FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    summary = (prof["summary"] if prof and prof["summary_date"] == date else "") or note
+    db.execute("INSERT INTO plan_log(user_id,date,summary,minutes_total,done_n,total,items_json) "
+               "VALUES(?,?,?,?,?,?,?)",
+               (uid(), date, summary,
+                sum(x["minutes"] or 0 for x in items),
+                sum(1 for x in items if x["done"]), len(items),
+                json.dumps(items, ensure_ascii=False)))
+
+
 PLAN_SYS = ("你是公考备考规划师。只根据给出的「学情快照」排计划，不编造学生没有的数据；"
             "任务要具体到可执行（写清做什么、做多少），总时长贴近可用时间。严格输出 JSON。")
 
@@ -4133,7 +4158,8 @@ def plan_generate():
     if not items:
         return jsonify({"error": "AI 没有排出计划，请重试"}), 502
 
-    # 重排会覆盖今天「AI 排的」那部分，手动加的条目保留
+    # 重排会覆盖今天「AI 排的」那部分：先把当前这一版存进历史，别让它丢了
+    _plan_snapshot(db, today)
     db.execute("DELETE FROM plan_items WHERE user_id=? AND date=? AND source='ai'", (uid(), today))
     base = db.execute("SELECT COALESCE(MAX(seq),0) FROM plan_items WHERE user_id=? AND date=?",
                       (uid(), today)).fetchone()[0]
@@ -4196,6 +4222,167 @@ def plan_del(pid):
     db.execute("DELETE FROM plan_items WHERE id=? AND user_id=?", (pid, uid()))
     db.commit()
     return jsonify({"ok": True})
+
+
+@app.post("/api/plan/restore/<int:log_id>")
+def plan_restore(log_id):
+    """把历史里的某一版（限当天）恢复成今天的计划；当前这版先存一份进历史。"""
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    r = db.execute("SELECT * FROM plan_log WHERE id=? AND user_id=?", (log_id, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "未找到该版本"}), 404
+    if r["date"] != today:
+        return jsonify({"error": "只能恢复今天的版本"}), 400
+    try:
+        items = json.loads(r["items_json"] or "[]")
+    except Exception:
+        items = []
+    _plan_snapshot(db, today)     # 当前版本也留一份，别覆盖丢了
+    db.execute("DELETE FROM plan_items WHERE user_id=? AND date=? AND source='ai'", (uid(), today))
+    base = db.execute("SELECT COALESCE(MAX(seq),0) FROM plan_items WHERE user_id=? AND date=?",
+                      (uid(), today)).fetchone()[0]
+    for i, x in enumerate([it for it in items if it.get("source") != "manual"], 1):
+        db.execute("INSERT INTO plan_items(user_id,date,seq,title,module,minutes,reason,link,source,done,done_at) "
+                   "VALUES(?,?,?,?,?,?,?,?,'ai',?,CASE WHEN ? THEN datetime('now','localtime') END)",
+                   (uid(), today, base + i, (x.get("title") or "")[:120], (x.get("module") or "")[:20],
+                    x.get("minutes") or 20, (x.get("reason") or "")[:200], x.get("link") or "",
+                    1 if x.get("done") else 0, 1 if x.get("done") else 0))
+    if r["summary"]:
+        db.execute("UPDATE plan_profile SET summary=?, summary_date=? WHERE user_id=?",
+                   (r["summary"].replace("【找回】", ""), today, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/plan/history")
+def plan_history():
+    """每天的计划 + 完成情况；今天被重排覆盖掉的旧版本也一并带出来。"""
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    days = {}
+    for r in db.execute("SELECT date,seq,title,module,minutes,reason,link,source,done,done_at "
+                        "FROM plan_items WHERE user_id=? ORDER BY date DESC, seq, id", (uid(),)):
+        d = days.setdefault(r["date"], {"date": r["date"], "live": [], "archived": []})
+        d["live"].append({k: r[k] for k in
+                          ("seq", "title", "module", "minutes", "reason", "link", "source", "done", "done_at")})
+    for r in db.execute("SELECT id,date,created_at,summary,minutes_total,done_n,total,items_json "
+                        "FROM plan_log WHERE user_id=? ORDER BY date DESC, id DESC", (uid(),)):
+        d = days.setdefault(r["date"], {"date": r["date"], "live": [], "archived": []})
+        try:
+            items = json.loads(r["items_json"] or "[]")
+        except Exception:
+            items = []
+        d["archived"].append({"id": r["id"], "created_at": r["created_at"], "summary": r["summary"],
+                              "minutes_total": r["minutes_total"], "done_n": r["done_n"],
+                              "total": r["total"], "items": items})
+    out = []
+    for date in sorted(days, reverse=True):
+        d = days[date]
+        live = d["live"]
+        out.append({"date": date, "is_today": date == today, "items": live,
+                    "done_n": sum(1 for x in live if x["done"]), "total": len(live),
+                    "minutes_total": sum(x["minutes"] or 0 for x in live),
+                    "minutes_done": sum((x["minutes"] or 0) for x in live if x["done"]),
+                    "archived": d["archived"]})
+    return jsonify({"days": out, "today": today})
+
+
+# 计划能覆盖的模块 → 用关键词从任务标题/模块名里认出来，算「最近有没有安排到」
+PLAN_MODULES = [
+    ("每日复习", ["复习", "遗忘曲线", "背诵", "回忆"]),
+    ("错题订正", ["错题", "订正"]),
+    ("成语词语", ["成语", "词语", "实词", "选词填空"]),
+    ("上位词", ["上位词", "概括词"]),
+    ("古诗文", ["古诗", "诗词", "名句", "文学常识"]),
+    ("数量关系", ["数量关系", "数学运算", "行程", "工程问题", "浓度", "排列组合", "概率"]),
+    ("资料分析", ["资料分析", "速算", "增长率", "比重"]),
+    ("判断推理", ["图形推理", "类比推理", "定义判断", "逻辑判断", "判断推理"]),
+    ("言语理解", ["言语理解", "逻辑填空", "片段阅读", "语句表达"]),
+    ("常识判断", ["常识"]),
+    ("政治理论/时政", ["时政", "政治理论", "理论基础", "马原", "毛概", "习思想", "党的创新"]),
+    ("申论", ["申论", "归纳概括", "综合分析", "提出对策", "贯彻执行", "大作文", "应用文", "作文", "批改"]),
+    ("素材/积累", ["素材", "积累", "概括句", "金句", "习语"]),
+]
+
+
+@app.post("/api/plan/analyze")
+def plan_analyze():
+    db = get_db()
+    today_d = datetime.now().date()
+    since = (today_d - timedelta(days=13)).strftime("%Y-%m-%d")
+    rows = db.execute("SELECT date,title,module,minutes,done FROM plan_items "
+                      "WHERE user_id=? AND date>=? ORDER BY date", (uid(), since)).fetchall()
+    # 把被覆盖的历史版本也纳入「安排过什么」的判断（避免漏掉今天早些版本里的成语等）
+    for r in db.execute("SELECT date,items_json FROM plan_log WHERE user_id=? AND date>=?", (uid(), since)):
+        try:
+            for it in json.loads(r["items_json"] or "[]"):
+                rows.append({"date": r["date"], "title": it.get("title", ""),
+                             "module": it.get("module", ""), "minutes": it.get("minutes", 0),
+                             "done": it.get("done", 0)})
+        except Exception:
+            pass
+    if not rows:
+        return jsonify({"error": "还没有计划记录，先让规划助手排几天计划再来分析"}), 400
+
+    dates = sorted({r["date"] for r in rows})
+    ndays = len(dates)
+    cover = {}
+    for name, kws in PLAN_MODULES:
+        hit = sorted({r["date"] for r in rows
+                      if any(k in ((r["title"] or "") + "|" + (r["module"] or "")) for k in kws)})
+        cover[name] = {"days": len(hit), "last": hit[-1] if hit else None}
+    total_items = len(rows)
+    done_items = sum(1 for r in rows if r["done"])
+
+    prof = db.execute("SELECT exam,exam_date,weak,note FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    cov_txt = "\n".join(
+        "· %s：%d 天里安排了 %d 天%s" %
+        (n, ndays, c["days"], ("，最近一次 %s" % c["last"]) if c["last"] else "，从没安排过")
+        for n, c in cover.items())
+    per_day = {}
+    for r in rows:
+        per_day.setdefault(r["date"], [0, 0])
+        per_day[r["date"]][0] += 1
+        per_day[r["date"]][1] += 1 if r["done"] else 0
+    day_txt = "\n".join("· %s：%d 条，完成 %d 条" % (d, per_day[d][0], per_day[d][1])
+                        for d in sorted(per_day))
+
+    prompt = (
+        "这是一名公考考生最近 %d 天（%s ~ %s）的每日备考计划完成情况，请你做一次进度分析。\n\n"
+        "【备考信息】考试：%s；薄弱环节：%s；备注：%s\n"
+        "【每天完成】\n%s\n\n"
+        "【各模块被安排的频率】（days 越少说明越少练到）\n%s\n\n"
+        "共 %d 条任务、完成 %d 条。请分析：\n"
+        "1. overview：两三句总体评价（完成率、坚持度）。\n"
+        "2. keep：坚持得好、完成率高的方面（数组，各一句）。\n"
+        "3. neglected：被冷落或长期没安排的模块，尤其点名那些「从没安排过」或很久没练的（如成语、古诗文等日积累项），"
+        "说明长期不练的风险（数组，各一句，带模块名）。\n"
+        "4. suggestions：给明天/近几天的具体建议，包含该补上的日积累项和薄弱环节（数组，3~5 条，可执行）。\n"
+        '只输出 JSON：{"overview":"","keep":[],"neglected":[],"suggestions":[]}'
+        % (ndays, dates[0], dates[-1],
+           prof["exam"] if prof else "未填", (prof["weak"] if prof else "") or "未填",
+           (prof["note"] if prof else "") or "无", day_txt, cov_txt, total_items, done_items))
+
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是公考备考教练，善于从学习记录里发现坚持得好的地方和被忽视的短板，"
+          "建议具体可执行。严格输出 JSON。"},
+         {"role": "user", "content": prompt}],
+        temperature=0.5, max_tokens=1400, timeout=120, json_mode=True)
+    if err:
+        return err
+    try:
+        d = json.loads(rep)
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+    return jsonify({
+        "overview": (d.get("overview") or "").strip(),
+        "keep": [str(x).strip() for x in (d.get("keep") or []) if str(x).strip()],
+        "neglected": [str(x).strip() for x in (d.get("neglected") or []) if str(x).strip()],
+        "suggestions": [str(x).strip() for x in (d.get("suggestions") or []) if str(x).strip()],
+        "days": ndays, "total": total_items, "done": done_items,
+        "coverage": [{"name": n, "days": c["days"], "last": c["last"]} for n, c in cover.items()],
+    })
 
 
 # ---------------------------------------------------------------- 消息中心（有新内容就提醒，点开直达）
