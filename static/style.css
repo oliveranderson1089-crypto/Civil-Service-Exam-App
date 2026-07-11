@@ -1914,6 +1914,12 @@ body.dark .hw-open-btn{background:#182333 !important;border-color:#274063 !impor
   padding:12px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:0 -8px 40px rgba(0,0,0,.25);}
 .hw-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
 .hw-title{font-size:15px;font-weight:700;color:#1f2733;}
+.hw-auto{margin-left:auto;margin-right:12px;display:flex;align-items:center;gap:5px;font-size:12.5px;color:#33415c;cursor:pointer;}
+.hw-auto input{margin:0;}
+.hw-hint-s{color:#12813f;margin-right:6px;}
+.hw-cand.filled{border-color:#12b886;background:#e9f9f1;color:#0b7a52;font-weight:700;}
+body.dark .hw-auto{color:#c4cdda !important;}
+body.dark .hw-cand.filled{background:#0f2a20 !important;border-color:#12b886 !important;color:#4ade9f !important;}
 .hw-x{border:none;background:none;font-size:18px;color:#98a2b3;cursor:pointer;padding:2px 6px;}
 .hw-cands{display:flex;gap:7px;overflow-x:auto;min-height:44px;align-items:center;padding:3px 1px;}
 .hw-hint{font-size:12.5px;color:#98a2b3;white-space:nowrap;}

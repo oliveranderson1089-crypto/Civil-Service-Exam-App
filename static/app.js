@@ -2710,15 +2710,17 @@ $('#gw-ask').onclick = async () => {
 };
 $('#gw-list').addEventListener('click', async e => {
   const d = e.target.closest('[data-gwdel]'); if (!d) return;
-  if (!confirm('删除这条 AI 归纳的场景？')) return;
+  if (!(await appConfirm('删除这条 AI 归纳的场景？'))) return;
   try { await api('/api/gongwen/' + d.dataset.gwdel, { method: 'DELETE' }); loadGongwen($('#gw-q').value.trim()); }
   catch (err) { toast(err.message, true); }
 });
 
 /* ============= 手写输入板（申论作答：数位板/手指 → Google 手写识别 → 填答案框） ============= */
 const hwEl = {}; let hwTarget = null, hwStrokes = [], hwCur = null, hwT0 = 0, hwDrawing = false, hwTimer = null;
+let hwAuto = localStorage.getItem('hwAuto') !== '0';   // 自动上屏首选字（默认开），连续写更快
+let hwCommitted = null;                                 // 刚自动上屏的字，可点别的候选替换
 function hwInit() {
-  ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done']
+  ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done', 'auto']
     .forEach(k => hwEl[k] = $('#hw-' + k));
   const cv = hwEl.canvas, ctx = cv.getContext('2d');
   function fit() {
@@ -2762,6 +2764,7 @@ function hwInit() {
   }
   function start(e) {
     e.preventDefault(); hwDrawing = true;
+    hwCommitted = null;                        // 又开始写了，取消"可替换刚上屏的字"
     if (!hwStrokes.length && !hwCur) hwT0 = Date.now();
     const p = pos(e); hwCur = { x: [p.x], y: [p.y], t: [Date.now() - hwT0] };
     clearTimeout(hwTimer);
@@ -2777,7 +2780,8 @@ function hwInit() {
     e && e.preventDefault(); hwDrawing = false;
     if (hwCur) { hwStrokes.push(hwCur); hwCur = null; hwRedraw(); }
     clearTimeout(hwTimer);
-    hwTimer = setTimeout(hwRecognize, 450);   // 停笔片刻自动识别
+    // 停笔就识别；自动上屏时给多笔画的字留足写完的时间，普通模式更快出候选
+    hwTimer = setTimeout(() => hwRecognize(true), hwAuto ? 550 : 300);
   }
   cv.addEventListener('pointerdown', start);
   cv.addEventListener('pointermove', move);
@@ -2792,12 +2796,15 @@ function hwInit() {
   hwEl.back.onclick = () => {
     if (!hwTarget) return;
     hwTarget.value = hwTarget.value.slice(0, -1);
-    hwFireInput();
+    hwCommitted = null; hwFireInput();
   };
   hwEl.done.onclick = hwClose;
+  hwEl.auto.checked = hwAuto;
+  hwEl.auto.onchange = () => { hwAuto = hwEl.auto.checked; localStorage.setItem('hwAuto', hwAuto ? '1' : '0'); };
 }
 let hwRedraw = () => {};
-async function hwRecognize() {
+let hwLastCands = [];
+async function hwRecognize(auto) {
   if (!hwStrokes.length) return;
   const cv = hwEl.canvas;
   const ink = hwStrokes.map(s => [s.x.map(v => Math.round(v)), s.y.map(v => Math.round(v)), s.t]);
@@ -2808,13 +2815,23 @@ async function hwRecognize() {
       body: JSON.stringify({ w: Math.round(cv.clientWidth), h: Math.round(cv.clientHeight), ink }),
     });
     if (d.error) { hwEl.cands.innerHTML = `<span class="hw-hint">${esc(d.error)}</span>`; return; }
-    hwSetCands(d.candidates || []);
+    const cands = d.candidates || [];
+    hwLastCands = cands;
+    if (auto && hwAuto && cands.length) {
+      // 自动上屏首选字并清空画布，接着写下一个；候选栏保留，写错点别的候选可替换
+      hwInsert(cands[0]);
+      hwCommitted = cands[0];
+      hwSetCands(cands, cands[0]);
+    } else {
+      hwSetCands(cands);
+    }
   } catch (e) { hwEl.cands.innerHTML = `<span class="hw-hint">${esc(e.message)}</span>`; }
 }
-function hwSetCands(list) {
+function hwSetCands(list, picked) {
   if (list === null) { hwEl.cands.innerHTML = '<span class="hw-hint">识别中…</span>'; return; }
-  if (!list.length) { hwEl.cands.innerHTML = '<span class="hw-hint">在下面田字格里写一个字，会自动识别</span>'; return; }
-  hwEl.cands.innerHTML = list.map(c => `<button class="hw-cand" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+  if (!list.length) { hwEl.cands.innerHTML = '<span class="hw-hint">在田字格里写字，' + (hwAuto ? '停笔即自动上屏' : '写完点候选字填入') + '</span>'; return; }
+  hwEl.cands.innerHTML = (picked ? '<span class="hw-hint hw-hint-s">已填，可点其它字更正 →</span>' : '') +
+    list.map(c => `<button class="hw-cand ${c === picked ? 'filled' : ''}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
 }
 function hwInsert(ch) {
   if (!hwTarget) return;
@@ -2847,7 +2864,16 @@ document.addEventListener('click', e => {
   const o = e.target.closest('[data-hw]');
   if (o) { e.preventDefault(); openHandwrite(o.dataset.hw); return; }
   const c = e.target.closest('.hw-cand');
-  if (c) { hwInsert(c.dataset.c); }
+  if (c) {
+    const ch = c.dataset.c;
+    if (hwCommitted && !hwStrokes.length) {
+      // 刚自动上屏的字选错了：删掉它再填选中的字（更正）
+      if (hwTarget) { hwTarget.value = hwTarget.value.slice(0, -1); }
+      hwInsert(ch); hwCommitted = ch; hwSetCands(hwLastCands, ch);
+    } else {
+      hwInsert(ch); hwCommitted = null;
+    }
+  }
 });
 
 /* ============= 议论文 · 素材积累 / 衔接表达（与微信 08:00 推送同源） ============= */
@@ -3205,11 +3231,15 @@ function bindBar() {
     }
     renderDtest();
   });
-  document.querySelectorAll('[data-dtc]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('[data-dtc]').forEach(b => b.onclick = async () => {
     const n = +b.dataset.dtc; if (n === dtCount) return;
-    dtCount = n; localStorage.setItem('dtCount', n);
-    if (dtItems.length && !dtSubmitted) { if (confirm('换成 ' + n + ' 题需要重新出题，当前作答会清空。')) dtGen(true); else { dtCount = (n === 10 ? 15 : 10); } }
-    else { document.querySelectorAll('[data-dtc]').forEach(x => x.classList.toggle('on', +x.dataset.dtc === dtCount)); }
+    if (dtItems.length && !dtSubmitted) {
+      if (!(await appConfirm('换成 ' + n + ' 题需要重新出题，当前作答会清空。'))) return;
+      dtCount = n; localStorage.setItem('dtCount', n); dtGen(true);
+    } else {
+      dtCount = n; localStorage.setItem('dtCount', n);
+      document.querySelectorAll('[data-dtc]').forEach(x => x.classList.toggle('on', +x.dataset.dtc === dtCount));
+    }
   });
 }
 async function dtGen(force) {
@@ -3256,7 +3286,7 @@ function renderDtest() {
       (done === dtItems.length ? `<button class="btn primary" id="dt-finish">看结果并记录</button>` : '');
   }
   $('#dt-body').innerHTML = (dtSubmitted ? '' : dtModeBar()) + `<div class="dt-list">${qs}</div><div class="dt-foot">${foot}</div>`;
-  if (dtSubmitted) $('#dt-again').onclick = () => { if (confirm('重新出一套？当前作答会清空。')) dtGen(true); };
+  if (dtSubmitted) $('#dt-again').onclick = async () => { if (await appConfirm('重新出一套？当前作答会清空。')) dtGen(true); };
   else { const s = $('#dt-submit'); if (s) s.onclick = dtSubmit; const f = $('#dt-finish'); if (f) f.onclick = dtFinish; bindBar(); }
 }
 async function dtRecord() {
