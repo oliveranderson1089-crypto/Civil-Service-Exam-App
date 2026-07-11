@@ -3739,7 +3739,7 @@ function rvShow() {
   }
   const it = rvQueue[0];
   $('#rv-bar').style.width = (rvTotal ? (rvDoneN / rvTotal * 100) : 0) + '%';
-  $('#rv-pos').textContent = `进度 ${rvDoneN} / ${rvTotal} · 待复习 ${rvQueue.length}`;
+  $('#rv-pos').textContent = `已复习 ${rvDoneN} / ${rvTotal}`;
   $('#rv-round').textContent = `第 ${it.stage + 1} 轮`;
   $('#rvf-kind').textContent = RV_KIND[it.kind] || it.kind;
   $('#rvf-kind').style.background = RV_COLOR[it.kind] || '#666';
@@ -4290,7 +4290,7 @@ const SYNC_REFRESH = {
   planlog: () => loadPlanLog(),
   partydict: () => loadPartyDict(),
   sucai: () => loadSucai(),
-  review: () => loadReview(),
+  review: () => { if ($('#rv-card-wrap').classList.contains('hidden')) loadReview(); },  // 复习进行中不打断会话
   csboard: () => loadCsBoard(),
 };
 function _syncEditing() {

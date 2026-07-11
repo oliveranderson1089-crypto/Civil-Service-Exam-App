@@ -5582,12 +5582,16 @@ def _review_due(db, u, today):
                         "ORDER BY id DESC LIMIT 300"):
         body = (r["content"] or "").strip()
         back = body + (("\n\n【例句】" + r["example"]) if r["example"] else "")
-        front = (r["topic"] or "").strip() or (r["kind"] or "素材")
+        # 正面给「人名/地名 + 首句」当回忆线索（素材开头就是主体），光给「为民·担当」这种主题回忆不起来
+        cue = re.split(r"[，,。；;、]", body, 1)[0][:22]
+        front = cue or (r["topic"] or "").strip() or (r["kind"] or "素材")
+        front_sub = (r["kind"] or "素材") + ((" · " + r["topic"]) if r["topic"] else "")
         if r["kind"] == "衔接表达":          # 句式类：正面给用途，背面给句式本身
-            front, back = "衔接表达 · 回忆句式", body + (("\n\n【例句】" + r["example"]) if r["example"] else "")
+            front, front_sub = "衔接表达 · 回忆句式", (r["kind"] or "素材")
+            back = body + (("\n\n【例句】" + r["example"]) if r["example"] else "")
         check("sucai", r["id"], r["created_at"], {
             "title": (r["topic"] or r["kind"] or "素材")[:36], "sub": r["kind"] or "素材",
-            "body": body[:90], "front": front, "front_sub": (r["kind"] or "素材") + " · " + (r["date"] or ""),
+            "body": body[:90], "front": front, "front_sub": front_sub,
             "back": back or "（无内容）"})
     return due
 
