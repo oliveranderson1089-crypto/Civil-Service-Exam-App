@@ -2960,8 +2960,10 @@ async function fillPlanExams() {
 }
 function renderPlan(d) {
   const p = d.profile;
+  const st = d.study || { streak: 0, total: 0 };
   $('#pl-head').innerHTML = `<div class="pl-days">${esc(p.exam || '备考规划')}</div>
-    <div class="pl-meta">今天可学 ${p.minutes} 分钟${p.weak ? ' · 薄弱：' + esc(p.weak) : ''}</div>`;
+    <div class="pl-meta">今天可学 ${p.minutes} 分钟${p.weak ? ' · 薄弱：' + esc(p.weak) : ''}</div>
+    <div class="pl-streak">🔥 连续学习 <b>${st.streak}</b> 天 · 累计 <b>${st.total}</b> 天</div>`;
 
   if (d.summary) {
     $('#pl-summary').innerHTML = `💡 ${esc(d.summary)}`;
@@ -3149,10 +3151,17 @@ $('#dt-open').onclick = () => openDtest();
 function openDtest() { push({ view: 'dtest', title: '巩固测试' }); loadDtest(); }
 let dtItems = [], dtChosen = {}, dtSubmitted = false, dtResults = null;
 let dtExam = localStorage.getItem('dtExam') === '1';   // 服务端判分：答案不下发，交卷才判
+let dtCount = (+localStorage.getItem('dtCount') === 15) ? 15 : 10;   // 题量 10 / 15
 const DT_L = ['A', 'B', 'C', 'D', 'E', 'F'];
 function dtModeBar() {
-  return `<label class="dt-mode"><input type="checkbox" id="dt-exam" ${dtExam ? 'checked' : ''}>
-    <span>🔒 服务端判分（答案不提前下发，交卷才由服务器判，更像考试）</span></label>`;
+  return `<div class="dt-bar">
+    <div class="dt-count">题量：
+      <button class="dt-cbtn ${dtCount === 10 ? 'on' : ''}" data-dtc="10">10 题</button>
+      <button class="dt-cbtn ${dtCount === 15 ? 'on' : ''}" data-dtc="15">15 题</button></div>
+    <label class="dt-mode"><input type="checkbox" id="dt-exam" ${dtExam ? 'checked' : ''}>
+      <span>🔒 服务端判分（答案不提前下发，交卷才判，更像考试）</span></label>
+    <button class="pl-link-btn" id="dt-records">📋 测试记录</button>
+  </div>`;
 }
 async function loadDtest() {
   $('#dt-body').innerHTML = '<p class="empty">加载中…</p>';
@@ -3161,23 +3170,30 @@ async function loadDtest() {
     dtItems = d.items || []; dtChosen = {}; dtSubmitted = false; dtResults = null;
     if (!dtItems.length) {
       $('#dt-body').innerHTML = dtModeBar() +
-        `<div class="dt-empty">今天还没生成测试。点下面按钮，AI 会按你今天学的内容出 6~8 道题。</div>
+        `<div class="dt-empty">今天还没生成测试。选好题量，AI 会按你今天学的内容出题。</div>
         <button class="btn primary" id="dt-gen">✨ 生成今日巩固测试</button>`;
       $('#dt-gen').onclick = () => dtGen(false);
-      bindExamToggle();
+      bindBar();
       return;
     }
     renderDtest();
   } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
-function bindExamToggle() {
-  const c = $('#dt-exam'); if (!c) return;
-  c.onchange = () => { dtExam = c.checked; localStorage.setItem('dtExam', dtExam ? '1' : '0'); loadDtest(); };
+function bindBar() {
+  const c = $('#dt-exam');
+  if (c) c.onchange = () => { dtExam = c.checked; localStorage.setItem('dtExam', dtExam ? '1' : '0'); loadDtest(); };
+  const rec = $('#dt-records'); if (rec) rec.onclick = openDtRecords;
+  document.querySelectorAll('[data-dtc]').forEach(b => b.onclick = () => {
+    const n = +b.dataset.dtc; if (n === dtCount) return;
+    dtCount = n; localStorage.setItem('dtCount', n);
+    if (dtItems.length && !dtSubmitted) { if (confirm('换成 ' + n + ' 题需要重新出题，当前作答会清空。')) dtGen(true); else { dtCount = (n === 10 ? 15 : 10); } }
+    else { document.querySelectorAll('[data-dtc]').forEach(x => x.classList.toggle('on', +x.dataset.dtc === dtCount)); }
+  });
 }
 async function dtGen(force) {
-  $('#dt-body').innerHTML = '<p class="empty">AI 正在按你今天学的内容出题，稍等…</p>';
+  $('#dt-body').innerHTML = `<p class="empty">AI 正在按你今天学的内容出 ${dtCount} 道题，稍等…</p>`;
   try {
-    const d = await api('/api/dtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force, exam: dtExam }) });
+    const d = await api('/api/dtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force, exam: dtExam, count: dtCount }) });
     dtItems = d.items || []; dtChosen = {}; dtSubmitted = false; dtResults = null;
     renderDtest();
   } catch (e) {
@@ -3211,25 +3227,60 @@ function renderDtest() {
     : `<button class="btn primary" id="dt-submit">交卷看结果</button>`;
   $('#dt-body').innerHTML = (dtSubmitted ? '' : dtModeBar()) + `<div class="dt-list">${qs}</div><div class="dt-foot">${foot}</div>`;
   if (dtSubmitted) $('#dt-again').onclick = () => { if (confirm('重新出一套？当前作答会清空。')) dtGen(true); };
-  else { $('#dt-submit').onclick = dtSubmit; bindExamToggle(); }
+  else { $('#dt-submit').onclick = dtSubmit; bindBar(); }
 }
 async function dtSubmit() {
   const un = dtItems.findIndex((_, i) => !dtChosen[i]);
   if (un >= 0) { toast('第 ' + (un + 1) + ' 题还没选', true); return; }
-  if (dtExam) {
-    const btn = $('#dt-submit'); if (btn) { btn.disabled = true; btn.textContent = '判分中…'; }
-    try {
-      const ans = {}; dtItems.forEach((_, i) => ans[i] = dtChosen[i]);
-      const d = await api('/api/dtest/grade', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: ans }) });
-      dtResults = d.results || [];
-    } catch (e) { toast(e.message, true); if (btn) { btn.disabled = false; btn.textContent = '交卷看结果'; } return; }
-  }
+  // 两种模式都交给服务端判分并记录（这样每次测试都留档）
+  const btn = $('#dt-submit'); if (btn) { btn.disabled = true; btn.textContent = '判分中…'; }
+  try {
+    const ans = {}; dtItems.forEach((_, i) => ans[i] = dtChosen[i]);
+    const d = await api('/api/dtest/grade', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: ans }) });
+    dtResults = d.results || [];
+  } catch (e) { toast(e.message, true); if (btn) { btn.disabled = false; btn.textContent = '交卷看结果'; } return; }
   dtSubmitted = true; renderDtest();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 $('#dt-body').addEventListener('click', e => {
   const o = e.target.closest('[data-dtq]'); if (!o || dtSubmitted) return;
   dtChosen[+o.dataset.dtq] = o.dataset.dtl; renderDtest();
+});
+/* 测试记录：列表 + 回看某次作答 */
+async function openDtRecords() {
+  $('#dt-body').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/dtest/records');
+    const list = d.items.length ? d.items.map(r => `
+      <div class="dtr-row" data-dtrec="${r.id}">
+        <span class="dtr-when">${esc((r.created_at || r.date || '').slice(5, 16))}</span>
+        <span class="dtr-score ${r.score >= r.total * 0.6 ? 'ok' : 'bad'}">${r.score} / ${r.total}</span>
+        <span class="dtr-go">回看 ›</span></div>`).join('')
+      : '<p class="empty">还没有测试记录。做一次巩固测试，交卷后就会留档。</p>';
+    $('#dt-body').innerHTML = `<div class="dtr-top"><button class="pl-link-btn" id="dt-back">‹ 返回测试</button><b>测试记录</b></div>${list}`;
+    $('#dt-back').onclick = loadDtest;
+  } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+async function openDtRecord(rid) {
+  $('#dt-body').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/dtest/record/' + rid);
+    const qs = (d.detail || []).map((it, i) => {
+      const opts = (it.options || []).map((o, j) => {
+        const L = DT_L[j], isAns = (it.answer || '').toUpperCase() === L, mine = (it.your || '').toUpperCase() === L;
+        let cls = 'dt-opt'; if (isAns) cls += ' correct'; else if (mine) cls += ' wrong';
+        return `<button class="${cls}" disabled>${esc(o)}</button>`;
+      }).join('');
+      return `<div class="dt-q"><div class="dt-qt">${i + 1}. ${esc(it.q)}</div><div class="dt-opts">${opts}</div>
+        <div class="dt-exp"><b>正确答案 ${esc(it.answer)}</b>${it.your ? ' · 你选了 ' + esc(it.your) : ''}${it.explain ? ' · ' + esc(it.explain) : ''}${it.source ? ` <span class="dt-src">${esc(it.source)}</span>` : ''}</div></div>`;
+    }).join('');
+    $('#dt-body').innerHTML = `<div class="dtr-top"><button class="pl-link-btn" id="dt-back2">‹ 返回记录</button>
+      <b>${esc((d.created_at || '').slice(5, 16))} · 得分 ${d.score}/${d.total}</b></div><div class="dt-list">${qs}</div>`;
+    $('#dt-back2').onclick = openDtRecords;
+  } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#dt-body').addEventListener('click', e => {
+  const r = e.target.closest('[data-dtrec]'); if (r) openDtRecord(+r.dataset.dtrec);
 });
 
 async function loadDaily() {
@@ -3298,9 +3349,11 @@ function renderTeamHeader(t) {
     <button class="btn tiny" data-tmrej="${disIn.id}">不同意</button></span></div>`;
   else if (disOut) dis = `<div class="tm-req"><span>⏳ 已申请解散，等对方同意</span>
     <button class="btn tiny" data-tmcancel="${disOut.id}">撤回</button></div>`;
+  const st = t.study || { streak: 0, total: 0 };
   $('#tk-team').innerHTML = `
     <div class="tm-head"><span>🤝 已与 <b>${esc(shortName(p ? p.name : '搭档'))}</b> 组队互监</span>
       ${disOut || disIn ? '' : '<button class="btn tiny" id="tm-disband">解散组队</button>'}</div>
+    <div class="tm-streak">🔥 连续学习 <b>${st.streak}</b> 天 · 累计 <b>${st.total}</b> 天</div>
     ${dis}`;
   if ($('#tm-disband')) $('#tm-disband').onclick = tmDisband;
 }

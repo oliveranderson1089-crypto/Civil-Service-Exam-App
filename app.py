@@ -776,6 +776,18 @@ def init_db():
             questions_json TEXT, created_at TEXT DEFAULT (datetime('now','localtime')),
             PRIMARY KEY(user_id, date)
         );
+        -- 巩固测试记录：每交一次卷存一条，可回看
+        CREATE TABLE IF NOT EXISTS dtest_records(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            date TEXT, score INTEGER, total INTEGER, detail_json TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_dtrec ON dtest_records(user_id, id DESC);
+        -- 学习天数：完成备考规划/互监待办的当天记一笔，用来算连续与累计
+        CREATE TABLE IF NOT EXISTS study_days(
+            user_id INTEGER NOT NULL, date TEXT NOT NULL,
+            PRIMARY KEY(user_id, date)
+        );
     """)
     # 备考规划：把 AI 给出的今日重点存下来，刷新后还能看到
     for col in ("summary", "summary_date"):
@@ -796,6 +808,17 @@ def init_db():
                      ("team_id", "INTEGER")):
         if col not in _cols(con, "shared_todos"):
             con.execute("ALTER TABLE shared_todos ADD COLUMN %s %s" % (col, typ))
+    # 学习天数回填：从历史完成记录补一次（备考规划完成 + 互监任务被确认）
+    try:
+        if not con.execute("SELECT COUNT(*) FROM study_days").fetchone()[0]:
+            con.execute("INSERT OR IGNORE INTO study_days(user_id,date) "
+                        "SELECT user_id, date(done_at) FROM plan_items "
+                        "WHERE done=1 AND done_at IS NOT NULL")
+            con.execute("INSERT OR IGNORE INTO study_days(user_id,date) "
+                        "SELECT user_id, date(done_at) FROM shared_todo_done "
+                        "WHERE user_id IS NOT NULL AND done_at IS NOT NULL")
+    except Exception:
+        pass
     # 老数据迁移：把已有的 todo_members 成员组成一个队，现有待办归到这个队
     try:
         if not con.execute("SELECT COUNT(*) FROM teams").fetchone()[0]:
@@ -872,6 +895,31 @@ def _bump_sync():
     """组队/互监有变动时想让对端尽快刷新——版本指纹本身就含这些表（见 /api/sync），
     这里留空即可，作为语义标记。"""
     pass
+
+
+def _mark_study(db, u, date):
+    """记一个学习日（完成备考规划任务、或互监任务被确认）。一天一条，重复无副作用。"""
+    if u and date:
+        db.execute("INSERT OR IGNORE INTO study_days(user_id,date) VALUES(?,?)", (u, date))
+
+
+def _study_stats(db, u):
+    """连续学习天数（到今天或昨天为止未断）+ 累计学习天数。"""
+    days = {r[0] for r in db.execute("SELECT date FROM study_days WHERE user_id=?", (u,))}
+    total = len(days)
+    if not total:
+        return {"streak": 0, "total": 0}
+    today = datetime.now().date()
+    cur = today
+    if today.isoformat() not in days:            # 今天还没学，连胜看到昨天为止
+        cur = today - timedelta(days=1)
+        if cur.isoformat() not in days:
+            return {"streak": 0, "total": total}
+    streak = 0
+    while cur.isoformat() in days:
+        streak += 1
+        cur = cur - timedelta(days=1)
+    return {"streak": streak, "total": total}
 
 
 def is_admin():
@@ -3625,6 +3673,8 @@ def shared_todos_toggle(tid):
         db.execute("INSERT OR IGNORE INTO shared_todo_done(todo_id,user_id,username,by_user,by_name) "
                    "VALUES(?,?,?,?,?)", (tid, who, name, me, current_user()["username"]))
         on = True
+        # 被确认完成的人（who）今天算学习过了（组队期间互监也计入学习天数）
+        _mark_study(db, who, datetime.now().strftime("%Y-%m-%d"))
     _sync_todo_done(db, tid, mids)
     db.commit()
     rows = db.execute("SELECT user_id, by_name FROM shared_todo_done WHERE todo_id=?", (tid,)).fetchall()
@@ -3663,7 +3713,7 @@ def team_info():
                  "kind": r["kind"]} for r in db.execute(
         "SELECT * FROM team_requests WHERE from_uid=? AND status='pending' ORDER BY id DESC", (me,))]
     return jsonify({"team": tinfo, "incoming": incoming, "outgoing": outgoing,
-                    "me": _uname(db, me), "me_id": me})
+                    "me": _uname(db, me), "me_id": me, "study": _study_stats(db, me)})
 
 
 @app.get("/api/team/search")
@@ -4400,6 +4450,7 @@ def plan_today():
         "minutes_total": sum(x["minutes"] or 0 for x in items),
         "minutes_done": sum((x["minutes"] or 0) for x in items if x["done"]),
         "stats": _plan_stats(db, today),
+        "study": _study_stats(db, uid()),
     })
 
 
@@ -4569,6 +4620,8 @@ def plan_toggle(pid):
     on = not r["done"]
     db.execute("UPDATE plan_items SET done=?, done_at=CASE WHEN ? THEN datetime('now','localtime') END "
                "WHERE id=?", (1 if on else 0, 1 if on else 0, pid))
+    if on:      # 完成一项就算今天学习过了
+        _mark_study(db, uid(), datetime.now().strftime("%Y-%m-%d"))
     db.commit()
     return jsonify({"done": on})
 
@@ -4639,25 +4692,26 @@ def _dtest_material(db, today):
     return parts
 
 
-def _gen_dtest(db, today):
+def _gen_dtest(db, today, n=10):
+    n = 15 if int(n) >= 15 else 10          # 题量只支持 10 / 15
     mats = _dtest_material(db, today)
     if len(mats) < 4:
         return None, "今天还没积累够可测的内容（常识/时政/成语等），先学一会儿再来测～"
     prompt = (
         "下面是一名公考考生最近学习的内容（常识、时政、成语、素材）。请据此出一份「巩固小测」，"
-        "6~8 道**单选题**，考点必须来自下面材料、答案唯一且明确，难度贴近公考常识判断。\n"
+        "正好 %d 道**单选题**，考点必须来自下面材料、答案唯一且明确，难度贴近公考常识判断。\n"
         "每题：题干清楚；4 个选项 A/B/C/D；answer 是正确选项字母；explain 一句话解析；"
         "source 标这题考的是哪条（如「时政-乡村振兴」「成语-抑扬顿挫」）。\n"
         '只输出 JSON：{"items":[{"q":"","options":["A. …","B. …","C. …","D. …"],"answer":"A","explain":"","source":""}]}\n\n'
-        + "\n".join("· " + m for m in mats[:30]))
+        % n + "\n".join("· " + m for m in mats[:40]))
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是公考命题老师，只根据给定材料出单选题，答案准确、解析简明，严格输出 JSON。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=2600, timeout=150, json_mode=True)
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=4000, timeout=180, json_mode=True)
     if err:
         return None, "AI 出题失败，请稍后再试"
     try:
         items = [x for x in (json.loads(rep).get("items") or [])
-                 if x.get("q") and (x.get("options") or []) and x.get("answer")][:8]
+                 if x.get("q") and (x.get("options") or []) and x.get("answer")][:n]
     except Exception:
         return None, "AI 返回格式异常，请重试"
     if not items:
@@ -4692,12 +4746,13 @@ def dtest_gen():
     d = request.get_json(silent=True) or {}
     force = bool(d.get("force"))
     exam = bool(d.get("exam"))
+    count = 15 if int(d.get("count") or 10) >= 15 else 10
     if not force:
         r = db.execute("SELECT questions_json FROM daily_quiz WHERE user_id=? AND date=?", (uid(), today)).fetchone()
         if r:
             return jsonify({"date": today, "items": _dtest_public(json.loads(r["questions_json"]), exam),
                             "cached": True, "exam": exam})
-    items, err = _gen_dtest(db, today)
+    items, err = _gen_dtest(db, today, count)
     if err:
         return jsonify({"error": err}), 400
     return jsonify({"date": today, "items": _dtest_public(items, exam), "exam": exam})
@@ -4705,7 +4760,7 @@ def dtest_gen():
 
 @app.post("/api/dtest/grade")
 def dtest_grade():
-    """服务端判分：收到 {answers:{题号:字母}}，对照缓存的正确答案判分并回传结果。"""
+    """判分并记录：收到 {answers:{题号:字母}}，对照缓存的正确答案判分、存一条记录并回传结果。"""
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
     r = db.execute("SELECT questions_json FROM daily_quiz WHERE user_id=? AND date=?", (uid(), today)).fetchone()
@@ -4713,16 +4768,43 @@ def dtest_grade():
         return jsonify({"error": "今天还没有测试"}), 400
     items = json.loads(r["questions_json"])
     ans = (request.get_json(silent=True) or {}).get("answers") or {}
-    results, score = [], 0
+    results, score, detail = [], 0, []
     for i, it in enumerate(items):
         your = (str(ans.get(str(i), ans.get(i, ""))) or "").strip().upper()
         correct_letter = (it.get("answer") or "").strip().upper()
         ok = bool(your) and your == correct_letter
         if ok:
             score += 1
-        results.append({"your": your, "answer": correct_letter, "correct": ok,
-                        "explain": it.get("explain", ""), "source": it.get("source", "")})
+        res = {"your": your, "answer": correct_letter, "correct": ok,
+               "explain": it.get("explain", ""), "source": it.get("source", "")}
+        results.append(res)
+        detail.append({"q": it.get("q", ""), "options": it.get("options") or [], **res})
+    db.execute("INSERT INTO dtest_records(user_id,date,score,total,detail_json) VALUES(?,?,?,?,?)",
+               (uid(), today, score, len(items), json.dumps(detail, ensure_ascii=False)))
+    db.commit()
     return jsonify({"score": score, "total": len(items), "results": results})
+
+
+@app.get("/api/dtest/records")
+def dtest_records():
+    db = get_db()
+    rows = db.execute("SELECT id,date,score,total,created_at FROM dtest_records "
+                      "WHERE user_id=? ORDER BY id DESC LIMIT 60", (uid(),)).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/dtest/record/<int:rid>")
+def dtest_record_detail(rid):
+    db = get_db()
+    r = db.execute("SELECT * FROM dtest_records WHERE id=? AND user_id=?", (rid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    d = dict(r)
+    try:
+        d["detail"] = json.loads(d.pop("detail_json") or "[]")
+    except Exception:
+        d["detail"] = []
+    return jsonify(d)
 
 
 @app.get("/api/plan/history")
