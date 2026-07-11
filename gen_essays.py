@@ -36,6 +36,17 @@ TOPICS = [
     ("文化自信", "sichuan"), ("生态文明", "guokao"), ("民生保障", "sichuan"),
     ("法治政府", "guokao"), ("营商环境", "sichuan"), ("数字治理", "guokao"),
     ("青年成长", "sichuan"), ("共同富裕", "guokao"), ("城乡融合", "sichuan"),
+    # —— 每日更新的话题池：按公考热度铺开，够 --daily 每天补一套跑一个多月 ——
+    ("绿色低碳", "guokao"), ("新质生产力", "guokao"), ("以人民为中心", "sichuan"),
+    ("诚信建设", "sichuan"), ("工匠精神", "sichuan"), ("志愿服务", "sichuan"),
+    ("公共服务", "guokao"), ("社会治理现代化", "guokao"), ("就业优先", "sichuan"),
+    ("教育强国", "guokao"), ("健康中国", "sichuan"), ("银发经济", "sichuan"),
+    ("消费提振", "guokao"), ("实体经济", "guokao"), ("民营经济", "sichuan"),
+    ("粮食安全", "guokao"), ("耕地保护", "sichuan"), ("防返贫", "sichuan"),
+    ("非遗传承", "sichuan"), ("文旅融合", "sichuan"), ("人工智能治理", "guokao"),
+    ("数据要素", "guokao"), ("社区养老", "sichuan"), ("未成年人保护", "sichuan"),
+    ("市场监管", "guokao"), ("政务服务", "sichuan"), ("信用监管", "guokao"),
+    ("河湖治理", "sichuan"), ("城市更新", "guokao"), ("安全生产", "sichuan"),
 ]
 
 SYS = "你是命制过多年申论真题的教研专家，材料真实可信、题目规范、参考答案能拿高分。"
@@ -236,6 +247,19 @@ def main():
         t = sys.argv[sys.argv.index("--topic") + 1]
         spec = dict(TOPICS).get(t, "guokao")
         build_topic(con, t, spec)
+        return
+
+    # 每日更新：定时器每天补一套还没生成的话题（含大作文 + 应用文小题）
+    if "--daily" in sys.argv:
+        nxt = next(((t, s) for t, s in TOPICS if t not in have), None)
+        if not nxt:
+            print("话题池已全部生成（%d 套），今天不新增；可在 TOPICS 里补充新话题。" % len(have))
+            return
+        try:
+            build_topic(con, *nxt)
+            print("每日范文已更新：%s" % nxt[0])
+        except Exception as e:
+            print("  ✗ %s 失败：%s" % (nxt[0], e))
         return
 
     limit = 3

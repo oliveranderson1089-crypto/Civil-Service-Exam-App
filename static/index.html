@@ -518,6 +518,17 @@
     <div id="gk-list" class="poly-list"></div>
   </section>
 
+  <!-- ===== 应用文 · 应用文上位词 ===== -->
+  <section id="view-gongwen" class="view hidden">
+    <div class="pd-intro">公文规范「上位表述」按场景归类 · 把大白话换成书面提法 · 也可让 AI 现场归纳</div>
+    <div class="gw-ai">
+      <input id="gw-in" type="text" placeholder="输入一句口语，或一个场景，如「怎么写通知的结尾」">
+      <button id="gw-ask" class="gw-ask-btn">AI 归纳</button>
+    </div>
+    <input id="gw-q" class="gw-search" type="search" placeholder="🔍 搜场景 / 表述 / 文种">
+    <div id="gw-list" class="gw-list"></div>
+  </section>
+
   <!-- ===== 议论文 · 素材积累 / 衔接表达 ===== -->
   <section id="view-sucai" class="view hidden">
     <div class="pd-intro">每天 08:00 自动更新（与微信推送同源）· 30 天内不重复 · 不涉抗疫题材</div>
@@ -610,7 +621,10 @@
     </div>
     <label class="slg-lb">我的答案 <span id="slg-req"></span></label>
     <textarea id="slg-a" rows="9" placeholder="写下你的作答…"></textarea>
-    <div id="slg-count" class="slg-count"></div>
+    <div class="slg-toolbar">
+      <button type="button" class="hw-open-btn" data-hw="slg-a">✍️ 手写输入</button>
+      <div id="slg-count" class="slg-count"></div>
+    </div>
     <div class="slg-row">
       <label class="slg-lb2" id="slg-fullwrap">满分 <input id="slg-full" type="number" min="5" max="60" value="15"></label>
       <button class="btn primary" id="slg-go">开始批改</button>
@@ -1149,6 +1163,29 @@
 </div>
 
 <div id="toast" class="toast hidden"></div>
+
+<!-- 手写板（申论作答：数位板/手指写字 → 识别 → 填进答案框） -->
+<div id="hw-modal" class="hw-modal hidden">
+  <div class="hw-sheet">
+    <div class="hw-bar">
+      <span class="hw-title">✍️ 手写输入</span>
+      <button id="hw-close" class="hw-x" title="关闭">✕</button>
+    </div>
+    <div id="hw-cands" class="hw-cands"><span class="hw-hint">在下面田字格里写一个字，会自动识别</span></div>
+    <div class="hw-canvas-wrap">
+      <canvas id="hw-canvas" class="hw-canvas"></canvas>
+    </div>
+    <div class="hw-ctrl">
+      <button id="hw-undo" class="hw-btn">↶ 撤笔</button>
+      <button id="hw-clear" class="hw-btn">清空</button>
+      <button id="hw-space" class="hw-btn">空格</button>
+      <button id="hw-nl" class="hw-btn">换行</button>
+      <button id="hw-back" class="hw-btn">⌫ 删字</button>
+      <button id="hw-done" class="hw-btn hw-done">完成</button>
+    </div>
+    <div class="hw-preview">已输入 <b id="hw-count">0</b> 字 · 写完点候选字即填入</div>
+  </div>
+</div>
 
 <!-- 朗读控制条（朗读中显示：停止 / 语速） -->
 <div id="read-ctrl" class="read-ctrl hidden">

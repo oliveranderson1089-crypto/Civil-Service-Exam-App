@@ -68,6 +68,7 @@ const BOARD_FEATURES = {
   ],
   '应用文': [
     { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
+    { key: 'gongwen', name: '应用文上位词', desc: '公文规范上位表述 · 按场景归类 · AI 归纳', icon: 'layers' },
   ],
   '议论文': [
     { key: 'sucai', name: '素材积累', desc: '每日更新 · 人物/事例/理论论据', icon: 'clip' },
@@ -86,8 +87,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -282,6 +283,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'policydoc') openPolicyDocs();
   else if (c.dataset.feat === 'news') openNews();
   else if (c.dataset.feat === 'gaikuo') openGaikuo();
+  else if (c.dataset.feat === 'gongwen') openGongwen();
   else if (c.dataset.feat === 'sucai') openSucai('全部');
   else if (c.dataset.feat === 'lianjie') openSucai('衔接表达');
   else if (c.dataset.feat === 'changshi') openChangshi();
@@ -2214,6 +2216,7 @@ const FEATURES = [
   { name: '素材积累', desc: '议论文 · 人物/事例/理论论据 每日更新', kw: '素材人物事例理论论据写作', open: () => openSucai('全部') },
   { name: '衔接表达', desc: '议论文 · 过渡/转折/万能句式', kw: '衔接过渡转折句式', open: () => openSucai('衔接表达') },
   { name: '概括句积累', desc: '应用文 · 材料表述→规范概括句', kw: '概括句申论', open: () => openGaikuo() },
+  { name: '应用文上位词', desc: '应用文 · 公文规范上位表述，按场景归类', kw: '应用文上位词公文规范表述通知意见倡议书规范用语提法', open: () => openGongwen() },
   { name: '错题本', desc: '拍照/输入 · AI 判题型给解析', kw: '错题刷题', open: () => openWrongq() },
   { name: '今日复习', desc: '遗忘曲线 · 该复习的都在这', kw: '复习遗忘曲线艾宾浩斯背诵', open: () => openReview() },
   { name: '小记', desc: '随手记 · 标签归类', kw: '笔记记录', open: () => openNotes() },
@@ -2656,6 +2659,188 @@ function openGaikuo() { gkDate = ''; push({ view: 'gaikuo', title: '概括句积
 $('#gk-dates').addEventListener('click', e => {
   const c = e.target.closest('[data-gd]'); if (!c) return;
   gkDate = c.dataset.gd; loadGaikuo();
+});
+
+/* ============= 应用文 · 应用文上位词（公文规范上位表述，按场景归类） ============= */
+function gwCard(it) {
+  const chips = (it.phrases || '').split(/[、,，]/).map(s => s.trim()).filter(Boolean)
+    .map(p => `<span class="gw-chip">${esc(p)}</span>`).join('');
+  return `<div class="gw-card">
+    <div class="gw-top"><span class="gw-scene">${esc(it.scene)}</span>
+      ${it.doctype ? `<span class="gw-doc">${esc(it.doctype)}</span>` : ''}
+      ${it.source === 'ai' ? `<button class="gw-del" data-gwdel="${it.id}" title="删除">✕</button>` : ''}</div>
+    <div class="gw-chips">${chips}</div>
+    ${it.note ? `<div class="gw-note">💡 ${esc(it.note)}</div>` : ''}
+    ${it.example ? `<div class="gw-eg"><span class="gw-lab">示范</span>${esc(it.example)}</div>` : ''}
+  </div>`;
+}
+async function loadGongwen(q) {
+  $('#gw-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/gongwen' + (q ? '?q=' + encodeURIComponent(q) : ''));
+    if (!d.items.length) { $('#gw-list').innerHTML = '<p class="empty">没有匹配的场景，换个词试试～</p>'; return; }
+    $('#gw-list').innerHTML = d.items.map(gwCard).join('');
+  } catch (e) { $('#gw-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function openGongwen() { push({ view: 'gongwen', title: '应用文上位词' }); $('#gw-in').value = ''; $('#gw-q').value = ''; loadGongwen(); }
+let gwTimer = null;
+$('#gw-q').addEventListener('input', e => {
+  clearTimeout(gwTimer);
+  gwTimer = setTimeout(() => loadGongwen(e.target.value.trim()), 250);
+});
+$('#gw-ask').onclick = async () => {
+  const text = $('#gw-in').value.trim();
+  if (!text) { toast('先输入一句口语或一个场景', true); return; }
+  $('#gw-ask').disabled = true; $('#gw-ask').textContent = '归纳中…';
+  try {
+    await api('/api/gongwen/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: text }) });
+    $('#gw-in').value = ''; $('#gw-q').value = '';
+    toast('已归纳并收录到最前面');
+    await loadGongwen();
+    $('#gw-list').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) { toast(e.message, true); }
+  $('#gw-ask').disabled = false; $('#gw-ask').textContent = 'AI 归纳';
+};
+$('#gw-list').addEventListener('click', async e => {
+  const d = e.target.closest('[data-gwdel]'); if (!d) return;
+  if (!confirm('删除这条 AI 归纳的场景？')) return;
+  try { await api('/api/gongwen/' + d.dataset.gwdel, { method: 'DELETE' }); loadGongwen($('#gw-q').value.trim()); }
+  catch (err) { toast(err.message, true); }
+});
+
+/* ============= 手写输入板（申论作答：数位板/手指 → Google 手写识别 → 填答案框） ============= */
+const hwEl = {}; let hwTarget = null, hwStrokes = [], hwCur = null, hwT0 = 0, hwDrawing = false, hwTimer = null;
+function hwInit() {
+  ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done']
+    .forEach(k => hwEl[k] = $('#hw-' + k));
+  const cv = hwEl.canvas, ctx = cv.getContext('2d');
+  function fit() {
+    const r = cv.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = r.width * dpr; cv.height = r.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    hwRedraw();
+  }
+  function pos(e) {
+    const r = cv.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: (t.clientX - r.left), y: (t.clientY - r.top) };
+  }
+  function guide() {
+    const w = cv.clientWidth, h = cv.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    ctx.strokeStyle = document.body.classList.contains('dark') ? '#2a3446' : '#e3e8f0';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(w / 2, 6); ctx.lineTo(w / 2, h - 6);
+    ctx.moveTo(6, h / 2); ctx.lineTo(w - 6, h / 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  hwRedraw = function () {
+    guide();
+    ctx.strokeStyle = document.body.classList.contains('dark') ? '#e8edf5' : '#1a2230';
+    ctx.lineWidth = 3.2; ctx.lineJoin = ctx.lineCap = 'round'; ctx.setLineDash([]);
+    for (const s of hwStrokes) drawStroke(s);
+    if (hwCur) drawStroke(hwCur);
+  };
+  function drawStroke(s) {
+    if (s.x.length < 1) return;
+    ctx.beginPath(); ctx.moveTo(s.x[0], s.y[0]);
+    for (let i = 1; i < s.x.length; i++) ctx.lineTo(s.x[i], s.y[i]);
+    if (s.x.length === 1) { ctx.lineTo(s.x[0] + 0.1, s.y[0] + 0.1); }
+    ctx.stroke();
+  }
+  function start(e) {
+    e.preventDefault(); hwDrawing = true;
+    if (!hwStrokes.length && !hwCur) hwT0 = Date.now();
+    const p = pos(e); hwCur = { x: [p.x], y: [p.y], t: [Date.now() - hwT0] };
+    clearTimeout(hwTimer);
+  }
+  function move(e) {
+    if (!hwDrawing || !hwCur) return;
+    e.preventDefault(); const p = pos(e);
+    hwCur.x.push(p.x); hwCur.y.push(p.y); hwCur.t.push(Date.now() - hwT0);
+    hwRedraw();
+  }
+  function end(e) {
+    if (!hwDrawing) return;
+    e && e.preventDefault(); hwDrawing = false;
+    if (hwCur) { hwStrokes.push(hwCur); hwCur = null; hwRedraw(); }
+    clearTimeout(hwTimer);
+    hwTimer = setTimeout(hwRecognize, 450);   // 停笔片刻自动识别
+  }
+  cv.addEventListener('pointerdown', start);
+  cv.addEventListener('pointermove', move);
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointerleave', end);
+  hwEl._fit = fit;
+  hwEl.close.onclick = hwClose;
+  hwEl.clear.onclick = () => { hwStrokes = []; hwCur = null; hwRedraw(); hwSetCands([]); };
+  hwEl.undo.onclick = () => { hwStrokes.pop(); hwRedraw(); hwStrokes.length ? hwRecognize() : hwSetCands([]); };
+  hwEl.space.onclick = () => hwInsert(' ');
+  hwEl.nl.onclick = () => hwInsert('\n');
+  hwEl.back.onclick = () => {
+    if (!hwTarget) return;
+    hwTarget.value = hwTarget.value.slice(0, -1);
+    hwFireInput();
+  };
+  hwEl.done.onclick = hwClose;
+}
+let hwRedraw = () => {};
+async function hwRecognize() {
+  if (!hwStrokes.length) return;
+  const cv = hwEl.canvas;
+  const ink = hwStrokes.map(s => [s.x.map(v => Math.round(v)), s.y.map(v => Math.round(v)), s.t]);
+  hwSetCands(null);   // loading
+  try {
+    const d = await api('/api/handwrite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ w: Math.round(cv.clientWidth), h: Math.round(cv.clientHeight), ink }),
+    });
+    if (d.error) { hwEl.cands.innerHTML = `<span class="hw-hint">${esc(d.error)}</span>`; return; }
+    hwSetCands(d.candidates || []);
+  } catch (e) { hwEl.cands.innerHTML = `<span class="hw-hint">${esc(e.message)}</span>`; }
+}
+function hwSetCands(list) {
+  if (list === null) { hwEl.cands.innerHTML = '<span class="hw-hint">识别中…</span>'; return; }
+  if (!list.length) { hwEl.cands.innerHTML = '<span class="hw-hint">在下面田字格里写一个字，会自动识别</span>'; return; }
+  hwEl.cands.innerHTML = list.map(c => `<button class="hw-cand" data-c="${esc(c)}">${esc(c)}</button>`).join('');
+}
+function hwInsert(ch) {
+  if (!hwTarget) return;
+  const s = hwTarget.selectionStart, e = hwTarget.selectionEnd, v = hwTarget.value;
+  if (s != null && e != null) {
+    hwTarget.value = v.slice(0, s) + ch + v.slice(e);
+    const p = s + ch.length; hwTarget.selectionStart = hwTarget.selectionEnd = p;
+  } else { hwTarget.value = v + ch; }
+  hwFireInput();
+  hwStrokes = []; hwCur = null; hwRedraw(); hwSetCands([]);
+}
+function hwFireInput() {
+  hwTarget.dispatchEvent(new Event('input', { bubbles: true }));
+  hwEl.count.textContent = (hwTarget.value || '').replace(/\s/g, '').length;
+}
+hwEl.candsClick = null;
+function openHandwrite(targetId) {
+  if (!hwEl.canvas) hwInit();
+  hwTarget = document.getElementById(targetId);
+  if (!hwTarget) return;
+  hwStrokes = []; hwCur = null;
+  hwEl.modal.classList.remove('hidden');
+  requestAnimationFrame(() => { hwEl._fit(); hwSetCands([]); hwFireInput(); });
+}
+function hwClose() {
+  hwEl.modal.classList.add('hidden');
+  clearTimeout(hwTimer); hwStrokes = []; hwCur = null; hwTarget && hwTarget.focus();
+}
+document.addEventListener('click', e => {
+  const o = e.target.closest('[data-hw]');
+  if (o) { e.preventDefault(); openHandwrite(o.dataset.hw); return; }
+  const c = e.target.closest('.hw-cand');
+  if (c) { hwInsert(c.dataset.c); }
 });
 
 /* ============= 议论文 · 素材积累 / 衔接表达（与微信 08:00 推送同源） ============= */
@@ -3992,6 +4177,7 @@ const SYNC_REFRESH = {
   wrongq: () => loadWrongq(),
   news: () => loadNews(),
   gaikuo: () => loadGaikuo(),
+  gongwen: () => loadGongwen($('#gw-q').value.trim()),
   partydict: () => loadPartyDict(),
   sucai: () => loadSucai(),
   review: () => loadReview(),
@@ -4313,7 +4499,7 @@ window.checkUpdate = checkUpdate;
 /* ================= 消息中心：有新内容就提醒，点开直达对应位置 ================= */
 const NTF_ICON = {
   changshi: '💡', newlaw: '⚖️', news: '📰', xiyu: '✒️', sucai: '📎',
-  gaikuo: '📝', review: '⏰', tasks: '📋', quiz: '🧩', plan: '📅',
+  gaikuo: '📝', review: '⏰', tasks: '📋', quiz: '🧩', plan: '📅', essay: '📄',
 };
 /* link 形如 "changshi" 或 "changshi:法律常识" */
 let _ntfTries = 0;
@@ -4331,6 +4517,8 @@ function ntfGo(link) {
     review: () => openReview(),
     tasks: () => openTasks(),
     quiz: () => openQuiz(),
+    essays: () => openEssays(),
+    gongwen: () => openGongwen(),
   }[k];
   if (go) go(); else toast('这条消息没有可跳转的位置');
 }

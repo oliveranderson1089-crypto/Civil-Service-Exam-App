@@ -22,6 +22,9 @@
     border-radius:9px;font-size:15px;outline:none;}
   .auth-box input:focus,.auth-box select:focus{border-color:#1a6fb5;}
   .row2{display:flex;gap:10px;}.row2>div{flex:1;}
+  .cap-row{display:flex;gap:10px;align-items:center;}
+  .cap-row input{flex:1;text-transform:uppercase;letter-spacing:2px;}
+  .cap-img{height:44px;width:130px;border-radius:8px;border:1.5px solid #e6e9ef;cursor:pointer;background:#f5f8fc;}
   .primary-btn{width:100%;padding:12px;background:#1a6fb5;color:#fff;border:none;
     border-radius:10px;font-size:16px;cursor:pointer;margin-top:18px;}
   .primary-btn:hover{background:#155a93;}
@@ -47,6 +50,12 @@
   <label>密保答案</label>
   <input id="seca" type="text" placeholder="请牢记，找回密码时要用">
 
+  <label>验证码</label>
+  <div class="cap-row">
+    <input id="cap" type="text" inputmode="text" autocomplete="off" maxlength="4" placeholder="填右图 4 位">
+    <img id="capimg" class="cap-img" alt="验证码" title="看不清？点击换一张">
+  </div>
+
   <button type="submit" class="primary-btn" id="btn">注 册</button>
   <p class="err" id="err"></p>
   <a class="tolink" href="/login">已有账号？去登录</a>
@@ -58,6 +67,15 @@ fetch('/api/sec_questions').then(r => r.json()).then(d => {
 });
 // 若已有用户，提示第一个注册者为管理员
 fetch('/api/me').catch(() => {});
+let capId = '';
+async function loadCap() {
+  try {
+    const d = await (await fetch('/api/captcha')).json();
+    capId = d.id; $('capimg').src = d.image; $('cap').value = '';
+  } catch (_) {}
+}
+$('capimg').addEventListener('click', loadCap);
+loadCap();
 $('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const err = $('err'); err.textContent = '';
@@ -69,14 +87,15 @@ $('form').addEventListener('submit', async (e) => {
       body: JSON.stringify({
         username: $('u').value.trim(), password: $('p').value,
         sec_question: $('secq').value, sec_answer: $('seca').value.trim(),
+        captcha_id: capId, captcha: $('cap').value.trim(),
       }),
     });
     const d = await r.json();
     if (r.ok) {
       if (d.role === 'admin') alert('你是第一个注册的用户，已设为管理员。');
       location.href = '/';
-    } else { err.textContent = d.error || '注册失败'; }
-  } catch (_) { err.textContent = '网络错误'; }
+    } else { err.textContent = d.error || '注册失败'; loadCap(); }
+  } catch (_) { err.textContent = '网络错误'; loadCap(); }
   $('btn').disabled = false; $('btn').textContent = '注 册';
 });
 </script>

@@ -6,6 +6,7 @@
 - 每个板块：资料库（上传图片/文档/网页，应用内直接查看，Office 自动转 PDF）
 - 多用户 + 密保问题找回密码 + 管理员后台
 """
+import base64
 import hashlib
 import io
 import json
@@ -108,6 +109,53 @@ app.config.update(
 
 _login_fails = {}  # username -> {count, locked_until}
 
+# ---------------------------------------------------------------- 图形验证码（防机器人）
+_captchas = {}  # cid -> {"code": 小写答案, "exp": 过期时间戳}
+_CAP_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # 去掉易混的 I O 0 1
+
+
+def _captcha_new():
+    """生成一个 4 位图形验证码，返回 (cid, dataURL)。答案存服务端，前端只拿图片。"""
+    import random
+    now = time.time()
+    for k in [k for k, v in _captchas.items() if v["exp"] < now]:   # 顺手清过期
+        _captchas.pop(k, None)
+    code = "".join(random.choice(_CAP_CHARS) for _ in range(4))
+    cid = secrets.token_urlsafe(12)
+    _captchas[cid] = {"code": code.lower(), "exp": now + 300}
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    W, H = 130, 44
+    img = Image.new("RGB", (W, H), (245, 248, 252))
+    d = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+    except Exception:
+        font = ImageFont.load_default()
+    for i, ch in enumerate(code):
+        col = (random.randint(20, 90), random.randint(30, 90), random.randint(90, 160))
+        y = random.randint(2, 10)
+        ci = Image.new("RGBA", (30, 40), (0, 0, 0, 0))
+        cd = ImageDraw.Draw(ci)
+        cd.text((4, 2), ch, font=font, fill=col)
+        ci = ci.rotate(random.randint(-28, 28), expand=1, resample=Image.BICUBIC)
+        img.paste(ci, (10 + i * 28, y), ci)
+    for _ in range(4):                                # 干扰线
+        d.line([(random.randint(0, W), random.randint(0, H)) for _ in range(2)],
+               fill=(random.randint(120, 200),) * 3, width=1)
+    for _ in range(90):                               # 噪点
+        d.point((random.randint(0, W), random.randint(0, H)),
+                fill=(random.randint(120, 200),) * 3)
+    img = img.filter(ImageFilter.SMOOTH)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return cid, "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _captcha_ok(cid, ans):
+    """一次性校验：对了就作废，防重放。"""
+    rec = _captchas.pop((cid or "").strip(), None)
+    return bool(rec and rec["exp"] >= time.time() and (ans or "").strip().lower() == rec["code"])
+
 
 # ---------------------------------------------------------------- AI（云端大模型，OpenAI 兼容）
 def _save_cfg():
@@ -174,6 +222,60 @@ def close_db(exc):
 
 def _cols(con, table):
     return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+# 应用文上位词起步词库：把口语/具体写法归纳为公文规范上位提法
+# (场景, 规范上位表述, 适用文种, 用法说明, 例句)
+_GONGWEN_SEED = [
+    ("开头·缘由（依据）", "为深入贯彻…、为进一步…、为切实…、根据…精神、按照…部署、结合…实际",
+     "通知/通报/报告/意见", "开头交代行文缘由，先亮依据再讲目的，不要直接铺陈内容。",
+     "为深入贯彻绿色发展理念、进一步改善城乡人居环境，结合我市实际，现就开展垃圾分类工作通知如下。"),
+    ("开头·目的", "旨在…、以…为目标、着力…、致力于…、力争…",
+     "通知/意见/倡议书", "承接缘由，点明要达到的效果，动词开头更有力。",
+     "旨在形成全社会共同参与的良好氛围，着力提升基层治理效能。"),
+    ("过渡·引出事项", "现将有关事项通知如下、现提出如下意见、具体安排如下、现将有关情况报告如下",
+     "通知/意见/报告", "缘由与正文之间的固定过渡句，一句收束、引出下文分条。",
+     "现将有关事项通知如下："),
+    ("主体·工作举措", "健全…机制、完善…制度、创新…方式、强化…保障、压实…责任、凝聚…合力",
+     "工作方案/意见/讲话", "写对策/举措时的动宾规范搭配，避免“搞好、弄好”这类口语。",
+     "健全联防联控机制，压实属地管理责任，凝聚多方参与合力。"),
+    ("主体·工作成效", "取得显著成效、实现新突破、迈上新台阶、亮点纷呈、由…向…转变、提质增效",
+     "总结/报告/推荐材料", "写成绩时的上位概括词，配数据更有说服力。",
+     "各项工作取得显著成效，群众满意度实现新突破。"),
+    ("主体·存在问题", "仍存在短板、有待加强、亟需破解、还不够…、尚未根本扭转、存在…的问题",
+     "报告/分析/自查", "客观指出不足的委婉规范说法，先肯定再指出。",
+     "个别环节衔接仍存在短板，长效机制有待进一步加强。"),
+    ("主体·分条领起", "一是…二是…三是…、其一…其二…、首先…其次…再次…、坚持…、突出…、注重…",
+     "意见/方案/讲话", "分条作答的领起词，同一份材料内保持句式一致。",
+     "一是加强组织领导，二是细化任务分工，三是强化督导考核。"),
+    ("结尾·号召（倡议）", "让我们…、携手…、共同…、从我做起、从现在做起、以实际行动…",
+     "倡议书/演讲稿", "倡议、演讲类的结尾动员语，有感染力、有画面感。",
+     "让我们携手行动起来，从点滴做起，共建美丽家园。"),
+    ("结尾·要求（通知）", "请…遵照执行、请…抓好落实、请…及时…、务必…、确保…",
+     "通知/通报", "布置类文书的结尾要求语，对象明确、要求具体。",
+     "请各单位高度重视，结合实际抓好落实，确保各项任务落到实处。"),
+    ("结尾·收束（报告/请示）", "特此报告、特此通知、特此函告、以上意见妥否，请批示、当否，请示",
+     "报告/请示/函", "上行/平行文的固定收束语，用错文种是硬伤。",
+     "以上报告妥否，请批示。"),
+    ("称谓·抬头落款", "各…、全体…、尊敬的…、此致敬礼、特此、（落款：单位+日期）",
+     "通知/倡议书/书信", "格式要素，抬头顶格、落款右对齐、日期写全。",
+     "各县（区）人民政府，市政府各部门："),
+    ("态度·重视强调", "高度重视、充分认识…的重要性、切实增强…的自觉、深刻领会、扛牢…责任",
+     "讲话/意见/通知", "强调重要性时的规范表述，避免“很重要、要注意”。",
+     "各级各部门要充分认识此项工作的重要性和紧迫性。"),
+    ("数据·概括表述", "同比增长…、覆盖率达…、惠及…群众、办结…件、压缩…时间、下降…个百分点",
+     "总结/报告/推荐材料", "用数据说话时的规范句式，动词+数据，别堆形容词。",
+     "累计惠及群众12万人次，平均办理时限压缩60%。"),
+    ("分析·原因归纳", "根本原因在于…、既有…也有…、主观上…客观上…、深层次…、既受…影响，又…",
+     "综合分析/报告", "综合分析题挖原因的规范框架，分层次、分主客观。",
+     "问题的根源，既有制度设计上的不完善，也有执行环节的不到位。"),
+    ("影响·意义表述", "有利于…、为…提供…、对…具有重要意义、是…的必然要求、是…的重要举措",
+     "综合分析/讲话", "谈意义、影响时的上位句式，正向排比更饱满。",
+     "此举有利于优化营商环境，为高质量发展提供有力支撑。"),
+    ("对策·落实保障", "加强组织领导、明确责任分工、加大投入力度、强化督导考核、注重宣传引导、建立长效机制",
+     "对策题/方案/意见", "提对策的“万能”保障维度，按“人财物、督宣制”展开。",
+     "要加强组织领导，明确责任分工，建立常态化督导考核机制。"),
+]
 
 
 def init_db():
@@ -468,6 +570,13 @@ def init_db():
             source TEXT DEFAULT 'ai',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        -- 应用文上位词（公文规范上位表述：口语/具体表述 → 规范提法，按场景归类）
+        CREATE TABLE IF NOT EXISTS gongwen_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scene TEXT UNIQUE, phrases TEXT, doctype TEXT, note TEXT, example TEXT,
+            source TEXT DEFAULT 'seed',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         -- 理论基础（马原/毛中特/习思想…）
         CREATE TABLE IF NOT EXISTS theory_items(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -602,6 +711,12 @@ def init_db():
             uid = con.execute("SELECT id FROM users WHERE username=?",
                               (old["username"],)).fetchone()[0]
             con.execute("UPDATE entries SET user_id=? WHERE user_id IS NULL", (uid,))
+
+    # 应用文上位词起步词库：口语/具体表述 → 公文规范上位提法，按场景归类
+    if con.execute("SELECT COUNT(*) FROM gongwen_items").fetchone()[0] == 0:
+        for scene, phrases, doctype, note, example in _GONGWEN_SEED:
+            con.execute("INSERT OR IGNORE INTO gongwen_items(scene,phrases,doctype,note,example,source) "
+                        "VALUES(?,?,?,?,?,'seed')", (scene, phrases, doctype, note, example))
     con.commit()
     con.close()
 
@@ -628,7 +743,7 @@ def is_admin():
 # ---------------------------------------------------------------- 访问控制
 _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
                  "/forgot", "/api/forgot/question", "/api/forgot/reset",
-                 "/api/sec_questions",
+                 "/api/sec_questions", "/api/captcha",
                  "/apk", "/download/gongkao.apk", "/api/app/version",
                  "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
@@ -764,6 +879,12 @@ def register_page():
     return send_from_directory(STATIC, "register.html")
 
 
+@app.get("/api/captcha")
+def api_captcha():
+    cid, url = _captcha_new()
+    return jsonify({"id": cid, "image": url})
+
+
 @app.post("/api/register")
 def api_register():
     data = request.get_json(silent=True) or {}
@@ -772,6 +893,8 @@ def api_register():
     sec_q = (data.get("sec_question") or "").strip()
     sec_a = (data.get("sec_answer") or "").strip()
     email = (data.get("email") or "").strip()
+    if not _captcha_ok(data.get("captcha_id"), data.get("captcha")):
+        return jsonify({"error": "验证码错误或已过期", "captcha": True}), 400
     if len(username) < 2:
         return jsonify({"error": "用户名至少 2 个字符"}), 400
     if len(pw) < 6:
@@ -812,6 +935,8 @@ def login_submit():
     if rec and rec.get("locked_until", 0) > now:
         left = int((rec["locked_until"] - now) / 60) + 1
         return jsonify({"error": f"登录失败次数过多，请 {left} 分钟后再试"}), 429
+    if not _captcha_ok(data.get("captcha_id"), data.get("captcha")):
+        return jsonify({"error": "验证码错误或已过期", "captcha": True}), 400
     u = get_db().execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
     if u and check_password_hash(u["password_hash"], pw):
         _login_fails.pop(username, None)
@@ -3543,8 +3668,13 @@ def _bg_set(con, tid, **kw):
 
 
 # 有「（　）」「A．」「下列…正确的是」这类特征的页面才值得送去问 AI，省一大笔调用
-_Q_HINT = re.compile(r"[（(]\s{0,6}[）)]|[ABCD][．.、]\s|下列|以下|不属于|正确的是|错误的是|"
-                     r"填入划?横线|依次填入|最恰当的|说法正确|说法错误")
+_Q_HINT = re.compile(
+    r"[（(]\s{0,6}[）)]|[ABCD]\s*[．.、]|下列|以下|不属于|正确的是|错误的是|"
+    r"填入划?横线|依次填入|最恰当的|最合适的?|说法正确|说法错误|"
+    # 图形推理 / 类比 / 定义判断这类题干，往往没有 A. B. 文本选项，靠这些提法识别
+    r"呈现\s*一?\s*定\s*的?\s*规律|规律性|从所给|所给的?\s*[四4]\s*个选项|填入问号|问号处|"
+    r"分为两类|每一类|类比推理|与之?相?对应|关系最为?相似|恰当的一项|符合的一项|"
+    r"\(\s*20\d\d[^)]{0,6}(?:国考|省考|联考|事业单位|吉林|广东|安徽|甘肃|江苏|浙江)")
 
 
 def _page_text(pdf, n):
@@ -3573,12 +3703,18 @@ def _ask_questions(chunk):
     body = "\n\n".join("【第 %d 页】\n%s" % (p, t[:3500]) for p, t in chunk)
     prompt = (
         "下面是一份公考讲义/资料中连续几页的文字（OCR 或 PDF 抽取，可能有断行和错字）。\n"
-        "请找出其中的【例题】——有题干、通常带 A/B/C/D 选项，或是填空/判断题。\n"
+        "请找出其中的【例题】——有题干，通常带 A/B/C/D 选项，或是填空/判断/图形/类比题。\n"
+        "注意：图形推理、类比推理、部分定义判断题的选项是图片，文字里可能看不到 A/B/C/D，"
+        "但只要有「从所给的四个选项中…」「使之呈现一定的规律性」「分为两类」这类题干，也算一道题，要收进来。\n"
         "对每一道题：\n"
         "· 若原文已给出答案，answer 用原文答案，并补写解析；\n"
-        "· 若原文没有答案（这是常见情况），请你作答，给出正确答案与解析。\n"
-        "· stem 要写清题干（可精简断行，但不要改意思）；options 按原文照抄，没有选项就给空数组。\n"
-        "· explain 要说清解题思路，并简要说明其他选项为什么不选。\n"
+        "· 若原文没有答案（常见），请你作答给出正确答案与解析；\n"
+        "· 若这是你熟悉的历年真题（题干里常标有年份和省份，如「2020国考」），"
+        "请依据该真题的公认答案作答，answer 直接给字母，explain 讲清规律。\n"
+        "· 若这是图形/图片类题目、而文字里确实没有图形信息、你也不能确定题源答案，"
+        "  answer 填「见原图」，explain 给出该题型的解题思路（如遍历/样式/位置/数量规律，该往哪些方向看），"
+        "  绝不要瞎猜一个字母，也不要只写「无法判断」。\n"
+        "· stem 写清题干（可精简断行，不要改意思）；options 按原文照抄，没有文字选项就给空数组。\n"
         "· qtype 写题目所属模块，如「言语理解-逻辑填空」「判断推理-图形推理」「常识判断-法律」。\n"
         "文档里没有题目就返回空数组，不要编造。\n"
         '只输出 JSON：{"items":[{"page":12,"stem":"","options":["A. …"],"answer":"B","explain":"","qtype":""}]}\n\n'
@@ -3671,6 +3807,7 @@ def _docqa_run(tid, user_id, mid, orig_name, board):
             t = _page_text(pdf, p)
             if len(re.sub(r"\s", "", t)) < 20:      # 扫描件：这一页没有文字层
                 t = _ocr_image_page(pdf, p, tmpdir)
+            t = _strip_artifacts(t)                 # 去掉页眉页脚 / 水印，别干扰识题
             texts[p] = t
             if _Q_HINT.search(t):
                 cand.append(p)
@@ -3749,7 +3886,7 @@ def _ocr_image_page(pdf, p, tmpdir):
     """没有文字层的页（扫描件）走 OCR。"""
     try:
         pre = os.path.join(tmpdir, "sc_%d" % p)
-        subprocess.run(["pdftoppm", "-r", "200", "-gray", "-png", "-f", str(p), "-l", str(p),
+        subprocess.run(["pdftoppm", "-r", "300", "-gray", "-png", "-f", str(p), "-l", str(p),
                         "-singlefile", pdf, pre], check=True, timeout=180, capture_output=True)
         return _ocr_image(pre + ".png")
     except Exception:
@@ -4111,6 +4248,13 @@ def _gen_notifications(db):
     if c:
         _n(db, "gaikuo", today, "概括句积累更新了 %d 条" % c, "材料表述 → 规范概括句", "gaikuo")
 
+    # 范文推荐：每日更新一套新话题（含大作文 + 应用文小题）
+    ep = db.execute("SELECT topic FROM essay_papers WHERE date(created_at)=? ORDER BY id DESC LIMIT 1",
+                    (today,)).fetchone()
+    if ep:
+        _n(db, "essay", today, "范文更新了新话题：%s" % ep["topic"],
+           "大作文范文 + 应用文小题完整参考答案", "essays")
+
     # 今日复习（遗忘曲线到期）
     due = _review_due(db, uid(), today)
     if due:
@@ -4200,6 +4344,39 @@ def _sl_words(t):
     return len(re.sub(r"\s+", "", t or ""))
 
 
+# 页眉页脚、水印、答题卡行号 —— 从真题里抽出来的杂质，混进材料/题干会很难看
+_JUNK_KW = re.compile(r"申公宝|优路教育|仅供学习|智能批改|都说得清来源|版权所有|www\.|扫码|关注公众号")
+_JUNK_PAGE = re.compile(r"^第\s*\d+\s*页(?:\s*[·・.]?\s*共\s*\d+\s*页)?$")
+_JUNK_GRID = re.compile(r"^(?:\d{1,2}00[ \t]*)+$")        # 答题卡行号：100 200 300 …
+
+
+def _strip_artifacts(text):
+    """去掉页眉页脚 / 水印 / 答题卡行号，保留正文与空行结构。"""
+    out = []
+    for ln in (text or "").splitlines():
+        s = ln.strip()
+        if s and (_JUNK_KW.search(s) or _JUNK_PAGE.fullmatch(s) or _JUNK_GRID.fullmatch(s)):
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _reflow(text):
+    """把 PDF 版式的硬换行拼回自然段：段内换行去掉（中文可任意断行），空行分段。
+    这样前端渲染时每一排都排满了再换行，不会中途留半截。"""
+    text = (text or "").strip()
+    # 「材料N / 资料N」序号标题单独成段，别和正文粘在一起
+    text = re.sub(r"[ \t]*\n?[ \t]*((?:给定)?(?:材|资)料\s*[一二三四五六七八九十\d]{1,3})[.、：:]?[ \t]*",
+                  r"\n\n\1\n\n", text)
+    paras = re.split(r"\n[ \t]*\n+", text)
+    out = []
+    for p in paras:
+        p = re.sub(r"[ \t]*\n[ \t]*", "", p.strip())
+        if p:
+            out.append(p)
+    return re.sub(r"\n{3,}", "\n\n", "\n\n".join(out)).strip()
+
+
 def _pdf_text_or_ocr(path, ext):
     """先按文本抽取；扫描件抽不出字就逐页 OCR（最多 30 页）。"""
     txt = (_extract_text(path, ext) or "").strip()
@@ -4283,12 +4460,13 @@ def _sl_sections(text):
 
 def _split_paper(text):
     """本地切分：材料段 / 作答要求段 / 各小题。AI 只负责判题型，省钱也更稳。"""
+    text = _strip_artifacts(text)    # 先洗掉页眉页脚 / 答题卡行号
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     mat_start, req_start, req_end = _sl_sections(text)
-    material = text[mat_start:req_start].strip()
+    material = _reflow(text[mat_start:req_start].strip())
     if len(material) < 60:           # 切歪了，宁可把作答要求之前的全文当材料
-        material = text[:req_start].strip()
+        material = _reflow(text[:req_start].strip())
     qtext = text[req_end:].strip()
 
     heads = list(_SL_Q_HEAD.finditer(qtext))
@@ -4389,9 +4567,15 @@ def _paper_detail(db, pid):
     for r in db.execute("SELECT question_id, id, score, full FROM shenlun_grade "
                         "WHERE user_id=? AND paper_id=? ORDER BY id", (uid(), pid)):
         best[r["question_id"]] = {"grade_id": r["id"], "score": r["score"], "full": r["full"]}
-    return {"id": p["id"], "title": p["title"], "material": p["material"],
+    def clean_q(q):
+        q = dict(q)
+        q["body"] = _strip_artifacts(q.get("body") or "")
+        return dict(q, done=best.get(q["id"]))
+    # 老数据也顺手洗一遍：页眉页脚 / 答题卡行号去掉，材料硬换行拼回自然段
+    return {"id": p["id"], "title": p["title"],
+            "material": _reflow(_strip_artifacts(p["material"] or "")),
             "created_at": p["created_at"],
-            "questions": [dict(q, done=best.get(q["id"])) for q in map(dict, qs)]}
+            "questions": [clean_q(q) for q in qs]}
 
 
 @app.get("/api/shenlun/papers")
@@ -4752,6 +4936,148 @@ def hyper_del(hid):
     db.execute("DELETE FROM hyper_items WHERE id=?", (hid,))
     db.commit()
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 应用文上位词
+@app.get("/api/gongwen")
+def gongwen_list():
+    q = (request.args.get("q") or "").strip()
+    db = get_db()
+    if q:
+        like = "%" + q + "%"
+        rows = db.execute("SELECT * FROM gongwen_items WHERE scene LIKE ? OR phrases LIKE ? OR doctype LIKE ? "
+                          "ORDER BY id LIMIT 200", (like, like, like)).fetchall()
+    else:
+        rows = db.execute("SELECT * FROM gongwen_items ORDER BY id LIMIT 200").fetchall()
+    return jsonify({"items": [dict(r) for r in rows],
+                    "total": db.execute("SELECT COUNT(*) FROM gongwen_items").fetchone()[0]})
+
+
+@app.get("/api/gongwen/daily")
+def gongwen_daily():
+    """每日推荐 3 组：按日期确定性轮换，全站一致。"""
+    db = get_db()
+    ids = [r[0] for r in db.execute("SELECT id FROM gongwen_items ORDER BY id")]
+    if not ids:
+        return jsonify({"items": []})
+    start = (datetime.now().toordinal() * 3) % len(ids)
+    pick = [ids[(start + i) % len(ids)] for i in range(min(3, len(ids)))]
+    rows = db.execute("SELECT * FROM gongwen_items WHERE id IN (%s)" %
+                      ",".join("?" * len(pick)), pick).fetchall()
+    order = {v: i for i, v in enumerate(pick)}
+    return jsonify({"items": sorted([dict(r) for r in rows], key=lambda x: order.get(x["id"], 0))})
+
+
+@app.post("/api/gongwen/ai")
+def gongwen_ai():
+    """输入口语句/场景 → AI 给出公文规范上位表述，并收录。"""
+    text = ((request.get_json(silent=True) or {}).get("input") or "").strip()
+    if not text:
+        return jsonify({"error": "请输入一句口语表述，或一个应用文场景"}), 400
+    db = get_db()
+    prompt = ("公考申论应用文（公文）写作要求用词规范、书面化。考生给你一句口语化表述或一个写作场景，"
+              "请把它归纳成公文里的「规范上位表述」，帮助考生答题时替换掉大白话。\n\n"
+              "输入：%s\n\n请输出 JSON：\n"
+              '{"scene":"这属于应用文的哪个场景（如「主体·工作举措」「结尾·号召」，10字内）",'
+              '"phrases":"该场景常用的规范上位表述，用顿号分隔，6~10个，都要是书面公文用语",'
+              '"doctype":"最常出现在哪些文种（如 通知/意见/倡议书，3个内）",'
+              '"note":"一句话点明用法或易错点（40字内）",'
+              '"example":"一个用上这些规范表述的完整示范句（30~60字）"}\n只输出 JSON。' % text[:200])
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论应用文（公文写作）阅卷老师，熟悉各文种的规范用语。"},
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=500, json_mode=True)
+    if err:
+        return err
+    try:
+        d = json.loads(rep)
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常"}), 502
+    scene = (d.get("scene") or text[:10]).strip()
+    # 场景重名就并入（避免 UNIQUE 冲突覆盖种子），改标一个带序号的场景名
+    if db.execute("SELECT 1 FROM gongwen_items WHERE scene=?", (scene,)).fetchone():
+        scene = scene + "·" + datetime.now().strftime("%m%d%H%M")
+    db.execute("INSERT INTO gongwen_items(scene,phrases,doctype,note,example,source) VALUES(?,?,?,?,?,'ai')",
+               (scene, (d.get("phrases") or "").strip(), (d.get("doctype") or "").strip(),
+                (d.get("note") or "").strip(), (d.get("example") or "").strip()))
+    db.commit()
+    r = db.execute("SELECT * FROM gongwen_items WHERE scene=?", (scene,)).fetchone()
+    return jsonify(dict(r))
+
+
+@app.delete("/api/gongwen/<int:gid>")
+def gongwen_del(gid):
+    db = get_db()
+    db.execute("DELETE FROM gongwen_items WHERE id=? AND source='ai'", (gid,))  # 种子词库不许删
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 手写识别（申论作答）
+# 本机直连 Google 不通、走本地代理可达；代理端口会变，做成可配 + 多端口兜底，记住能用的那个
+_HW_ITC = "zh-t-i0-handwrit"
+_hw_proxy_ok = None   # 上次跑通的代理，命中就先用它
+
+
+def _hw_proxies():
+    env = os.environ.get("GONGKAO_HW_PROXY", "").strip()
+    cfg = ""
+    try:
+        cfg = (json.load(open(CONFIG, encoding="utf-8")).get("hw_proxy") or "").strip()
+    except Exception:
+        pass
+    cand = [p for p in (_hw_proxy_ok, env, cfg) if p]
+    cand += ["http://127.0.0.1:7897", "http://127.0.0.1:7890",
+             "http://127.0.0.1:1080", "http://127.0.0.1:8080"]
+    seen, out = set(), []
+    for p in cand:
+        if p and p not in seen:
+            seen.add(p); out.append(p)
+    return out
+
+
+def _hw_recognize(ink, w, h):
+    """把画布笔迹交给 Google 手写识别，返回候选字列表。经本地代理出网。"""
+    global _hw_proxy_ok
+    payload = {"options": "enable_pre_space", "requests": [{
+        "writing_guide": {"writing_area_width": w, "writing_area_height": h},
+        "ink": ink, "language": "zh"}]}
+    data = json.dumps(payload).encode()
+    saved = {k: os.environ.pop(k) for k in ("NO_PROXY", "no_proxy") if k in os.environ}
+    try:
+        for proxy in _hw_proxies():
+            try:
+                opener = urllib.request.build_opener(
+                    urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+                req = urllib.request.Request(
+                    "https://inputtools.google.com/request?itc=%s&app=demopage" % _HW_ITC,
+                    data=data, headers={"Content-Type": "application/json"})
+                raw = opener.open(req, timeout=10).read().decode("utf-8", "ignore")
+                arr = json.loads(raw)
+                if arr and arr[0] == "SUCCESS":
+                    _hw_proxy_ok = proxy
+                    return arr[1][0][1] or []
+            except Exception:
+                continue
+        return None
+    finally:
+        os.environ.update(saved)
+
+
+@app.post("/api/handwrite")
+def handwrite():
+    d = request.get_json(silent=True) or {}
+    ink = d.get("ink") or []
+    if not ink:
+        return jsonify({"candidates": []})
+    try:
+        w = max(1, int(d.get("w") or 400))
+        h = max(1, int(d.get("h") or 400))
+    except Exception:
+        w = h = 400
+    cands = _hw_recognize(ink, w, h)
+    if cands is None:
+        return jsonify({"candidates": [], "error": "手写识别服务连不上，请稍后再试或直接键盘输入"}), 200
+    return jsonify({"candidates": cands[:12]})
 
 
 # ---------------------------------------------------------------- 理论基础（马原/毛中特/习思想）

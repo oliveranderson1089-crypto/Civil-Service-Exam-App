@@ -24,6 +24,9 @@
   .login-box button{width:100%;padding:12px;background:#1a6fb5;color:#fff;border:none;
     border-radius:10px;font-size:16px;cursor:pointer;}
   .login-box button:hover{background:#155a93;}
+  .cap-row{display:flex;gap:10px;align-items:flex-start;margin-bottom:15px;}
+  .cap-row input{flex:1;margin-bottom:0;text-transform:uppercase;letter-spacing:2px;}
+  .cap-img{height:46px;width:130px;border-radius:10px;border:1.5px solid #e6e9ef;cursor:pointer;background:#f5f8fc;}
   .err{color:#c0392b;font-size:13px;text-align:center;min-height:18px;margin:4px 0 0;}
 </style>
 </head>
@@ -36,6 +39,11 @@
   <input id="u" type="text" autocomplete="username" placeholder="用户名" autofocus>
   <label>密码</label>
   <input id="p" type="password" autocomplete="current-password" placeholder="密码">
+  <label>验证码</label>
+  <div class="cap-row">
+    <input id="cap" type="text" inputmode="text" autocomplete="off" maxlength="4" placeholder="填右图 4 位">
+    <img id="capimg" class="cap-img" alt="验证码" title="看不清？点击换一张">
+  </div>
   <button type="submit">登 录</button>
   <p class="err" id="err"></p>
   <p style="display:flex;justify-content:space-between;margin:12px 2px 0;">
@@ -45,22 +53,33 @@
 </form>
 <script>
 const form = document.getElementById('form');
+const $ = (id) => document.getElementById(id);
+let capId = '';
+async function loadCap() {
+  try {
+    const d = await (await fetch('/api/captcha')).json();
+    capId = d.id; $('capimg').src = d.image; $('cap').value = '';
+  } catch (_) {}
+}
+$('capimg').addEventListener('click', loadCap);
+loadCap();
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const err = document.getElementById('err');
+  const err = $('err');
   err.textContent = '';
   try {
     const r = await fetch('/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        username: document.getElementById('u').value,
-        password: document.getElementById('p').value,
+        username: $('u').value,
+        password: $('p').value,
+        captcha_id: capId, captcha: $('cap').value.trim(),
       }),
     });
     const d = await r.json();
     if (r.ok) { location.href = '/'; }
-    else { err.textContent = d.error || '登录失败'; }
-  } catch (_) { err.textContent = '网络错误'; }
+    else { err.textContent = d.error || '登录失败'; loadCap(); }
+  } catch (_) { err.textContent = '网络错误'; loadCap(); }
 });
 </script>
 </body>
