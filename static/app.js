@@ -3149,28 +3149,36 @@ async function plhAnalyze() {
 /* ---------------- 每日巩固测试（按当天学的内容 AI 出小测） ---------------- */
 $('#dt-open').onclick = () => openDtest();
 function openDtest() { push({ view: 'dtest', title: '巩固测试' }); loadDtest(); }
-let dtItems = [], dtChosen = {}, dtSubmitted = false, dtResults = null;
-let dtExam = localStorage.getItem('dtExam') === '1';   // 服务端判分：答案不下发，交卷才判
+let dtItems = [], dtChosen = {}, dtRevealed = {}, dtSubmitted = false, dtResults = null;
+// 背题模式 study：做一题立刻显示答案；测试模式 test：答案不下发，交卷才服务端判分
+let dtMode = localStorage.getItem('dtMode') === 'test' ? 'test' : 'study';
 let dtCount = (+localStorage.getItem('dtCount') === 15) ? 15 : 10;   // 题量 10 / 15
 const DT_L = ['A', 'B', 'C', 'D', 'E', 'F'];
+function dtIsTest() { return dtMode === 'test'; }
+function dtRevealedAt(i) { return dtIsTest() ? dtSubmitted : !!dtRevealed[i]; }
 function dtModeBar() {
   return `<div class="dt-bar">
+    <div class="dt-modes">
+      <button class="dt-mbtn ${dtMode === 'study' ? 'on' : ''}" data-dtm="study">📖 背题模式</button>
+      <button class="dt-mbtn ${dtMode === 'test' ? 'on' : ''}" data-dtm="test">📝 测试模式</button>
+    </div>
+    <div class="dt-mhint">${dtMode === 'study'
+      ? '做一题立刻显示这题答案与解析，边做边记'
+      : '答案不提前下发，全部做完交卷、由服务端判分，更像考试'}</div>
     <div class="dt-count">题量：
       <button class="dt-cbtn ${dtCount === 10 ? 'on' : ''}" data-dtc="10">10 题</button>
       <button class="dt-cbtn ${dtCount === 15 ? 'on' : ''}" data-dtc="15">15 题</button></div>
-    <label class="dt-mode"><input type="checkbox" id="dt-exam" ${dtExam ? 'checked' : ''}>
-      <span>🔒 服务端判分（答案不提前下发，交卷才判，更像考试）</span></label>
     <button class="pl-link-btn" id="dt-records">📋 测试记录</button>
   </div>`;
 }
 async function loadDtest() {
   $('#dt-body').innerHTML = '<p class="empty">加载中…</p>';
   try {
-    const d = await api('/api/dtest' + (dtExam ? '?exam=1' : ''));
-    dtItems = d.items || []; dtChosen = {}; dtSubmitted = false; dtResults = null;
+    const d = await api('/api/dtest' + (dtIsTest() ? '?exam=1' : ''));
+    dtItems = d.items || []; dtChosen = {}; dtRevealed = {}; dtSubmitted = false; dtResults = null;
     if (!dtItems.length) {
       $('#dt-body').innerHTML = dtModeBar() +
-        `<div class="dt-empty">今天还没生成测试。选好题量，AI 会按你今天学的内容出题。</div>
+        `<div class="dt-empty">今天还没生成测试。选好模式和题量，AI 会按你今天学的内容出题。</div>
         <button class="btn primary" id="dt-gen">✨ 生成今日巩固测试</button>`;
       $('#dt-gen').onclick = () => dtGen(false);
       bindBar();
@@ -3180,9 +3188,23 @@ async function loadDtest() {
   } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
 function bindBar() {
-  const c = $('#dt-exam');
-  if (c) c.onchange = () => { dtExam = c.checked; localStorage.setItem('dtExam', dtExam ? '1' : '0'); loadDtest(); };
   const rec = $('#dt-records'); if (rec) rec.onclick = openDtRecords;
+  document.querySelectorAll('[data-dtm]').forEach(b => b.onclick = async () => {
+    const m = b.dataset.dtm; if (m === dtMode) return;
+    dtMode = m; localStorage.setItem('dtMode', m);
+    // 切换模式：同一套题、保留你的作答，只改「何时揭晓答案」，不重新出题、不清空
+    if (dtSubmitted || !dtItems.length) { loadDtest(); return; }
+    if (m === 'study') {
+      // 背题模式要用到答案；若当前这套没带答案（从测试模式来的），重新拉同一套带答案的
+      if (dtItems[0] && dtItems[0].answer === undefined) {
+        try { const d = await api('/api/dtest'); if ((d.items || []).length === dtItems.length) dtItems = d.items; } catch (_) {}
+      }
+      dtRevealed = {}; Object.keys(dtChosen).forEach(i => dtRevealed[i] = true);  // 已答的直接揭晓
+    } else {
+      dtRevealed = {};   // 测试模式：收起逐题揭晓，作答保留，交卷时统一判分
+    }
+    renderDtest();
+  });
   document.querySelectorAll('[data-dtc]').forEach(b => b.onclick = () => {
     const n = +b.dataset.dtc; if (n === dtCount) return;
     dtCount = n; localStorage.setItem('dtCount', n);
@@ -3193,15 +3215,15 @@ function bindBar() {
 async function dtGen(force) {
   $('#dt-body').innerHTML = `<p class="empty">AI 正在按你今天学的内容出 ${dtCount} 道题，稍等…</p>`;
   try {
-    const d = await api('/api/dtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force, exam: dtExam, count: dtCount }) });
-    dtItems = d.items || []; dtChosen = {}; dtSubmitted = false; dtResults = null;
+    const d = await api('/api/dtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force, exam: dtIsTest(), count: dtCount }) });
+    dtItems = d.items || []; dtChosen = {}; dtRevealed = {}; dtSubmitted = false; dtResults = null;
     renderDtest();
   } catch (e) {
     $('#dt-body').innerHTML = `<div class="dt-empty">${esc(e.message)}</div><button class="btn" id="dt-retry">重试</button>`;
     $('#dt-retry').onclick = () => dtGen(force);
   }
 }
-// 答案来源：普通模式在 item 里；服务端判分模式交卷后在 dtResults 里
+// 答案来源：背题模式在 item 里（已下发）；测试模式交卷后在 dtResults 里
 function dtAns(i) { return dtResults ? (dtResults[i] || {}).answer : (dtItems[i].answer || '').toUpperCase(); }
 function dtExp(i) { return dtResults ? (dtResults[i] || {}) : dtItems[i]; }
 function dtScore() {
@@ -3210,41 +3232,62 @@ function dtScore() {
 }
 function renderDtest() {
   const qs = dtItems.map((it, i) => {
+    const revealed = dtRevealedAt(i);
     const opts = (it.options || []).map((o, j) => {
       const L = DT_L[j], chosen = dtChosen[i] === L, isAns = (dtAns(i) || '').toUpperCase() === L;
       let cls = 'dt-opt';
-      if (dtSubmitted) { if (isAns) cls += ' correct'; else if (chosen) cls += ' wrong'; }
+      if (revealed) { if (isAns) cls += ' correct'; else if (chosen) cls += ' wrong'; }
       else if (chosen) cls += ' chosen';
-      return `<button class="${cls}" data-dtq="${i}" data-dtl="${L}" ${dtSubmitted ? 'disabled' : ''}>${esc(o)}</button>`;
+      return `<button class="${cls}" data-dtq="${i}" data-dtl="${L}" ${revealed ? 'disabled' : ''}>${esc(o)}</button>`;
     }).join('');
     const e = dtExp(i);
-    const exp = dtSubmitted ? `<div class="dt-exp"><b>正确答案 ${esc(dtAns(i))}</b>${e.explain ? ' · ' + esc(e.explain) : ''}${e.source ? ` <span class="dt-src">${esc(e.source)}</span>` : ''}</div>` : '';
+    const exp = revealed ? `<div class="dt-exp"><b>正确答案 ${esc(dtAns(i))}</b>${e.explain ? ' · ' + esc(e.explain) : ''}${e.source ? ` <span class="dt-src">${esc(e.source)}</span>` : ''}</div>` : '';
     return `<div class="dt-q"><div class="dt-qt">${i + 1}. ${esc(it.q)}</div><div class="dt-opts">${opts}</div>${exp}</div>`;
   }).join('');
-  const foot = dtSubmitted
-    ? `<div class="dt-score">得分 ${dtScore()} / ${dtItems.length}</div>
-       <button class="btn" id="dt-again">🔄 换一套新题</button>`
-    : `<button class="btn primary" id="dt-submit">交卷看结果</button>`;
+  let foot;
+  if (dtSubmitted) {
+    foot = `<div class="dt-score">得分 ${dtScore()} / ${dtItems.length}</div>
+       <button class="btn" id="dt-again">🔄 换一套新题</button>`;
+  } else if (dtIsTest()) {
+    foot = `<button class="btn primary" id="dt-submit">交卷看结果</button>`;
+  } else {
+    const done = dtItems.filter((_, i) => dtRevealed[i]).length;
+    foot = `<div class="dt-prog2">已做 ${done} / ${dtItems.length}</div>` +
+      (done === dtItems.length ? `<button class="btn primary" id="dt-finish">看结果并记录</button>` : '');
+  }
   $('#dt-body').innerHTML = (dtSubmitted ? '' : dtModeBar()) + `<div class="dt-list">${qs}</div><div class="dt-foot">${foot}</div>`;
   if (dtSubmitted) $('#dt-again').onclick = () => { if (confirm('重新出一套？当前作答会清空。')) dtGen(true); };
-  else { $('#dt-submit').onclick = dtSubmit; bindBar(); }
+  else { const s = $('#dt-submit'); if (s) s.onclick = dtSubmit; const f = $('#dt-finish'); if (f) f.onclick = dtFinish; bindBar(); }
 }
-async function dtSubmit() {
+async function dtRecord() {
+  // 把本次作答交给服务端判分并留档
+  try {
+    const ans = {}; dtItems.forEach((_, i) => ans[i] = dtChosen[i] || '');
+    return await api('/api/dtest/grade', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: ans }) });
+  } catch (e) { toast(e.message, true); return null; }
+}
+async function dtSubmit() {   // 测试模式交卷
   const un = dtItems.findIndex((_, i) => !dtChosen[i]);
   if (un >= 0) { toast('第 ' + (un + 1) + ' 题还没选', true); return; }
-  // 两种模式都交给服务端判分并记录（这样每次测试都留档）
   const btn = $('#dt-submit'); if (btn) { btn.disabled = true; btn.textContent = '判分中…'; }
-  try {
-    const ans = {}; dtItems.forEach((_, i) => ans[i] = dtChosen[i]);
-    const d = await api('/api/dtest/grade', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: ans }) });
-    dtResults = d.results || [];
-  } catch (e) { toast(e.message, true); if (btn) { btn.disabled = false; btn.textContent = '交卷看结果'; } return; }
+  const d = await dtRecord();
+  if (!d) { if (btn) { btn.disabled = false; btn.textContent = '交卷看结果'; } return; }
+  dtResults = d.results || [];
+  dtSubmitted = true; renderDtest();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+async function dtFinish() {   // 背题模式做完，记录成绩
+  await dtRecord();
   dtSubmitted = true; renderDtest();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 $('#dt-body').addEventListener('click', e => {
-  const o = e.target.closest('[data-dtq]'); if (!o || dtSubmitted) return;
-  dtChosen[+o.dataset.dtq] = o.dataset.dtl; renderDtest();
+  const o = e.target.closest('[data-dtq]'); if (!o) return;
+  const i = +o.dataset.dtq;
+  if (dtRevealedAt(i)) return;              // 已揭晓的题不能再改
+  dtChosen[i] = o.dataset.dtl;
+  if (!dtIsTest()) dtRevealed[i] = true;    // 背题模式：选完立刻揭晓这题
+  renderDtest();
 });
 /* 测试记录：列表 + 回看某次作答 */
 async function openDtRecords() {
