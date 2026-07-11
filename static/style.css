@@ -1946,6 +1946,26 @@ body.dark .pl-link-btn{background:#172234 !important;border-color:#26405f !impor
   border-radius:6px;padding:1px 6px;margin-right:2px;vertical-align:1px;}
 body.dark .ts-plan{background:#18293f !important;color:#7fb3e8 !important;}
 
+/* ============ 组队（互监搭档） ============ */
+.tm-search{display:flex;gap:8px;margin:2px 0 10px;}
+.tm-search input{flex:1;padding:11px 13px;border:1.5px solid #e6e9ef;border-radius:10px;font-size:14.5px;outline:none;}
+.tm-search input:focus{border-color:var(--blue);}
+.tm-res,.tm-req{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:#fff;border:1px solid #eef1f5;border-radius:11px;padding:11px 13px;margin-bottom:9px;font-size:14px;color:#2b3442;}
+.tm-uid{color:#98a2b3;font-size:12px;margin-left:4px;}
+.tm-busy{color:#98a2b3;font-size:13px;}
+.tm-acts{display:flex;gap:6px;flex:none;}
+.tm-sec{margin-top:14px;}
+.tm-sec-t{font-size:13px;color:#6b7280;font-weight:600;margin-bottom:8px;}
+.tm-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:linear-gradient(135deg,#1a6fb5,#4bb0f0);color:#fff;border-radius:12px;padding:12px 14px;margin-bottom:12px;font-size:15px;}
+.tm-head b{font-weight:800;}
+.tm-head .btn.tiny{background:rgba(255,255,255,.2);color:#fff;border:none;}
+.tm-req.tm-warn{border-color:#f0b429;background:#fff9ec;}
+body.dark .tm-search input{background:#1a2130 !important;border-color:#2a3345 !important;color:#e2e7ef !important;}
+body.dark .tm-res,body.dark .tm-req{background:#161b24 !important;border-color:#242c39 !important;color:#d3dae4 !important;}
+body.dark .tm-req.tm-warn{background:#2a2413 !important;border-color:#7a5a1a !important;}
+
 /* ============ 每日巩固测试 ============ */
 .dt-empty{font-size:14px;color:#6b7280;line-height:1.7;margin:10px 0 14px;}
 .dt-list{display:flex;flex-direction:column;gap:16px;}

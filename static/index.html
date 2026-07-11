@@ -738,11 +738,13 @@
       <div class="tk-add"><input id="tk-daily-in" placeholder="添加每日任务…"><button class="btn primary" id="tk-daily-add">添加</button></div>
     </div>
     <div id="tk-shared" class="tk-pane hidden">
-      <div class="pd-intro">交叉确认 · 你只能勾<b>搭档</b>那一格（🔒 是你自己的，等对方来勾），两格都打勾才算完成💪
-        <button class="btn tiny" id="tk-members">👥 成员</button></div>
-      <div id="tk-shared-head" class="tk-head"></div>
-      <div id="tk-shared-list" class="tk-list"></div>
-      <div class="tk-add"><input id="tk-shared-in" placeholder="添加待办（两人可见）…"><button class="btn primary" id="tk-shared-add">添加</button></div>
+      <div id="tk-team"></div>   <!-- 组队状态 / 组队邀请，JS 渲染 -->
+      <div id="tk-board" class="hidden">
+        <div class="pd-intro">交叉确认 · 你只能勾<b>搭档</b>那一格（🔒 是你自己的，等对方来勾），两格都打勾才算完成💪</div>
+        <div id="tk-shared-head" class="tk-head"></div>
+        <div id="tk-shared-list" class="tk-list"></div>
+        <div class="tk-add"><input id="tk-shared-in" placeholder="添加待办（两人可见）…"><button class="btn primary" id="tk-shared-add">添加</button></div>
+      </div>
     </div>
   </section>
 
@@ -775,20 +777,6 @@
     </div>
   </div>
 
-  <!-- 互监成员选择 -->
-  <div id="tk-memsheet" class="note-sheet hidden" style="z-index:130;">
-    <div class="ns-mask" data-sheet-close></div>
-    <div class="ns-panel">
-      <div class="ns-handle"></div>
-      <div class="ns-title">选择互监成员</div>
-      <div class="ns-sub">被选中的账号会在每条待办上各有一个打勾位</div>
-      <div id="tk-mem-list" class="tk-mem-list"></div>
-      <div class="tk-mem-btns">
-        <button class="btn" id="tk-mem-cancel">取消</button>
-        <button class="btn primary" id="tk-mem-save">保存</button>
-      </div>
-    </div>
-  </div>
 
   <!-- ===== 今日复习（遗忘曲线 · 墨墨式卡片） ===== -->
   <section id="view-review" class="view hidden">

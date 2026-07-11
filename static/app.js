@@ -3231,8 +3231,82 @@ $('#tk-daily-add').onclick = async () => {
 };
 $('#tk-daily-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-daily-add').click(); });
 
-let tkMembers = [], tkMeId = 0;
+let tkMembers = [], tkMeId = 0, tkTeam = null;
+/* 先看组队状态：没组队 → 组队 UI；已组队 → 队头 + 互监清单 */
 async function loadShared() {
+  $('#tk-team').innerHTML = '<p class="empty">加载中…</p>';
+  $('#tk-board').classList.add('hidden');
+  try {
+    const t = await api('/api/team');
+    tkMeId = t.me_id; tkTeam = t.team;
+    if (!t.team) { renderTeamSetup(t); return; }
+    renderTeamHeader(t);
+    $('#tk-board').classList.remove('hidden');
+    await loadSharedBoard();
+  } catch (e) { $('#tk-team').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function renderTeamSetup(t) {
+  const inc = (t.incoming || []).filter(r => r.kind === 'join').map(r => `
+    <div class="tm-req"><span>📨 <b>${esc(shortName(r.from_name))}</b> 想和你组队互监</span>
+      <span class="tm-acts"><button class="btn tiny primary" data-tmacc="${r.id}">接受</button>
+      <button class="btn tiny" data-tmrej="${r.id}">拒绝</button></span></div>`).join('');
+  const out = (t.outgoing || []).filter(r => r.kind === 'join').map(r => `
+    <div class="tm-req"><span>⏳ 已向 <b>${esc(shortName(r.to_name))}</b> 发出组队申请，等对方接受</span>
+      <button class="btn tiny" data-tmcancel="${r.id}">撤回</button></div>`).join('');
+  $('#tk-team').innerHTML = `
+    <div class="pd-intro">互监需要先和搭档组队：搜对方的账号发起邀请，对方接受即可互相监督。</div>
+    <div class="tm-search"><input id="tm-q" placeholder="搜账号 / 用户名 / ID"><button class="btn primary" id="tm-search-btn">搜索</button></div>
+    <div id="tm-results"></div>
+    ${inc ? `<div class="tm-sec"><div class="tm-sec-t">收到的组队申请</div>${inc}</div>` : ''}
+    ${out ? `<div class="tm-sec"><div class="tm-sec-t">我发出的申请</div>${out}</div>` : ''}`;
+  $('#tm-search-btn').onclick = tmSearch;
+  $('#tm-q').addEventListener('keydown', e => { if (e.key === 'Enter') tmSearch(); });
+}
+function renderTeamHeader(t) {
+  const p = t.team.partner;
+  const disIn = (t.incoming || []).find(r => r.kind === 'disband');
+  const disOut = (t.outgoing || []).find(r => r.kind === 'disband');
+  let dis = '';
+  if (disIn) dis = `<div class="tm-req tm-warn"><span>⚠️ <b>${esc(shortName(p ? p.name : '搭档'))}</b> 申请解散组队</span>
+    <span class="tm-acts"><button class="btn tiny primary" data-tmacc="${disIn.id}">同意解散</button>
+    <button class="btn tiny" data-tmrej="${disIn.id}">不同意</button></span></div>`;
+  else if (disOut) dis = `<div class="tm-req"><span>⏳ 已申请解散，等对方同意</span>
+    <button class="btn tiny" data-tmcancel="${disOut.id}">撤回</button></div>`;
+  $('#tk-team').innerHTML = `
+    <div class="tm-head"><span>🤝 已与 <b>${esc(shortName(p ? p.name : '搭档'))}</b> 组队互监</span>
+      ${disOut || disIn ? '' : '<button class="btn tiny" id="tm-disband">解散组队</button>'}</div>
+    ${dis}`;
+  if ($('#tm-disband')) $('#tm-disband').onclick = tmDisband;
+}
+async function tmSearch() {
+  const q = $('#tm-q').value.trim(); if (!q) return;
+  $('#tm-results').innerHTML = '<p class="empty">搜索中…</p>';
+  try {
+    const d = await api('/api/team/search?q=' + encodeURIComponent(q));
+    $('#tm-results').innerHTML = d.users.length ? d.users.map(u => `
+      <div class="tm-res"><span>${esc(u.name)} <i class="tm-uid">ID ${u.id}</i></span>
+        ${u.in_team ? '<span class="tm-busy">已组队</span>' : `<button class="btn tiny primary" data-tminvite="${u.id}">邀请组队</button>`}</div>`).join('')
+      : '<p class="empty">没找到这个账号</p>';
+  } catch (e) { $('#tm-results').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+async function tmDisband() {
+  if (!(await appConfirm('向搭档发出解散组队申请？对方同意后才会解散。'))) return;
+  try { await api('/api/team/disband', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); toast('已发出解散申请'); loadShared(); }
+  catch (e) { toast(e.message, true); }
+}
+$('#tk-team').addEventListener('click', async e => {
+  const inv = e.target.closest('[data-tminvite]');
+  const acc = e.target.closest('[data-tmacc]');
+  const rej = e.target.closest('[data-tmrej]');
+  const can = e.target.closest('[data-tmcancel]');
+  try {
+    if (inv) { await api('/api/team/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to_uid: +inv.dataset.tminvite }) }); toast('已发出组队申请'); loadShared(); }
+    else if (acc) { const r = await api('/api/team/request/' + acc.dataset.tmacc + '/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); toast(r.disbanded ? '已解散组队' : '已组队 🤝'); loadShared(); }
+    else if (rej) { await api('/api/team/request/' + rej.dataset.tmrej + '/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadShared(); }
+    else if (can) { await api('/api/team/request/' + can.dataset.tmcancel + '/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadShared(); }
+  } catch (er) { toast(er.message, true); }
+});
+async function loadSharedBoard() {
   $('#tk-shared-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/shared_todos');
@@ -3269,7 +3343,7 @@ function shortName(n) { n = n || ''; n = n.split('@')[0]; return n.length > 6 ? 
 function initials(n) { n = (n || '').split('@')[0]; return n.slice(0, 4); }
 $('#tk-shared-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-tsdel]');
-  if (del) { e.stopPropagation(); if (!(await appConfirm('删除这条共享待办？'))) return; try { await api('/api/shared_todos/' + del.dataset.tsdel, { method: 'DELETE' }); loadShared(); } catch (er) { toast(er.message, true); } return; }
+  if (del) { e.stopPropagation(); if (!(await appConfirm('删除这条共享待办？'))) return; try { await api('/api/shared_todos/' + del.dataset.tsdel, { method: 'DELETE' }); loadSharedBoard(); } catch (er) { toast(er.message, true); } return; }
   const box = e.target.closest('[data-tsbox]'); if (!box) return;
   if (+box.dataset.tsuser === tkMeId) { toast('自己不能给自己打勾，等搭档来确认 🤝', true); return; }
   try {
@@ -3277,36 +3351,14 @@ $('#tk-shared-list').addEventListener('click', async e => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: +box.dataset.tsuser })
     });
-    loadShared();
+    loadSharedBoard();
   } catch (er) { toast(er.message, true); }
 });
-/* 互监成员选择 */
-$('#tk-members').onclick = async () => {
-  try {
-    const d = await api('/api/todo_members');
-    const cur = new Set(d.members.map(m => m.id));
-    $('#tk-mem-list').innerHTML = d.users.map(u =>
-      `<label class="tk-mem"><input type="checkbox" value="${u.id}" ${cur.has(u.id) ? 'checked' : ''}><span>${esc(u.name)}</span></label>`).join('');
-    $('#tk-memsheet').classList.remove('hidden');
-  } catch (e) { toast(e.message, true); }
-};
-$('#tk-mem-cancel').onclick = () => $('#tk-memsheet').classList.add('hidden');
-$('#tk-mem-save').onclick = async () => {
-  const ids = [...$('#tk-mem-list').querySelectorAll('input:checked')].map(i => +i.value);
-  if (!ids.length) return toast('至少选一个成员', true);
-  try {
-    await api('/api/todo_members', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_ids: ids }) });
-    $('#tk-memsheet').classList.add('hidden'); loadShared(); toast('成员已更新');
-  } catch (e) { toast(e.message, true); }
-};
 $('#tk-shared-add').onclick = async () => {
   const v = $('#tk-shared-in').value.trim(); if (!v) return;
-  try { await api('/api/shared_todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-shared-in').value = ''; loadShared(); } catch (e) { toast(e.message, true); }
+  try { await api('/api/shared_todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-shared-in').value = ''; loadSharedBoard(); } catch (e) { toast(e.message, true); }
 };
 $('#tk-shared-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-shared-add').click(); });
-$('#tk-memsheet').addEventListener('click', e => {
-  if (e.target.closest('[data-sheet-close]')) $('#tk-memsheet').classList.add('hidden');
-});
 
 /* ================= 申论：真题卷 + 题型讲义 + AI 逐点批改 ================= */
 let slType = null, slQuestion = null, slPaper = null, slResult = null;
@@ -4353,6 +4405,7 @@ const SYNC_REFRESH = {
   partydict: () => loadPartyDict(),
   sucai: () => loadSucai(),
   review: () => { if ($('#rv-card-wrap').classList.contains('hidden')) loadReview(); },  // 复习进行中不打断会话
+  tasks: () => { const a = document.querySelector('#view-tasks .tk-tab.active'); if (a && a.dataset.tkt === 'shared') loadShared(); },
   csboard: () => loadCsBoard(),
 };
 function _syncEditing() {
