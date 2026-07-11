@@ -3952,6 +3952,8 @@ def _docqa_run(tid, user_id, mid, orig_name, board):
         _bg_set(con, tid, progress=0, total=len(cand), message="AI 解题中…")
         found, done = [], 0
         for i in range(0, len(cand), 3):            # 三页一批，省调用
+            if i and page_images:
+                time.sleep(1.5)                     # 视觉批次间留点间隔，少触发限流(429)
             chunk = [(p, texts[p]) for p in cand[i:i + 3]]
             for it in _ask_questions(chunk, page_images):
                 try:
