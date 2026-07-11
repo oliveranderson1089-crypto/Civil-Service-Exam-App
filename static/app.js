@@ -4805,14 +4805,19 @@ var dqPoll = null;   // var：render() 在它上面，用 let 会踩暂时性死
 function openDocqa() { push({ view: 'docqa', title: '题目解析' }); loadDocqa(); }
 $('#dq-upload').onclick = () => $('#dq-file').click();
 $('#dq-file').addEventListener('change', async e => {
-  const file = e.target.files[0]; e.target.value = '';
-  if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('board', matBoard || '');
-  toast('已上传，正在后台识题…');
-  try { await api('/api/docqa/upload', { method: 'POST', body: fd }); loadDocqa(); }
-  catch (err) { toast(err.message, true); }
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) return;
+  toast(files.length > 1 ? `已上传 ${files.length} 份，正在后台排队识题…` : '已上传，正在后台识题…');
+  let ok = 0, fail = 0;
+  for (const file of files) {           // 逐个上传；后端会排队，一次只解一份，不挤爆接口
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('board', matBoard || '');
+    try { await api('/api/docqa/upload', { method: 'POST', body: fd }); ok++; }
+    catch (err) { fail++; }
+  }
+  if (fail) toast(`${ok} 份已排队，${fail} 份上传失败`, true);
+  loadDocqa();
 });
 
 async function loadDocqa() {

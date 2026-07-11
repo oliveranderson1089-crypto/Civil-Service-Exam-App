@@ -3907,12 +3907,16 @@ def _merge_interleaved(src, page_ans, out):
 
 
 DOCQA_MAX_PAGES = int(os.environ.get("GONGKAO_DOCQA_MAX_PAGES", "80"))
+# 多份讲义同时上传时排队处理：一次只跑一份，别同时挤爆视觉接口（429）
+_docqa_gate = threading.Semaphore(1)
 
 
 def _docqa_run(tid, user_id, mid, orig_name, board):
     con = sqlite3.connect(DB, timeout=60)
     con.row_factory = sqlite3.Row
     tmpdir = tempfile.mkdtemp(prefix="docqa_")
+    _bg_set(con, tid, message="排队中…")
+    _docqa_gate.acquire()          # 前面还有讲义在解就排队等
     try:
         m = con.execute("SELECT * FROM materials WHERE id=?", (mid,)).fetchone()
         path = os.path.join(UPLOADS, str(user_id), m["stored_name"])
@@ -4014,6 +4018,7 @@ def _docqa_run(tid, user_id, mid, orig_name, board):
         except Exception:
             pass
     finally:
+        _docqa_gate.release()
         shutil.rmtree(tmpdir, ignore_errors=True)
         con.close()
 
