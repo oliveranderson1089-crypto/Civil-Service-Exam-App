@@ -204,6 +204,91 @@ def ai_chat(messages, temperature=0.4, max_tokens=1600, timeout=120, json_mode=F
     return d["choices"][0]["message"]["content"].strip()
 
 
+# ---------------------------------------------------------------- 视觉模型（智谱 GLM-4.6V，OpenAI 兼容）
+# DeepSeek 没有视觉，图片相关（拍照识题、图形推理、图片附件）走这里。文字任务仍走 DeepSeek。
+def _vision_conf():
+    return {
+        "base": (CFG.get("vision_base") or "").rstrip("/"),
+        "key": CFG.get("vision_key") or "",
+        "model": CFG.get("vision_model") or "glm-4.6v",       # 旗舰：图形推理这类硬任务
+        "free": CFG.get("vision_model_free") or "",           # 免费 flash：读图/OCR 足够
+    }
+
+
+def vision_configured():
+    c = _vision_conf()
+    return bool(c["key"] and c["base"])
+
+
+def _img_data_url(path, maxpx=1600):
+    """读图 → 摆正/压到合理尺寸 → base64 data URL（省流量、够清晰）。"""
+    from PIL import Image, ImageOps
+    im = Image.open(path)
+    try:
+        im = ImageOps.exif_transpose(im)
+    except Exception:
+        pass
+    if im.mode not in ("RGB", "L"):
+        im = im.convert("RGB")
+    w, h = im.size
+    if max(w, h) > maxpx:
+        s = maxpx / float(max(w, h))
+        im = im.resize((max(1, int(w * s)), max(1, int(h * s))), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.convert("RGB").save(buf, "JPEG", quality=88)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def vision_chat(text, images, prefer="free", temperature=0.2, max_tokens=1500, timeout=90, json_mode=False):
+    """智谱视觉对话。images 为文件路径或 data-url 列表。
+    prefer='free' 先用免费 flash（省钱、读图够用），429/失败自动退到旗舰 glm-4.6v。"""
+    conf = _vision_conf()
+    if not conf["key"] or not conf["base"]:
+        raise RuntimeError("视觉模型未配置")
+    content = [{"type": "text", "text": text}]
+    for im in images:
+        u = im if isinstance(im, str) and im.startswith("data:") else _img_data_url(im)
+        content.append({"type": "image_url", "image_url": {"url": u}})
+    url = conf["base"] + ("" if conf["base"].endswith("/chat/completions") else "/chat/completions")
+    order = ([conf["free"], conf["model"]] if prefer == "free" and conf["free"]
+             else [conf["model"]] + ([conf["free"]] if conf["free"] and conf["free"] != conf["model"] else []))
+    last = "未知错误"
+    for model in [m for m in order if m]:
+        for attempt in range(3):
+            payload = {"model": model, "messages": [{"role": "user", "content": content}],
+                       "temperature": temperature, "max_tokens": max_tokens, "stream": False}
+            if json_mode:
+                payload["response_format"] = {"type": "json_object"}
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={
+                "Content-Type": "application/json", "Authorization": "Bearer " + conf["key"]})
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    d = json.loads(r.read().decode("utf-8"))
+                return (d["choices"][0]["message"]["content"] or "").strip()
+            except urllib.error.HTTPError as e:
+                last = "HTTP %d" % e.code
+                if e.code == 429 and attempt < 2:
+                    time.sleep(2 + attempt * 2)
+                    continue
+                break     # 其它错误：换下一个模型再试
+            except Exception as e:
+                last = str(e)
+                time.sleep(1)
+                continue
+    raise RuntimeError("视觉识别失败（%s）" % last)
+
+
+VISION_OCR_PROMPT = (
+    "请把这张图片里的文字**原样转写**出来：题干、选项(A/B/C/D)、数字、数学式、标点都要，按阅读顺序分行。"
+    "若有图形/表格但没有文字，用【图形】【表格】占位标注。"
+    "只输出图片中的文字内容，不要解释、不要作答、不要加任何前后缀。")
+
+
+def vision_ocr(path):
+    """用视觉模型把图片转写成文字（手写、排版、公式都比 tesseract 强）。"""
+    return vision_chat(VISION_OCR_PROMPT, [path], prefer="free", temperature=0.1, max_tokens=1800)
+
+
 # ---------------------------------------------------------------- 数据库
 def get_db():
     db = getattr(g, "_db", None)
@@ -2443,7 +2528,8 @@ def _ai_call_or_error(messages, **kw):
 
 @app.get("/api/ai/status")
 def ai_status():
-    return jsonify({"configured": ai_configured(), "model": _ai_conf()["model"]})
+    return jsonify({"configured": ai_configured(), "model": _ai_conf()["model"],
+                    "vision": vision_configured()})
 
 
 def _user_stats():
@@ -2537,6 +2623,18 @@ def api_ocr():
     ext = os.path.splitext(f.filename)[1].lower() or ".jpg"
     tmp = os.path.join(tempfile.gettempdir(), "ocr_" + uuid.uuid4().hex + ext)
     f.save(tmp)
+    # 优先用视觉模型识别（手写 / 排版 / 公式都比 tesseract 强），失败再退 tesseract
+    if vision_configured():
+        try:
+            vt = vision_ocr(tmp)
+            if vt.strip():
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+                return jsonify({"text": vt.strip(), "engine": "vision"})
+        except Exception:
+            pass
     # 预处理：摆正方向 / 灰度 / 放大 / 拉对比度 / 锐化 —— 显著提升拍照识别率
     proc = tmp
     try:
@@ -3706,27 +3804,46 @@ DOCQA_SYS = ("你是公考各科目的资深讲师。只处理文档里真实存
              "答案要有把握，解析要讲清怎么想、为什么排除其他选项。严格输出 JSON。")
 
 
-def _ask_questions(chunk):
-    """chunk = [(页码, 该页文字)]，返回这几页里的题目及答案解析。"""
+_DOCQA_RULES = (
+    "对每一道题：\n"
+    "· 若原文已给出答案，answer 用原文答案，并补写解析；\n"
+    "· 若原文没有答案（常见），请你作答给出正确答案与解析；\n"
+    "· stem 写清题干（可精简断行，不要改意思）；options 按原文照抄，没有文字选项就给空数组；\n"
+    "· qtype 写题目所属模块，如「言语理解-逻辑填空」「判断推理-图形推理」「常识判断-法律」。\n"
+    "文档里没有题目就返回空数组，不要编造。\n"
+    '只输出 JSON：{"items":[{"page":12,"stem":"","options":["A. …"],"answer":"B","explain":"","qtype":""}]}')
+
+
+def _ask_questions(chunk, page_images=None):
+    """chunk = [(页码, 该页文字)]。配了视觉模型就看图作答（图形推理靠它），否则退纯文字。"""
     body = "\n\n".join("【第 %d 页】\n%s" % (p, t[:3500]) for p, t in chunk)
+
+    # 有视觉模型 + 页面图 → 让它真的「看图做题」，图形推理/图表题才有救
+    if vision_configured() and page_images:
+        imgs = [page_images[p] for p, _ in chunk if page_images.get(p)]
+        if imgs:
+            vprompt = (
+                "下面每张图片是一份公考讲义的一页（按页码顺序），另附从图片里抽取的文字（可能有错字）。\n"
+                "请**看着图片**找出其中的【例题】并作答，尤其是图形推理 / 类比推理 / 图表题——"
+                "直接根据图形本身选出正确选项，并在 explain 里讲清规律（遍历/样式/位置/数量等）。\n"
+                "普通带 A/B/C/D 的文字题也要收进来。\n" + _DOCQA_RULES + "\n\n【各页文字】\n" + body)
+            try:
+                rep = vision_chat(vprompt, imgs, prefer="pro", temperature=0.2,
+                                  max_tokens=4000, timeout=200, json_mode=True)
+                return json.loads(rep).get("items", []) or []
+            except Exception:
+                pass   # 视觉失败 → 退回纯文字，别让整批崩掉
+
     prompt = (
         "下面是一份公考讲义/资料中连续几页的文字（OCR 或 PDF 抽取，可能有断行和错字）。\n"
         "请找出其中的【例题】——有题干，通常带 A/B/C/D 选项，或是填空/判断/图形/类比题。\n"
         "注意：图形推理、类比推理、部分定义判断题的选项是图片，文字里可能看不到 A/B/C/D，"
         "但只要有「从所给的四个选项中…」「使之呈现一定的规律性」「分为两类」这类题干，也算一道题，要收进来。\n"
-        "对每一道题：\n"
-        "· 若原文已给出答案，answer 用原文答案，并补写解析；\n"
-        "· 若原文没有答案（常见），请你作答给出正确答案与解析；\n"
         "· 若这是你熟悉的历年真题（题干里常标有年份和省份，如「2020国考」），"
         "请依据该真题的公认答案作答，answer 直接给字母，explain 讲清规律。\n"
-        "· 若这是图形/图片类题目、而文字里确实没有图形信息、你也不能确定题源答案，"
-        "  answer 填「见原图」，explain 给出该题型的解题思路（如遍历/样式/位置/数量规律，该往哪些方向看），"
-        "  绝不要瞎猜一个字母，也不要只写「无法判断」。\n"
-        "· stem 写清题干（可精简断行，不要改意思）；options 按原文照抄，没有文字选项就给空数组。\n"
-        "· qtype 写题目所属模块，如「言语理解-逻辑填空」「判断推理-图形推理」「常识判断-法律」。\n"
-        "文档里没有题目就返回空数组，不要编造。\n"
-        '只输出 JSON：{"items":[{"page":12,"stem":"","options":["A. …"],"answer":"B","explain":"","qtype":""}]}\n\n'
-        + body)
+        "· 若这是图形/图片类题目、文字里没有图形信息、你也不能确定题源答案，"
+        "answer 填「见原图」，explain 给出该题型的解题思路，绝不要瞎猜一个字母，也不要只写「无法判断」。\n"
+        + _DOCQA_RULES + "\n\n" + body)
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": DOCQA_SYS}, {"role": "user", "content": prompt}],
         temperature=0.2, max_tokens=6000, timeout=300, json_mode=True)
@@ -3823,11 +3940,20 @@ def _docqa_run(tid, user_id, mid, orig_name, board):
         if not cand:
             raise RuntimeError("没在文档里找到像题目的内容（前 %d 页）" % scan)
 
+        # 配了视觉模型：把候选页渲染成图，好让模型「看图做题」（图形推理靠这个）
+        page_images = {}
+        if vision_configured():
+            for p in cand:
+                try:
+                    page_images[p] = _render_page(pdf, p, tmpdir)
+                except Exception:
+                    pass
+
         _bg_set(con, tid, progress=0, total=len(cand), message="AI 解题中…")
         found, done = [], 0
         for i in range(0, len(cand), 3):            # 三页一批，省调用
             chunk = [(p, texts[p]) for p in cand[i:i + 3]]
-            for it in _ask_questions(chunk):
+            for it in _ask_questions(chunk, page_images):
                 try:
                     it["page"] = int(it.get("page") or chunk[0][0])
                 except Exception:
@@ -3888,6 +4014,14 @@ def _docqa_run(tid, user_id, mid, orig_name, board):
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
         con.close()
+
+
+def _render_page(pdf, p, tmpdir, dpi=150):
+    """把 PDF 某页渲染成 PNG，返回图片路径（给视觉模型看图用）。"""
+    out = os.path.join(tmpdir, "pg_%d" % p)
+    subprocess.run(["pdftoppm", "-r", str(dpi), "-png", "-f", str(p), "-l", str(p),
+                    "-singlefile", pdf, out], check=True, timeout=180, capture_output=True)
+    return out + ".png"
 
 
 def _ocr_image_page(pdf, p, tmpdir):
@@ -5324,7 +5458,13 @@ def ai_extract_attachment():
     text, err = "", ""
     try:
         if is_img:
-            text = _ocr_image(tmp)
+            if vision_configured():          # 视觉模型：比 OCR 更能读懂图片（含手写、排版）
+                try:
+                    text = vision_ocr(tmp)
+                except Exception:
+                    text = ""
+            if not text.strip():
+                text = _ocr_image(tmp)       # 兜底
             if not text.strip():
                 err = "图片里没识别出文字（可能是纯图形、字太小或太模糊，可放大后重拍）"
         else:
