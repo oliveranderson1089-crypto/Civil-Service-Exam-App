@@ -4668,28 +4668,61 @@ def _gen_dtest(db, today):
     return items, None
 
 
+def _dtest_public(items, exam):
+    """服务端判分模式(exam)下，发到前端的题目去掉答案与解析，交卷才由服务端判。"""
+    if not exam:
+        return items
+    return [{"q": it.get("q", ""), "options": it.get("options") or []} for it in items]
+
+
 @app.get("/api/dtest")
 def dtest_get():
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
+    exam = request.args.get("exam") in ("1", "true")
     r = db.execute("SELECT questions_json FROM daily_quiz WHERE user_id=? AND date=?", (uid(), today)).fetchone()
     items = json.loads(r["questions_json"]) if r else []
-    return jsonify({"date": today, "items": items, "has": bool(items)})
+    return jsonify({"date": today, "items": _dtest_public(items, exam), "has": bool(items), "exam": exam})
 
 
 @app.post("/api/dtest")
 def dtest_gen():
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
-    force = bool((request.get_json(silent=True) or {}).get("force"))
+    d = request.get_json(silent=True) or {}
+    force = bool(d.get("force"))
+    exam = bool(d.get("exam"))
     if not force:
         r = db.execute("SELECT questions_json FROM daily_quiz WHERE user_id=? AND date=?", (uid(), today)).fetchone()
         if r:
-            return jsonify({"date": today, "items": json.loads(r["questions_json"]), "cached": True})
+            return jsonify({"date": today, "items": _dtest_public(json.loads(r["questions_json"]), exam),
+                            "cached": True, "exam": exam})
     items, err = _gen_dtest(db, today)
     if err:
         return jsonify({"error": err}), 400
-    return jsonify({"date": today, "items": items})
+    return jsonify({"date": today, "items": _dtest_public(items, exam), "exam": exam})
+
+
+@app.post("/api/dtest/grade")
+def dtest_grade():
+    """服务端判分：收到 {answers:{题号:字母}}，对照缓存的正确答案判分并回传结果。"""
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    r = db.execute("SELECT questions_json FROM daily_quiz WHERE user_id=? AND date=?", (uid(), today)).fetchone()
+    if not r:
+        return jsonify({"error": "今天还没有测试"}), 400
+    items = json.loads(r["questions_json"])
+    ans = (request.get_json(silent=True) or {}).get("answers") or {}
+    results, score = [], 0
+    for i, it in enumerate(items):
+        your = (str(ans.get(str(i), ans.get(i, ""))) or "").strip().upper()
+        correct_letter = (it.get("answer") or "").strip().upper()
+        ok = bool(your) and your == correct_letter
+        if ok:
+            score += 1
+        results.append({"your": your, "answer": correct_letter, "correct": ok,
+                        "explain": it.get("explain", ""), "source": it.get("source", "")})
+    return jsonify({"score": score, "total": len(items), "results": results})
 
 
 @app.get("/api/plan/history")

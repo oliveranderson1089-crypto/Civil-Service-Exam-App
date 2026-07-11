@@ -3147,57 +3147,83 @@ async function plhAnalyze() {
 /* ---------------- 每日巩固测试（按当天学的内容 AI 出小测） ---------------- */
 $('#dt-open').onclick = () => openDtest();
 function openDtest() { push({ view: 'dtest', title: '巩固测试' }); loadDtest(); }
-let dtItems = [], dtChosen = {}, dtSubmitted = false;
+let dtItems = [], dtChosen = {}, dtSubmitted = false, dtResults = null;
+let dtExam = localStorage.getItem('dtExam') === '1';   // 服务端判分：答案不下发，交卷才判
 const DT_L = ['A', 'B', 'C', 'D', 'E', 'F'];
+function dtModeBar() {
+  return `<label class="dt-mode"><input type="checkbox" id="dt-exam" ${dtExam ? 'checked' : ''}>
+    <span>🔒 服务端判分（答案不提前下发，交卷才由服务器判，更像考试）</span></label>`;
+}
 async function loadDtest() {
   $('#dt-body').innerHTML = '<p class="empty">加载中…</p>';
   try {
-    const d = await api('/api/dtest');
-    dtItems = d.items || []; dtChosen = {}; dtSubmitted = false;
+    const d = await api('/api/dtest' + (dtExam ? '?exam=1' : ''));
+    dtItems = d.items || []; dtChosen = {}; dtSubmitted = false; dtResults = null;
     if (!dtItems.length) {
-      $('#dt-body').innerHTML = `<div class="dt-empty">今天还没生成测试。点下面按钮，AI 会按你今天学的内容出 6~8 道题。</div>
+      $('#dt-body').innerHTML = dtModeBar() +
+        `<div class="dt-empty">今天还没生成测试。点下面按钮，AI 会按你今天学的内容出 6~8 道题。</div>
         <button class="btn primary" id="dt-gen">✨ 生成今日巩固测试</button>`;
       $('#dt-gen').onclick = () => dtGen(false);
+      bindExamToggle();
       return;
     }
     renderDtest();
   } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
+function bindExamToggle() {
+  const c = $('#dt-exam'); if (!c) return;
+  c.onchange = () => { dtExam = c.checked; localStorage.setItem('dtExam', dtExam ? '1' : '0'); loadDtest(); };
+}
 async function dtGen(force) {
   $('#dt-body').innerHTML = '<p class="empty">AI 正在按你今天学的内容出题，稍等…</p>';
   try {
-    const d = await api('/api/dtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
-    dtItems = d.items || []; dtChosen = {}; dtSubmitted = false;
+    const d = await api('/api/dtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force, exam: dtExam }) });
+    dtItems = d.items || []; dtChosen = {}; dtSubmitted = false; dtResults = null;
     renderDtest();
   } catch (e) {
     $('#dt-body').innerHTML = `<div class="dt-empty">${esc(e.message)}</div><button class="btn" id="dt-retry">重试</button>`;
     $('#dt-retry').onclick = () => dtGen(force);
   }
 }
-function dtScore() { return dtItems.reduce((n, it, i) => n + (dtChosen[i] === (it.answer || '').toUpperCase() ? 1 : 0), 0); }
+// 答案来源：普通模式在 item 里；服务端判分模式交卷后在 dtResults 里
+function dtAns(i) { return dtResults ? (dtResults[i] || {}).answer : (dtItems[i].answer || '').toUpperCase(); }
+function dtExp(i) { return dtResults ? (dtResults[i] || {}) : dtItems[i]; }
+function dtScore() {
+  if (dtResults) return dtResults.reduce((n, r) => n + (r.correct ? 1 : 0), 0);
+  return dtItems.reduce((n, it, i) => n + (dtChosen[i] === (it.answer || '').toUpperCase() ? 1 : 0), 0);
+}
 function renderDtest() {
   const qs = dtItems.map((it, i) => {
     const opts = (it.options || []).map((o, j) => {
-      const L = DT_L[j], chosen = dtChosen[i] === L, isAns = (it.answer || '').toUpperCase() === L;
+      const L = DT_L[j], chosen = dtChosen[i] === L, isAns = (dtAns(i) || '').toUpperCase() === L;
       let cls = 'dt-opt';
       if (dtSubmitted) { if (isAns) cls += ' correct'; else if (chosen) cls += ' wrong'; }
       else if (chosen) cls += ' chosen';
       return `<button class="${cls}" data-dtq="${i}" data-dtl="${L}" ${dtSubmitted ? 'disabled' : ''}>${esc(o)}</button>`;
     }).join('');
-    const exp = dtSubmitted ? `<div class="dt-exp"><b>正确答案 ${esc(it.answer)}</b>${it.explain ? ' · ' + esc(it.explain) : ''}${it.source ? ` <span class="dt-src">${esc(it.source)}</span>` : ''}</div>` : '';
+    const e = dtExp(i);
+    const exp = dtSubmitted ? `<div class="dt-exp"><b>正确答案 ${esc(dtAns(i))}</b>${e.explain ? ' · ' + esc(e.explain) : ''}${e.source ? ` <span class="dt-src">${esc(e.source)}</span>` : ''}</div>` : '';
     return `<div class="dt-q"><div class="dt-qt">${i + 1}. ${esc(it.q)}</div><div class="dt-opts">${opts}</div>${exp}</div>`;
   }).join('');
   const foot = dtSubmitted
     ? `<div class="dt-score">得分 ${dtScore()} / ${dtItems.length}</div>
        <button class="btn" id="dt-again">🔄 换一套新题</button>`
     : `<button class="btn primary" id="dt-submit">交卷看结果</button>`;
-  $('#dt-body').innerHTML = `<div class="dt-list">${qs}</div><div class="dt-foot">${foot}</div>`;
+  $('#dt-body').innerHTML = (dtSubmitted ? '' : dtModeBar()) + `<div class="dt-list">${qs}</div><div class="dt-foot">${foot}</div>`;
   if (dtSubmitted) $('#dt-again').onclick = () => { if (confirm('重新出一套？当前作答会清空。')) dtGen(true); };
-  else $('#dt-submit').onclick = dtSubmit;
+  else { $('#dt-submit').onclick = dtSubmit; bindExamToggle(); }
 }
-function dtSubmit() {
+async function dtSubmit() {
   const un = dtItems.findIndex((_, i) => !dtChosen[i]);
   if (un >= 0) { toast('第 ' + (un + 1) + ' 题还没选', true); return; }
+  if (dtExam) {
+    const btn = $('#dt-submit'); if (btn) { btn.disabled = true; btn.textContent = '判分中…'; }
+    try {
+      const ans = {}; dtItems.forEach((_, i) => ans[i] = dtChosen[i]);
+      const d = await api('/api/dtest/grade', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: ans }) });
+      dtResults = d.results || [];
+    } catch (e) { toast(e.message, true); if (btn) { btn.disabled = false; btn.textContent = '交卷看结果'; } return; }
+  }
   dtSubmitted = true; renderDtest();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }

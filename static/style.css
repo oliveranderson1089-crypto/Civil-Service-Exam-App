@@ -1965,9 +1965,18 @@ body.dark .ts-plan{background:#18293f !important;color:#7fb3e8 !important;}
 body.dark .tm-search input{background:#1a2130 !important;border-color:#2a3345 !important;color:#e2e7ef !important;}
 body.dark .tm-res,body.dark .tm-req{background:#161b24 !important;border-color:#242c39 !important;color:#d3dae4 !important;}
 body.dark .tm-req.tm-warn{background:#2a2413 !important;border-color:#7a5a1a !important;}
+.es-warn{background:#fff7e6;border:1px solid #f5d79a;border-radius:10px;padding:9px 12px;
+  font-size:12.5px;color:#8a5a00;line-height:1.65;margin-bottom:10px;}
+.es-warn b{color:#a35b00;}
+body.dark .es-warn{background:#2a2413 !important;border-color:#7a5a1a !important;color:#e6c98a !important;}
+body.dark .es-warn b{color:#f0c674 !important;}
 
 /* ============ 每日巩固测试 ============ */
 .dt-empty{font-size:14px;color:#6b7280;line-height:1.7;margin:10px 0 14px;}
+.dt-mode{display:flex;align-items:flex-start;gap:8px;background:#f3f8fd;border:1px solid #dbe8f5;
+  border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12.5px;color:#33415c;line-height:1.6;cursor:pointer;}
+.dt-mode input{margin-top:2px;flex:none;}
+body.dark .dt-mode{background:#141d2b !important;border-color:#22344a !important;color:#c4cdda !important;}
 .dt-list{display:flex;flex-direction:column;gap:16px;}
 .dt-q{background:#fff;border:1px solid #eef1f5;border-radius:13px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
 .dt-qt{font-size:15px;font-weight:600;color:#1f2733;line-height:1.6;margin-bottom:11px;}
