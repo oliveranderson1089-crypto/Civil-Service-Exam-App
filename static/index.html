@@ -732,6 +732,7 @@
     </div>
     <div id="tk-daily" class="tk-pane hidden">
       <div class="pd-intro">你自定义的每日任务，每天清零重打卡（如"背10个成语""做1篇资料分析"）</div>
+      <button class="pl-link-btn" id="dt-open" style="margin-bottom:12px">🧪 今日巩固测试 · 测测今天学的</button>
       <div id="tk-daily-prog" class="tk-prog"></div>
       <div id="tk-daily-list" class="tk-list"></div>
       <div class="tk-add"><input id="tk-daily-in" placeholder="添加每日任务…"><button class="btn primary" id="tk-daily-add">添加</button></div>
@@ -743,6 +744,12 @@
       <div id="tk-shared-list" class="tk-list"></div>
       <div class="tk-add"><input id="tk-shared-in" placeholder="添加待办（两人可见）…"><button class="btn primary" id="tk-shared-add">添加</button></div>
     </div>
+  </section>
+
+  <!-- 每日巩固测试 -->
+  <section id="view-dtest" class="view hidden">
+    <div class="pd-intro">根据你今天学的常识 / 时政 / 成语 / 素材出的小测，检验掌握程度 · 每天一套</div>
+    <div id="dt-body"></div>
   </section>
 
   <!-- 备考计划记录 + 进度分析 -->

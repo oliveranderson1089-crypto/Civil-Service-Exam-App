@@ -753,6 +753,12 @@ def init_db():
             items_json TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_plan_log ON plan_log(user_id, date DESC, id DESC);
+        -- 每日巩固测试：按当天学的内容出一份小测，按 用户+日期 缓存
+        CREATE TABLE IF NOT EXISTS daily_quiz(
+            user_id INTEGER NOT NULL, date TEXT NOT NULL,
+            questions_json TEXT, created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, date)
+        );
     """)
     # 备考规划：把 AI 给出的今日重点存下来，刷新后还能看到
     for col in ("summary", "summary_date"):
@@ -768,6 +774,10 @@ def init_db():
     for col, typ in (("by_user", "INTEGER"), ("by_name", "TEXT")):
         if col not in _cols(con, "shared_todo_done"):
             con.execute("ALTER TABLE shared_todo_done ADD COLUMN %s %s" % (col, typ))
+    # 互监待办：来源标记——把「备考规划」的今日计划同步进来给搭档监督
+    for col, typ in (("source", "TEXT"), ("src_uid", "INTEGER"), ("plan_date", "TEXT")):
+        if col not in _cols(con, "shared_todos"):
+            con.execute("ALTER TABLE shared_todos ADD COLUMN %s %s" % (col, typ))
     # 老数据迁移：shared_todos.done=1 → 记到完成人名下
     try:
         if not con.execute("SELECT COUNT(*) FROM shared_todo_done").fetchone()[0]:
@@ -3524,6 +3534,7 @@ def shared_todos_list():
         d = dict(r)
         d["done_ids"] = marks.get(r["id"], [])
         d["done_by_map"] = by.get(r["id"], {})   # {被确认人id: 确认人}
+        d["is_plan"] = (r["source"] == "plan")   # 来自备考规划的条目，前端加标记
         items.append(d)
     return jsonify({"items": items, "members": members,
                     "me": current_user()["username"], "me_id": uid()})
@@ -4212,6 +4223,26 @@ def plan_today():
     })
 
 
+def _sync_plan_to_shared(db, date):
+    """把我今天的备考规划镜像进「互监待办」，搭档就能交叉打勾监督我完成。
+    只镜像当前用户的当天计划；旧的规划条目先清掉，保持同步。"""
+    me = uid()
+    name = current_user()["username"]
+    old = [r[0] for r in db.execute(
+        "SELECT id FROM shared_todos WHERE source='plan' AND src_uid=?", (me,))]
+    if old:
+        qs = ",".join("?" * len(old))
+        db.execute("DELETE FROM shared_todo_done WHERE todo_id IN (%s)" % qs, old)
+        db.execute("DELETE FROM shared_todos WHERE id IN (%s)" % qs, old)
+    for r in db.execute("SELECT title, minutes FROM plan_items WHERE user_id=? AND date=? ORDER BY seq, id",
+                        (me, date)):
+        txt = (r["title"] or "").strip()
+        if r["minutes"]:
+            txt += "（%d 分钟）" % r["minutes"]
+        db.execute("INSERT INTO shared_todos(text,created_by,source,src_uid,plan_date) "
+                   "VALUES(?,?,'plan',?,?)", (txt[:200], name, me, date))
+
+
 def _plan_snapshot(db, date, note=""):
     """把某天当前的计划存一份进 plan_log（重排/覆盖前调用，避免旧版丢失）。"""
     rows = db.execute("SELECT seq,title,module,minutes,reason,link,source,done FROM plan_items "
@@ -4319,6 +4350,7 @@ def plan_generate():
                     (x.get("reason") or "").strip()[:200], link))
     db.execute("UPDATE plan_profile SET summary=?, summary_date=? WHERE user_id=?",
                ((d.get("summary") or "").strip()[:200], today, uid()))
+    _sync_plan_to_shared(db, today)      # 同步进互监待办，方便搭档监督
     db.commit()
     return jsonify(plan_today().get_json())
 
@@ -4340,6 +4372,7 @@ def plan_item_add():
     db.execute("INSERT INTO plan_items(user_id,date,seq,title,module,minutes,reason,link,source) "
                "VALUES(?,?,?,?,?,?,'','','manual')",
                (uid(), today, seq, title[:120], (d.get("module") or "").strip()[:20], mins))
+    _sync_plan_to_shared(db, today)
     db.commit()
     return jsonify({"ok": True}), 201
 
@@ -4361,6 +4394,8 @@ def plan_toggle(pid):
 def plan_del(pid):
     db = get_db()
     db.execute("DELETE FROM plan_items WHERE id=? AND user_id=?", (pid, uid()))
+    today = datetime.now().strftime("%Y-%m-%d")
+    _sync_plan_to_shared(db, today)
     db.commit()
     return jsonify({"ok": True})
 
@@ -4392,8 +4427,86 @@ def plan_restore(log_id):
     if r["summary"]:
         db.execute("UPDATE plan_profile SET summary=?, summary_date=? WHERE user_id=?",
                    (r["summary"].replace("【找回】", ""), today, uid()))
+    _sync_plan_to_shared(db, today)
     db.commit()
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 每日巩固测试（按当天学的内容出小测）
+def _dtest_material(db, today):
+    """凑出今天/最近学的可考内容：常识、时政、成语、素材。太少就往前放宽几天。"""
+    parts = []
+    cs = db.execute("SELECT board, COALESCE(NULLIF(title,''),topic) t, content FROM changshi_items "
+                    "WHERE date=? LIMIT 14", (today,)).fetchall()
+    if len(cs) < 4:
+        cs = db.execute("SELECT board, COALESCE(NULLIF(title,''),topic) t, content FROM changshi_items "
+                        "WHERE date>=date('now','localtime','-3 day') ORDER BY date DESC LIMIT 14").fetchall()
+    for r in cs:
+        parts.append("【常识·%s】%s：%s" % (r["board"] or "", r["t"] or "", (r["content"] or "")[:120]))
+    nw = db.execute("SELECT title, ai_summary FROM news_items WHERE date(created_at)=? LIMIT 8", (today,)).fetchall()
+    if len(nw) < 3:
+        nw = db.execute("SELECT title, ai_summary FROM news_items "
+                        "WHERE date(created_at)>=date('now','localtime','-3 day') ORDER BY id DESC LIMIT 8").fetchall()
+    for r in nw:
+        parts.append("【时政】%s：%s" % (r["title"] or "", (r["ai_summary"] or "")[:120]))
+    for r in db.execute("SELECT word, explanation FROM entries WHERE user_id=? ORDER BY id DESC LIMIT 12", (uid(),)):
+        parts.append("【成语】%s：%s" % (r["word"] or "", (r["explanation"] or "")[:100]))
+    for r in db.execute("SELECT kind, topic, content FROM sucai_items WHERE date=? LIMIT 6", (today,)):
+        parts.append("【素材·%s】%s：%s" % (r["kind"] or "", r["topic"] or "", (r["content"] or "")[:100]))
+    return parts
+
+
+def _gen_dtest(db, today):
+    mats = _dtest_material(db, today)
+    if len(mats) < 4:
+        return None, "今天还没积累够可测的内容（常识/时政/成语等），先学一会儿再来测～"
+    prompt = (
+        "下面是一名公考考生最近学习的内容（常识、时政、成语、素材）。请据此出一份「巩固小测」，"
+        "6~8 道**单选题**，考点必须来自下面材料、答案唯一且明确，难度贴近公考常识判断。\n"
+        "每题：题干清楚；4 个选项 A/B/C/D；answer 是正确选项字母；explain 一句话解析；"
+        "source 标这题考的是哪条（如「时政-乡村振兴」「成语-抑扬顿挫」）。\n"
+        '只输出 JSON：{"items":[{"q":"","options":["A. …","B. …","C. …","D. …"],"answer":"A","explain":"","source":""}]}\n\n'
+        + "\n".join("· " + m for m in mats[:30]))
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是公考命题老师，只根据给定材料出单选题，答案准确、解析简明，严格输出 JSON。"},
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=2600, timeout=150, json_mode=True)
+    if err:
+        return None, "AI 出题失败，请稍后再试"
+    try:
+        items = [x for x in (json.loads(rep).get("items") or [])
+                 if x.get("q") and (x.get("options") or []) and x.get("answer")][:8]
+    except Exception:
+        return None, "AI 返回格式异常，请重试"
+    if not items:
+        return None, "没能出出题目，请重试"
+    db.execute("INSERT OR REPLACE INTO daily_quiz(user_id,date,questions_json) VALUES(?,?,?)",
+               (uid(), today, json.dumps(items, ensure_ascii=False)))
+    db.commit()
+    return items, None
+
+
+@app.get("/api/dtest")
+def dtest_get():
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    r = db.execute("SELECT questions_json FROM daily_quiz WHERE user_id=? AND date=?", (uid(), today)).fetchone()
+    items = json.loads(r["questions_json"]) if r else []
+    return jsonify({"date": today, "items": items, "has": bool(items)})
+
+
+@app.post("/api/dtest")
+def dtest_gen():
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    force = bool((request.get_json(silent=True) or {}).get("force"))
+    if not force:
+        r = db.execute("SELECT questions_json FROM daily_quiz WHERE user_id=? AND date=?", (uid(), today)).fetchone()
+        if r:
+            return jsonify({"date": today, "items": json.loads(r["questions_json"]), "cached": True})
+    items, err = _gen_dtest(db, today)
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify({"date": today, "items": items})
 
 
 @app.get("/api/plan/history")

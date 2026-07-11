@@ -87,8 +87,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -3144,6 +3144,68 @@ async function plhAnalyze() {
   btn.disabled = false;
 }
 
+/* ---------------- 每日巩固测试（按当天学的内容 AI 出小测） ---------------- */
+$('#dt-open').onclick = () => openDtest();
+function openDtest() { push({ view: 'dtest', title: '巩固测试' }); loadDtest(); }
+let dtItems = [], dtChosen = {}, dtSubmitted = false;
+const DT_L = ['A', 'B', 'C', 'D', 'E', 'F'];
+async function loadDtest() {
+  $('#dt-body').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/dtest');
+    dtItems = d.items || []; dtChosen = {}; dtSubmitted = false;
+    if (!dtItems.length) {
+      $('#dt-body').innerHTML = `<div class="dt-empty">今天还没生成测试。点下面按钮，AI 会按你今天学的内容出 6~8 道题。</div>
+        <button class="btn primary" id="dt-gen">✨ 生成今日巩固测试</button>`;
+      $('#dt-gen').onclick = () => dtGen(false);
+      return;
+    }
+    renderDtest();
+  } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+async function dtGen(force) {
+  $('#dt-body').innerHTML = '<p class="empty">AI 正在按你今天学的内容出题，稍等…</p>';
+  try {
+    const d = await api('/api/dtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force }) });
+    dtItems = d.items || []; dtChosen = {}; dtSubmitted = false;
+    renderDtest();
+  } catch (e) {
+    $('#dt-body').innerHTML = `<div class="dt-empty">${esc(e.message)}</div><button class="btn" id="dt-retry">重试</button>`;
+    $('#dt-retry').onclick = () => dtGen(force);
+  }
+}
+function dtScore() { return dtItems.reduce((n, it, i) => n + (dtChosen[i] === (it.answer || '').toUpperCase() ? 1 : 0), 0); }
+function renderDtest() {
+  const qs = dtItems.map((it, i) => {
+    const opts = (it.options || []).map((o, j) => {
+      const L = DT_L[j], chosen = dtChosen[i] === L, isAns = (it.answer || '').toUpperCase() === L;
+      let cls = 'dt-opt';
+      if (dtSubmitted) { if (isAns) cls += ' correct'; else if (chosen) cls += ' wrong'; }
+      else if (chosen) cls += ' chosen';
+      return `<button class="${cls}" data-dtq="${i}" data-dtl="${L}" ${dtSubmitted ? 'disabled' : ''}>${esc(o)}</button>`;
+    }).join('');
+    const exp = dtSubmitted ? `<div class="dt-exp"><b>正确答案 ${esc(it.answer)}</b>${it.explain ? ' · ' + esc(it.explain) : ''}${it.source ? ` <span class="dt-src">${esc(it.source)}</span>` : ''}</div>` : '';
+    return `<div class="dt-q"><div class="dt-qt">${i + 1}. ${esc(it.q)}</div><div class="dt-opts">${opts}</div>${exp}</div>`;
+  }).join('');
+  const foot = dtSubmitted
+    ? `<div class="dt-score">得分 ${dtScore()} / ${dtItems.length}</div>
+       <button class="btn" id="dt-again">🔄 换一套新题</button>`
+    : `<button class="btn primary" id="dt-submit">交卷看结果</button>`;
+  $('#dt-body').innerHTML = `<div class="dt-list">${qs}</div><div class="dt-foot">${foot}</div>`;
+  if (dtSubmitted) $('#dt-again').onclick = () => { if (confirm('重新出一套？当前作答会清空。')) dtGen(true); };
+  else $('#dt-submit').onclick = dtSubmit;
+}
+function dtSubmit() {
+  const un = dtItems.findIndex((_, i) => !dtChosen[i]);
+  if (un >= 0) { toast('第 ' + (un + 1) + ' 题还没选', true); return; }
+  dtSubmitted = true; renderDtest();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+$('#dt-body').addEventListener('click', e => {
+  const o = e.target.closest('[data-dtq]'); if (!o || dtSubmitted) return;
+  dtChosen[+o.dataset.dtq] = o.dataset.dtl; renderDtest();
+});
+
 async function loadDaily() {
   $('#tk-daily-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
@@ -3195,9 +3257,9 @@ async function loadShared() {
         .map(m => `${shortName(m.name)}（${shortName(byMap[m.id] || '?')} 确认）`);
       const all = tkMembers.length && tkMembers.every(m => ids.includes(m.id));
       return `<div class="tk-item tk-multi ${all ? 'done' : ''}" data-ts="${it.id}">
-        <span class="tk-text">${esc(it.text)}<span class="tk-who">发起 ${esc(shortName(it.created_by))}${all ? ' · 🎉 双方都已确认' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
+        <span class="tk-text">${it.is_plan ? '<i class="ts-plan">📅 规划</i> ' : ''}${esc(it.text)}<span class="tk-who">${it.is_plan ? '来自 ' + esc(shortName(it.created_by)) + ' 的今日计划' : '发起 ' + esc(shortName(it.created_by))}${all ? ' · 🎉 双方都已确认' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
         <span class="tk-boxes">${boxes}</span>
-        <button class="tk-del" data-tsdel="${it.id}">🗑</button>
+        ${it.is_plan ? '' : `<button class="tk-del" data-tsdel="${it.id}">🗑</button>`}
       </div>`;
     }).join('') : '<p class="empty">还没有共享待办，加一条大家一起监督～</p>';
   } catch (e) { $('#tk-shared-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }

@@ -1942,6 +1942,35 @@ body.dark .hw-btn.hw-done{background:#1a6fb5 !important;color:#fff !important;}
 .pl-link-btn:active{background:#e6f0fa;}
 body.dark .pl-setup-title{color:#e6ebf2 !important;}
 body.dark .pl-link-btn{background:#172234 !important;border-color:#26405f !important;color:#7fb3e8 !important;}
+.ts-plan{display:inline-block;font-size:11px;font-weight:600;color:#1a6fb5;background:#eaf3fb;
+  border-radius:6px;padding:1px 6px;margin-right:2px;vertical-align:1px;}
+body.dark .ts-plan{background:#18293f !important;color:#7fb3e8 !important;}
+
+/* ============ 每日巩固测试 ============ */
+.dt-empty{font-size:14px;color:#6b7280;line-height:1.7;margin:10px 0 14px;}
+.dt-list{display:flex;flex-direction:column;gap:16px;}
+.dt-q{background:#fff;border:1px solid #eef1f5;border-radius:13px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+.dt-qt{font-size:15px;font-weight:600;color:#1f2733;line-height:1.6;margin-bottom:11px;}
+.dt-opts{display:flex;flex-direction:column;gap:8px;}
+.dt-opt{text-align:left;border:1.5px solid #e6e9ef;background:#fff;border-radius:10px;padding:10px 12px;
+  font-size:14px;color:#33415c;cursor:pointer;line-height:1.5;}
+.dt-opt.chosen{border-color:var(--blue);background:#eef5fc;}
+.dt-opt.correct{border-color:#12b886;background:#e9f9f1;color:#0b7a52;font-weight:600;}
+.dt-opt.wrong{border-color:#e03131;background:#fdecec;color:#c0392b;}
+.dt-opt:disabled{cursor:default;}
+.dt-exp{margin-top:10px;font-size:12.5px;color:#5b6472;line-height:1.7;background:#f7fafc;
+  border-left:3px solid #4bb0f0;border-radius:0 8px 8px 0;padding:8px 11px;}
+.dt-src{color:#1a6fb5;background:#eaf3fb;border-radius:5px;padding:1px 7px;font-size:11.5px;margin-left:4px;}
+.dt-foot{margin:18px 0 8px;display:flex;flex-direction:column;gap:10px;align-items:center;}
+.dt-foot .btn{width:100%;}
+.dt-score{font-size:20px;font-weight:800;color:#1a6fb5;}
+body.dark .dt-q{background:#161b24 !important;border-color:#242c39 !important;}
+body.dark .dt-qt{color:#e6ebf2 !important;}
+body.dark .dt-opt{background:#12171f !important;border-color:#2a3345 !important;color:#c4cdda !important;}
+body.dark .dt-opt.chosen{background:#182333 !important;border-color:#3a6ea5 !important;}
+body.dark .dt-opt.correct{background:#0f2a20 !important;border-color:#12b886 !important;color:#4ade9f !important;}
+body.dark .dt-opt.wrong{background:#2a1414 !important;border-color:#e03131 !important;color:#f28b82 !important;}
+body.dark .dt-exp{background:#141b26 !important;color:#9aa4b2 !important;}
 
 .plh-top{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;}
 .plh-top .btn{width:100%;}
