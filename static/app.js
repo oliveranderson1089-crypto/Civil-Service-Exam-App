@@ -3189,6 +3189,103 @@ const PL_MOD_COLOR = {
 };
 let plProfile = null, plEditing = false;
 
+/* ---------- 40 天冲刺路线：今天第几天、什么阶段、今日定额、正确率目标 ---------- */
+let plRoadOpen = false;
+function renderRoadmap(rm, prof) {
+  const box = $('#pl-road');
+  if (!rm || (!rm.phase && !rm.over)) {           // 没开启（或还没到开始日）
+    box.innerHTML = `<div class="plr-off">
+      <div class="plr-off-t">🚀 40 天冲刺路线</div>
+      <div class="plr-off-d">对标「140 分」强度，但按 <b>6 天推进 + 第 7 天复盘日</b> 排，能扛完全程。
+        分三段：打牢根基(1-12) → 专项拔高(13-28) → 套题强化(29-40)；
+        每天给你行测题量定额、申论安排、正确率目标，积累类任务直接用 App 里现成的内容。</div>
+      <button class="btn primary" id="plr-start">开启 40 天冲刺</button>
+    </div>`;
+    return;
+  }
+  if (rm.over) {
+    box.innerHTML = `<div class="plr-off">
+      <div class="plr-off-t">🏁 40 天冲刺已走完（第 ${rm.day} 天）</div>
+      <div class="plr-off-d">${esc(rm.data.after || '')}</div>
+      <button class="btn primary" id="plr-start">再开一轮</button>
+    </div>`;
+    return;
+  }
+  const ph = rm.phase, dd = rm.data;
+  const pct = Math.round(rm.day / rm.days * 100);
+  const quota = Object.entries(ph.quota).map(([k, v]) =>
+    `<span class="plr-q"><b>${v}</b> ${esc(k)}</span>`).join('');
+  const acc = Object.entries(ph.accuracy).map(([k, v]) =>
+    `<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('');
+  box.innerHTML = `
+    <div class="plr-top">
+      <span class="plr-day">第 <b>${rm.day}</b> / ${rm.days} 天</span>
+      <span class="plr-ph">${esc(ph.key)} · ${esc(ph.name)}</span>
+      ${rm.review_day ? '<span class="plr-rv">★ 今天是复盘日</span>' : ''}
+      <button class="plr-more" id="plr-more">${plRoadOpen ? '收起' : '看路线'}</button>
+    </div>
+    <div class="plr-bar"><i style="width:${pct}%"></i></div>
+    <div class="plr-focus">${esc(ph.focus)}</div>
+    ${rm.review_day ? `<div class="plr-tip">上午一套行测限时套题（严格 120 分钟）→ 下午全套订正 + 错因归因 → 晚上错题过筛，然后<b>休半天</b>。今天别堆新知识。</div>` : ''}
+    <div class="plr-quota"><span class="plr-qt">今日行测定额</span>${quota}</div>
+    <div class="plr-sl">📝 申论：${esc(ph.shenlun)}</div>
+    <div class="plr-detail ${plRoadOpen ? '' : 'hidden'}">
+      <div class="plr-sec">🎯 本阶段正确率目标</div>
+      <table class="plr-tb">${acc}</table>
+      <div class="plr-sec">📌 模块优先级</div>
+      <div class="plr-p">${esc(dd.priority || '')}<div class="plr-why">${esc(dd.priority_why || '')}</div></div>
+      <div class="plr-sec">🔁 本阶段每周要做到</div>
+      <ul class="plr-ul">${(ph.weekly || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="plr-sec">📚 每日固定动作（用 App 现成内容）</div>
+      <ul class="plr-ul">${(dd.fixed || []).map(x =>
+        `<li>${esc(x.t)}${x.link ? ` <i class="pl-go" data-plgo="${esc(x.link)}">去做 ›</i>` : ''}
+          <span class="plr-note">${esc(x.note || '')}</span></li>`).join('')}</ul>
+      <div class="plr-sec">⏰ 节奏</div>
+      <div class="plr-p">${esc(dd.rhythm || '')}</div>
+      <div class="plr-sec">🧱 纪律（原贴的 140 分强度，挑能长期执行的）</div>
+      <ul class="plr-ul">${(dd.discipline || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="plr-sec">🏁 阶段产出</div>
+      <div class="plr-p">${esc(ph.output || '')}</div>
+      <div class="plr-sec">➡️ 40 天之后</div>
+      <div class="plr-p">${esc(dd.after || '')}</div>
+      <button class="btn tiny plr-stop" id="plr-stop">结束这轮冲刺</button>
+    </div>`;
+  if (prof && prof.minutes < 300) {
+    box.insertAdjacentHTML('beforeend',
+      `<div class="plr-warn">你的「每天可学」只填了 ${prof.minutes} 分钟，这套定额是按 6~8 小时排的。
+        建议去「⚙️ 备考信息」改成 <b>420</b> 分钟左右，规划助手才会把任务排够。</div>`);
+  }
+}
+$('#pl-road').addEventListener('click', async e => {
+  if (e.target.closest('#plr-more')) { plRoadOpen = !plRoadOpen; loadPlan(); return; }
+  const go = e.target.closest('[data-plgo]');
+  if (go) { ntfGo(go.dataset.plgo); return; }
+  if (e.target.closest('#plr-start')) {
+    const mins = (plProfile && plProfile.minutes) || 0;
+    const ok = await appConfirm(
+      '开启 40 天冲刺：从今天算第 1 天，分三段（根基 12 天 → 专项 16 天 → 套题 12 天），'
+      + '每 7 天有一个复盘日。规划助手以后会按当天的定额和正确率目标排任务。'
+      + (mins < 300 ? '\n\n你说全天有 6~8 小时，我顺便把「每天可学」设成 420 分钟，可以吗？' : ''),
+      { title: '40 天冲刺路线', okText: '开始' });
+    if (!ok) return;
+    try {
+      await api('/api/plan/roadmap', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mins < 300 ? { minutes: 420 } : {}),
+      });
+      toast('40 天冲刺已开启，去让规划助手排今天的计划');
+      loadPlan();
+    } catch (er) { toast(er.message, true); }
+    return;
+  }
+  if (e.target.closest('#plr-stop')) {
+    if (!await appConfirm('结束这轮 40 天冲刺？已排的计划不会删，只是规划助手不再按路线图排任务。',
+      { title: '结束冲刺', okText: '结束' })) return;
+    try { await api('/api/plan/roadmap', { method: 'DELETE' }); toast('已结束'); loadPlan(); }
+    catch (er) { toast(er.message, true); }
+  }
+});
+
 async function loadPlan() {
   try {
     const d = await api('/api/plan/today');
@@ -3220,6 +3317,7 @@ function renderPlan(d) {
   $('#pl-head').innerHTML = `<div class="pl-days">${esc(p.exam || '备考规划')}</div>
     <div class="pl-meta">今天可学 ${p.minutes} 分钟${p.weak ? ' · 薄弱：' + esc(p.weak) : ''}</div>
     <div class="pl-streak">🔥 连续学习 <b>${st.streak}</b> 天 · 累计 <b>${st.total}</b> 天</div>`;
+  renderRoadmap(d.roadmap, p);
 
   if (d.summary) {
     $('#pl-summary').innerHTML = `💡 ${esc(d.summary)}`;
@@ -5208,7 +5306,21 @@ function ntfGo(link) {
     tasks: () => openTasks(),
     quiz: () => openQuiz(),
     essays: () => openEssays(),
+    essay: () => openEssays(),
     gongwen: () => openGongwen(),
+    // 备考规划/路线图里的 link 也走这里（以前这些点了没反应）
+    wrongq: () => openWrongq(),
+    drafts: () => openDrafts(),
+    idiom: () => openIdiom(),
+    changkao: () => { openChangkao(); if (arg) setTimeout(() => openCkBoard(arg), 260); },
+    shenlun: () => openShenlun(),
+    classics: () => openClassics(),
+    theory: () => { openTheory(); if (arg) setTimeout(() => openThBoard(arg), 260); },
+    works: () => openWorks(),
+    partydict: () => openPartyDict(),
+    policydoc: () => openPolicyDocs(),
+    dtest: () => { openTasks(); setTimeout(() => tkSwitch('todo'), 60); },
+    plan: () => { openTasks(); setTimeout(() => tkSwitch('plan'), 60); },
   }[k];
   if (go) go(); else toast('这条消息没有可跳转的位置');
 }
