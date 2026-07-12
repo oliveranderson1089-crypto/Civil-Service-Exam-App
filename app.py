@@ -631,6 +631,12 @@ def init_db():
     # 每日一诗：常识判断考点
     if "common" not in _cols(con, "classic_daily"):
         con.execute("ALTER TABLE classic_daily ADD COLUMN common TEXT")
+    # 首页卡片自定义排序（拖拽保存，JSON 数组）
+    if "home_order" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN home_order TEXT")
+    # 各功能页卡片排序（JSON 对象：网格键→顺序数组）
+    if "ui_orders" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN ui_orders TEXT")
     con.executescript("""
         -- 互监待办：每人独立打勾（旧 shared_todos.done 保留兼容）
         CREATE TABLE IF NOT EXISTS shared_todo_done(
@@ -1220,8 +1226,54 @@ def api_me():
     u = current_user()
     if not u:
         return jsonify({"error": "未登录"}), 401
+    try:
+        home_order = json.loads(u["home_order"]) if u["home_order"] else None
+    except Exception:
+        home_order = None
+    try:
+        ui_orders = json.loads(u["ui_orders"]) if u["ui_orders"] else {}
+    except Exception:
+        ui_orders = {}
+    if home_order and "home" not in ui_orders:   # 兼容旧版存的首页顺序
+        ui_orders["home"] = home_order
     return jsonify({"username": u["username"], "role": u["role"],
-                    "is_admin": u["role"] == "admin", "email": u["email"] or ""})
+                    "is_admin": u["role"] == "admin", "email": u["email"] or "",
+                    "home_order": home_order, "ui_orders": ui_orders})
+
+
+@app.post("/api/home_order")
+def api_home_order():
+    data = request.get_json(silent=True) or {}
+    order = data.get("order")
+    if (not isinstance(order, list) or len(order) > 50
+            or not all(isinstance(x, str) and 0 < len(x) <= 40 for x in order)):
+        return jsonify({"error": "无效顺序"}), 400
+    db = get_db()
+    db.execute("UPDATE users SET home_order=? WHERE id=?",
+               (json.dumps(order, ensure_ascii=False), uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/ui_order")
+def api_ui_order():
+    data = request.get_json(silent=True) or {}
+    key, order = data.get("key"), data.get("order")
+    if (not isinstance(key, str) or not 0 < len(key) <= 60
+            or not isinstance(order, list) or len(order) > 80
+            or not all(isinstance(x, str) and 0 < len(x) <= 80 for x in order)):
+        return jsonify({"error": "无效顺序"}), 400
+    db = get_db()
+    row = db.execute("SELECT ui_orders FROM users WHERE id=?", (uid(),)).fetchone()
+    try:
+        cur = json.loads(row["ui_orders"]) if row and row["ui_orders"] else {}
+    except Exception:
+        cur = {}
+    cur[key] = order
+    db.execute("UPDATE users SET ui_orders=? WHERE id=?",
+               (json.dumps(cur, ensure_ascii=False), uid()))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 @app.get("/api/sections")
@@ -2417,6 +2469,63 @@ def api_search():
                         (uid(), like, like, like)):
         results.append({"type": "entry", "id": r["id"], "title": r["word"],
                         "board": r["category"] or "收录", "snippet": _snippet(r["explanation"] or "", q)})
+    # 草稿本（笔迹不识别，只能按本子名搜）
+    for r in db.execute("SELECT id,title,pages,updated_at FROM drafts WHERE user_id=? AND title LIKE ? "
+                        "ORDER BY updated_at DESC LIMIT 10", (uid(), like)):
+        results.append({"type": "draft", "id": r["id"], "title": r["title"] or "未命名草稿",
+                        "board": "草稿本 · %d 页" % (r["pages"] or 1),
+                        "snippet": "最近更新 " + (r["updated_at"] or "")[:16]})
+    # 范文（题干 / 参考答案）
+    for r in db.execute("SELECT e.id, e.type_name, e.stem, e.answer, p.topic, p.title "
+                        "FROM essays e LEFT JOIN essay_papers p ON p.id=e.paper_id "
+                        "WHERE e.stem LIKE ? OR e.answer LIKE ? OR p.topic LIKE ? OR p.title LIKE ? LIMIT 10",
+                        (like, like, like, like)):
+        body = r["answer"] or ""
+        results.append({"type": "essay", "id": r["id"],
+                        "title": "%s · %s" % (r["title"] or r["topic"] or "范文", r["type_name"] or ""),
+                        "board": "范文推荐 · AI 仿真卷（非真题）",
+                        "snippet": _snippet(body if ql in body.lower() else (r["stem"] or ""), q)})
+    # 应用文上位词（场景规范表述）
+    for r in db.execute("SELECT id,scene,phrases,doctype,note,example FROM gongwen_items "
+                        "WHERE scene LIKE ? OR phrases LIKE ? OR doctype LIKE ? OR note LIKE ? OR example LIKE ? "
+                        "LIMIT 10", (like, like, like, like, like)):
+        results.append({"type": "gongwen", "id": r["id"], "title": r["scene"] or "应用文表述",
+                        "board": "应用文上位词 · " + (r["doctype"] or ""), "term": r["scene"] or "",
+                        "snippet": _snippet(r["phrases"] or r["note"] or r["example"] or "", q)})
+    # 上位词（常考·逻辑填空）
+    for r in db.execute("SELECT id,hyper,subs,note FROM hyper_items "
+                        "WHERE hyper LIKE ? OR subs LIKE ? OR note LIKE ? OR example LIKE ? LIMIT 10",
+                        (like, like, like, like)):
+        results.append({"type": "changkao", "id": r["id"], "title": r["hyper"] or "上位词",
+                        "board": "常考 · 上位词", "ck_board": "上位词",
+                        "snippet": _snippet(r["subs"] or r["note"] or "", q)})
+    # 习语金句
+    for r in db.execute("SELECT id,quote,note,category,apply FROM xiyu_items "
+                        "WHERE quote LIKE ? OR note LIKE ? OR apply LIKE ? OR keyword LIKE ? LIMIT 10",
+                        (like, like, like, like)):
+        results.append({"type": "xiyu", "id": r["id"], "title": (r["quote"] or "")[:30],
+                        "board": "习语金句 · " + (r["category"] or ""),
+                        "snippet": _snippet(r["note"] or r["apply"] or "", q)})
+    # 常考（高频成语/实词/提法…）
+    for r in db.execute("SELECT id,board,title,content,note FROM changkao_items "
+                        "WHERE title LIKE ? OR content LIKE ? OR note LIKE ? LIMIT 15", (like, like, like)):
+        results.append({"type": "changkao", "id": r["id"], "title": r["title"] or "常考",
+                        "board": "常考 · " + (r["board"] or ""), "ck_board": r["board"] or "",
+                        "snippet": _snippet(r["content"] or r["note"] or "", q)})
+    # 理论基础（马原/毛概/中特/习思想）
+    for r in db.execute("SELECT id,board,topic,title,content FROM theory_items "
+                        "WHERE title LIKE ? OR content LIKE ? OR topic LIKE ? LIMIT 15", (like, like, like)):
+        results.append({"type": "theory", "id": r["id"], "title": r["title"] or r["topic"] or "理论",
+                        "board": "理论基础 · " + (r["board"] or ""), "th_board": r["board"] or "",
+                        "snippet": _snippet(r["content"] or "", q)})
+    # 经典著作（毛选等）
+    for r in db.execute("SELECT id,book,title,content,interpretation FROM works "
+                        "WHERE title LIKE ? OR content LIKE ? OR interpretation LIKE ? LIMIT 10",
+                        (like, like, like)):
+        body = r["content"] or ""
+        results.append({"type": "work", "id": r["id"], "title": r["title"] or "篇目",
+                        "board": "经典著作 · " + (r["book"] or ""),
+                        "snippet": _snippet(body if ql in body.lower() else (r["interpretation"] or ""), q)})
     return jsonify({"results": results, "q": q})
 
 

@@ -162,6 +162,11 @@ async function init() {
     <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
     <div class="home-card" data-go="quiz"><div class="hc-logo">${IC.edit}</div><div class="hc-name">题库</div><div class="hc-desc">四川省考卷面 · 每周自动更新</div></div>
     <div class="home-card" data-go="tasks"><div class="hc-logo">${IC.check || IC.clock}</div><div class="hc-name">任务清单</div><div class="hc-desc">每日任务 · 互监待办</div></div>\n    <div class="home-card" data-go="review"><div class="hc-logo hc-rev">${IC.clock || IC.bulb}<span class="rev-badge hidden" id="rev-badge"></span></div><div class="hc-name">今日复习</div><div class="hc-desc" id="rev-desc">遗忘曲线 · 该复习的都在这</div></div>`;
+  UI_ORDERS = ME.ui_orders || {};
+  $('#home-cards').dataset.dragsort = 'home';
+  $('#sl-types').dataset.dragsort = 'slt';
+  $('#qz-entries').dataset.dragsort = 'qz';
+  applyCardOrder($('#home-cards'));
   goHome();
   refreshReviewBadge();
   hideSplash();
@@ -224,6 +229,7 @@ async function refreshReviewBadge() {
   } catch (_) {}
 }
 $('#home-cards').addEventListener('click', e => {
+  if (hcDragSuppress) return;   // 刚拖拽完的抬手不算点击
   const c = e.target.closest('[data-go]'); if (!c) return;
   const g = c.dataset.go;
   if (g.startsWith('sec:')) openSection(g.slice(4));
@@ -237,6 +243,129 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'quiz') openQuiz();
   else if (g === 'changkao') openChangkao();
 });
+
+/* ---------------- 卡片拖拽排序（通用）：电脑按住拖动，手机长按 0.4 秒再拖 ----------------
+   容器带 data-dragsort="唯一键" 即可拖动其中的 .home-card；顺序按键独立存入账号(ui_orders)。 */
+let hcDragSuppress = false;
+let UI_ORDERS = {};
+const CARD_KEY_ATTRS = ['go', 'secfeat', 'feat', 'slt', 'ckb', 'thb', 'csb', 'qzgo'];
+function cardKey(c) {
+  for (const k of CARD_KEY_ATTRS) if (c.dataset[k] !== undefined) return c.dataset[k];
+  const n = c.querySelector('.hc-name');
+  return n ? n.textContent.trim() : '';
+}
+function applyCardOrder(grid) {
+  const key = grid && grid.dataset ? grid.dataset.dragsort : '';
+  const order = key && UI_ORDERS[key];
+  if (!Array.isArray(order) || !order.length) return;
+  const cards = [...grid.querySelectorAll(':scope > .home-card')];
+  const want = order.map(k => cards.find(c => cardKey(c) === k)).filter(Boolean)
+    .concat(cards.filter(c => !order.includes(cardKey(c))));   // 之后新增的卡片排最后
+  if (want.every((c, i) => c === cards[i])) return;            // 顺序已一致：避免观察器循环
+  want.forEach(c => grid.appendChild(c));
+}
+async function saveCardOrder(grid) {
+  const key = grid.dataset.dragsort; if (!key) return;
+  const order = [...grid.querySelectorAll(':scope > .home-card')].map(cardKey);
+  UI_ORDERS[key] = order;
+  try {
+    await api('/api/ui_order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, order }) });
+  } catch (_) {}
+}
+(function initCardDrag() {
+  let grid = null, card = null, ghost = null, timer = null, sx = 0, sy = 0, dragging = false, isTouch = false;
+  function startDrag(x, y) {
+    dragging = true; hcDragSuppress = true;
+    if (navigator.vibrate) navigator.vibrate(30);
+    const r = card.getBoundingClientRect();
+    ghost = card.cloneNode(true);
+    ghost.classList.add('hc-ghost');
+    ghost.style.width = r.width + 'px';
+    document.body.appendChild(ghost);
+    card.classList.add('hc-hole');
+    moveGhost(x, y);
+  }
+  function moveGhost(x, y) {
+    ghost.style.left = x + 'px'; ghost.style.top = y + 'px';
+    const el = document.elementFromPoint(x, y);
+    let over = el && el.closest ? el.closest('.home-card') : null;
+    if (over && over.parentElement !== grid) over = null;   // 只在同一网格内换位
+    let after = null;
+    if (!over) {   // 网格空白处（如宽屏行尾）：行优先找最近的卡片落位
+      const g = grid.getBoundingClientRect();
+      if (x < g.left - 40 || x > g.right + 40 || y < g.top - 40 || y > g.bottom + 40) return;
+      let bd = Infinity, bb = null;
+      grid.querySelectorAll(':scope > .home-card').forEach(c => {
+        if (c === card) return;
+        const b = c.getBoundingClientRect();
+        const dy = Math.max(b.top - y, y - b.bottom, 0);
+        const dx = Math.max(b.left - x, x - b.right, 0);
+        const d = dy * 10000 + dx;   // 行距离权重远大于列：先匹配所在行
+        if (d < bd) { bd = d; over = c; bb = b; }
+      });
+      if (over) after = x > bb.left + bb.width / 2;   // 指针在目标卡右侧→插到它后面
+    }
+    if (!over || over === card) return;
+    const cards = [...grid.querySelectorAll(':scope > .home-card')];
+    if (after === null) after = cards.indexOf(card) < cards.indexOf(over);
+    grid.insertBefore(card, after ? over.nextSibling : over);
+  }
+  function endDrag(save) {
+    clearTimeout(timer); timer = null;
+    if (!card && !dragging) return;
+    if (ghost) { ghost.remove(); ghost = null; }
+    if (card) card.classList.remove('hc-hole');
+    if (dragging && save !== false && grid) saveCardOrder(grid);
+    card = null; grid = null;
+    if (dragging) { dragging = false; setTimeout(() => { hcDragSuppress = false; }, 60); }
+  }
+  document.addEventListener('pointerdown', e => {
+    const c = e.target.closest('.home-card'); if (!c || dragging) return;
+    const g = c.parentElement;
+    if (!g || !g.dataset || !g.dataset.dragsort) return;
+    grid = g; card = c; sx = e.clientX; sy = e.clientY; isTouch = e.pointerType !== 'mouse';
+    if (isTouch) timer = setTimeout(() => startDrag(sx, sy), 400);   // 手机：长按进入拖动
+  });
+  document.addEventListener('pointermove', e => {
+    if (!card) return;
+    if (dragging) { moveGhost(e.clientX, e.clientY); return; }
+    const moved = Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy);
+    if (isTouch) { if (moved > 10) endDrag(false); }       // 手指先动了 = 想滚动页面，取消长按
+    else if (moved > 6) startDrag(e.clientX, e.clientY);   // 电脑：鼠标按住微移即拖
+  });
+  document.addEventListener('pointerup', () => endDrag());
+  // 触摸的取消/滚动判断全靠 touch 事件（惯性滚动中长按会触发 pointercancel，不能据此取消）
+  document.addEventListener('pointercancel', () => { if (!isTouch) endDrag(false); });
+  document.addEventListener('touchmove', e => {
+    const t = e.touches[0];
+    if (!dragging) {
+      // 长按等待中：手指移动超阈值 = 想滚动页面，取消长按
+      if (card && t && Math.abs(t.clientX - sx) + Math.abs(t.clientY - sy) > 10) endDrag(false);
+      return;
+    }
+    e.preventDefault();   // 拖动期间禁止页面滚动（必须非 passive）
+    if (t) moveGhost(t.clientX, t.clientY);
+  }, { passive: false });
+  document.addEventListener('touchend', () => { if (dragging && isTouch) endDrag(); }, { passive: true });
+  document.addEventListener('touchcancel', () => { if (dragging && isTouch) endDrag(false); }, { passive: true });
+  document.addEventListener('contextmenu', e => { if (dragging || timer) e.preventDefault(); });   // 长按不弹系统菜单
+  document.addEventListener('click', e => { if (hcDragSuppress) { e.stopPropagation(); e.preventDefault(); } }, true);   // 拖完的抬手不算点击
+  // 任何卡片网格重新渲染后，自动应用该网格已保存的顺序
+  new MutationObserver(muts => {
+    if (dragging) return;
+    const seen = new Set();
+    const hit = g => { if (!seen.has(g)) { seen.add(g); applyCardOrder(g); } };
+    muts.forEach(m => {
+      const t = m.target;
+      if (t.nodeType === 1 && t.dataset && t.dataset.dragsort) hit(t);
+      m.addedNodes.forEach(n => {
+        if (n.nodeType !== 1) return;
+        if (n.dataset && n.dataset.dragsort) hit(n);
+        if (n.querySelectorAll) n.querySelectorAll('[data-dragsort]').forEach(hit);
+      });
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
 function openSection(key) {
   const sec = SECTIONS.find(s => s.key === key); if (!sec) return;
   $('#section-title').textContent = sec.name;
@@ -247,6 +376,8 @@ function openSection(key) {
       <div class="hc-name">${esc(f.name)}</div>
       <div class="hc-desc">${esc(f.desc)}</div>
     </div>`).join('');
+  $('#section-feats').dataset.dragsort = 'secfeat:' + key;
+  applyCardOrder($('#section-feats'));
   $('#board-grid').innerHTML = sec.boards.map(b => `
     <div class="board-card" data-board="${esc(b)}">
       <span class="bc-name">${esc(b)}</span>
@@ -284,6 +415,8 @@ function openBoard(board) {
       <div class="hc-name">${esc(f.name)}</div>
       <div class="hc-desc">${esc(f.desc)}</div>
     </div>`).join('');
+  $('#board-features').dataset.dragsort = 'feat:' + board;
+  applyCardOrder($('#board-features'));
   $('#board-features').classList.remove('hidden');
   $('#board-ph').classList.add('hidden');
   push({ view: 'board', title: board });
@@ -2211,7 +2344,8 @@ function hl(text, q) {
   try { return t.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); }
   catch (_) { return t; }
 }
-const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能' };
+const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能',
+  draft: '草稿本', essay: '范文', gongwen: '应用文', changkao: '常考', theory: '理论', xiyu: '习语', work: '经典著作' };
 // 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
 const FEATURES = [
   { name: '备考规划', desc: '任务清单 · AI 按你的学情排当天计划', kw: '规划助手备考计划学习计划每日计划安排时间距考试', open: () => { openTasks(); setTimeout(() => tkSwitch('plan'), 60); } },
@@ -2232,6 +2366,10 @@ const FEATURES = [
   { name: '概括句积累', desc: '应用文 · 材料表述→规范概括句', kw: '概括句申论', open: () => openGaikuo() },
   { name: '应用文上位词', desc: '应用文 · 公文规范上位表述，按场景归类', kw: '应用文上位词公文规范表述通知意见倡议书规范用语提法', open: () => openGongwen() },
   { name: '错题本', desc: '拍照/输入 · AI 判题型给解析', kw: '错题刷题', open: () => openWrongq() },
+  { name: '草稿本', desc: '错题本 · 平时打草稿/演算，手写不识别，自动保存', kw: '草稿本草稿纸打草稿演算竖式手写画板白板涂鸦计算', open: () => openDrafts() },
+  { name: '巩固测试', desc: '任务清单 · 按当天计划出题，背题/测试两种模式', kw: '巩固测试测验做题背题模式服务端判分每日测试', open: () => { openTasks(); setTimeout(() => tkSwitch('todo'), 60); } },
+  { name: '计划记录', desc: '任务清单 · 历史计划回看 + 进度分析', kw: '计划记录历史回看进度分析冷落模块', open: () => openPlanLog() },
+  { name: '经典著作', desc: '毛泽东选集 · 全文精读 + AI 导读', kw: '经典著作毛选毛泽东选集精读朗读', open: () => openWorks() },
   { name: '今日复习', desc: '遗忘曲线 · 该复习的都在这', kw: '复习遗忘曲线艾宾浩斯背诵', open: () => openReview() },
   { name: '小记', desc: '随手记 · 标签归类', kw: '笔记记录', open: () => openNotes() },
   { name: '知识库', desc: '笔记本 · 文档 · 分组整理', kw: '文档笔记本', open: () => openKb() },
@@ -2241,6 +2379,12 @@ const FEATURES = [
 ];
 function renderSearch() {
   const box = $('#search-results');
+  // 筛选条只留「这次搜到东西」的类别，免得十几个 chip 排满一屏
+  document.querySelectorAll('#search-filter .chip').forEach(c => {
+    const t = c.dataset.sf;
+    c.classList.toggle('hidden', !!searchData.q && t !== 'all'
+      && !searchData.results.some(r => r.type === t));
+  });
   if (!searchData.q) { box.innerHTML = ''; $('#search-empty').classList.add('hidden'); return; }
   let items = searchData.results;
   if (searchData.filter !== 'all') items = items.filter(r => r.type === searchData.filter);
@@ -2306,6 +2450,23 @@ $('#search-results').addEventListener('click', async e => {
   } else if (r.type === 'entry') {
     openIdiom();
     state.q = r.title; $('#search').value = r.title; loadEntries();
+  } else if (r.type === 'draft') {
+    openDrafts();
+    setTimeout(() => openDraft(r.id), 80);
+  } else if (r.type === 'essay') {
+    openEssay(r.id);
+  } else if (r.type === 'gongwen') {
+    openGongwen();
+    setTimeout(() => { $('#gw-q').value = r.term || r.title; $('#gw-q').dispatchEvent(new Event('input')); }, 120);
+  } else if (r.type === 'changkao') {
+    openCkBoard(r.ck_board || '上位词');
+  } else if (r.type === 'theory') {
+    openThBoard(r.th_board || '');
+  } else if (r.type === 'xiyu') {
+    openNews();
+    setTimeout(() => { const b = document.querySelector('#news-boards [data-nb="习语"]'); if (b) b.click(); }, 260);
+  } else if (r.type === 'work') {
+    openWorkDetail(r.id);
   }
 });
 
@@ -3904,7 +4065,7 @@ async function loadCkBoards() {
   $('#ck-boards').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/changkao/boards');
-    $('#ck-boards').innerHTML = '<div class="home-cards cs-cards">' + d.boards.map(b => `
+    $('#ck-boards').innerHTML = '<div class="home-cards cs-cards" data-dragsort="ckb">' + d.boards.map(b => `
       <div class="home-card ck-card" data-ckb="${esc(b.key)}">
         <div class="hc-logo hc-ck">${IC[b.icon] || IC.bulb}</div>
         <div class="hc-name">${esc(b.name)}</div>
@@ -3991,7 +4152,7 @@ async function openTheory() {
   $('#th-boards').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/theory/boards');
-    $('#th-boards').innerHTML = '<div class="home-cards cs-cards">' + d.boards.map(b => `
+    $('#th-boards').innerHTML = '<div class="home-cards cs-cards" data-dragsort="thb">' + d.boards.map(b => `
       <div class="home-card ck-card" data-thb="${esc(b.name)}">
         <div class="hc-logo hc-th">${IC[b.icon] || IC.book}</div>
         <div class="hc-name">${esc(b.short)}</div>
@@ -4271,7 +4432,7 @@ async function openChangshi() {
     const d = await api('/api/changshi/boards');
     $('#cs-tiers').innerHTML = d.tiers.map(t => `
       <div class="cs-tier-name">${esc(t.name)}</div>
-      <div class="home-cards cs-cards">${t.boards.map(b => `
+      <div class="home-cards cs-cards" data-dragsort="csb:${esc(t.name)}">${t.boards.map(b => `
         <div class="home-card" data-csb="${esc(b.name)}">
           <div class="hc-logo" style="background:${CS_COLOR[b.name] || '#666'}">${esc(b.name[0])}</div>
           <div class="hc-name">${esc(b.name)}</div>

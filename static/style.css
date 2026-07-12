@@ -2164,3 +2164,13 @@ body.dark #pad-cv{background:#0f141e;}
 .pad-st{font-size:11.5px;color:var(--muted);flex:none;}
 body.dark .dr-card{background:#151b27;}
 body.dark .dr-thumb{background-color:#e9edf3;}
+
+/* ---------------- 首页卡片拖拽排序 ---------------- */
+.home-card{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;}
+.hc-ghost{position:fixed;z-index:200;margin:0;pointer-events:none;transform:translate(-50%,-50%) scale(1.06);box-shadow:0 14px 34px rgba(0,0,0,.28);opacity:.95;}
+.hc-hole{opacity:.35;outline:2px dashed var(--blue);outline-offset:-3px;}
+body.dark .hc-ghost{box-shadow:0 14px 34px rgba(0,0,0,.6);}
+
+/* 电脑端首页：多列铺满整行（手机端仍走上面的 2 列规则），卡片可拖到右侧区域 */
+body:not(.mobile-ui) #home-cards{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));max-width:none;}
+body:not(.mobile-ui) #view-home{max-width:1500px;}
