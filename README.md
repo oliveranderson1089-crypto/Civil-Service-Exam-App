@@ -73,11 +73,12 @@
 
 - 前端 `<canvas>` 捕捉笔迹（`pointer` 事件，兼容笔 / 鼠标 / 触摸），把每一笔的坐标 + 时间戳发给后端。
 - **自动上屏 + 流水线（默认开）**：停笔即把这个字**入队、立刻清空画布**接着写下一个，识别在后台**排队按序填字**——连续写申论不用等每个字识别完（`hwFlush`/`hwPump`）。写错点候选栏里别的字可替换刚上屏的字；关掉"自动上屏"则回到"写完点候选"的手动模式。
-- **识别三条路，自动择优**（`hwCall`）：
-  - **APK 内置离线识别（ML Kit Digital Ink，中文 `zh-Hani`）**：首次联网下载一次中文模型（几 MB），之后**完全离线、瞬时**。JS 经 `window.GongkaoNative.hwRecognize` 把笔迹交给原生 `Handwrite.java`，结果经 `window.__hwNative` 回调。打开手写板即预下载模型（`hwPrepare`）。
-  - **网页 / 电脑端·本地识别（Zinnia，默认）**：后端 `/api/handwrite/local` 用 `libzinnia` + tegaki 简体模型（ctypes 直调，无 Python 绑定），**离线、约 10ms**（云端 Google 约 0.6s，快数十倍）。准度不如 ML Kit / Google，本地没结果自动退云端。手写栏「云端」开关可随时切到云端求准。
-  - **云端识别（Google，兜准）**：`/api/handwrite` 调 **Google 手写识别**（本机直连不通，**经本地代理出网**；端口会变，多端口兜底，可用 `GONGKAO_HW_PROXY` 或 `config.json` 的 `hw_proxy` 指定）。
-  - 依赖：`apt install libzinnia0 zinnia-utils tegaki-zinnia-simplified-chinese`；模型路径可用 `GONGKAO_ZINNIA_MODEL` 指定。
+- **识别默认走云端 Google（最准）**，另有「更快」可选（`hwCall`）：
+  - **默认·云端 Google**：`/api/handwrite` 调 **Google 手写识别**（本机直连不通，**经本地代理出网**；端口会变，多端口兜底，可用 `GONGKAO_HW_PROXY` 或 `config.json` 的 `hw_proxy` 指定）。约 0.6s，给候选列表，最准。手机、电脑都默认用它。
+  - 手写栏勾「**更快**」→ 用**端上/本地引擎**（准度稍逊，没结果自动退云端）：
+    - 手机：**ML Kit Digital Ink**（`zh-Hani`，端上离线、瞬时；`Handwrite.java` + `window.__hwNative` 回调；`hwPrepare` 预下载模型）。
+    - 电脑/网页：**Zinnia**（`/api/handwrite/local`，ctypes 直调 `libzinnia` + tegaki 简体模型，离线约 10ms；`_zinnia_norm` 按外接框居中归一化，位置/大小无关）。依赖 `apt install libzinnia0 zinnia-utils tegaki-zinnia-simplified-chinese`，模型路径可用 `GONGKAO_ZINNIA_MODEL` 指定。
+  - 实测：Zinnia ~10ms / Google ~0.6s / 智谱 GLM-4.6V 视觉 2–3s（更慢且无候选，故不用于逐字输入）。准度 Google ≈ ML Kit ＞ Zinnia。
 - 支持撤笔 / 清空 / 空格 / 换行 / 删字；填字后自动触发字数统计。
 
 ### 题目解析（讲义识题）

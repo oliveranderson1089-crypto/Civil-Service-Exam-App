@@ -2720,7 +2720,7 @@ const hwEl = {}; let hwTarget = null, hwStrokes = [], hwCur = null, hwT0 = 0, hw
 let hwAuto = localStorage.getItem('hwAuto') !== '0';   // 自动上屏首选字（默认开），连续写更快
 let hwCommitted = null;                                 // 刚自动上屏的字，可点别的候选替换
 let hwFs = localStorage.getItem('hwFs') === '1';        // 全屏透明手写：看得到后面正在填入的答案
-let hwEngine = localStorage.getItem('hwEngine') || 'local';  // 网页/桌面：local=Zinnia(快) / cloud=Google(准)
+let hwEngine = localStorage.getItem('hwEng') || 'cloud';  // 默认云端 Google(准)；'local'=端上ML Kit/本地Zinnia(快)
 function hwInit() {
   ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done', 'auto', 'fs', 'eng']
     .forEach(k => hwEl[k] = $('#hw-' + k));
@@ -2805,11 +2805,13 @@ function hwInit() {
   hwEl.auto.checked = hwAuto;
   hwEl.auto.onchange = () => { hwAuto = hwEl.auto.checked; localStorage.setItem('hwAuto', hwAuto ? '1' : '0'); };
   if (hwEl.fs) hwEl.fs.onclick = () => { hwFs = !hwFs; localStorage.setItem('hwFs', hwFs ? '1' : '0'); hwApplyFs(); };
-  // APK 用端上 ML Kit，不需要"本地/云端"切换，隐藏它；网页/桌面才显示
-  if (hwEl.engWrap) hwEl.engWrap.style.display = hwNativeReady() ? 'none' : '';
+  // 默认云端 Google(准)，打勾切「更快(本地/端上)」——手机 ML Kit、电脑 Zinnia
   if (hwEl.eng) {
-    hwEl.eng.checked = (hwEngine === 'cloud');
-    hwEl.eng.onchange = () => { hwEngine = hwEl.eng.checked ? 'cloud' : 'local'; localStorage.setItem('hwEngine', hwEngine); };
+    hwEl.eng.checked = (hwEngine === 'local');
+    hwEl.eng.onchange = () => {
+      hwEngine = hwEl.eng.checked ? 'local' : 'cloud'; localStorage.setItem('hwEng', hwEngine);
+      try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) {}
+    };
   }
 }
 function hwApplyFs() {
@@ -2849,14 +2851,15 @@ function hwApi(url, payload) {
 }
 // 统一识别：APK 端上 ML Kit 优先；网页/桌面按开关走「本地 Zinnia(快)」或「云端 Google(准)」，本地无果自动退云端
 async function hwCall(payload) {
+  if (hwEngine !== 'local') return hwApi('/api/handwrite', payload);   // 默认：手机/电脑都走 Google(准)
+  // 「更快(本地)」：手机端上 ML Kit，电脑本地 Zinnia，都退云端兜底
   if (hwNativeReady()) {
     const c = await hwNativeRecognize(payload);
     if (c) return c;
   }
-  if (hwEngine === 'cloud') return hwApi('/api/handwrite', payload);
   const local = await hwApi('/api/handwrite/local', payload);
   if (local.length) return local;
-  return hwApi('/api/handwrite', payload);   // 本地引擎没结果 → 退云端兜准
+  return hwApi('/api/handwrite', payload);
 }
 // 自动模式：把这个字入队、立刻清空画布接着写下一个；识别在后台排队跟上、按顺序填字
 function hwFlush() {
@@ -2908,7 +2911,7 @@ function openHandwrite(targetId) {
   hwTarget = document.getElementById(targetId);
   if (!hwTarget) return;
   hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
-  try { if (window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) {}  // APK：预下载离线模型
+  try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) {}  // 仅"更快"模式才预下载端上模型
   hwEl.modal.classList.remove('hidden');
   hwApplyFs();
   requestAnimationFrame(() => { hwEl._fit(); hwSetCands([]); hwFireInput(); });
