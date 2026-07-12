@@ -2780,8 +2780,8 @@ function hwInit() {
     e && e.preventDefault(); hwDrawing = false;
     if (hwCur) { hwStrokes.push(hwCur); hwCur = null; hwRedraw(); }
     clearTimeout(hwTimer);
-    // 停笔就识别；自动上屏时给多笔画的字留足写完的时间，普通模式更快出候选
-    hwTimer = setTimeout(() => hwRecognize(true), hwAuto ? 550 : 300);
+    // 停笔就处理：自动=入队并清画布(接着写)，手动=出候选等你点。多笔画的字留足写完时间
+    hwTimer = setTimeout(() => (hwAuto ? hwFlush() : hwRecognizeManual()), hwAuto ? 500 : 300);
   }
   cv.addEventListener('pointerdown', start);
   cv.addEventListener('pointermove', move);
@@ -2790,7 +2790,7 @@ function hwInit() {
   hwEl._fit = fit;
   hwEl.close.onclick = hwClose;
   hwEl.clear.onclick = () => { hwStrokes = []; hwCur = null; hwRedraw(); hwSetCands([]); };
-  hwEl.undo.onclick = () => { hwStrokes.pop(); hwRedraw(); hwStrokes.length ? hwRecognize() : hwSetCands([]); };
+  hwEl.undo.onclick = () => { hwStrokes.pop(); hwRedraw(); if (!hwStrokes.length) hwSetCands([]); else if (!hwAuto) hwRecognizeManual(); };
   hwEl.space.onclick = () => hwInsert(' ');
   hwEl.nl.onclick = () => hwInsert('\n');
   hwEl.back.onclick = () => {
@@ -2803,28 +2803,42 @@ function hwInit() {
   hwEl.auto.onchange = () => { hwAuto = hwEl.auto.checked; localStorage.setItem('hwAuto', hwAuto ? '1' : '0'); };
 }
 let hwRedraw = () => {};
-let hwLastCands = [];
-async function hwRecognize(auto) {
-  if (!hwStrokes.length) return;
+let hwLastCands = [], hwQueue = [], hwBusy = false;
+function hwInk() {
   const cv = hwEl.canvas;
-  const ink = hwStrokes.map(s => [s.x.map(v => Math.round(v)), s.y.map(v => Math.round(v)), s.t]);
-  hwSetCands(null);   // loading
+  return { w: Math.round(cv.clientWidth), h: Math.round(cv.clientHeight),
+           ink: hwStrokes.map(s => [s.x.map(v => Math.round(v)), s.y.map(v => Math.round(v)), s.t]) };
+}
+// 自动模式：把这个字入队、立刻清空画布接着写下一个；识别在后台排队跟上、按顺序填字
+function hwFlush() {
+  if (!hwStrokes.length) return;
+  hwQueue.push(hwInk());
+  hwCommitted = null;
+  hwStrokes = []; hwCur = null; hwRedraw();
+  hwPump();
+}
+async function hwPump() {
+  if (hwBusy || !hwQueue.length) return;
+  hwBusy = true;
+  const job = hwQueue.shift();
   try {
-    const d = await api('/api/handwrite', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ w: Math.round(cv.clientWidth), h: Math.round(cv.clientHeight), ink }),
-    });
+    const d = await api('/api/handwrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(job) });
+    const cands = (d && d.candidates) || [];
+    if (cands.length) { hwLastCands = cands; hwInsert(cands[0]); hwCommitted = cands[0]; hwSetCands(cands, cands[0]); }
+    else if (d && d.error) hwEl.cands.innerHTML = `<span class="hw-hint">${esc(d.error)}</span>`;
+  } catch (_) {}
+  hwBusy = false;
+  hwPump();     // 处理队列里下一个字
+}
+// 手动模式：识别后展示候选，等你点（不清画布）
+async function hwRecognizeManual() {
+  if (!hwStrokes.length) return;
+  hwSetCands(null);
+  try {
+    const d = await api('/api/handwrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hwInk()) });
     if (d.error) { hwEl.cands.innerHTML = `<span class="hw-hint">${esc(d.error)}</span>`; return; }
-    const cands = d.candidates || [];
-    hwLastCands = cands;
-    if (auto && hwAuto && cands.length) {
-      // 自动上屏首选字并清空画布，接着写下一个；候选栏保留，写错点别的候选可替换
-      hwInsert(cands[0]);
-      hwCommitted = cands[0];
-      hwSetCands(cands, cands[0]);
-    } else {
-      hwSetCands(cands);
-    }
+    hwLastCands = d.candidates || [];
+    hwSetCands(hwLastCands);
   } catch (e) { hwEl.cands.innerHTML = `<span class="hw-hint">${esc(e.message)}</span>`; }
 }
 function hwSetCands(list, picked) {
@@ -2833,7 +2847,7 @@ function hwSetCands(list, picked) {
   hwEl.cands.innerHTML = (picked ? '<span class="hw-hint hw-hint-s">已填，可点其它字更正 →</span>' : '') +
     list.map(c => `<button class="hw-cand ${c === picked ? 'filled' : ''}" data-c="${esc(c)}">${esc(c)}</button>`).join('');
 }
-function hwInsert(ch) {
+function hwInsert(ch) {   // 只插文字，不动画布（流水线里画布可能已在写下一个字）
   if (!hwTarget) return;
   const s = hwTarget.selectionStart, e = hwTarget.selectionEnd, v = hwTarget.value;
   if (s != null && e != null) {
@@ -2841,8 +2855,8 @@ function hwInsert(ch) {
     const p = s + ch.length; hwTarget.selectionStart = hwTarget.selectionEnd = p;
   } else { hwTarget.value = v + ch; }
   hwFireInput();
-  hwStrokes = []; hwCur = null; hwRedraw(); hwSetCands([]);
 }
+function hwClearPad() { hwStrokes = []; hwCur = null; hwRedraw(); hwSetCands([]); }
 function hwFireInput() {
   hwTarget.dispatchEvent(new Event('input', { bubbles: true }));
   hwEl.count.textContent = (hwTarget.value || '').replace(/\s/g, '').length;
@@ -2852,13 +2866,14 @@ function openHandwrite(targetId) {
   if (!hwEl.canvas) hwInit();
   hwTarget = document.getElementById(targetId);
   if (!hwTarget) return;
-  hwStrokes = []; hwCur = null;
+  hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
   hwEl.modal.classList.remove('hidden');
   requestAnimationFrame(() => { hwEl._fit(); hwSetCands([]); hwFireInput(); });
 }
 function hwClose() {
   hwEl.modal.classList.add('hidden');
-  clearTimeout(hwTimer); hwStrokes = []; hwCur = null; hwTarget && hwTarget.focus();
+  clearTimeout(hwTimer); hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
+  hwTarget && hwTarget.focus();
 }
 document.addEventListener('click', e => {
   const o = e.target.closest('[data-hw]');
@@ -2872,6 +2887,7 @@ document.addEventListener('click', e => {
       hwInsert(ch); hwCommitted = ch; hwSetCands(hwLastCands, ch);
     } else {
       hwInsert(ch); hwCommitted = null;
+      if (!hwAuto) hwClearPad();   // 手动模式：填完清画布，准备写下一个
     }
   }
 });
