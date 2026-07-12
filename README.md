@@ -73,9 +73,10 @@
 
 - 前端 `<canvas>` 捕捉笔迹（`pointer` 事件，兼容笔 / 鼠标 / 触摸），把每一笔的坐标 + 时间戳发给后端。
 - **自动上屏 + 流水线（默认开）**：停笔即把这个字**入队、立刻清空画布**接着写下一个，识别在后台**排队按序填字**——连续写申论不用等每个字识别完（`hwFlush`/`hwPump`）。写错点候选栏里别的字可替换刚上屏的字；关掉"自动上屏"则回到"写完点候选"的手动模式。
-- 后端 `/api/handwrite` 调 **Google 手写识别**（本机直连不通，**经本地代理出网**；代理端口会变，做了多端口兜底并记住能用的那个，可用 `GONGKAO_HW_PROXY` 或 `config.json` 的 `hw_proxy` 指定）。
+- **识别两条路，自动择优**（`hwCall`）：
+  - **APK 内置离线识别（ML Kit Digital Ink，中文 `zh-Hani`）**：首次联网下载一次中文模型（几 MB），之后**完全离线、瞬时**。JS 经 `window.GongkaoNative.hwRecognize` 把笔迹交给原生 `Handwrite.java`，结果经 `window.__hwNative` 回调。打开手写板即预下载模型（`hwPrepare`）。
+  - **服务端识别（网页端 / APK 模型未就绪时兜底）**：后端 `/api/handwrite` 调 **Google 手写识别**（本机直连不通，**经本地代理出网**；代理端口会变，多端口兜底，可用 `GONGKAO_HW_PROXY` 或 `config.json` 的 `hw_proxy` 指定）。
 - 支持撤笔 / 清空 / 空格 / 换行 / 删字；填字后自动触发字数统计。
-- 网页端已上线；**APK 离线手写（ML Kit）**为后续——它要把 APK 构建迁到 Gradle，属较大改造，暂缓。
 
 ### 题目解析（讲义识题）
 

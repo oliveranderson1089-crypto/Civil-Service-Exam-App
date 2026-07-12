@@ -2809,6 +2809,36 @@ function hwInk() {
   return { w: Math.round(cv.clientWidth), h: Math.round(cv.clientHeight),
            ink: hwStrokes.map(s => [s.x.map(v => Math.round(v)), s.y.map(v => Math.round(v)), s.t]) };
 }
+// APK 内置离线手写（ML Kit）：可用则优先，识别瞬时且离线；结果经原生回调
+let __hwReq = 0; const __hwCbs = {};
+window.__hwNative = function (reqId, jsonStr) {
+  const cb = __hwCbs[reqId]; if (!cb) return; delete __hwCbs[reqId];
+  let r = null; try { r = JSON.parse(jsonStr); } catch (_) {}
+  cb(r && r.ok ? (r.candidates || []) : null);   // null = 模型未就绪/失败 → 退服务端
+};
+function hwNativeReady() {
+  try { return !!(window.GongkaoNative && GongkaoNative.hwAvailable && GongkaoNative.hwAvailable()); }
+  catch (_) { return false; }
+}
+function hwNativeRecognize(payload) {
+  return new Promise(resolve => {
+    const id = ++__hwReq; __hwCbs[id] = resolve;
+    try { GongkaoNative.hwRecognize(id, JSON.stringify(payload)); }
+    catch (_) { delete __hwCbs[id]; resolve(null); return; }
+    setTimeout(() => { if (__hwCbs[id]) { delete __hwCbs[id]; resolve(null); } }, 5000);
+  });
+}
+// 统一识别：APK 原生离线优先，未就绪/失败或网页端则走服务端 Google 识别
+async function hwCall(payload) {
+  if (hwNativeReady()) {
+    const c = await hwNativeRecognize(payload);
+    if (c) return c;
+  }
+  try {
+    const d = await api('/api/handwrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    return d.candidates || [];
+  } catch (_) { return []; }
+}
 // 自动模式：把这个字入队、立刻清空画布接着写下一个；识别在后台排队跟上、按顺序填字
 function hwFlush() {
   if (!hwStrokes.length) return;
@@ -2821,12 +2851,8 @@ async function hwPump() {
   if (hwBusy || !hwQueue.length) return;
   hwBusy = true;
   const job = hwQueue.shift();
-  try {
-    const d = await api('/api/handwrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(job) });
-    const cands = (d && d.candidates) || [];
-    if (cands.length) { hwLastCands = cands; hwInsert(cands[0]); hwCommitted = cands[0]; hwSetCands(cands, cands[0]); }
-    else if (d && d.error) hwEl.cands.innerHTML = `<span class="hw-hint">${esc(d.error)}</span>`;
-  } catch (_) {}
+  const cands = await hwCall(job);
+  if (cands.length) { hwLastCands = cands; hwInsert(cands[0]); hwCommitted = cands[0]; hwSetCands(cands, cands[0]); }
   hwBusy = false;
   hwPump();     // 处理队列里下一个字
 }
@@ -2834,12 +2860,8 @@ async function hwPump() {
 async function hwRecognizeManual() {
   if (!hwStrokes.length) return;
   hwSetCands(null);
-  try {
-    const d = await api('/api/handwrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hwInk()) });
-    if (d.error) { hwEl.cands.innerHTML = `<span class="hw-hint">${esc(d.error)}</span>`; return; }
-    hwLastCands = d.candidates || [];
-    hwSetCands(hwLastCands);
-  } catch (e) { hwEl.cands.innerHTML = `<span class="hw-hint">${esc(e.message)}</span>`; }
+  hwLastCands = await hwCall(hwInk());
+  hwSetCands(hwLastCands);
 }
 function hwSetCands(list, picked) {
   if (list === null) { hwEl.cands.innerHTML = '<span class="hw-hint">识别中…</span>'; return; }
@@ -2867,6 +2889,7 @@ function openHandwrite(targetId) {
   hwTarget = document.getElementById(targetId);
   if (!hwTarget) return;
   hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
+  try { if (window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) {}  // APK：预下载离线模型
   hwEl.modal.classList.remove('hidden');
   requestAnimationFrame(() => { hwEl._fit(); hwSetCands([]); hwFireInput(); });
 }

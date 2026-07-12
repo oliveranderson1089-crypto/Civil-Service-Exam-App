@@ -345,6 +345,25 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 把离线手写识别结果（JSON 字符串）安全地回调给网页的 window.__hwNative。 */
+    private void deliverHw(int reqId, String json) {
+        final String js = "window.__hwNative && window.__hwNative(" + reqId + ",'" + jsEsc(json) + "')";
+        runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
+    }
+
+    private static String jsEsc(String s) {
+        if (s == null) return "";
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\\' || c == '\'') b.append('\\').append(c);
+            else if (c == '\n') b.append("\\n");
+            else if (c == '\r') b.append("\\r");
+            else b.append(c);
+        }
+        return b.toString();
+    }
+
     public class Bridge {
         /** 手机通知栏推送：是否已开启。 */
         @android.webkit.JavascriptInterface
@@ -382,6 +401,20 @@ public class MainActivity extends Activity {
 
         @android.webkit.JavascriptInterface
         public void reload() { runOnUiThread(() -> web.reload()); }
+
+        /** 端上离线手写：是否可用（在 APK 里即可用）。 */
+        @android.webkit.JavascriptInterface
+        public boolean hwAvailable() { return Handwrite.get().available(); }
+
+        /** 预下载中文手写模型（首次联网一次，之后离线）。 */
+        @android.webkit.JavascriptInterface
+        public void hwPrepare() { Handwrite.get().ensureModel(null); }
+
+        /** 识别一段笔迹；结果异步经 window.__hwNative(reqId, jsonStr) 回调。 */
+        @android.webkit.JavascriptInterface
+        public void hwRecognize(final int reqId, final String inkJson) {
+            Handwrite.get().recognize(inkJson, json -> deliverHw(reqId, json));
+        }
 
         @android.webkit.JavascriptInterface
         public void ttsSpeak(String id, String text, float rate) {

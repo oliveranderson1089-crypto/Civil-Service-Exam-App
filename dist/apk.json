@@ -1,5 +1,5 @@
 {
-  "version_code": 17,
-  "version_name": "2.6",
-  "notes": "迁移到 Gradle 构建（界面功能不变）；后续支持离线手写。"
+  "version_code": 18,
+  "version_name": "2.7",
+  "notes": "新增手机端离线手写（ML Kit，首次联网下载中文模型后离线+瞬时识别）；构建迁到 Gradle。"
 }
