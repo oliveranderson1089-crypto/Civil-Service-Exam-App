@@ -327,9 +327,23 @@ APK_NOTES="这次改了什么" ./make_apk.sh
 
 - 启动器 `/usr/bin/gongkao-assistant`（`desktop/gongkao_native.py`，用系统 `python3` + PyGObject）：**本机在跑服务(8011)就用 localhost（更快），否则走公网隧道**；可用 `GONGKAO_URL` 覆盖。
 - 持久化登录 / localStorage / SW 缓存（`WebsiteDataManager`，存 `~/.local/share/gongkao-assistant`），首次在窗口里登录一次即可。跳到别的网站的链接交系统浏览器打开。
+- 快捷键：**F5 / Ctrl+R 刷新**、Ctrl+Shift+R 强制刷新、Ctrl± / Ctrl+0 缩放、Ctrl+Q 退出。
 - 依赖：`python3-gi`、`gir1.2-gtk-3.0`、`gir1.2-webkit2-4.1`（Ubuntu 一般已装）。
-- **重新构建**：`DEB_VERSION=3.0 ./desktop/build_deb.sh` → `dist/gongkao.deb`。
+- **重新构建**：`DEB_VERSION=3.2 ./desktop/build_deb.sh` → `dist/gongkao.deb` + `dist/deb.json`（版本元数据）。
 - 更省事的替代：网页版本身是 PWA，浏览器里「安装应用」也能得到独立窗口 + 图标，无需装 .deb。
+
+#### 桌面版自动更新（两种更新，提示不一样）
+
+桌面壳会注入 `window.__desktop` / `window.__desktopVer`，网页据此在**启动后 3.5s、每 30 分钟、切回窗口时**静默问一次 `GET /api/desktop/version`，有更新才弹窗（「以后再说」记进 `localStorage.skipUpdate`，同一版不再打扰）：
+
+| 改了什么 | 判断依据 | 弹窗提示 | 点一下会 |
+|---|---|---|---|
+| **只改网页**（绝大多数改动） | 服务器 `sw` 版本 ≠ 本次启动时的版本 | 「有新内容更新 · **不需要重新下载客户端**」 | **刷新更新** → `location.reload()` |
+| **改了桌面壳本身**（少数） | 服务器 `deb_code` > 本机 `__desktopVer` | 「发现桌面版新版本 vX · 需重新下载安装包」 | **下载更新** → 下载 .deb 到「下载」文件夹，下完弹窗告诉你怎么装 |
+
+- 壳内版本号由 `build_deb.sh` 用 `sed` 注入，恒等于包版本；`version_code` = 版本号去掉点（`3.2 → 32`）。
+- 壳新增 `download-started` 处理：下载的文件（更新包、导出的附件）存到系统「下载」文件夹，完成后回调网页 `window.__onDownloaded(path)`。
+- 账户页「💻 桌面版」区块可手动**检查更新**、刷新页面（安卓专属的通知/切服务器按钮在桌面版自动隐藏）。
 
 ---
 

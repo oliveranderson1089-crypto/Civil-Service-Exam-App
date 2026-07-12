@@ -6,7 +6,9 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$HERE/.."
 DIST="$ROOT/dist"
-VER="${DEB_VERSION:-3.0}"
+VER="${DEB_VERSION:-3.2}"
+CODE="$(echo "$VER" | tr -d '.')"                      # 3.2 → 32，供网页比对版本用
+NOTES="${DEB_NOTES:-新增自动检查更新与更新提示；支持下载文件（更新包存到「下载」文件夹）。}"
 PKG="gongkao-assistant"
 BUILD="$HERE/build/$PKG"
 
@@ -21,6 +23,8 @@ mkdir -p "$BUILD/DEBIAN" \
 
 echo "[2/4] 原生启动器 + 桌面项 + 图标"
 cp "$HERE/gongkao_native.py" "$BUILD/usr/bin/$PKG"
+# 壳里的版本号必须与包版本一致（网页据此判断有没有新版桌面客户端）
+sed -i "s/^DESKTOP_VER = .*/DESKTOP_VER = \"$VER\"/" "$BUILD/usr/bin/$PKG"
 chmod 755 "$BUILD/usr/bin/$PKG"
 
 cat > "$BUILD/usr/share/applications/$PKG.desktop" <<DESK
@@ -68,6 +72,16 @@ chmod 755 "$BUILD/DEBIAN/postinst"
 
 echo "[4/4] 打包"
 dpkg-deb --build --root-owner-group "$BUILD" "$DIST/gongkao.deb" >/dev/null
+
+# 版本元数据：桌面版启动时问 /api/desktop/version，据此提示「下载更新」
+cat > "$DIST/deb.json" <<META
+{
+  "version_code": $CODE,
+  "version_name": "$VER",
+  "notes": "$NOTES"
+}
+META
+
 echo "==== 完成 ===="
 dpkg-deb --info "$DIST/gongkao.deb" | grep -E "Package|Version|Installed-Size|Depends"
 ls -lh "$DIST/gongkao.deb"

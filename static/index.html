@@ -462,12 +462,13 @@
     </div>
 
     <div class="acct-sec hidden" id="acct-app">
-      <div class="acct-sec-t">📱 App</div>
+      <div class="acct-sec-t" id="acct-app-t">📱 App</div>
       <button class="btn acct-btn" id="acct-refresh">刷新页面</button>
       <button class="btn acct-btn" id="acct-update">检查更新</button>
-      <button class="btn acct-btn" id="acct-notify">手机通知</button>
-      <button class="btn acct-btn" id="acct-notifytest">发送测试通知</button>
-      <button class="btn acct-btn" id="acct-server">切换服务器地址</button>
+      <button class="btn acct-btn apk-only" id="acct-notify">手机通知</button>
+      <button class="btn acct-btn apk-only" id="acct-notifytest">发送测试通知</button>
+      <button class="btn acct-btn apk-only" id="acct-server">切换服务器地址</button>
+      <p class="acct-hint hidden" id="acct-app-hint">当前 桌面版 <span id="acct-dver"></span> · 有更新会自动提示</p>
     </div>
 
     <button class="btn acct-logout" id="acct-logout">退出登录</button>
@@ -777,7 +778,7 @@
   <!-- 应用内更新提示 -->
   <div id="upd-modal" class="modal hidden">
     <div class="modal-box">
-      <h3>发现新版本 <span id="upd-ver"></span></h3>
+      <h3><span id="upd-title">发现新版本</span> <span id="upd-ver"></span></h3>
       <div id="upd-notes" class="upd-notes"></div>
       <div id="upd-size" class="upd-size"></div>
       <div class="modal-actions">

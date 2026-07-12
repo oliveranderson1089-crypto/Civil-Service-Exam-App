@@ -373,7 +373,7 @@ main{max-width:none;margin:0;padding:0;}
 .acct-sec input,.acct-sec select{width:100%;border:1.5px solid var(--line);border-radius:9px;
   padding:10px 12px;font-size:14.5px;font-family:inherit;outline:none;margin-bottom:10px;background:#fff;}
 .acct-sec input:focus,.acct-sec select:focus{border-color:var(--blue);}
-.acct-btn{width:100%;padding:11px;}
+.acct-btn{display:block;width:100%;padding:11px;box-sizing:border-box;text-align:center;text-decoration:none;white-space:normal;}
 .acct-sec .acct-btn+.acct-btn{margin-top:9px;}
 .acct-logout{width:100%;padding:12px;color:#e0524d;border-color:#f0c9c5;margin-top:4px;}
 .acct-logout:hover{background:#fbeceb;}

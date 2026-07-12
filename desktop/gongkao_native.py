@@ -10,6 +10,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
+DESKTOP_VER = "3.2"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -69,7 +70,22 @@ class Gongkao(Gtk.Application):
         except Exception:
             pass
 
-        self.web = WebKit2.WebView.new_with_context(ctx)
+        # 注入「我是桌面版 + 版本号」，网页端据此显示检查更新/更新弹窗
+        ucm = WebKit2.UserContentManager()
+        try:
+            ucm.add_script(WebKit2.UserScript.new(
+                "window.__desktop=true;window.__desktopVer='%s';" % DESKTOP_VER,
+                WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.START, None, None))
+        except Exception:
+            pass
+        # 下载（更新用的 .deb、导出的文件等）默认存到「下载」文件夹
+        try:
+            ctx.connect("download-started", self.on_download)
+        except Exception:
+            pass
+
+        self.web = WebKit2.WebView(web_context=ctx, user_content_manager=ucm)
         try:
             self.web.get_settings().set_property("enable-developer-extras", False)
         except Exception:
@@ -103,6 +119,31 @@ class Gongkao(Gtk.Application):
             self.web.set_zoom_level(1.0)
             return True
         return False
+
+    def on_download(self, ctx, download):
+        download.connect("decide-destination", self._dl_dest)
+        download.connect("finished", self._dl_done)
+
+    def _dl_dest(self, download, suggested):
+        d = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) or GLib.get_home_dir()
+        dest = os.path.join(d, suggested or "download")
+        base, ext = os.path.splitext(dest); i = 1
+        while os.path.exists(dest):                     # 不覆盖已存在的文件
+            dest = "%s(%d)%s" % (base, i, ext); i += 1
+        self._last_dl = dest
+        download.set_destination(GLib.filename_to_uri(dest, None))
+        return True
+
+    def _dl_done(self, download):
+        path = getattr(self, "_last_dl", "")
+        if not path or not os.path.exists(path):
+            return
+        js = ("window.__onDownloaded && window.__onDownloaded(%s)"
+              % ("'" + path.replace("\\", "\\\\").replace("'", "\\'") + "'"))
+        try:
+            self.web.run_javascript(js, None, None, None)
+        except Exception:
+            pass
 
     def on_decide(self, web, decision, dtype):
         # 跳到「别的网站」的链接 → 交系统浏览器；App 只停在自己的站

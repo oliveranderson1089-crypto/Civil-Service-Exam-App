@@ -932,7 +932,8 @@ def is_admin():
 _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
                  "/forgot", "/api/forgot/question", "/api/forgot/reset",
                  "/api/sec_questions", "/api/captcha", "/api/register/status",
-                 "/apk", "/download/gongkao.apk", "/deb", "/download/gongkao.deb", "/api/app/version",
+                 "/apk", "/download/gongkao.apk", "/deb", "/download/gongkao.deb",
+                 "/api/app/version", "/api/desktop/version",
                  "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
 
@@ -6310,6 +6311,42 @@ def app_version():
         "size": os.path.getsize(apk) if os.path.exists(apk) else 0,
         "url": "/download/gongkao.apk",
         "available": os.path.exists(apk),
+    })
+
+
+def _deb_meta():
+    """从 dist/deb.json 读桌面版发布信息（build_deb.sh 生成）。"""
+    p = os.path.join(BASE, "dist", "deb.json")
+    try:
+        with open(p, encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception:
+        return {}
+
+
+def _sw_version():
+    """读 static/sw.js 里的前端缓存版本号（gongkao-vNN），用于判断网页端有没有更新。"""
+    try:
+        with open(os.path.join(STATIC, "sw.js"), encoding="utf-8") as fp:
+            m = re.search(r"gongkao-v(\d+)", fp.read())
+            return "gongkao-v" + m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+@app.get("/api/desktop/version")
+def desktop_version():
+    """桌面版启动/手动检查更新时来问：前端有没有更新(刷新即可)、桌面壳有没有新版(需重下)。"""
+    deb = os.path.join(BASE, "dist", "gongkao.deb")
+    meta = _deb_meta()
+    return jsonify({
+        "sw": _sw_version(),                                  # 当前网页端版本；和启动时不同 → 刷新即更新
+        "deb_code": int(meta.get("version_code") or 0),       # 桌面壳版本；比本机新 → 需重新下载 .deb
+        "deb_name": meta.get("version_name") or "",
+        "deb_notes": meta.get("notes") or "",
+        "deb_size": os.path.getsize(deb) if os.path.exists(deb) else 0,
+        "deb_url": "/download/gongkao.deb",
+        "deb_available": os.path.exists(deb),
     })
 
 
