@@ -5821,6 +5821,92 @@ def handwrite():
     return jsonify({"candidates": cands[:12]})
 
 
+# ---------------------------------------------------------------- 本地手写识别（Zinnia，离线瞬时）
+# 电脑端不出网、毫秒级；准度不如 Google/ML Kit，作为"快"的选项，拿不准可切云端兜准。
+_ZINNIA = None
+_zinnia_lock = threading.Lock()
+_ZINNIA_MODEL = os.environ.get("GONGKAO_ZINNIA_MODEL",
+                               "/usr/share/tegaki/models/zinnia/handwriting-zh_CN.model")
+
+
+def _zinnia():
+    """懒加载 Zinnia 识别器（ctypes 直调 libzinnia）。装不上就返回 None，前端自动退云端。"""
+    global _ZINNIA
+    if _ZINNIA is not None:
+        return _ZINNIA or None
+    try:
+        import ctypes
+        z = ctypes.CDLL("libzinnia.so.0")
+        z.zinnia_recognizer_new.restype = ctypes.c_void_p
+        z.zinnia_recognizer_open.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        z.zinnia_recognizer_open.restype = ctypes.c_int
+        z.zinnia_character_new.restype = ctypes.c_void_p
+        z.zinnia_character_clear.argtypes = [ctypes.c_void_p]
+        z.zinnia_character_set_width.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        z.zinnia_character_set_height.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        z.zinnia_character_add.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int]
+        z.zinnia_recognizer_classify.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+        z.zinnia_recognizer_classify.restype = ctypes.c_void_p
+        z.zinnia_result_size.argtypes = [ctypes.c_void_p]
+        z.zinnia_result_size.restype = ctypes.c_size_t
+        z.zinnia_result_value.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        z.zinnia_result_value.restype = ctypes.c_char_p
+        z.zinnia_result_destroy.argtypes = [ctypes.c_void_p]
+        z.zinnia_character_destroy.argtypes = [ctypes.c_void_p]
+        rec = z.zinnia_recognizer_new()
+        if not rec or not z.zinnia_recognizer_open(rec, _ZINNIA_MODEL.encode()):
+            _ZINNIA = False
+            return None
+        _ZINNIA = (z, rec)
+        return _ZINNIA
+    except Exception:
+        _ZINNIA = False
+        return None
+
+
+def _zinnia_recognize(ink, w, h, n=12):
+    zz = _zinnia()
+    if not zz:
+        return None
+    z, rec = zz
+    with _zinnia_lock:      # zinnia 识别器非线程安全，串行化
+        ch = z.zinnia_character_new()
+        z.zinnia_character_clear(ch)
+        z.zinnia_character_set_width(ch, int(w) or 300)
+        z.zinnia_character_set_height(ch, int(h) or 300)
+        for si, st in enumerate(ink):
+            xs, ys = (st[0] if len(st) > 0 else []), (st[1] if len(st) > 1 else [])
+            for i in range(min(len(xs), len(ys))):
+                z.zinnia_character_add(ch, si, int(xs[i]), int(ys[i]))
+        res = z.zinnia_recognizer_classify(rec, ch, n)
+        out = []
+        if res:
+            for i in range(z.zinnia_result_size(res)):
+                v = z.zinnia_result_value(res, i)
+                if v:
+                    out.append(v.decode("utf-8", "ignore"))
+            z.zinnia_result_destroy(res)
+        z.zinnia_character_destroy(ch)
+        return out
+
+
+@app.post("/api/handwrite/local")
+def handwrite_local():
+    d = request.get_json(silent=True) or {}
+    ink = d.get("ink") or []
+    if not ink:
+        return jsonify({"candidates": []})
+    try:
+        w = max(1, int(d.get("w") or 300))
+        h = max(1, int(d.get("h") or 300))
+    except Exception:
+        w = h = 300
+    cands = _zinnia_recognize(ink, w, h)
+    if cands is None:
+        return jsonify({"candidates": [], "error": "本地手写引擎未就绪"}), 200
+    return jsonify({"candidates": cands[:12], "engine": "zinnia"})
+
+
 # ---------------------------------------------------------------- 理论基础（马原/毛中特/习思想）
 TH_BOARDS = [
     {"name": "马克思主义基本原理", "short": "马原", "icon": "compass",
