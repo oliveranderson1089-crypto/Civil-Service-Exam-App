@@ -1,5 +1,5 @@
 {
   "version_code": 17,
   "version_name": "2.6",
-  "notes": "修复上传真题/讲义/AI附件只能选图片的问题：现在会打开系统文件管理器，可浏览文件夹选 PDF、Word、PPT。"
+  "notes": "迁移到 Gradle 构建（界面功能不变）；后续支持离线手写。"
 }

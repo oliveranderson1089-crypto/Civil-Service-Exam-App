@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.gongkao.app'
+    compileSdk 34
+    buildToolsVersion '34.0.0'
+
+    defaultConfig {
+        applicationId 'com.gongkao.app'
+        minSdk 21
+        targetSdk 34
+        versionCode 17
+        versionName '2.6'
+    }
+
+    // 用和手工构建同一个 keystore(alias gongkao)，签名一致 → 新包直接覆盖安装
+    signingConfigs {
+        release {
+            storeFile file('../debug.keystore')
+            storePassword 'android'
+            keyAlias 'gongkao'
+            keyPassword 'android'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    // 目前无外部依赖（纯 WebView 壳）。后续离线手写在这里加：
+    // implementation 'com.google.mlkit:digital-ink-recognition:18.1.0'
+}

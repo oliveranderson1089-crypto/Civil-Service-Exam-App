@@ -170,7 +170,7 @@ DeepSeek 只有文字能力，所以**图片相关**统一走智谱 GLM-4.6V（O
 gongkao-app/
 ├─ app.py                # 后端（Flask + waitress）：鉴权、各模块 API、AI 调用、PDF/OCR、消息中心
 ├─ static/               # 前端 SPA + PWA（Service Worker 离线缓存、pdf.js）
-├─ android/              # 安卓 WebView 壳 + 手动构建脚本 build_apk.sh（无 Gradle）
+├─ android/              # 安卓 WebView 壳（Gradle 项目：app/src/main + make_apk.sh）
 ├─ dist/gongkao.apk      # 构建好的安装包；dist/apk.json 供应用内更新比对版本
 │
 ├─ build_db.py           # 成语/词语词典导入（JSON → SQLite）
@@ -304,14 +304,16 @@ systemctl --user list-timers 'gongkao-*'
 - Android 13+ 会申请 `POST_NOTIFICATIONS` 权限。
 - 「账户 → 手机通知」可开关，「发送测试通知」可验证系统有没有把通知挡掉。
 
-**重新构建**
+**重新构建（Gradle）**
 ```bash
 cd ~/gongkao-app/android
-# 改版本号：AndroidManifest.xml 的 versionCode / versionName
-APK_NOTES="这次改了什么" JAVA_HOME=~/.local/jdk17 ANDROID_SDK_ROOT=~/android-sdk ./build_apk.sh
+# 改版本号：app/build.gradle 的 versionCode / versionName
+APK_NOTES="这次改了什么" ./make_apk.sh
 # 产物：dist/gongkao.apk + dist/apk.json（供应用内更新比对）
 ```
-> 依赖便携 JDK17（`~/.local/jdk17`）+ Android SDK（`~/android-sdk`，build-tools;34.0.0、platforms;android-34），用 aapt2/d8/zipalign/apksigner 手动打包，不依赖 Android Studio / Gradle。
+> **已从手工构建迁移到 Gradle**（AGP 8.5.2 + Gradle 8.9 + JDK17）。`make_apk.sh` 跑 `:app:assembleRelease` 再复制产物、写 `apk.json`。标准项目布局 `app/src/main/{java,res,AndroidManifest.xml}`，`namespace` 与签名 keystore（`android/debug.keystore`，alias `gongkao`）都沿用，所以**新包签名与旧包一致、可直接覆盖安装**。
+> 迁 Gradle 只换"打包方式"，**界面和功能不变**（整个 UI 是 WebView 加载的网页）。好处是以后能一行加原生库（如离线手写 ML Kit）。旧的手工脚本保留为 `build_apk.sh.superseded` 仅作参考。
+> 依赖：便携 JDK17（`~/.local/jdk17`）、Android SDK（`~/android-sdk`，build-tools;34.0.0、platforms;android-34、cmdline-tools）、Gradle 8.9（`~/.local/gradle-8.9`，或项目内 `./gradlew`）。首次构建会从 Google Maven / Maven Central 下 AGP 和依赖（本机东京可直连）。
 
 ---
 
@@ -340,7 +342,7 @@ systemctl --user restart gongkao-tunnel.service   # 重启隧道（网址不变�
 - **AI**：DeepSeek（OpenAI 兼容），JSON mode 用于结构化输出（批改、拆题、识题、常识生成等）。
   长文本的字数控制一律「生成 → 数字数 → 超/欠就带上一稿返工」，不指望提示词一次说准。
 - **前端**：原生 HTML/CSS/JS 单页应用 + PWA（Service Worker）；pdf.js 应用内预览；自带轻量 Markdown 渲染。
-- **安卓**：WebView 壳 + 自定义 ContentProvider + JS 桥接（`window.GongkaoNative`）；手动构建。
+- **安卓**：WebView 壳 + 自定义 ContentProvider + JS 桥接（`window.GongkaoNative`）；Gradle 构建（AGP 8.5.2）。
 - **推送**：OpenClaw 微信机器人 + systemd timers。
 - **部署**：systemd 用户服务 + Cloudflare 命名隧道。
 
