@@ -372,6 +372,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input id="wq-input" type="search" placeholder="搜题干 / 题型 / 知识点…" autocomplete="off">
     </div>
+    <div class="wq-tools">
+      <button class="btn" id="wq-drafts">📓 草稿本</button>
+      <span class="wq-tools-h">平时打草稿、演算用，写完自动存</span>
+    </div>
     <div class="cls-cats" id="wq-cats"></div>
     <div id="wq-list" class="wq-list"></div>
     <p id="wq-empty" class="empty hidden"></p>
@@ -379,6 +383,16 @@
       <button id="wq-prev" class="btn">上一页</button><span id="wq-info" class="pg-info"></span><button id="wq-next" class="btn">下一页</button>
     </nav>
     <button class="kb-fab" id="wq-fab" title="记录错题">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+  </section>
+
+  <!-- ===== 草稿本（错题本里；平时打草稿，多本、云端保存） ===== -->
+  <section id="view-drafts" class="view hidden">
+    <div class="pd-intro">平时打草稿 / 演算用：手写不识别，自动保存，手机和电脑同步。点右下角 ＋ 新建一本。</div>
+    <div id="dr-list" class="dr-list"></div>
+    <p id="dr-empty" class="empty hidden"></p>
+    <button class="kb-fab" id="dr-fab" title="新建草稿">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     </button>
   </section>
@@ -1179,6 +1193,11 @@
 <div id="pad" class="pad hidden">
   <div class="pad-grip" id="pad-grip" title="上下拖动可改高度"></div>
   <div class="pad-bar">
+    <div class="pad-grp pad-doc hidden" id="pad-doc">
+      <button class="pad-t" id="pad-name" title="点一下改名">📓</button>
+      <span class="pad-title" id="pad-title"></span>
+      <span class="pad-st" id="pad-st"></span>
+    </div>
     <div class="pad-grp">
       <button class="pad-t" data-tool="pen" title="笔">✏️</button>
       <button class="pad-t" data-tool="hl" title="荧光笔">🖍️</button>

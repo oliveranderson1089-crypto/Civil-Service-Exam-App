@@ -90,8 +90,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -5342,6 +5342,7 @@ let padPages = [{ st: [], rd: [] }], padPg = 0;
 let padTool = 'pen', padColor = PAD_INK, padSize = 3, padBg = 1;
 let padCur = null, padDrawing = false, padSawPen = false, padSaveT = null, padInited = false;
 let padCv, padCtx, padBase, padBaseCtx, padRaf = 0;
+let padMode = 'scratch', padDraftId = null;     // scratch=做题时的随手草稿纸(存本地)；draft=草稿本(存服务器)
 
 const padDark = () => document.body.classList.contains('dark');
 const padW = () => padCv.clientWidth || 1;
@@ -5482,30 +5483,70 @@ function padSyncUI() {
     `<i class="pad-c${c === padColor && padTool !== 'eraser' ? ' on' : ''}" data-c="${c}" style="background:${padCol(c, padDark())}"></i>`).join('');
 }
 
-/* 存本地：切题/刷新/关掉再开都还在（按用户分开存） */
-const padKey = () => 'pad:' + ((ME && (ME.id || ME.username)) || 'x');
-function padSaveSoon() { clearTimeout(padSaveT); padSaveT = setTimeout(padSave, 700); }
-function padSave() {
+/* 笔迹存储格式：本地「随手草稿纸」和云端「草稿本」共用（坐标已按画布宽度归一化） */
+function padData() {
   const r = (n) => Math.round(n * 1e4) / 1e4;
-  try {
-    localStorage.setItem(padKey(), JSON.stringify({
-      bg: padBg, pg: padPg,
-      pages: padPages.map(p => ({
-        st: p.st.map(s => ({ t: s.tool, c: s.color, w: r(s.size), p: s.pts.map(q => [r(q.x), r(q.y), Math.round((q.p || 0) * 100) / 100]) })),
-      })),
-    }));
-  } catch (_) {}                                                  // 存不下就算了，别影响做题
+  return {
+    bg: padBg,
+    pages: padPages.map(p => ({
+      st: p.st.map(s => ({ t: s.tool, c: s.color, w: r(s.size), p: s.pts.map(q => [r(q.x), r(q.y), Math.round((q.p || 0) * 100) / 100]) })),
+    })),
+  };
+}
+function padSetData(d) {
+  const ps = (d && d.pages && d.pages.length) ? d.pages : [{ st: [] }];
+  padPages = ps.map(p => ({
+    st: (p.st || []).map(s => ({ tool: s.t, color: s.c, size: s.w, pts: (s.p || []).map(q => ({ x: q[0], y: q[1], p: q[2] })) })),
+    rd: [],
+  }));
+  padBg = (d && d.bg != null) ? (d.bg | 0) : 1;
+  padPg = Math.min((d && (d.pg | 0)) || 0, padPages.length - 1);
+}
+/* 第一页的缩略图（白底黑字），给草稿本列表当封面 */
+function padThumb() {
+  const w = padCv.clientWidth || 1, h = padCv.clientHeight || 1, W = 320, k = W / w;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = Math.max(1, Math.round(h * k));
+  const x = c.getContext('2d');
+  x.setTransform(k, 0, 0, k, 0, 0);
+  padPaper(x, w, h, false);
+  for (const s of padPages[0].st) padDraw(x, s, w, false);
+  return c.toDataURL('image/jpeg', .72);
+}
+
+/* 随手草稿纸：存本地（切题/刷新/关掉再开都还在，按用户分开存） */
+const padKey = () => 'pad:' + ((ME && (ME.id || ME.username)) || 'x');
+function padSaveSoon() {
+  clearTimeout(padSaveT);
+  if (padMode === 'draft') padStatus('未保存…');
+  padSaveT = setTimeout(() => (padMode === 'draft' ? padDraftSave() : padSave()), padMode === 'draft' ? 1200 : 700);
+}
+function padSave() {
+  try { localStorage.setItem(padKey(), JSON.stringify(Object.assign(padData(), { pg: padPg }))); }
+  catch (_) {}                                                    // 存不下就算了，别影响做题
 }
 function padLoad() {
   try {
     const d = JSON.parse(localStorage.getItem(padKey()) || 'null');
-    if (!d || !d.pages || !d.pages.length) return;
-    padPages = d.pages.map(p => ({
-      st: (p.st || []).map(s => ({ tool: s.t, color: s.c, size: s.w, pts: (s.p || []).map(q => ({ x: q[0], y: q[1], p: q[2] })) })),
-      rd: [],
-    }));
-    padBg = d.bg | 0; padPg = Math.min(d.pg | 0, padPages.length - 1);
+    if (d && d.pages && d.pages.length) padSetData(d);
   } catch (_) {}
+}
+
+/* 草稿本：存服务器（多本、手机电脑同步） */
+function padStatus(t) { $('#pad-st').textContent = t || ''; }
+async function padDraftSave() {
+  if (!padDraftId) return;
+  const id = padDraftId;                       // 存的过程中可能已经关掉了，用当时的 id
+  padStatus('保存中…');
+  try {
+    await api('/api/drafts/' + id, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: padData(), pages: padPages.length, thumb: padThumb() }),
+    });
+    if (padDraftId === id) padStatus('已保存');
+  } catch (_) {
+    if (padDraftId === id) padStatus('没存上·稍后重试');
+  }
 }
 
 function padInit() {
@@ -5583,6 +5624,7 @@ function padInit() {
     const k = (e.key || '').toLowerCase();
     if (e.ctrlKey && k === 'z') { e.preventDefault(); e.shiftKey ? padRedo() : padUndo(); }
     else if (e.ctrlKey && k === 'y') { e.preventDefault(); padRedo(); }
+    else if (e.ctrlKey && k === 's') { e.preventDefault(); if (padMode === 'draft') { clearTimeout(padSaveT); padDraftSave(); } }
     else if (e.key === 'Escape') padClose();
   });
 }
@@ -5594,15 +5636,97 @@ function padOpen() {
   requestAnimationFrame(padFit);
 }
 function padClose() {
+  const wasDraft = padMode === 'draft';
+  clearTimeout(padSaveT);
+  if (wasDraft) padDraftSave(); else padSave();
   $('#pad').classList.add('hidden');
   document.body.classList.remove('pad-open');
-  padSave();
+  if (wasDraft) {                                                 // 退出草稿本 → 回列表，恢复随手草稿纸
+    padMode = 'scratch'; padDraftId = null;
+    $('#pad-doc').classList.add('hidden');
+    $('#pad').classList.remove('full');
+    padLoad();
+    loadDrafts();
+  }
 }
 function padToggle() { $('#pad').classList.contains('hidden') ? padOpen() : padClose(); }
 function padOnView(v) {                                           // 只在做题页出现；离开就收起（内容已存）
   $('#pad-fab').classList.toggle('hidden', !PAD_VIEWS.has(v));
+  if (padMode === 'draft') return;                                // 草稿本是整页打开的，不受视图影响
   if (!PAD_VIEWS.has(v) && !$('#pad').classList.contains('hidden')) padClose();
 }
+
+/* ---------- 草稿本：错题本里，平时打草稿用（多本 / 云端保存 / 手机电脑同步） ---------- */
+function openDrafts() { push({ view: 'drafts' }); loadDrafts(); }
+async function loadDrafts() {
+  try {
+    const d = await api('/api/drafts');
+    $('#dr-empty').textContent = '还没有草稿本，点右下角 ＋ 新建一本';
+    $('#dr-empty').classList.toggle('hidden', !!d.items.length);
+    $('#dr-list').innerHTML = d.items.map(it => `
+      <div class="dr-card" data-dr="${it.id}">
+        <div class="dr-thumb"${it.thumb ? ` style="background-image:url(${it.thumb})"` : ''}></div>
+        <div class="dr-body">
+          <div class="dr-t">${esc(it.title || '未命名')}</div>
+          <div class="dr-foot">
+            <span class="dr-m">${it.pages || 1} 页 · ${(it.updated_at || '').slice(5, 16)}</span>
+            <button class="dr-del" data-del="${it.id}" title="删除">✕</button>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch (e) { toast(e.message, true); }
+}
+$('#dr-list').addEventListener('click', async e => {
+  const del = e.target.closest('.dr-del');
+  if (del) {
+    e.stopPropagation();
+    if (!await appConfirm('删除这本草稿？删了就找不回来了。', { title: '草稿本', okText: '删除' })) return;
+    try { await api('/api/drafts/' + del.dataset.del, { method: 'DELETE' }); toast('已删除'); loadDrafts(); }
+    catch (err) { toast(err.message, true); }
+    return;
+  }
+  const c = e.target.closest('.dr-card');
+  if (c) openDraft(+c.dataset.dr);
+});
+$('#dr-fab').onclick = async () => {
+  const t = await appPrompt('新建草稿本', '起个名字（留空就用日期）', '');
+  if (t === null) return;
+  try {
+    const d = await api('/api/drafts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: t }),
+    });
+    openDraft(d.id);
+  } catch (e) { toast(e.message, true); }
+};
+async function openDraft(id) {
+  try {
+    const d = await api('/api/drafts/' + id);
+    if (!padInited) padInit();
+    if (padMode !== 'draft') padSave();                            // 先把随手草稿纸存好，等下还要还原
+    padMode = 'draft'; padDraftId = id; padCur = null;
+    padSetData(d.data);
+    $('#pad-title').textContent = d.title || '未命名';
+    $('#pad-doc').classList.remove('hidden');
+    $('#pad').classList.add('full');                              // 打草稿就整页写，写得开
+    padStatus('已保存');
+    padOpen();
+  } catch (e) { toast(e.message, true); }
+}
+$('#pad-name').onclick = async () => {
+  if (padMode !== 'draft') return;
+  const t = await appPrompt('草稿本改名', '名字', $('#pad-title').textContent);
+  if (t === null) return;
+  try {
+    await api('/api/drafts/' + padDraftId, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: t }),
+    });
+    $('#pad-title').textContent = t.trim() || '未命名草稿';
+    toast('已改名');
+  } catch (e) { toast(e.message, true); }
+};
+$('#wq-drafts').onclick = openDrafts;
 $('#pad-fab').onclick = padToggle;
 /* 对外钩子放在最后才挂：顶层 function 声明会自动成为 window 属性，
    若直接用同名守卫(window.padRebuild)，脚本刚开始就会被误判为"已就绪"而提前调用。 */
