@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 构建「公考助手」桌面版 .deb —— 一个轻量壳：用 Chrome 应用窗口模式打开网页版，
-# 提供独立窗口 + 启动器图标。几十 KB，不含 Electron，复用已装的 Chrome。
+# 构建「公考助手」桌面版 .deb —— 原生 GTK + 系统 WebKit2GTK（不依赖 Chrome、不打包引擎）。
+# 一个真·原生窗口加载网页版；用系统 python3(自带 gi) 运行。
 set -e
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$HERE/.."
 DIST="$ROOT/dist"
-VER="${DEB_VERSION:-2.7}"
+VER="${DEB_VERSION:-3.0}"
 PKG="gongkao-assistant"
 BUILD="$HERE/build/$PKG"
 
@@ -19,22 +19,8 @@ mkdir -p "$BUILD/DEBIAN" \
          "$BUILD/usr/share/icons/hicolor/256x256/apps" \
          "$BUILD/usr/share/icons/hicolor/192x192/apps"
 
-echo "[2/4] 启动脚本 + 桌面项 + 图标"
-cat > "$BUILD/usr/bin/$PKG" <<'LAUNCH'
-#!/usr/bin/env bash
-# 公考助手 桌面版：Chrome 应用窗口。
-# 默认公网隧道；本机若在跑本地服务(8011)则优先用它(更快)。可用 GONGKAO_URL 覆盖。
-URL="${GONGKAO_URL:-https://gk.gongkaopei2026.click}"
-if [ -z "$GONGKAO_URL" ] && curl -s -o /dev/null --max-time 1 http://127.0.0.1:8011/ 2>/dev/null; then
-  URL="http://127.0.0.1:8011"
-fi
-for B in google-chrome-stable google-chrome chromium chromium-browser; do
-  command -v "$B" >/dev/null 2>&1 && CHROME="$B" && break
-done
-[ -z "$CHROME" ] && { echo "未找到 Chrome/Chromium"; exit 1; }
-exec "$CHROME" --app="$URL" --class=Gongkao --name=gongkao-assistant \
-  --user-data-dir="$HOME/.config/gongkao-assistant" "$@"
-LAUNCH
+echo "[2/4] 原生启动器 + 桌面项 + 图标"
+cp "$HERE/gongkao_native.py" "$BUILD/usr/bin/$PKG"
 chmod 755 "$BUILD/usr/bin/$PKG"
 
 cat > "$BUILD/usr/share/applications/$PKG.desktop" <<DESK
@@ -48,7 +34,7 @@ Exec=$PKG %U
 Icon=$PKG
 Terminal=false
 Categories=Education;
-StartupWMClass=Gongkao
+StartupWMClass=gongkao-assistant
 DESK
 
 cp "$ROOT/static/icon-512.png" "$BUILD/usr/share/icons/hicolor/512x512/apps/$PKG.png"
@@ -62,17 +48,15 @@ Package: $PKG
 Version: $VER
 Architecture: all
 Maintainer: Gongkao <noreply@localhost>
-Depends: google-chrome-stable | google-chrome | chromium | chromium-browser
-Recommends: curl
+Depends: python3, python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1
 Section: education
 Priority: optional
 Installed-Size: $INSTALLED_KB
-Description: 公考助手 桌面版
- 公务员考试积累与练习的桌面客户端。用 Chrome 应用窗口模式打开网页版，
- 提供独立窗口与启动器图标；本机在跑服务时自动用 localhost，否则走公网。
+Description: 公考助手 桌面版（原生 GTK）
+ 公务员考试积累与练习的桌面客户端。原生 GTK 窗口 + 系统 WebKit2GTK 加载网页版，
+ 不依赖 Chrome、不打包浏览器引擎；本机在跑服务时自动用 localhost，否则走公网。
 CTRL
 
-# 安装后刷新图标/桌面缓存
 cat > "$BUILD/DEBIAN/postinst" <<'POST'
 #!/bin/sh
 set -e
