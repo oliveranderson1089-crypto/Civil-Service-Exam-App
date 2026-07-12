@@ -293,8 +293,10 @@ def vision_ocr(path):
 def get_db():
     db = getattr(g, "_db", None)
     if db is None:
-        db = g._db = sqlite3.connect(DB)
+        db = g._db = sqlite3.connect(DB, timeout=30)
         db.row_factory = sqlite3.Row
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA synchronous=NORMAL")
     return db
 
 
@@ -6468,4 +6470,4 @@ if __name__ == "__main__":
     else:
         from waitress import serve
         print(f" * 公考助手已启动： http://{a.host}:{a.port}")
-        serve(app, host=a.host, port=a.port, threads=8)
+        serve(app, host=a.host, port=a.port, threads=32)

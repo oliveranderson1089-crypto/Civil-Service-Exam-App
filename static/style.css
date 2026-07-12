@@ -1914,8 +1914,25 @@ body.dark .hw-open-btn{background:#182333 !important;border-color:#274063 !impor
   padding:12px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:0 -8px 40px rgba(0,0,0,.25);}
 .hw-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
 .hw-title{font-size:15px;font-weight:700;color:#1f2733;}
-.hw-auto{margin-left:auto;margin-right:12px;display:flex;align-items:center;gap:5px;font-size:12.5px;color:#33415c;cursor:pointer;}
+.hw-auto{margin-left:auto;margin-right:8px;display:flex;align-items:center;gap:5px;font-size:12.5px;color:#33415c;cursor:pointer;}
 .hw-auto input{margin:0;}
+.hw-icon{border:none;background:none;font-size:19px;line-height:1;color:#98a2b3;cursor:pointer;padding:2px 6px;margin-right:2px;}
+.hw-icon.on{color:#1a6fb5;}
+
+/* 全屏透明手写：铺满屏、画布透明，透过它看得到后面正在填入的答案 */
+.hw-modal.hw-fs{background:transparent;align-items:stretch;}
+.hw-modal.hw-fs .hw-sheet{max-width:none;width:100%;height:100%;border-radius:0;background:transparent;
+  box-shadow:none;padding:8px 10px calc(10px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;}
+.hw-fs .hw-bar{background:rgba(255,255,255,.9);border-radius:12px;padding:8px 12px;margin:0;
+  box-shadow:0 1px 6px rgba(0,0,0,.12);}
+.hw-fs .hw-cands{background:rgba(255,255,255,.9);border-radius:12px;padding:4px 8px;margin:0;
+  box-shadow:0 1px 6px rgba(0,0,0,.12);}
+.hw-fs .hw-canvas-wrap{flex:1;margin:0;background:transparent;border:1.5px dashed #aeb9c8;}
+.hw-fs .hw-canvas{height:100%;}
+.hw-fs .hw-ctrl{background:rgba(255,255,255,.9);border-radius:12px;padding:6px;box-shadow:0 1px 6px rgba(0,0,0,.12);}
+.hw-fs .hw-preview{background:rgba(255,255,255,.82);border-radius:8px;padding:5px;margin:0;}
+body.dark .hw-fs .hw-bar,body.dark .hw-fs .hw-cands,body.dark .hw-fs .hw-ctrl,body.dark .hw-fs .hw-preview{background:rgba(18,23,31,.9) !important;}
+body.dark .hw-fs .hw-canvas-wrap{border-color:#3a4556 !important;}
 .hw-hint-s{color:#12813f;margin-right:6px;}
 .hw-cand.filled{border-color:#12b886;background:#e9f9f1;color:#0b7a52;font-weight:700;}
 body.dark .hw-auto{color:#c4cdda !important;}

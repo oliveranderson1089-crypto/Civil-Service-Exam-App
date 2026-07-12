@@ -2719,8 +2719,9 @@ $('#gw-list').addEventListener('click', async e => {
 const hwEl = {}; let hwTarget = null, hwStrokes = [], hwCur = null, hwT0 = 0, hwDrawing = false, hwTimer = null;
 let hwAuto = localStorage.getItem('hwAuto') !== '0';   // 自动上屏首选字（默认开），连续写更快
 let hwCommitted = null;                                 // 刚自动上屏的字，可点别的候选替换
+let hwFs = localStorage.getItem('hwFs') === '1';        // 全屏透明手写：看得到后面正在填入的答案
 function hwInit() {
-  ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done', 'auto']
+  ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done', 'auto', 'fs']
     .forEach(k => hwEl[k] = $('#hw-' + k));
   const cv = hwEl.canvas, ctx = cv.getContext('2d');
   function fit() {
@@ -2801,6 +2802,12 @@ function hwInit() {
   hwEl.done.onclick = hwClose;
   hwEl.auto.checked = hwAuto;
   hwEl.auto.onchange = () => { hwAuto = hwEl.auto.checked; localStorage.setItem('hwAuto', hwAuto ? '1' : '0'); };
+  if (hwEl.fs) hwEl.fs.onclick = () => { hwFs = !hwFs; localStorage.setItem('hwFs', hwFs ? '1' : '0'); hwApplyFs(); };
+}
+function hwApplyFs() {
+  hwEl.modal.classList.toggle('hw-fs', hwFs);
+  if (hwEl.fs) hwEl.fs.classList.toggle('on', hwFs);
+  requestAnimationFrame(() => { if (hwEl._fit) hwEl._fit(); });   // 尺寸变了，重新适配画布
 }
 let hwRedraw = () => {};
 let hwLastCands = [], hwQueue = [], hwBusy = false;
@@ -2891,6 +2898,7 @@ function openHandwrite(targetId) {
   hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
   try { if (window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) {}  // APK：预下载离线模型
   hwEl.modal.classList.remove('hidden');
+  hwApplyFs();
   requestAnimationFrame(() => { hwEl._fit(); hwSetCands([]); hwFireInput(); });
 }
 function hwClose() {
