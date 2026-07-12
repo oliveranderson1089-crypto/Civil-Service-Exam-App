@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# 公考助手 桌面版：Chrome 应用窗口。
+# 默认公网隧道；本机若在跑本地服务(8011)则优先用它(更快)。可用 GONGKAO_URL 覆盖。
+URL="${GONGKAO_URL:-https://gk.gongkaopei2026.click}"
+if [ -z "$GONGKAO_URL" ] && curl -s -o /dev/null --max-time 1 http://127.0.0.1:8011/ 2>/dev/null; then
+  URL="http://127.0.0.1:8011"
+fi
+for B in google-chrome-stable google-chrome chromium chromium-browser; do
+  command -v "$B" >/dev/null 2>&1 && CHROME="$B" && break
+done
+[ -z "$CHROME" ] && { echo "未找到 Chrome/Chromium"; exit 1; }
+exec "$CHROME" --app="$URL" --class=Gongkao --name=gongkao-assistant \
+  --user-data-dir="$HOME/.config/gongkao-assistant" "$@"

@@ -930,7 +930,7 @@ def is_admin():
 _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
                  "/forgot", "/api/forgot/question", "/api/forgot/reset",
                  "/api/sec_questions", "/api/captcha",
-                 "/apk", "/download/gongkao.apk", "/api/app/version",
+                 "/apk", "/download/gongkao.apk", "/deb", "/download/gongkao.deb", "/api/app/version",
                  "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
 
@@ -6170,6 +6170,17 @@ def download_apk():
         return "APK 尚未构建", 404
     return send_file(apk, mimetype="application/vnd.android.package-archive",
                      as_attachment=True, download_name="gongkao.apk")
+
+
+@app.get("/deb")
+@app.get("/download/gongkao.deb")
+def download_deb():
+    """电脑桌面版（Linux .deb）。"""
+    deb = os.path.join(BASE, "dist", "gongkao.deb")
+    if not os.path.exists(deb):
+        return "桌面版尚未构建", 404
+    return send_file(deb, mimetype="application/vnd.debian.binary-package",
+                     as_attachment=True, download_name="gongkao.deb")
 
 
 # ---------------------------------------------------------------- 静态前端

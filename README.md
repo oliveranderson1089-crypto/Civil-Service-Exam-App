@@ -316,6 +316,18 @@ APK_NOTES="这次改了什么" ./make_apk.sh
 > 迁 Gradle 只换"打包方式"，**界面和功能不变**（整个 UI 是 WebView 加载的网页）。好处是以后能一行加原生库（如离线手写 ML Kit）。旧的手工脚本保留为 `build_apk.sh.superseded` 仅作参考。
 > 依赖：便携 JDK17（`~/.local/jdk17`）、Android SDK（`~/android-sdk`，build-tools;34.0.0、platforms;android-34、cmdline-tools）、Gradle 8.9（`~/.local/gradle-8.9`，或项目内 `./gradlew`）。首次构建会从 Google Maven / Maven Central 下 AGP 和依赖（本机东京可直连）。
 
+### 电脑桌面版（Linux .deb）
+
+一个**轻量壳**：用已装的 Chrome「应用窗口模式」打开网页版，给一个独立窗口 + 启动器图标（约 124KB，不是 Electron）。
+
+**安装**：浏览器打开 **https://gk.gongkaopei2026.click/deb** 下载，或本机 `dist/gongkao.deb`，然后 `sudo dpkg -i gongkao.deb`（或双击用「软件安装器」打开）。装好在应用菜单搜「公考助手」。
+
+- 启动脚本 `/usr/bin/gongkao-assistant`：**本机在跑服务(8011)就用 localhost（更快），否则走公网隧道**；可用 `GONGKAO_URL` 覆盖。
+- 用独立 Chrome profile（`~/.config/gongkao-assistant`），首次在应用窗口里登录一次。
+- 依赖 `google-chrome-stable | chromium`（已装即满足）。
+- **重新构建**：`DEB_VERSION=2.7 ./desktop/build_deb.sh` → `dist/gongkao.deb`。
+- 更省事的替代：网页版本身是 PWA，Chrome 里「安装应用」也能得到独立窗口 + 图标，无需装 .deb。
+
 ---
 
 ## 五、公网访问 —— Cloudflare 命名隧道

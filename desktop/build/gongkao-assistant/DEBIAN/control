@@ -1,0 +1,12 @@
+Package: gongkao-assistant
+Version: 2.7
+Architecture: all
+Maintainer: Gongkao <noreply@localhost>
+Depends: google-chrome-stable | google-chrome | chromium | chromium-browser
+Recommends: curl
+Section: education
+Priority: optional
+Installed-Size: 292
+Description: 公考助手 桌面版
+ 公务员考试积累与练习的桌面客户端。用 Chrome 应用窗口模式打开网页版，
+ 提供独立窗口与启动器图标；本机在跑服务时自动用 localhost，否则走公网。
