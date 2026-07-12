@@ -50,6 +50,11 @@
   <label>密保答案</label>
   <input id="seca" type="text" placeholder="请牢记，找回密码时要用">
 
+  <div id="invite-row" style="display:none">
+    <label>邀请码</label>
+    <input id="invite" type="text" autocomplete="off" placeholder="请向管理员索取">
+  </div>
+
   <label>验证码</label>
   <div class="cap-row">
     <input id="cap" type="text" inputmode="text" autocomplete="off" maxlength="4" placeholder="填右图 4 位">
@@ -76,6 +81,19 @@ async function loadCap() {
 }
 $('capimg').addEventListener('click', loadCap);
 loadCap();
+(async () => {
+  try {
+    const d = await (await fetch('/api/register/status')).json();
+    if (!d.open) {
+      $('form').innerHTML = `<div class="auth-logo">公</div>
+  <h1>注册公考助手</h1>
+  <p class="sub">注册暂未开放，如需账号请联系管理员。</p>
+  <a class="tolink" href="/login">已有账号？去登录</a>`;
+    } else if (d.invite) {
+      $('invite-row').style.display = '';
+    }
+  } catch (_) {}
+})();
 $('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const err = $('err'); err.textContent = '';
@@ -88,6 +106,7 @@ $('form').addEventListener('submit', async (e) => {
         username: $('u').value.trim(), password: $('p').value,
         sec_question: $('secq').value, sec_answer: $('seca').value.trim(),
         captcha_id: capId, captcha: $('cap').value.trim(),
+        invite_code: $('invite').value.trim(),
       }),
     });
     const d = await r.json();

@@ -931,7 +931,7 @@ def is_admin():
 # ---------------------------------------------------------------- 访问控制
 _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
                  "/forgot", "/api/forgot/question", "/api/forgot/reset",
-                 "/api/sec_questions", "/api/captcha",
+                 "/api/sec_questions", "/api/captcha", "/api/register/status",
                  "/apk", "/download/gongkao.apk", "/deb", "/download/gongkao.deb", "/api/app/version",
                  "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
 
@@ -1073,9 +1073,20 @@ def api_captcha():
     return jsonify({"id": cid, "image": url})
 
 
+@app.get("/api/register/status")
+def register_status():
+    # 首个用户（管理员）注册永远放行，且不需要邀请码
+    first = users_count() == 0
+    open_ = first or bool(CFG.get("registration_open", True))
+    return jsonify({"open": open_,
+                    "invite": (not first) and open_ and bool(CFG.get("invite_code"))})
+
+
 @app.post("/api/register")
 def api_register():
     data = request.get_json(silent=True) or {}
+    if users_count() > 0 and not CFG.get("registration_open", True):
+        return jsonify({"error": "注册暂未开放，请联系管理员"}), 403
     username = (data.get("username") or "").strip()
     pw = data.get("password") or ""
     sec_q = (data.get("sec_question") or "").strip()
@@ -1083,6 +1094,10 @@ def api_register():
     email = (data.get("email") or "").strip()
     if not _captcha_ok(data.get("captcha_id"), data.get("captcha")):
         return jsonify({"error": "验证码错误或已过期", "captcha": True}), 400
+    # 邀请码校验放在验证码之后：每试一次都要过一次验证码，无法脚本枚举
+    if users_count() > 0 and CFG.get("invite_code"):
+        if (data.get("invite_code") or "").strip() != CFG["invite_code"]:
+            return jsonify({"error": "邀请码错误，请向管理员索取", "invite": True}), 403
     if len(username) < 2:
         return jsonify({"error": "用户名至少 2 个字符"}), 400
     if len(pw) < 6:
@@ -2707,6 +2722,24 @@ def admin_ai_set():
         CFG["ai_key"] = data.get("key").strip()
     _save_cfg()
     return jsonify({"ok": True, "configured": ai_configured()})
+
+
+@app.get("/api/admin/registration")
+def admin_reg_get():
+    return jsonify({"open": bool(CFG.get("registration_open", True)),
+                    "invite_code": CFG.get("invite_code", "")})
+
+
+@app.post("/api/admin/registration")
+def admin_reg_set():
+    data = request.get_json(silent=True) or {}
+    if "open" in data:
+        CFG["registration_open"] = bool(data.get("open"))
+    if "invite_code" in data:
+        CFG["invite_code"] = (data.get("invite_code") or "").strip()[:32]
+    _save_cfg()
+    return jsonify({"ok": True, "open": bool(CFG.get("registration_open", True)),
+                    "invite_code": CFG.get("invite_code", "")})
 
 
 # ================================================================ OCR 识图（tesseract）
