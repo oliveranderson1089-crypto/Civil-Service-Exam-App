@@ -5864,20 +5864,50 @@ def _zinnia():
         return None
 
 
+def _zinnia_norm(ink, side=256, pad_ratio=0.12):
+    """按字的外接框把笔迹居中归一化到一个正方形里——不管写在画布哪、多大，
+    喂给 Zinnia 的都是"框好、居中、统一大小"的字，识别率比拿画布尺寸归一化高很多。"""
+    xs_all, ys_all = [], []
+    for st in ink:
+        xs_all += list(st[0]) if len(st) > 0 else []
+        ys_all += list(st[1]) if len(st) > 1 else []
+    if not xs_all:
+        return [], side
+    minx, maxx = min(xs_all), max(xs_all)
+    miny, maxy = min(ys_all), max(ys_all)
+    bw, bh = max(1.0, maxx - minx), max(1.0, maxy - miny)
+    span = max(bw, bh)
+    pad = span * pad_ratio
+    scale = side / (span + 2 * pad)
+    ox = pad + (span - bw) / 2.0        # 居中：短边两侧补空
+    oy = pad + (span - bh) / 2.0
+    out = []
+    for st in ink:
+        xs = st[0] if len(st) > 0 else []
+        ys = st[1] if len(st) > 1 else []
+        pts = []
+        for i in range(min(len(xs), len(ys))):
+            nx = int((xs[i] - minx + ox) * scale)
+            ny = int((ys[i] - miny + oy) * scale)
+            pts.append((nx, ny))
+        out.append(pts)
+    return out, side
+
+
 def _zinnia_recognize(ink, w, h, n=12):
     zz = _zinnia()
     if not zz:
         return None
     z, rec = zz
+    strokes, side = _zinnia_norm(ink)      # 外接框居中归一化，跟画布大小无关
     with _zinnia_lock:      # zinnia 识别器非线程安全，串行化
         ch = z.zinnia_character_new()
         z.zinnia_character_clear(ch)
-        z.zinnia_character_set_width(ch, int(w) or 300)
-        z.zinnia_character_set_height(ch, int(h) or 300)
-        for si, st in enumerate(ink):
-            xs, ys = (st[0] if len(st) > 0 else []), (st[1] if len(st) > 1 else [])
-            for i in range(min(len(xs), len(ys))):
-                z.zinnia_character_add(ch, si, int(xs[i]), int(ys[i]))
+        z.zinnia_character_set_width(ch, side)
+        z.zinnia_character_set_height(ch, side)
+        for si, pts in enumerate(strokes):
+            for (x, y) in pts:
+                z.zinnia_character_add(ch, si, x, y)
         res = z.zinnia_recognizer_classify(rec, ch, n)
         out = []
         if res:
