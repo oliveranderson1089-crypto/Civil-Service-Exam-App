@@ -2171,6 +2171,52 @@ body.dark .dr-thumb{background-color:#e9edf3;}
 .hc-hole{opacity:.35;outline:2px dashed var(--blue);outline-offset:-3px;}
 body.dark .hc-ghost{box-shadow:0 14px 34px rgba(0,0,0,.6);}
 
-/* 电脑端首页：多列铺满整行（手机端仍走上面的 2 列规则），卡片可拖到右侧区域 */
-body:not(.mobile-ui) #home-cards{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));max-width:none;}
-body:not(.mobile-ui) #view-home{max-width:1500px;}
+/* 电脑端：所有功能卡网格多列铺满整行（手机端仍是 2 列），卡片可拖到行尾空白落位 */
+body:not(.mobile-ui) .home-cards{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));max-width:none;}
+body:not(.mobile-ui) #view-home,body:not(.mobile-ui) #view-section,body:not(.mobile-ui) #view-board,
+body:not(.mobile-ui) #view-changshi,body:not(.mobile-ui) #view-quiz{max-width:1500px;}
+
+/* ================= 40 天冲刺路线卡片 ================= */
+.pl-road{margin:0 0 12px;}
+.plr-off{background:linear-gradient(135deg,#1a6fb5,#2c8fd6);color:#fff;border-radius:var(--radius);
+  padding:16px 16px 14px;box-shadow:0 6px 20px rgba(26,111,181,.25);}
+.plr-off-t{font-size:16px;font-weight:700;margin-bottom:6px;}
+.plr-off-d{font-size:13px;line-height:1.75;opacity:.94;margin-bottom:12px;}
+.plr-off .btn{background:#fff;border-color:#fff;color:var(--blue);font-weight:600;}
+.plr-off .btn:hover{background:#eef4fb;color:var(--blue-d);}
+
+.pl-road:has(.plr-top){background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:13px 14px;box-shadow:var(--shadow);}
+.plr-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+.plr-day{font-size:15px;}
+.plr-day b{font-size:19px;color:var(--blue);}
+.plr-ph{font-size:12.5px;padding:3px 9px;border-radius:20px;background:rgba(26,111,181,.1);color:var(--blue);font-weight:600;}
+.plr-rv{font-size:12.5px;padding:3px 9px;border-radius:20px;background:rgba(240,165,0,.16);color:#a06a00;font-weight:600;}
+.plr-more{margin-left:auto;border:none;background:none;color:var(--blue);font-size:13px;cursor:pointer;padding:2px 4px;}
+.plr-bar{height:6px;border-radius:4px;background:var(--line);margin:9px 0 10px;overflow:hidden;}
+.plr-bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#1a6fb5,#2c8fd6);}
+.plr-focus{font-size:13px;color:var(--muted);line-height:1.7;}
+.plr-tip{margin-top:8px;padding:9px 11px;border-radius:10px;font-size:12.8px;line-height:1.7;
+  background:rgba(240,165,0,.1);color:#8a5a00;}
+.plr-quota{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:10px;}
+.plr-qt{font-size:12.5px;color:var(--muted);margin-right:2px;}
+.plr-q{font-size:12.5px;padding:4px 9px;border-radius:8px;background:rgba(26,111,181,.08);color:var(--text);}
+.plr-q b{color:var(--blue);font-size:13.5px;}
+.plr-sl{margin-top:9px;font-size:13px;line-height:1.7;color:var(--text);}
+.plr-detail{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px;}
+.plr-sec{font-size:13.5px;font-weight:700;margin:12px 0 6px;}
+.plr-sec:first-child{margin-top:0;}
+.plr-tb{width:100%;border-collapse:collapse;font-size:13px;}
+.plr-tb td{padding:5px 0;border-bottom:1px solid var(--line);}
+.plr-tb td:last-child{text-align:right;color:var(--blue);}
+.plr-p{font-size:13px;line-height:1.8;color:var(--text);}
+.plr-why{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.75;}
+.plr-ul{margin:0;padding-left:18px;font-size:13px;line-height:1.85;}
+.plr-ul li{margin-bottom:4px;}
+.plr-note{display:block;font-size:12px;color:var(--muted);line-height:1.65;}
+.plr-stop{margin-top:14px;}
+.plr-warn{margin-top:10px;padding:9px 11px;border-radius:10px;font-size:12.8px;line-height:1.7;
+  background:rgba(192,57,43,.08);color:#a5382c;}
+body.dark .plr-tip{background:rgba(240,165,0,.14);color:#e9c07a;}
+body.dark .plr-warn{background:rgba(192,57,43,.16);color:#e39a90;}
+body.dark .plr-q{background:rgba(44,143,214,.14);}
