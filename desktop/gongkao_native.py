@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")
-from gi.repository import Gtk, WebKit2, GLib, Gio  # noqa: E402
+from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
 TUNNEL = "https://gk.gongkaopei2026.click"
@@ -77,7 +77,32 @@ class Gongkao(Gtk.Application):
         self.web.connect("decide-policy", self.on_decide)
         self.web.load_uri(resolve_url())
         self.win.add(self.web)
+        self.win.connect("key-press-event", self.on_key)   # F5 刷新等快捷键
         self.win.show_all()
+
+    def on_key(self, widget, event):
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        kv = event.keyval
+        if kv == Gdk.KEY_F5 or (ctrl and kv in (Gdk.KEY_r, Gdk.KEY_R)):
+            if shift:
+                self.web.reload_bypass_cache()   # 强制刷新，绕缓存
+            else:
+                self.web.reload()                # 刷新（和浏览器 F5 一样）
+            return True
+        if ctrl and kv in (Gdk.KEY_q, Gdk.KEY_Q):
+            self.quit()
+            return True
+        if ctrl and kv in (Gdk.KEY_plus, Gdk.KEY_equal, Gdk.KEY_KP_Add):
+            self.web.set_zoom_level(self.web.get_zoom_level() + 0.1)
+            return True
+        if ctrl and kv in (Gdk.KEY_minus, Gdk.KEY_KP_Subtract):
+            self.web.set_zoom_level(max(0.4, self.web.get_zoom_level() - 0.1))
+            return True
+        if ctrl and kv in (Gdk.KEY_0, Gdk.KEY_KP_0):
+            self.web.set_zoom_level(1.0)
+            return True
+        return False
 
     def on_decide(self, web, decision, dtype):
         # 跳到「别的网站」的链接 → 交系统浏览器；App 只停在自己的站

@@ -66,9 +66,11 @@
   </div>
   <h2 class="view-title" style="margin-top:26px;">注册入口</h2>
   <div class="ai-cfg">
-    <p class="ai-tip">控制新用户能否自行注册。人齐之后建议<b>关闭</b>，防止陌生人注册账号消耗 AI 额度；现有账号登录不受影响，随时可重新开放。</p>
+    <p class="ai-tip">控制新用户能否自行注册。人齐之后建议<b>关闭</b>，防止陌生人注册账号消耗 AI 额度；现有账号登录不受影响，随时可重新开放。开放时可再设<b>邀请码</b>：填对暗号才能注册，把暗号私下发给朋友即可。</p>
+    <label class="ai-f"><span>邀请码</span><input id="reg-invite" type="text" maxlength="32" placeholder="留空 = 开放注册时不需要邀请码" autocomplete="off"></label>
     <div class="ai-acts" style="align-items:center;">
       <span id="reg-status" class="ai-msg2" style="margin:0 auto 0 0;"></span>
+      <button class="ubtn" id="reg-save">保存邀请码</button>
       <button class="ubtn primary" id="reg-toggle">…</button>
     </div>
   </div>
@@ -207,7 +209,8 @@ async function loadReg() {
   try {
     const d = await (await fetch('/api/admin/registration')).json();
     REG_OPEN = !!d.open;
-    $('#reg-status').textContent = REG_OPEN ? '当前状态：开放注册' : '当前状态：已关闭';
+    $('#reg-invite').value = d.invite_code || '';
+    $('#reg-status').textContent = REG_OPEN ? (d.invite_code ? '当前状态：开放注册（需邀请码）' : '当前状态：开放注册') : '当前状态：已关闭';
     $('#reg-status').className = 'ai-msg2 ' + (REG_OPEN ? 'ok' : 'err');
     $('#reg-toggle').textContent = REG_OPEN ? '关闭注册' : '开放注册';
   } catch (_) {}
@@ -216,6 +219,13 @@ $('#reg-toggle').onclick = async () => {
   try {
     const r = await fetch('/api/admin/registration', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ open: !REG_OPEN }) });
     if (r.ok) { toast(REG_OPEN ? '已关闭注册入口' : '已开放注册入口'); loadReg(); } else toast('操作失败', true);
+  } catch (_) { toast('网络错误', true); }
+};
+$('#reg-save').onclick = async () => {
+  const code = $('#reg-invite').value.trim();
+  try {
+    const r = await fetch('/api/admin/registration', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invite_code: code }) });
+    if (r.ok) { toast(code ? '已设置邀请码' : '已清除邀请码（开放时无需暗号）'); loadReg(); } else toast('操作失败', true);
   } catch (_) { toast('网络错误', true); }
 };
 (async () => {
