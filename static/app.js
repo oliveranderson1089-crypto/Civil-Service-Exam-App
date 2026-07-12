@@ -105,12 +105,16 @@ function render() {
   if (st.view !== 'viewer' && document.body.classList.contains('viewer-full')) setViewerFull(false);
   // 离开「题目解析」就别再轮询进度了（dqPoll 是顶层 let，不挂在 window 上）
   if (st.view !== 'docqa' && dqPoll) { clearInterval(dqPoll); dqPoll = null; }
+  if (window.__padView) window.__padView(st.view);        // 做题页才出现草稿纸按钮
 }
 function push(state) { stack.push(state); render(); }
 function back() { if (stack.length > 1) { stack.pop(); render(); } }
 function goHome() { stack = [{ view: 'home' }]; render(); if (window.refreshNtfDot) refreshNtfDot(); }
 // 供安卓原生「返回/侧滑」调用：能退则退并返回 true，已在首页返回 false
 window.appBack = function () {
+  // 草稿纸开着就先收起（内容已自动保存）
+  const padEl = $('#pad');
+  if (padEl && !padEl.classList.contains('hidden')) { padClose(); return true; }
   // 幻灯片播放优先退出
   if (!$('#slideshow').classList.contains('hidden')) { closeSlideshow(); return true; }
   // AI 面板
@@ -4877,6 +4881,7 @@ function applyTheme() {
   document.querySelectorAll('.theme-opt').forEach(b => b.classList.toggle('on', b.dataset.theme === mode));
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = dark ? '#0f141e' : '#1a6fb5';
+  if (window.__padTheme) window.__padTheme();      // 草稿纸墨色跟着日/夜间翻转（钩子在脚本末尾才挂，早期调用自动跳过）
 }
 // 原生壳在系统深色模式切换时调用
 window.__onSysTheme = function (dark) { window.__sysDark = !!dark; applyTheme(); };
@@ -5325,3 +5330,281 @@ $('#acct-notifytest').onclick = () => {
   try { n.notifyTest(); toast('已发送，下拉通知栏看看'); }
   catch (e) { toast('发送失败', true); }
 };
+
+/* ================= 草稿纸（做题时演算用；只写不识别） =================
+   笔/荧光笔/橡皮 · 数位板压感 · 撤销重做 · 多页 · 方格/横线纸 · 存为图片 ·
+   自动保存到本地（切题、刷新、关掉再开都还在）。 */
+const PAD_VIEWS = new Set(['quizrun', 'dtest']);        // 做题的页面才出现草稿纸按钮
+const PAD_INK = '#1a2230';                              // 默认墨色（夜间自动转浅）
+const PAD_COLORS = [PAD_INK, '#1a6fb5', '#c0392b', '#1e8449', '#f0a500'];
+const PAD_BGICON = ['▢', '⊞', '☰'];                     // 空白 / 方格 / 横线
+let padPages = [{ st: [], rd: [] }], padPg = 0;
+let padTool = 'pen', padColor = PAD_INK, padSize = 3, padBg = 1;
+let padCur = null, padDrawing = false, padSawPen = false, padSaveT = null, padInited = false;
+let padCv, padCtx, padBase, padBaseCtx, padRaf = 0;
+
+const padDark = () => document.body.classList.contains('dark');
+const padW = () => padCv.clientWidth || 1;
+const padCol = (c, dark) => (c === PAD_INK && dark) ? '#e8edf5' : c;
+
+function padPt(e) {
+  const r = padCv.getBoundingClientRect(), w = r.width || 1;
+  return {
+    x: (e.clientX - r.left) / w, y: (e.clientY - r.top) / w,      // 按宽度归一化：换屏/全屏不变形
+    p: (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0,
+  };
+}
+
+function padPaper(ctx, w, h, dark) {
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = dark ? '#0f141e' : '#fff';
+  ctx.fillRect(0, 0, w, h);
+  if (padBg) {                                                    // 0=空白 1=方格 2=横线
+    ctx.strokeStyle = dark ? 'rgba(160,180,210,.13)' : 'rgba(30,70,130,.10)';
+    ctx.lineWidth = 1;
+    const g = 26;
+    ctx.beginPath();
+    for (let y = g; y < h; y += g) { ctx.moveTo(0, y + .5); ctx.lineTo(w, y + .5); }
+    if (padBg === 1) for (let x = g; x < w; x += g) { ctx.moveTo(x + .5, 0); ctx.lineTo(x + .5, h); }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function padDraw(ctx, s, W, dark) {
+  const pts = s.pts;
+  if (!pts || !pts.length) return;
+  ctx.save();
+  ctx.lineJoin = ctx.lineCap = 'round';
+  const base = s.size * W;                                        // 归一化粗细 → 当前屏幕像素
+  let wid = base;
+  if (s.tool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';             // 只擦笔迹，不擦纸上的格子
+    ctx.strokeStyle = '#000'; wid = base * 5;
+  } else {
+    ctx.strokeStyle = padCol(s.color, dark);
+    if (s.tool === 'hl') { ctx.globalAlpha = .3; wid = base * 3.2; }
+  }
+  if (pts.length === 1) {                                         // 点一下 = 一个点
+    ctx.beginPath(); ctx.arc(pts[0].x * W, pts[0].y * W, Math.max(.6, wid / 2), 0, 6.2832);
+    ctx.fillStyle = ctx.strokeStyle; ctx.fill(); ctx.restore(); return;
+  }
+  const varW = s.tool === 'pen' && pts.some(p => p.p > 0);        // 数位板：有压感就逐段变粗细
+  if (!varW) {
+    ctx.lineWidth = wid;
+    ctx.beginPath(); ctx.moveTo(pts[0].x * W, pts[0].y * W);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * W, pts[i].y * W);
+    ctx.stroke();
+  } else {
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      ctx.lineWidth = wid * (.35 + 1.1 * (((a.p || .5) + (b.p || .5)) / 2));
+      ctx.beginPath(); ctx.moveTo(a.x * W, a.y * W); ctx.lineTo(b.x * W, b.y * W); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function padPaint() {                                             // 纸 + 已完成图层 + 正在画的这笔
+  const w = padCv.clientWidth, h = padCv.clientHeight;
+  padPaper(padCtx, w, h, padDark());
+  padCtx.drawImage(padBase, 0, 0, w, h);
+  if (padCur) padDraw(padCtx, padCur, padW(), padDark());
+}
+function padRebuild() {                                           // 重建"已完成"图层（撤销/翻页/换主题/改尺寸后）
+  padBaseCtx.save();
+  padBaseCtx.setTransform(1, 0, 0, 1, 0, 0);
+  padBaseCtx.clearRect(0, 0, padBase.width, padBase.height);
+  padBaseCtx.restore();
+  const dark = padDark(), W = padW();
+  for (const s of padPages[padPg].st) padDraw(padBaseCtx, s, W, dark);
+  padPaint(); padSyncUI();
+}
+function padFit() {
+  const w = padCv.clientWidth, h = padCv.clientHeight;
+  if (!w || !h) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  padCv.width = padBase.width = Math.round(w * dpr);
+  padCv.height = padBase.height = Math.round(h * dpr);
+  padCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  padBaseCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  padRebuild();
+}
+
+function padDown(e) {
+  if (e.pointerType === 'pen') padSawPen = true;
+  if (e.pointerType === 'touch' && padSawPen) return;             // 用过笔之后忽略触摸 = 防手掌误触
+  if (e.button > 0) return;
+  e.preventDefault();
+  try { padCv.setPointerCapture(e.pointerId); } catch (_) {}
+  padDrawing = true;
+  padCur = { tool: padTool, color: padColor, size: padSize / padW(), pts: [padPt(e)] };
+  padPaint();
+}
+function padMove(e) {
+  if (!padDrawing || !padCur) return;
+  e.preventDefault();
+  // 高频合并采样能让线更顺；但有的实现（含部分 WebKit）会返回空表，那就退回事件本身，
+  // 否则一笔只剩落笔那个点，画出来是个小点。
+  let evs = [];
+  try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
+  if (!evs.length) evs = [e];
+  for (const ev of evs) padCur.pts.push(padPt(ev));
+  if (!padRaf) padRaf = requestAnimationFrame(() => { padRaf = 0; padPaint(); });
+}
+function padUp() {
+  if (!padDrawing) return;
+  padDrawing = false;
+  if (!padCur) return;
+  const pg = padPages[padPg];
+  pg.st.push(padCur); pg.rd = [];                                 // 新落笔 → 清空重做栈
+  padDraw(padBaseCtx, padCur, padW(), padDark());
+  padCur = null;
+  padPaint(); padSyncUI(); padSaveSoon();
+}
+
+function padUndo() { const p = padPages[padPg]; if (!p.st.length) return; p.rd.push(p.st.pop()); padRebuild(); padSaveSoon(); }
+function padRedo() { const p = padPages[padPg]; if (!p.rd.length) return; p.st.push(p.rd.pop()); padRebuild(); padSaveSoon(); }
+function padGo(i) { padPg = Math.max(0, Math.min(padPages.length - 1, i)); padCur = null; padRebuild(); padSaveSoon(); }
+
+function padSyncUI() {
+  const pg = padPages[padPg];
+  $('#pad-pg').textContent = (padPg + 1) + ' / ' + padPages.length;
+  $('#pad-undo').disabled = !pg.st.length;
+  $('#pad-redo').disabled = !pg.rd.length;
+  $('#pad-prev').disabled = padPg === 0;
+  $('#pad-next').disabled = padPg >= padPages.length - 1;
+  $('#pad-bg').textContent = PAD_BGICON[padBg];
+  $('#pad-size').value = padSize;
+  document.querySelectorAll('#pad .pad-t[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === padTool));
+  $('#pad-colors').innerHTML = PAD_COLORS.map(c =>
+    `<i class="pad-c${c === padColor && padTool !== 'eraser' ? ' on' : ''}" data-c="${c}" style="background:${padCol(c, padDark())}"></i>`).join('');
+}
+
+/* 存本地：切题/刷新/关掉再开都还在（按用户分开存） */
+const padKey = () => 'pad:' + ((ME && (ME.id || ME.username)) || 'x');
+function padSaveSoon() { clearTimeout(padSaveT); padSaveT = setTimeout(padSave, 700); }
+function padSave() {
+  const r = (n) => Math.round(n * 1e4) / 1e4;
+  try {
+    localStorage.setItem(padKey(), JSON.stringify({
+      bg: padBg, pg: padPg,
+      pages: padPages.map(p => ({
+        st: p.st.map(s => ({ t: s.tool, c: s.color, w: r(s.size), p: s.pts.map(q => [r(q.x), r(q.y), Math.round((q.p || 0) * 100) / 100]) })),
+      })),
+    }));
+  } catch (_) {}                                                  // 存不下就算了，别影响做题
+}
+function padLoad() {
+  try {
+    const d = JSON.parse(localStorage.getItem(padKey()) || 'null');
+    if (!d || !d.pages || !d.pages.length) return;
+    padPages = d.pages.map(p => ({
+      st: (p.st || []).map(s => ({ tool: s.t, color: s.c, size: s.w, pts: (s.p || []).map(q => ({ x: q[0], y: q[1], p: q[2] })) })),
+      rd: [],
+    }));
+    padBg = d.bg | 0; padPg = Math.min(d.pg | 0, padPages.length - 1);
+  } catch (_) {}
+}
+
+function padInit() {
+  padInited = true;
+  padCv = $('#pad-cv'); padCtx = padCv.getContext('2d');
+  padBase = document.createElement('canvas'); padBaseCtx = padBase.getContext('2d');
+  padLoad();
+
+  padCv.addEventListener('pointerdown', padDown);
+  padCv.addEventListener('pointermove', padMove);
+  padCv.addEventListener('pointerup', padUp);
+  padCv.addEventListener('pointercancel', padUp);
+  padCv.addEventListener('pointerleave', padUp);
+
+  $('#pad').addEventListener('click', e => {
+    const t = e.target.closest('.pad-t[data-tool]');
+    if (t) { padTool = t.dataset.tool; padSyncUI(); return; }
+    const c = e.target.closest('.pad-c');
+    if (c) { padColor = c.dataset.c; if (padTool === 'eraser') padTool = 'pen'; padSyncUI(); }
+  });
+  $('#pad-size').oninput = (e) => { padSize = +e.target.value; };
+  $('#pad-undo').onclick = padUndo;
+  $('#pad-redo').onclick = padRedo;
+  $('#pad-prev').onclick = () => padGo(padPg - 1);
+  $('#pad-next').onclick = () => padGo(padPg + 1);
+  $('#pad-add').onclick = () => {
+    if (padPages.length >= 20) { toast('最多 20 页', true); return; }
+    padPages.splice(padPg + 1, 0, { st: [], rd: [] });
+    padGo(padPg + 1); toast('已新增一页');
+  };
+  $('#pad-bg').onclick = () => { padBg = (padBg + 1) % 3; padPaint(); padSyncUI(); padSaveSoon(); };
+  $('#pad-clear').onclick = async () => {
+    const many = padPages.length > 1;
+    const r = await appConfirm('清空这一页的草稿？' + (many ? '（也可以直接删掉这一页）' : ''),
+      { title: '草稿纸', okText: '清空本页', altText: many ? '删除本页' : '', altDanger: true });
+    if (r === 'alt') { padPages.splice(padPg, 1); padGo(Math.min(padPg, padPages.length - 1)); toast('已删除本页'); }
+    else if (r === true) { padPages[padPg] = { st: [], rd: [] }; padRebuild(); padSaveSoon(); toast('本页已清空'); }
+  };
+  $('#pad-png').onclick = () => {                                 // 导出白底黑字，方便打印/贴到错题本
+    const w = padCv.clientWidth, h = padCv.clientHeight, k = 2;
+    const c = document.createElement('canvas');
+    c.width = w * k; c.height = h * k;
+    const x = c.getContext('2d');
+    x.setTransform(k, 0, 0, k, 0, 0);
+    padPaper(x, w, h, false);
+    for (const s of padPages[padPg].st) padDraw(x, s, w, false);
+    const a = document.createElement('a');
+    a.download = '草稿-第' + (padPg + 1) + '页.png';
+    a.href = c.toDataURL('image/png');
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('已保存为图片');
+  };
+  $('#pad-mode').onclick = () => { $('#pad').classList.toggle('full'); requestAnimationFrame(padFit); };
+  $('#pad-close').onclick = padClose;
+
+  $('#pad-grip').addEventListener('pointerdown', e => {           // 拖动上边缘改高度
+    if ($('#pad').classList.contains('full')) return;
+    e.preventDefault();
+    const mv = (ev) => {
+      const h = Math.min(innerHeight * .92, Math.max(190, innerHeight - ev.clientY));
+      $('#pad').style.height = h + 'px';
+      if (!padRaf) padRaf = requestAnimationFrame(() => { padRaf = 0; padFit(); });
+    };
+    const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); padFit(); };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  });
+
+  let rzT = null;
+  addEventListener('resize', () => {
+    if ($('#pad').classList.contains('hidden')) return;
+    clearTimeout(rzT); rzT = setTimeout(padFit, 120);
+  });
+  document.addEventListener('keydown', e => {
+    if ($('#pad').classList.contains('hidden')) return;
+    const k = (e.key || '').toLowerCase();
+    if (e.ctrlKey && k === 'z') { e.preventDefault(); e.shiftKey ? padRedo() : padUndo(); }
+    else if (e.ctrlKey && k === 'y') { e.preventDefault(); padRedo(); }
+    else if (e.key === 'Escape') padClose();
+  });
+}
+
+function padOpen() {
+  if (!padInited) padInit();
+  $('#pad').classList.remove('hidden');
+  document.body.classList.add('pad-open');
+  requestAnimationFrame(padFit);
+}
+function padClose() {
+  $('#pad').classList.add('hidden');
+  document.body.classList.remove('pad-open');
+  padSave();
+}
+function padToggle() { $('#pad').classList.contains('hidden') ? padOpen() : padClose(); }
+function padOnView(v) {                                           // 只在做题页出现；离开就收起（内容已存）
+  $('#pad-fab').classList.toggle('hidden', !PAD_VIEWS.has(v));
+  if (!PAD_VIEWS.has(v) && !$('#pad').classList.contains('hidden')) padClose();
+}
+$('#pad-fab').onclick = padToggle;
+/* 对外钩子放在最后才挂：顶层 function 声明会自动成为 window 属性，
+   若直接用同名守卫(window.padRebuild)，脚本刚开始就会被误判为"已就绪"而提前调用。 */
+window.__padView = padOnView;
+window.__padTheme = () => { if (padInited && !$('#pad').classList.contains('hidden')) padRebuild(); };

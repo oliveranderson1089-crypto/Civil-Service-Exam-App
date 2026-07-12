@@ -1174,6 +1174,39 @@
 <!-- 全局 AI 悬浮按钮 -->
 <button id="ai-fab" title="AI 助手">AI</button>
 
+<!-- ===== 草稿纸（做题时演算用；只写不识别） ===== -->
+<button id="pad-fab" class="pad-fab hidden" title="草稿纸（做题时演算）">📝</button>
+<div id="pad" class="pad hidden">
+  <div class="pad-grip" id="pad-grip" title="上下拖动可改高度"></div>
+  <div class="pad-bar">
+    <div class="pad-grp">
+      <button class="pad-t" data-tool="pen" title="笔">✏️</button>
+      <button class="pad-t" data-tool="hl" title="荧光笔">🖍️</button>
+      <button class="pad-t" data-tool="eraser" title="橡皮">🧽</button>
+      <span class="pad-colors" id="pad-colors"></span>
+      <input type="range" id="pad-size" min="1" max="14" step="1" value="3" title="笔的粗细">
+    </div>
+    <div class="pad-grp">
+      <button class="pad-t" id="pad-undo" title="撤销 (Ctrl+Z)">↶</button>
+      <button class="pad-t" id="pad-redo" title="重做 (Ctrl+Y)">↷</button>
+      <button class="pad-t" id="pad-clear" title="清空 / 删除本页">🗑</button>
+      <button class="pad-t" id="pad-bg" title="纸张：空白 / 方格 / 横线">⊞</button>
+    </div>
+    <div class="pad-grp pad-pages">
+      <button class="pad-t" id="pad-prev" title="上一页">◀</button>
+      <span id="pad-pg" class="pad-pg">1 / 1</span>
+      <button class="pad-t" id="pad-next" title="下一页">▶</button>
+      <button class="pad-t" id="pad-add" title="新增一页">＋</button>
+    </div>
+    <div class="pad-grp pad-right">
+      <button class="pad-t" id="pad-png" title="保存为图片">⤓</button>
+      <button class="pad-t" id="pad-mode" title="半屏 / 全屏">⛶</button>
+      <button class="pad-t" id="pad-close" title="收起草稿纸">✕</button>
+    </div>
+  </div>
+  <div class="pad-cvwrap"><canvas id="pad-cv"></canvas></div>
+</div>
+
 <!-- 通用确认/输入弹窗（替代安卓原生 confirm/prompt） -->
 <div id="app-dialog" class="modal hidden">
   <div class="modal-box ad-box">

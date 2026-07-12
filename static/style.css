@@ -2093,3 +2093,50 @@ body.dark .plh-sec.sug li{color:#7fd4e0 !important;}
 body.dark .plh-day{background:#161b24 !important;border-color:#242c39 !important;}
 body.dark .plh-dhead b,body.dark .plh-title{color:#e2e7ef !important;}
 body.dark .plh-restore{background:#172234 !important;border-color:#26405f !important;color:#7fb3e8 !important;}
+
+/* ================= 草稿纸（做题演算，不做识别） ================= */
+#pad-fab{position:fixed;left:16px;bottom:calc(86px + env(safe-area-inset-bottom));z-index:58;
+  width:50px;height:50px;border-radius:50%;border:none;cursor:pointer;
+  background:linear-gradient(135deg,#f0a500,#e07b39);color:#fff;font-size:22px;
+  box-shadow:0 5px 16px rgba(224,123,57,.42);-webkit-tap-highlight-color:transparent;}
+#pad-fab:active{transform:scale(.94);}
+
+.pad{position:fixed;left:0;right:0;bottom:0;z-index:70;height:46vh;min-height:190px;
+  display:flex;flex-direction:column;background:var(--card);
+  border-top:1px solid var(--line);border-radius:16px 16px 0 0;
+  box-shadow:0 -8px 30px rgba(20,40,80,.18);touch-action:none;}
+.pad.full{top:0;height:100%;border-radius:0;}
+.pad.full .pad-grip{display:none;}
+.pad-grip{height:14px;flex:none;cursor:ns-resize;display:grid;place-items:center;}
+.pad-grip::before{content:"";width:44px;height:4px;border-radius:3px;background:var(--line);}
+.pad-bar{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;
+  padding:4px 10px 7px;border-bottom:1px solid var(--line);}
+.pad-grp{display:flex;align-items:center;gap:4px;}
+.pad-right{margin-left:auto;}
+.pad-t{width:32px;height:32px;flex:none;display:grid;place-items:center;padding:0;
+  border:1.5px solid var(--line);background:var(--card);color:var(--text);
+  border-radius:9px;font-size:15px;line-height:1;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.pad-t:hover{border-color:var(--blue);}
+.pad-t.on{background:var(--blue);border-color:var(--blue);color:#fff;}
+.pad-t:disabled{opacity:.35;cursor:default;}
+.pad-pg{font-size:12.5px;color:var(--muted);min-width:44px;text-align:center;}
+.pad-colors{display:flex;gap:4px;}
+.pad-c{width:20px;height:20px;flex:none;border-radius:50%;cursor:pointer;
+  border:2px solid transparent;box-shadow:0 0 0 1px var(--line) inset;}
+.pad-c.on{border-color:var(--blue);transform:scale(1.12);}
+#pad-size{width:74px;accent-color:var(--blue);}
+.pad-cvwrap{flex:1;min-height:0;position:relative;overflow:hidden;}
+#pad-cv{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair;
+  display:block;background:#fff;}
+/* 草稿纸(z70)之上仍要能弹确认框；开着草稿纸时收起 AI 球免得挡笔 */
+#app-dialog,#upd-modal{z-index:3100;}
+body.pad-open #ai-fab{display:none;}
+body.dark .pad{background:#151b27;}
+body.dark .pad-t{background:#1b2231;}
+body.dark #pad-cv{background:#0f141e;}
+@media (max-width:520px){
+  .pad-bar{gap:5px 6px;padding:3px 7px 6px;}
+  .pad-t{width:29px;height:29px;font-size:14px;border-radius:8px;}
+  #pad-size{width:56px;}
+  .pad-right{margin-left:auto;}
+}
