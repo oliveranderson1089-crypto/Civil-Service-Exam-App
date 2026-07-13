@@ -2267,7 +2267,7 @@ $('#ai-send').onclick = aiSend;
     const dy = t.clientY - sy, dx = Math.abs(t.clientX - sx);
     if (dy > 70 && dy > dx) {   // 明显下滑
       const cur = ['home', 'projects', 'project', 'chat'].find(v => !$('#aiv-' + v).classList.contains('hidden'));
-      if (cur === 'home' || !cur) { $('#ai-panel').classList.add('hidden'); avoidFab(); }
+      if (cur === 'home' || !cur) { $('#ai-panel').classList.add('hidden'); applyPush(); avoidFab(); }
       else if (cur === 'project') { renderAiProjects(); aiShow('projects'); }
       else { aiShow('home'); loadAiHome(); }
     }
@@ -2288,7 +2288,7 @@ $('#aip-new').onclick = async () => {
 $('#ai-panel').addEventListener('click', async e => {
   const back = e.target.closest('[data-aiback]');
   if (back) {
-    if (back.dataset.aiback === 'close') { $('#ai-panel').classList.add('hidden'); avoidFab(); }
+    if (back.dataset.aiback === 'close') { $('#ai-panel').classList.add('hidden'); applyPush(); avoidFab(); }
     else aiBack();
     return;
   }
@@ -2310,7 +2310,7 @@ $('#ai-panel').addEventListener('click', async e => {
   const proj = e.target.closest('[data-aiproj]');
   if (proj) { openAiProject(+proj.dataset.aiproj); return; }
 });
-$('#ai-close').onclick = () => { $('#ai-panel').classList.add('hidden'); avoidFab(); };
+$('#ai-close').onclick = () => { $('#ai-panel').classList.add('hidden'); applyPush(); avoidFab(); };
 $('#ai-text').addEventListener('input', aiGrow);
 $('#ai-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); } });
 
@@ -5960,7 +5960,7 @@ function createDock(el, key, defDock, onChange) {
       else el.style.setProperty('--dk-h', size(st.dock) + 'px');
     }
     if (doSave) save();
-    requestAnimationFrame(() => { if (onChange) onChange(); avoidFab(); });
+    requestAnimationFrame(() => { if (onChange) onChange(); applyPush(); avoidFab(); });
   }
   function set(d, quiet) {
     if (!DOCK_NAME[d]) return;
@@ -6051,6 +6051,23 @@ function fabClamp() {
 addEventListener('resize', fabClamp);
 addEventListener('load', () => requestAnimationFrame(fabClamp));
 
+/* 停靠面板占屏后，把页面内容挤到剩下的可见区（卡片会自动重排，不再被盖住） */
+function applyPush() {
+  const p = { left: 0, right: 0, top: 0, bottom: 0 };
+  [$('#pad'), $('#ai-panel')].forEach(el => {
+    if (!el || el.classList.contains('hidden') || el.classList.contains('dk-full')) return;
+    const d = Object.keys(DOCK_NAME).find(k => el.classList.contains('dk-' + k));
+    if (!d || d === 'full') return;
+    const r = el.getBoundingClientRect();
+    p[d] = Math.max(p[d], Math.round(dockVert(d) ? r.width : r.height));
+  });
+  const s = document.body.style;
+  s.setProperty('--push-l', p.left + 'px');
+  s.setProperty('--push-r', p.right + 'px');
+  s.setProperty('--push-t', p.top + 'px');
+  s.setProperty('--push-b', p.bottom + 'px');
+}
+
 /* 悬浮球别被面板压住：挡住就挪到面板外；面板全屏时藏起来 */
 function avoidFab() {
   const fab = $('#fab');
@@ -6091,7 +6108,7 @@ function padClose() {
   if (wasDraft) padDraftSave(); else padSave();
   $('#pad').classList.add('hidden');
   document.body.classList.remove('pad-open', 'pad-full');
-  avoidFab();
+  applyPush(); avoidFab();
   if (wasDraft) {                                                 // 退出草稿本 → 回列表，恢复随手草稿纸
     padMode = 'scratch'; padDraftId = null;
     $('#pad-doc').classList.add('hidden');

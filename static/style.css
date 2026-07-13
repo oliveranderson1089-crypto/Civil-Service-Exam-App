@@ -2278,3 +2278,11 @@ body.pad-full .fab{display:none;}      /* 草稿纸全屏书写时，悬浮球�
 /* 巩固测试：题目上的板块标签（行测五个板块都会出现） */
 .dt-mod{display:inline-block;margin-right:7px;padding:1px 7px;border-radius:20px;
   font-size:11.5px;font-weight:600;color:#fff;vertical-align:1px;}
+
+/* 停靠面板占了半屏时，把页面内容「挤」到看得见的地方，而不是被盖住。
+   顶栏/视图都在普通流里，所以给 body 加内边距就能整体让位，卡片网格会自动重排。 */
+body{
+  padding-left:var(--push-l,0px); padding-right:var(--push-r,0px);
+  padding-top:var(--push-t,0px);  padding-bottom:var(--push-b,0px);
+  transition:padding .18s ease;
+}
