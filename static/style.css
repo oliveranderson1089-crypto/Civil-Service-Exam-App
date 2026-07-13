@@ -2325,3 +2325,8 @@ body.dark{--c1:#3f92d6;--c2:#cf7c33;--c3:#2fa36c;--c4:#8d72d1;
 .ch-tb th{background:rgba(26,111,181,.07);font-weight:700;}
 .ch-tb td.num{text-align:right;font-variant-numeric:tabular-nums;}
 .dt-same{font-size:12.5px;color:var(--muted);margin-bottom:8px;}
+/* 模拟卷里的图形推理选项（和巩固测试同款） */
+.qz-opts.qz-figs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.qz-figopt{position:relative;display:grid !important;place-items:center;padding:10px 4px !important;}
+.qz-figopt .fg{width:60px;height:60px;color:var(--text);}
+@media(max-width:480px){.qz-opts.qz-figs{grid-template-columns:repeat(2,1fr);}}

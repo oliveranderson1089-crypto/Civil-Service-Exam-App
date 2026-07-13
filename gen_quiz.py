@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """题库生成器：按四川省考卷面结构 AI 生成一套新题（每周二/五定时跑）。
-行测 100 题：常识15 / 言语30(选词15+片段12+语句3) / 数量10 / 判断30(定义10+类比10+逻辑10，
-图形推理不适合文字题库，以此三类补足) / 资料15(3篇材料×5题)。
+行测 100 题：常识15 / 言语30(选词15+片段12+语句3) / 数量10 /
+判断30(**图形推理8** + 定义8+类比7+逻辑7) / 资料15(3篇材料×5题，其中2篇是程序生成的表格/图表)。
+图形推理与资料分析材料由 figgen.py 程序化生成（AI 画不准图、也给不出自洽材料）。
 申论 1 套：归纳概括 + 综合分析 + 贯彻执行 + 大作文（含给定资料与参考答案）。
 用法: python3 gen_quiz.py [xingce|shenlun|both]
 """
 import json, os, sys, sqlite3, time, urllib.request
 from datetime import date
+
+from figgen import _gen_figure_q, _gen_ziliao   # 图形推理/资料分析：程序化出题，答案由代码保证
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -54,12 +57,12 @@ XC_PLAN = [
      "出3道语句表达单选题：语句排序（给5个打乱的句子选正确顺序）或语句衔接。"),
     ("数量关系", "数学运算", 10,
      "出10道数量关系数学运算单选题：覆盖工程、行程、利润折扣、排列组合概率、容斥、最值、几何、浓度等，计算量适中，答案为具体数值。解析给出最优解法（如赋值法、比例法）。"),
-    ("判断推理", "定义判断", 10,
-     "出10道定义判断单选题：给出一个规范定义，问下列哪项属于/不属于该定义。定义要严谨。"),
-    ("判断推理", "类比推理", 10,
-     "出10道类比推理单选题：两词型、三词型、括号填空型混合，考语义/逻辑/语法关系。"),
-    ("判断推理", "逻辑判断", 10,
-     "出10道逻辑判断单选题：翻译推理、真假推理、加强削弱、前提假设、结论推出混合。"),
+    ("判断推理", "定义判断", 8,
+     "出8道定义判断单选题：给出一个规范定义，问下列哪项属于/不属于该定义。定义要严谨。"),
+    ("判断推理", "类比推理", 7,
+     "出7道类比推理单选题：两词型、三词型、括号填空型混合，考语义/逻辑/语法关系。"),
+    ("判断推理", "逻辑判断", 7,
+     "出7道逻辑判断单选题：翻译推理、真假推理、加强削弱、前提假设、结论推出混合。"),
 ]
 
 
@@ -89,8 +92,32 @@ def gen_xingce(con):
             time.sleep(0.5)
         except Exception as e:
             print("✗ %s·%s: %s" % (module, qtype, e))
-    # 资料分析：3 篇材料 × 5 题
-    for gi in range(3):
+    # 图形推理：程序化出 8 题（答案由构造保证正确，AI 画不准图）
+    for _ in range(8):
+        q = _gen_figure_q()
+        seq += 1
+        con.execute("INSERT INTO quiz_questions(set_id,seq,module,qtype,material,question,options,answer,explanation) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (sid, seq, "判断推理", "图形推理",
+                     json.dumps({"type": "figs", **q["figs"]}, ensure_ascii=False),   # 图存 material（前端会渲染成 SVG）
+                     q["q"], json.dumps([], ensure_ascii=False), q["answer"], q["explain"]))
+    con.commit()
+    print("✓ 判断推理·图形推理 +8（程序化）")
+
+    # 资料分析：2 篇程序化材料（真表格/图表，5 题/篇）+ 1 篇 AI 文字材料
+    for _ in range(2):
+        qs = _gen_ziliao(5)
+        mat = json.dumps(qs[0]["material"], ensure_ascii=False)
+        for it in qs:
+            seq += 1
+            con.execute("INSERT INTO quiz_questions(set_id,seq,module,qtype,material,question,options,answer,explanation) "
+                        "VALUES(?,?,?,?,?,?,?,?,?)",
+                        (sid, seq, "资料分析", "资料分析", mat, it["q"],
+                         json.dumps(it["options"], ensure_ascii=False), it["answer"], it["explain"]))
+        con.commit()
+        print("✓ 资料分析（程序化表格/图表）+5")
+
+    for gi in range(1):
         try:
             d = ai("为四川省考行测【资料分析】出1篇统计材料和5道单选题。材料为200~350字的统计文字材料"
                    "（含具体年份与数据：总量、增速、比重等，数据自洽）。5题覆盖增长率、增长量、比重、平均数、综合判断。\n"

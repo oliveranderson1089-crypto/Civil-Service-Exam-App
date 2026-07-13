@@ -4519,8 +4519,24 @@ function renderQuiz() {
   const doneN = qz.qs.filter(x => x.my_choice).length;
   const isSL = qz.set.kind === '申论';
   const answered = !!q.my_choice;
+  // 材料可能是三种：图形推理的图（JSON figs）/ 资料分析的表格·图表（JSON）/ 老的纯文字材料
+  let mat = null;
+  try { mat = q.material && q.material.trim().startsWith('{') ? JSON.parse(q.material) : null; } catch (_) { mat = null; }
+  const isFig = !!(mat && mat.type === 'figs');
   let optHtml = '';
-  if (!isSL) {
+  if (isFig) {
+    optHtml = '<div class="qz-opts qz-figs">' + (mat.opts || []).map((svg, j) => {
+      const letter = DT_L[j];
+      let cls = '';
+      if (answered) {
+        if (letter === q.answer) cls = ' right';
+        else if (letter === q.my_choice) cls = ' wrong';
+        else cls = ' dim';
+      }
+      return `<button class="qz-opt qz-figopt${cls}" data-opt="${letter}" ${answered ? 'disabled' : ''}>
+        <span class="dt-figl">${letter}</span>${svg}</button>`;
+    }).join('') + '</div>';
+  } else if (!isSL) {
     optHtml = '<div class="qz-opts">' + q.options.map(o => {
       const letter = (o || '').trim().slice(0, 1).toUpperCase();
       let cls = '';
@@ -4543,8 +4559,12 @@ function renderQuiz() {
     <div class="rv-progress"><div class="rv-bar" style="width:${doneN / total * 100}%"></div></div>
     <div class="rv-meta-row"><span>第 ${qz.idx + 1} / ${total} 题 · ${esc(q.module)}${q.qtype && q.qtype !== q.module ? '·' + esc(q.qtype) : ''}</span>
       <span>已做 ${doneN} · 对 ${qz.qs.filter(x => x.my_choice && x.my_choice === x.answer).length}</span></div>
-    ${q.material ? `<div class="qz-mat"><div class="qz-mat-t">📋 ${isSL ? '给定资料' : '材料'}（上下滚动）</div><div class="qz-mat-b">${emKey(q.material)}</div></div>` : ''}
-    <div class="gk-card"><div class="qz-q">${qz.idx + 1}. ${emKey(q.question)}</div>${optHtml}${slAns}</div>
+    ${(mat && !isFig) ? (_dtLastMat = '', dtMaterial(mat, 'qz' + qz.idx))          /* 资料分析：真表格 / 图表 */
+      : (q.material && !mat) ? `<div class="qz-mat"><div class="qz-mat-t">📋 ${isSL ? '给定资料' : '材料'}（上下滚动）</div><div class="qz-mat-b">${emKey(q.material)}</div></div>`
+        : ''}
+    <div class="gk-card"><div class="qz-q">${qz.idx + 1}. ${emKey(q.question)}</div>
+      ${isFig ? `<div class="dt-seq">${(mat.seq || []).join('')}<span class="dt-qm">?</span></div>` : ''}
+      ${optHtml}${slAns}</div>
     ${expl}
     <div class="qz-nav">
       <button class="btn" id="qz-prev" ${qz.idx === 0 ? 'disabled' : ''}>‹ 上一题</button>
@@ -4553,6 +4573,13 @@ function renderQuiz() {
   window.scrollTo(0, 0);
 }
 $('#qzr-wrap').addEventListener('click', async e => {
+  const chtb = e.target.closest('[data-chtb]');        // 资料分析图表下的「看数据表」
+  if (chtb) {
+    const box = $('#chtb-' + chtb.dataset.chtb);
+    const hidden = box.classList.toggle('hidden');
+    chtb.textContent = hidden ? '📋 看数据表' : '📊 收起数据表';
+    return;
+  }
   if (e.target.closest('#qz-prev')) { if (qz.idx > 0) { qz.idx--; renderQuiz(); } return; }
   if (e.target.closest('#qz-next')) { if (qz.idx < qz.qs.length - 1) { qz.idx++; renderQuiz(); } return; }
   if (e.target.closest('#qz-showans')) {
