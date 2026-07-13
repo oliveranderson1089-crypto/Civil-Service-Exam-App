@@ -2101,8 +2101,20 @@ function aiShow(v) {
   ['aiv-home', 'aiv-projects', 'aiv-project', 'aiv-chat'].forEach(id => $('#' + id).classList.add('hidden'));
   $('#aiv-' + v).classList.remove('hidden');
 }
+/* AI 面板也用通用停靠：默认半屏（电脑右半屏 / 手机下半屏），不再一点就整屏盖住 */
+let aiDk = null;
+function aiInitDock() {
+  if (aiDk) return;
+  aiDk = createDock($('#ai-panel'), 'aiDock', IS_MOBILE ? 'bottom' : 'right', null);
+  document.querySelectorAll('#ai-panel .ai-dock').forEach(b =>
+    b.addEventListener('pointerdown', (e) => aiDk.dockDrag(e)));
+  document.querySelectorAll('#ai-panel .ai-full').forEach(b =>
+    b.onclick = () => aiDk.toggleFull());
+}
 async function openAI(preset) {
+  aiInitDock();
   $('#ai-panel').classList.remove('hidden');
+  aiDk.apply(false);
   if (preset) { await aiNewChat(); $('#ai-text').value = preset; aiGrow(); return; }
   aiShow('home'); loadAiHome();
 }
@@ -2255,7 +2267,7 @@ $('#ai-send').onclick = aiSend;
     const dy = t.clientY - sy, dx = Math.abs(t.clientX - sx);
     if (dy > 70 && dy > dx) {   // 明显下滑
       const cur = ['home', 'projects', 'project', 'chat'].find(v => !$('#aiv-' + v).classList.contains('hidden'));
-      if (cur === 'home' || !cur) $('#ai-panel').classList.add('hidden');
+      if (cur === 'home' || !cur) { $('#ai-panel').classList.add('hidden'); avoidFab(); }
       else if (cur === 'project') { renderAiProjects(); aiShow('projects'); }
       else { aiShow('home'); loadAiHome(); }
     }
@@ -2276,7 +2288,7 @@ $('#aip-new').onclick = async () => {
 $('#ai-panel').addEventListener('click', async e => {
   const back = e.target.closest('[data-aiback]');
   if (back) {
-    if (back.dataset.aiback === 'close') $('#ai-panel').classList.add('hidden');
+    if (back.dataset.aiback === 'close') { $('#ai-panel').classList.add('hidden'); avoidFab(); }
     else aiBack();
     return;
   }
@@ -2298,7 +2310,7 @@ $('#ai-panel').addEventListener('click', async e => {
   const proj = e.target.closest('[data-aiproj]');
   if (proj) { openAiProject(+proj.dataset.aiproj); return; }
 });
-$('#ai-close').onclick = () => $('#ai-panel').classList.add('hidden');
+$('#ai-close').onclick = () => { $('#ai-panel').classList.add('hidden'); avoidFab(); };
 $('#ai-text').addEventListener('input', aiGrow);
 $('#ai-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); } });
 
@@ -5627,8 +5639,6 @@ $('#acct-notifytest').onclick = () => {
    自动保存到本地（切题、刷新、关掉再开都还在）。 */
 /* 草稿纸随时可调用（悬浮球里点开），停靠位可拖：下/右/左/上/全屏 */
 const PAD_DOCKS = ['bottom', 'right', 'left', 'top', 'full'];
-let padDock = 'bottom';
-let padSizes = { bottom: 0, top: 0, right: 0, left: 0 };   // 每个停靠位各自记住你拖成的大小
 const PAD_INK = '#1a2230';                              // 默认墨色（夜间自动转浅）
 const PAD_COLORS = [PAD_INK, '#1a6fb5', '#c0392b', '#1e8449', '#f0a500'];
 const PAD_BGICON = ['▢', '⊞', '☰'];                     // 空白 / 方格 / 横线
@@ -5848,7 +5858,7 @@ function padInit() {
   padInited = true;
   padCv = $('#pad-cv'); padCtx = padCv.getContext('2d');
   padBase = document.createElement('canvas'); padBaseCtx = padBase.getContext('2d');
-  padLoadDock();
+  padDk = createDock($('#pad'), 'padDock', 'bottom', padFit);
   padLoad();
 
   padCv.addEventListener('pointerdown', padDown);
@@ -5895,20 +5905,9 @@ function padInit() {
     document.body.appendChild(a); a.click(); a.remove();
     toast('已保存为图片');
   };
-  let padPrevDock = 'bottom';
-  $('#pad-mode').onclick = () => {                                 // 全屏 ⇄ 还原到上次的停靠位
-    if (padDock === 'full') padSetDock(padPrevDock);
-    else { padPrevDock = padDock; padSetDock('full'); }
-  };
+  $('#pad-mode').onclick = () => padDk.toggleFull();               // 全屏 ⇄ 还原
   $('#pad-close').onclick = padClose;
-  $('#pad-dock').addEventListener('pointerdown', padDockDrag);     // 按住拖到边缘 → 吸附那半屏
-  $('#pad-grip').addEventListener('pointerdown', padResizeDrag);   // 拖交界处那条线 → 改大小
-  $('#pad-grip').addEventListener('dblclick', () => {              // 双击复位成一半
-    if (padDock === 'full') return;
-    padSizes[padDock] = 0;
-    padApplyDock(true);
-    toast('已复位成一半');
-  });
+  $('#pad-dock').addEventListener('pointerdown', (e) => padDk.dockDrag(e));
 
   let rzT = null;
   addEventListener('resize', () => {
@@ -5925,218 +5924,146 @@ function padInit() {
   });
 }
 
-/* ---------- 停靠：下 / 右 / 左 / 上 / 全屏（✥ 手柄拖到屏幕边缘即吸附） ----------
-   半屏只是默认值：交界处那条分隔线可以直接拖着改大小，比例按「每个停靠位」分别记住。 */
-function padInit() {
-  padInited = true;
-  padCv = $('#pad-cv'); padCtx = padCv.getContext('2d');
-  padBase = document.createElement('canvas'); padBaseCtx = padBase.getContext('2d');
-  padLoadDock();
-  padLoad();
+/* ================= 通用停靠（草稿纸 / AI 面板共用） =================
+   半屏只是默认值：交界处的分隔线可以直接拖，比例按「每个停靠位」分别记住；
+   ✥ 手柄按住拖到屏幕任一边 → 松手吸附成那半边（拖到正中 = 全屏）。 */
+const DOCK_NAME = { bottom: '下半屏', top: '上半屏', right: '右半屏', left: '左半屏', full: '全屏' };
+const dockVert = (d) => d === 'left' || d === 'right';
 
-  padCv.addEventListener('pointerdown', padDown);
-  padCv.addEventListener('pointermove', padMove);
-  padCv.addEventListener('pointerup', padUp);
-  padCv.addEventListener('pointercancel', padUp);
-  padCv.addEventListener('pointerleave', padUp);
+function createDock(el, key, defDock, onChange) {
+  const st = { dock: defDock, prev: defDock, sizes: { bottom: 0, top: 0, left: 0, right: 0 } };
+  const defSize = (d) => dockVert(d) ? Math.round(innerWidth * .5) : Math.round(innerHeight * .46);
+  const size = (d) => {                       // 记住的大小；没拖过就是一半。换屏也不会越界
+    const v = st.sizes[d] || defSize(d);
+    const max = dockVert(d) ? innerWidth * .95 : innerHeight * .95;
+    const min = dockVert(d) ? 280 : 190;
+    return Math.round(Math.min(max, Math.max(min, v)));
+  };
+  const save = () => { try { localStorage.setItem(key, JSON.stringify({ d: st.dock, sizes: st.sizes })); } catch (_) {} };
+  (function load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(key) || 'null');
+      if (!d) return;
+      if (DOCK_NAME[d.d]) { st.dock = d.d; st.prev = d.d === 'full' ? defDock : d.d; }
+      if (d.sizes) Object.assign(st.sizes, d.sizes);
+      else { if (d.h) { st.sizes.bottom = d.h; st.sizes.top = d.h; }    // 兼容旧格式
+             if (d.w) { st.sizes.left = d.w; st.sizes.right = d.w; } }
+    } catch (_) {}
+  })();
 
-  $('#pad').addEventListener('click', e => {
-    const t = e.target.closest('.pad-t[data-tool]');
-    if (t) { padTool = t.dataset.tool; padSyncUI(); return; }
-    const c = e.target.closest('.pad-c');
-    if (c) { padColor = c.dataset.c; if (padTool === 'eraser') padTool = 'pen'; padSyncUI(); }
-  });
-  $('#pad-size').oninput = (e) => { padSize = +e.target.value; };
-  $('#pad-undo').onclick = padUndo;
-  $('#pad-redo').onclick = padRedo;
-  $('#pad-prev').onclick = () => padGo(padPg - 1);
-  $('#pad-next').onclick = () => padGo(padPg + 1);
-  $('#pad-add').onclick = () => {
-    if (padPages.length >= 20) { toast('最多 20 页', true); return; }
-    padPages.splice(padPg + 1, 0, { st: [], rd: [] });
-    padGo(padPg + 1); toast('已新增一页');
-  };
-  $('#pad-bg').onclick = () => { padBg = (padBg + 1) % 3; padPaint(); padSyncUI(); padSaveSoon(); };
-  $('#pad-clear').onclick = async () => {
-    const many = padPages.length > 1;
-    const r = await appConfirm('清空这一页的草稿？' + (many ? '（也可以直接删掉这一页）' : ''),
-      { title: '草稿纸', okText: '清空本页', altText: many ? '删除本页' : '', altDanger: true });
-    if (r === 'alt') { padPages.splice(padPg, 1); padGo(Math.min(padPg, padPages.length - 1)); toast('已删除本页'); }
-    else if (r === true) { padPages[padPg] = { st: [], rd: [] }; padRebuild(); padSaveSoon(); toast('本页已清空'); }
-  };
-  $('#pad-png').onclick = () => {                                 // 导出白底黑字，方便打印/贴到错题本
-    const w = padCv.clientWidth, h = padCv.clientHeight, k = 2;
-    const c = document.createElement('canvas');
-    c.width = w * k; c.height = h * k;
-    const x = c.getContext('2d');
-    x.setTransform(k, 0, 0, k, 0, 0);
-    padPaper(x, w, h, false);
-    for (const s of padPages[padPg].st) padDraw(x, s, w, false);
-    const a = document.createElement('a');
-    a.download = '草稿-第' + (padPg + 1) + '页.png';
-    a.href = c.toDataURL('image/png');
-    document.body.appendChild(a); a.click(); a.remove();
-    toast('已保存为图片');
-  };
-  let padPrevDock = 'bottom';
-  $('#pad-mode').onclick = () => {                                 // 全屏 ⇄ 还原到上次的停靠位
-    if (padDock === 'full') padSetDock(padPrevDock);
-    else { padPrevDock = padDock; padSetDock('full'); }
-  };
-  $('#pad-close').onclick = padClose;
-  $('#pad-dock').addEventListener('pointerdown', padDockDrag);     // 按住拖到边缘 → 吸附那半屏
-  $('#pad-grip').addEventListener('pointerdown', padResizeDrag);   // 拖交界处那条线 → 改大小
-  $('#pad-grip').addEventListener('dblclick', () => {              // 双击复位成一半
-    if (padDock === 'full') return;
-    padSizes[padDock] = 0;
-    padApplyDock(true);
-    toast('已复位成一半');
-  });
-
-  let rzT = null;
-  addEventListener('resize', () => {
-    if ($('#pad').classList.contains('hidden')) return;
-    clearTimeout(rzT); rzT = setTimeout(padFit, 120);
-  });
-  document.addEventListener('keydown', e => {
-    if ($('#pad').classList.contains('hidden')) return;
-    const k = (e.key || '').toLowerCase();
-    if (e.ctrlKey && k === 'z') { e.preventDefault(); e.shiftKey ? padRedo() : padUndo(); }
-    else if (e.ctrlKey && k === 'y') { e.preventDefault(); padRedo(); }
-    else if (e.ctrlKey && k === 's') { e.preventDefault(); if (padMode === 'draft') { clearTimeout(padSaveT); padDraftSave(); } }
-    else if (e.key === 'Escape') padClose();
-  });
-}
-
-/* ---------- 停靠：下 / 右 / 左 / 上 / 全屏（✥ 手柄拖到屏幕边缘即吸附） ----------
-   半屏只是默认值：交界处那条分隔线可以直接拖着改大小，比例按「每个停靠位」分别记住。 */
-const padIsV = () => padDock === 'left' || padDock === 'right';   // 左右停靠 = 改宽度
-function padDefSize(d) {
-  return (d === 'left' || d === 'right') ? Math.round(innerWidth * .5) : Math.round(innerHeight * .46);
-}
-function padDockSize(d) {                       // 该停靠位记住的大小（没有就用默认的一半）
-  const v = padSizes[d] || padDefSize(d);
-  const max = (d === 'left' || d === 'right') ? innerWidth * .95 : innerHeight * .95;
-  const min = (d === 'left' || d === 'right') ? 280 : 190;
-  return Math.round(Math.min(max, Math.max(min, v)));            // 换了屏幕尺寸也不会越界
-}
-function padApplyDock(save) {
-  const el = $('#pad');
-  PAD_DOCKS.forEach(d => el.classList.toggle('dk-' + d, d === padDock));
-  if (padDock !== 'full') {
-    if (padIsV()) el.style.setProperty('--pad-w', padDockSize(padDock) + 'px');
-    else el.style.setProperty('--pad-h', padDockSize(padDock) + 'px');
-  }
-  if (save) padSaveDock();
-  requestAnimationFrame(() => { padFit(); padAvoidFab(); });
-}
-function padSaveDock() {
-  try { localStorage.setItem('padDock', JSON.stringify({ d: padDock, sizes: padSizes })); } catch (_) {}
-}
-/* 悬浮球别压在草稿纸上：挡住了就自动挪到纸外面（全屏时干脆藏起来） */
-function padAvoidFab() {
-  const fab = $('#fab'), pad = $('#pad');
-  if (!fab || pad.classList.contains('hidden')) { document.body.classList.remove('pad-full'); return; }
-  document.body.classList.toggle('pad-full', padDock === 'full');
-  if (padDock === 'full') return;
-  const p = pad.getBoundingClientRect(), f = fab.getBoundingClientRect();
-  const hit = f.left < p.right && f.right > p.left && f.top < p.bottom && f.bottom > p.top;
-  if (!hit) return;
-  let x = f.left, y = f.top;
-  if (padDock === 'right') x = p.left - f.width - 12;
-  else if (padDock === 'left') x = p.right + 12;
-  else if (padDock === 'bottom') y = p.top - f.height - 12;
-  else if (padDock === 'top') y = p.bottom + 12;
-  x = Math.min(Math.max(4, x), innerWidth - f.width - 4);
-  y = Math.min(Math.max(4, y), innerHeight - f.height - 4);
-  fab.style.left = x + 'px'; fab.style.top = y + 'px';
-  fab.style.right = 'auto'; fab.style.bottom = 'auto';
-  try { localStorage.setItem('aifab', JSON.stringify({ x, y })); } catch (_) {}
-}
-function padLoadDock() {
-  try {
-    const d = JSON.parse(localStorage.getItem('padDock') || 'null');
-    if (!d) return;
-    if (PAD_DOCKS.includes(d.d)) padDock = d.d;
-    if (d.sizes) Object.assign(padSizes, d.sizes);
-    else {                                   // 兼容旧格式 {d,h,w}
-      if (d.h) { padSizes.bottom = d.h; padSizes.top = d.h; }
-      if (d.w) { padSizes.left = d.w; padSizes.right = d.w; }
+  function apply(doSave) {
+    Object.keys(DOCK_NAME).forEach(d => el.classList.toggle('dk-' + d, d === st.dock));
+    if (st.dock !== 'full') {
+      if (dockVert(st.dock)) el.style.setProperty('--dk-w', size(st.dock) + 'px');
+      else el.style.setProperty('--dk-h', size(st.dock) + 'px');
     }
-  } catch (_) {}
+    if (doSave) save();
+    requestAnimationFrame(() => { if (onChange) onChange(); avoidFab(); });
+  }
+  function set(d, quiet) {
+    if (!DOCK_NAME[d]) return;
+    if (d !== 'full') st.prev = d;
+    st.dock = d; apply(true);
+    if (!quiet) toast(d === 'full' ? '全屏' : '已停靠：' + DOCK_NAME[d]);
+  }
+  function toggleFull() { set(st.dock === 'full' ? (st.prev || defDock) : 'full', true); }
+
+  const box = (z) => z === 'full' ? { left: 0, top: 0, width: innerWidth, height: innerHeight }
+    : z === 'left' ? { left: 0, top: 0, width: size('left'), height: innerHeight }
+      : z === 'right' ? { left: innerWidth - size('right'), top: 0, width: size('right'), height: innerHeight }
+        : z === 'top' ? { left: 0, top: 0, width: innerWidth, height: size('top') }
+          : { left: 0, top: innerHeight - size('bottom'), width: innerWidth, height: size('bottom') };
+  const zoneAt = (x, y) => x < innerWidth * .18 ? 'left' : x > innerWidth * .82 ? 'right'
+    : y < innerHeight * .15 ? 'top' : y > innerHeight * .85 ? 'bottom' : 'full';
+
+  function dockDrag(e) {                      // 按住 ✥ 拖 → 松手吸附
+    e.preventDefault();
+    el.classList.add('dragging');
+    let zone = st.dock;
+    const show = (z) => {
+      const s = $('#dock-snap'), b = box(z);
+      s.style.left = b.left + 'px'; s.style.top = b.top + 'px';
+      s.style.width = b.width + 'px'; s.style.height = b.height + 'px';
+      s.classList.remove('hidden');
+    };
+    const mv = (ev) => { zone = zoneAt(ev.clientX, ev.clientY); show(zone); };
+    const up = () => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+      el.classList.remove('dragging');
+      $('#dock-snap').classList.add('hidden');
+      if (zone !== st.dock) set(zone);        // 大小沿用该停靠位上次拖成的比例
+    };
+    show(zone);
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  }
+
+  const grip = document.createElement('div');   // 交界处那条分隔线
+  grip.className = 'dk-grip';
+  grip.title = '拖动改大小 · 双击复位成一半';
+  el.appendChild(grip);
+  grip.addEventListener('pointerdown', (e) => {
+    if (st.dock === 'full') return;
+    e.preventDefault();
+    document.body.classList.add(dockVert(st.dock) ? 'dk-rz-x' : 'dk-rz-y');
+    grip.classList.add('on');
+    const mv = (ev) => {
+      st.sizes[st.dock] = st.dock === 'bottom' ? innerHeight - ev.clientY
+        : st.dock === 'top' ? ev.clientY
+          : st.dock === 'right' ? innerWidth - ev.clientX
+            : ev.clientX;
+      apply(false);
+    };
+    const up = () => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+      document.body.classList.remove('dk-rz-x', 'dk-rz-y');
+      grip.classList.remove('on');
+      st.sizes[st.dock] = size(st.dock);
+      apply(true);
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  });
+  grip.addEventListener('dblclick', () => {
+    if (st.dock === 'full') return;
+    st.sizes[st.dock] = 0; apply(true); toast('已复位成一半');
+  });
+
+  addEventListener('resize', () => { if (!el.classList.contains('hidden')) apply(false); });
+  return { st, apply, set, toggleFull, dockDrag, isFull: () => st.dock === 'full' };
 }
-function padSetDock(d) {
-  if (!PAD_DOCKS.includes(d)) return;
-  padDock = d;
-  padApplyDock(true);
-  toast({ bottom: '已停靠：下半屏', top: '已停靠：上半屏', right: '已停靠：右半屏', left: '已停靠：左半屏', full: '全屏书写' }[d]);
+
+/* 悬浮球别被面板压住：挡住就挪到面板外；面板全屏时藏起来 */
+function avoidFab() {
+  const fab = $('#fab');
+  if (!fab) return;
+  const open = [$('#pad'), $('#ai-panel')].filter(p => p && !p.classList.contains('hidden'));
+  document.body.classList.toggle('pad-full', open.some(p => p.classList.contains('dk-full')));
+  if (!open.length || document.body.classList.contains('pad-full')) return;
+  for (const p of open) {
+    const r = p.getBoundingClientRect(), f = fab.getBoundingClientRect();
+    if (!(f.left < r.right && f.right > r.left && f.top < r.bottom && f.bottom > r.top)) continue;
+    const d = Object.keys(DOCK_NAME).find(k => p.classList.contains('dk-' + k));
+    let x = f.left, y = f.top;
+    if (d === 'right') x = r.left - f.width - 12;
+    else if (d === 'left') x = r.right + 12;
+    else if (d === 'bottom') y = r.top - f.height - 12;
+    else if (d === 'top') y = r.bottom + 12;
+    x = Math.min(Math.max(4, x), innerWidth - f.width - 4);
+    y = Math.min(Math.max(4, y), innerHeight - f.height - 4);
+    fab.style.left = x + 'px'; fab.style.top = y + 'px';
+    fab.style.right = 'auto'; fab.style.bottom = 'auto';
+    try { localStorage.setItem('aifab', JSON.stringify({ x, y })); } catch (_) {}
+  }
 }
-/* 吸附预览框 = 最终停靠位；用「这个停靠位上次拖成的大小」，不是永远一半 */
-const PAD_SNAP_BOX = {
-  left: () => ({ left: 0, top: 0, width: padDockSize('left'), height: innerHeight }),
-  right: () => ({ left: innerWidth - padDockSize('right'), top: 0, width: padDockSize('right'), height: innerHeight }),
-  top: () => ({ left: 0, top: 0, width: innerWidth, height: padDockSize('top') }),
-  bottom: () => ({ left: 0, top: innerHeight - padDockSize('bottom'), width: innerWidth, height: padDockSize('bottom') }),
-  full: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight }),
-};
-function padZoneAt(x, y) {                  // 光标离哪条边近，就吸到哪半边；正中间 = 全屏
-  const w = innerWidth, h = innerHeight;
-  if (x < w * .18) return 'left';
-  if (x > w * .82) return 'right';
-  if (y < h * .15) return 'top';
-  if (y > h * .85) return 'bottom';
-  return 'full';
-}
-function padSnapShow(zone) {
-  const s = $('#pad-snap'), b = PAD_SNAP_BOX[zone]();
-  s.style.left = b.left + 'px'; s.style.top = b.top + 'px';
-  s.style.width = b.width + 'px'; s.style.height = b.height + 'px';
-  s.classList.remove('hidden');
-}
-function padDockDrag(e) {                   // 按住 ✥ 拖动 → 松手吸附
-  e.preventDefault();
-  const el = $('#pad');
-  el.classList.add('dragging');
-  let zone = padDock;
-  const mv = (ev) => { zone = padZoneAt(ev.clientX, ev.clientY); padSnapShow(zone); };
-  const up = () => {
-    removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
-    el.classList.remove('dragging');
-    $('#pad-snap').classList.add('hidden');
-    if (zone !== padDock) padSetDock(zone);   // 大小沿用这个停靠位上次拖成的比例（没拖过才是一半）
-  };
-  padSnapShow(zone);
-  addEventListener('pointermove', mv); addEventListener('pointerup', up);
-}
-/* 交界处那条分隔线：像编辑器分栏一样直接拖着改大小；松手记住这个停靠位的比例 */
-function padResizeDrag(e) {
-  if (padDock === 'full') return;
-  e.preventDefault();
-  document.body.classList.add(padIsV() ? 'pad-rz-x' : 'pad-rz-y');   // 拖动时全局锁光标、别选中文字
-  $('#pad-grip').classList.add('on');
-  const mv = (ev) => {
-    padSizes[padDock] =
-      padDock === 'bottom' ? innerHeight - ev.clientY
-        : padDock === 'top' ? ev.clientY
-          : padDock === 'right' ? innerWidth - ev.clientX
-            : ev.clientX;                                            // left
-    padApplyDock(false);
-  };
-  const up = () => {
-    removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
-    document.body.classList.remove('pad-rz-x', 'pad-rz-y');
-    $('#pad-grip').classList.remove('on');
-    padSizes[padDock] = padDockSize(padDock);                            // 夹到合法范围再存
-    padApplyDock(true);
-  };
-  addEventListener('pointermove', mv); addEventListener('pointerup', up);
-}
+
+/* 草稿纸的停靠实例（手机默认下半屏，电脑默认下半屏；想要别的自己拖） */
+let padDk = null;
+function padDock_() { return padDk ? padDk.st.dock : 'bottom'; }
 
 function padOpen() {
   if (!padInited) padInit();
   $('#pad').classList.remove('hidden');
   document.body.classList.add('pad-open');
-  padApplyDock(false);
+  padDk.apply(false);
 }
 function padClose() {
   const wasDraft = padMode === 'draft';
@@ -6144,6 +6071,7 @@ function padClose() {
   if (wasDraft) padDraftSave(); else padSave();
   $('#pad').classList.add('hidden');
   document.body.classList.remove('pad-open', 'pad-full');
+  avoidFab();
   if (wasDraft) {                                                 // 退出草稿本 → 回列表，恢复随手草稿纸
     padMode = 'scratch'; padDraftId = null;
     $('#pad-doc').classList.add('hidden');

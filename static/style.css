@@ -1019,7 +1019,7 @@ img,svg,video{max-width:100%;}
 .mat-head-btns{flex:0 0 auto;}
 
 /* ---- AI 助手对话面板 ---- */
-.ai-panel{position:fixed;inset:0;z-index:90;background:#f5f7fb;display:flex;flex-direction:column;}
+.ai-panel{z-index:90;background:#f5f7fb;}
 .ai-panel.hidden{display:none;}
 .ai-head{display:flex;align-items:center;gap:8px;padding:13px 14px;
   padding-top:max(13px,env(safe-area-inset-top));background:linear-gradient(120deg,#1a6fb5,#2a8ad6);color:#fff;}
@@ -2091,40 +2091,43 @@ body.dark .plh-dhead b,body.dark .plh-title{color:#e2e7ef !important;}
 body.dark .plh-restore{background:#172234 !important;border-color:#26405f !important;color:#7fb3e8 !important;}
 
 /* ================= 草稿纸（做题演算，不做识别） ================= */
-.pad{position:fixed;z-index:70;display:flex;flex-direction:column;background:var(--card);
-  border:1px solid var(--line);box-shadow:0 -8px 30px rgba(20,40,80,.18);touch-action:none;}
-/* 停靠位：下 / 上 / 右 / 左 / 全屏（手柄 ✥ 拖到屏幕边缘即吸附） */
-.pad.dk-bottom{left:0;right:0;bottom:0;height:var(--pad-h,46vh);min-height:190px;
+/* ===== 通用停靠面板（草稿纸 / AI 共用）：半屏为默认，可拖分隔线、可拖到边缘吸附 ===== */
+.dockable{position:fixed;display:flex;flex-direction:column;
+  border:1px solid var(--line);box-shadow:0 -8px 30px rgba(20,40,80,.18);}
+.dockable.dk-bottom{left:0;right:0;bottom:0;height:var(--dk-h,46vh);min-height:190px;
   border-radius:16px 16px 0 0;padding-top:15px;}
-.pad.dk-top{left:0;right:0;top:0;height:var(--pad-h,46vh);min-height:190px;
-  border-radius:0 0 16px 16px;padding-bottom:14px;}
-.pad.dk-right{right:0;top:0;bottom:0;width:var(--pad-w,50vw);min-width:280px;
-  border-radius:16px 0 0 16px;padding-left:12px;}
-.pad.dk-left{left:0;top:0;bottom:0;width:var(--pad-w,50vw);min-width:280px;
-  border-radius:0 16px 16px 0;padding-right:12px;}
-.pad.dk-full{inset:0;border-radius:0;padding:0;}
-.pad.dk-full .pad-grip{display:none;}
-.pad.dragging{opacity:.55;}
-/* 吸附预览：拖动时高亮将要停靠的半边 */
-.pad-snap{position:fixed;z-index:69;border-radius:14px;pointer-events:none;
-  background:rgba(26,111,181,.16);border:2px dashed var(--blue);transition:all .12s;}
-/* 交界处的分隔线：像编辑器分栏一样，悬停就能拖着改大小（命中区放宽，视觉仍是细线） */
-.pad-grip{position:absolute;z-index:3;display:grid;place-items:center;
+.dockable.dk-top{left:0;right:0;top:0;height:var(--dk-h,46vh);min-height:190px;
+  border-radius:0 0 16px 16px;padding-bottom:15px;}
+.dockable.dk-right{right:0;top:0;bottom:0;width:var(--dk-w,50vw);min-width:280px;
+  border-radius:16px 0 0 16px;padding-left:15px;}
+.dockable.dk-left{left:0;top:0;bottom:0;width:var(--dk-w,50vw);min-width:280px;
+  border-radius:0 16px 16px 0;padding-right:15px;}
+.dockable.dk-full{inset:0;border-radius:0;padding:0;border:none;}
+.dockable.dk-full>.dk-grip{display:none;}
+.dockable.dragging{opacity:.55;}
+
+/* 交界处的分隔线：悬停就能拖（命中区放宽，视觉仍是细线）；双击复位一半 */
+.dk-grip{position:absolute;z-index:5;display:grid;place-items:center;
   background:transparent;transition:background .15s;}
-.pad-grip::before{content:"";border-radius:3px;background:var(--line);transition:background .15s,transform .15s;}
-.pad-grip:hover,.pad-grip.on{background:rgba(26,111,181,.1);}
-.pad-grip:hover::before,.pad-grip.on::before{background:var(--blue);transform:scale(1.15);}
-/* 下/上停靠：横线，上下拖 */
-.pad.dk-bottom>.pad-grip{left:0;right:0;top:-4px;height:18px;cursor:ns-resize;}
-.pad.dk-top>.pad-grip{left:0;right:0;bottom:-4px;height:18px;cursor:ns-resize;}
-.pad.dk-bottom>.pad-grip::before,.pad.dk-top>.pad-grip::before{width:46px;height:4px;}
-/* 左/右停靠：竖线，左右拖 */
-.pad.dk-right>.pad-grip{top:0;bottom:0;left:-4px;width:18px;cursor:ew-resize;}
-.pad.dk-left>.pad-grip{top:0;bottom:0;right:-4px;width:18px;cursor:ew-resize;}
-.pad.dk-right>.pad-grip::before,.pad.dk-left>.pad-grip::before{width:4px;height:46px;}
-/* 拖动中：锁住光标，别让整页选中文字 */
-body.pad-rz-x,body.pad-rz-x *{cursor:ew-resize !important;user-select:none !important;}
-body.pad-rz-y,body.pad-rz-y *{cursor:ns-resize !important;user-select:none !important;}
+.dk-grip::before{content:"";border-radius:3px;background:var(--line);transition:background .15s,transform .15s;}
+.dk-grip:hover,.dk-grip.on{background:rgba(26,111,181,.12);}
+.dk-grip:hover::before,.dk-grip.on::before{background:var(--blue);transform:scale(1.15);}
+.dockable.dk-bottom>.dk-grip{left:0;right:0;top:-4px;height:18px;cursor:ns-resize;}
+.dockable.dk-top>.dk-grip{left:0;right:0;bottom:-4px;height:18px;cursor:ns-resize;}
+.dockable.dk-bottom>.dk-grip::before,.dockable.dk-top>.dk-grip::before{width:46px;height:4px;}
+.dockable.dk-right>.dk-grip{top:0;bottom:0;left:-4px;width:18px;cursor:ew-resize;}
+.dockable.dk-left>.dk-grip{top:0;bottom:0;right:-4px;width:18px;cursor:ew-resize;}
+.dockable.dk-right>.dk-grip::before,.dockable.dk-left>.dk-grip::before{width:4px;height:46px;}
+body.dk-rz-x,body.dk-rz-x *{cursor:ew-resize !important;user-select:none !important;}
+body.dk-rz-y,body.dk-rz-y *{cursor:ns-resize !important;user-select:none !important;}
+
+/* 吸附预览：拖动时高亮将要停靠的位置 */
+.dock-snap{position:fixed;z-index:95;border-radius:14px;pointer-events:none;
+  background:rgba(26,111,181,.16);border:2px dashed var(--blue);transition:all .12s;}
+
+/* 草稿纸自己的皮 */
+.pad{z-index:70;background:var(--card);touch-action:none;}
+
 .pad-bar{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;
   padding:4px 10px 7px;border-bottom:1px solid var(--line);}
 .pad-grp{display:flex;align-items:center;gap:4px;}

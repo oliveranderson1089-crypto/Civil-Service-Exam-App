@@ -1099,12 +1099,12 @@
 </div>
 
 <!-- AI 助手对话面板 -->
-<div id="ai-panel" class="ai-panel hidden">
+<div id="ai-panel" class="ai-panel dockable hidden dk-right">
   <!-- 首页：新对话 / 项目 / 最近 -->
   <div id="aiv-home" class="aiv">
     <div class="ai-head">
       <span class="ai-title">AI 助手</span>
-      <button id="ai-close" class="ai-x" title="关闭">✕</button>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button><button class="ai-x ai-full" title="全屏 / 还原">⛶</button><button id="ai-close" class="ai-x" title="关闭">✕</button>
     </div>
     <div class="aih-scroll">
       <button class="aih-new" id="aih-new">＋ 新对话</button>
@@ -1119,7 +1119,7 @@
       <button class="ai-backbtn" data-aiback="home">‹</button>
       <span class="ai-title">项目</span>
       <button id="aip-new" class="ai-headbtn">＋ 新建</button>
-      <button class="ai-x" data-aiback="close">✕</button>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button><button class="ai-x ai-full" title="全屏 / 还原">⛶</button><button class="ai-x" data-aiback="close">✕</button>
     </div>
     <div class="aih-scroll" id="aip-list"></div>
   </div>
@@ -1129,7 +1129,7 @@
       <button class="ai-backbtn" data-aiback="projects">‹</button>
       <span class="ai-title" id="aipd-title">项目</span>
       <button id="aipd-new" class="ai-headbtn">＋ 新对话</button>
-      <button class="ai-x" data-aiback="close">✕</button>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button><button class="ai-x ai-full" title="全屏 / 还原">⛶</button><button class="ai-x" data-aiback="close">✕</button>
     </div>
     <div class="aih-scroll" id="aipd-chats"></div>
   </div>
@@ -1139,7 +1139,7 @@
     <div class="ai-head">
       <button class="ai-backbtn" data-aiback="home">‹</button>
       <span class="ai-title" id="aic-title">新对话</span>
-      <button class="ai-x" data-aiback="close">✕</button>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button><button class="ai-x ai-full" title="全屏 / 还原">⛶</button><button class="ai-x" data-aiback="close">✕</button>
     </div>
     <div id="ai-msgs" class="ai-msgs"></div>
     <div id="ai-atts" class="ai-atts"></div>
@@ -1201,9 +1201,8 @@
 </div>
 
 <!-- ===== 草稿纸（随时可调用；只写不识别） ===== -->
-<div id="pad-snap" class="pad-snap hidden"></div>
-<div id="pad" class="pad hidden dk-bottom">
-  <div class="pad-grip" id="pad-grip" title="拖动可改大小"></div>
+<div id="dock-snap" class="dock-snap hidden"></div>
+<div id="pad" class="pad dockable hidden dk-bottom">
   <div class="pad-bar">
     <div class="pad-grp pad-doc hidden" id="pad-doc">
       <button class="pad-t" id="pad-name" title="点一下改名">📓</button>
