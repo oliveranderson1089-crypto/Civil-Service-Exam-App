@@ -691,6 +691,7 @@
     <textarea id="slg-a" rows="9" placeholder="写下你的作答…"></textarea>
     <div class="slg-toolbar">
       <button type="button" class="hw-open-btn" data-hw="slg-a">✍️ 手写输入</button>
+      <button type="button" class="btn tiny hidden" id="slg-mat">📋 给定资料（可勾画）</button>
       <div id="slg-count" class="slg-count"></div>
     </div>
     <div class="slg-row">
@@ -1225,6 +1226,29 @@
       <button data-mm="dup">🗐 复制一份</button>
       <button data-mm="dl">⬇️ 下载</button>
       <button data-mm="del" class="acm-danger">🗑 删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 给定资料面板：可停靠半屏、可拖大小、可用手写笔在原文上勾画（像考场划重点） -->
+<div id="matpad" class="matpad dockable hidden dk-right">
+  <div class="mat-bar">
+    <span class="mat-t">📋 给定资料</span>
+    <button class="pad-t" data-mt="hl" title="荧光笔">🖍️</button>
+    <button class="pad-t" data-mt="pen" title="笔">✏️</button>
+    <button class="pad-t" data-mt="eraser" title="橡皮">🧽</button>
+    <span class="mat-colors" id="mat-colors"></span>
+    <button class="pad-t" id="mat-clear" title="清除全部勾画">🗑</button>
+    <span class="mat-right">
+      <button class="pad-t" id="mat-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button>
+      <button class="pad-t" id="mat-full" title="全屏 / 还原">⛶</button>
+      <button class="pad-t" id="mat-close" title="收起">✕</button>
+    </span>
+  </div>
+  <div class="mat-scroll" id="mat-scroll">
+    <div class="mat-inner" id="mat-inner">
+      <div class="mat-text" id="mat-text"></div>
+      <canvas id="mat-cv"></canvas>
     </div>
   </div>
 </div>

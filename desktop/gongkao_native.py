@@ -18,7 +18,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "3.3"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "3.4"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -103,6 +103,7 @@ class Gongkao(Gtk.Application):
         except Exception:
             pass
         self.web.connect("decide-policy", self.on_decide)
+        self.web.connect("run-file-chooser", self.on_file_chooser)   # 自己弹文件框，见下
         self.web.load_uri(resolve_url())
         self.win.add(self.web)
         self.win.connect("key-press-event", self.on_key)   # F5 刷新等快捷键
@@ -131,6 +132,39 @@ class Gongkao(Gtk.Application):
             self.web.set_zoom_level(1.0)
             return True
         return False
+
+    def on_file_chooser(self, web, req):
+        """自己弹文件选择框。
+           WebKit 默认会把网页 accept 里混着的 image/* 和 .pdf/.docx 过滤成「只剩图片」——
+           上传真题时就只能选图片了。这里按用途给全套过滤器，并默认停在「支持的文件」上。"""
+        dlg = Gtk.FileChooserDialog(title="选择文件", transient_for=self.win,
+                                    action=Gtk.FileChooserAction.OPEN)
+        dlg.add_buttons("取消", Gtk.ResponseType.CANCEL, "打开", Gtk.ResponseType.ACCEPT)
+        try:
+            dlg.set_select_multiple(req.get_select_multiple())
+        except Exception:
+            pass
+
+        def mk(name, patterns):
+            f = Gtk.FileFilter()
+            f.set_name(name)
+            for p in patterns:
+                f.add_pattern(p)
+            return f
+
+        docs = ["*.pdf", "*.doc", "*.docx", "*.ppt", "*.pptx", "*.txt", "*.md", "*.html", "*.htm"]
+        imgs = ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.bmp", "*.heic"]
+        dlg.add_filter(mk("支持的文件（文档 + 图片）", docs + imgs))
+        dlg.add_filter(mk("文档（PDF / Word / PPT / 文本）", docs))
+        dlg.add_filter(mk("图片", imgs))
+        dlg.add_filter(mk("所有文件", ["*"]))
+
+        if dlg.run() == Gtk.ResponseType.ACCEPT:
+            req.select_files(dlg.get_filenames())
+        else:
+            req.cancel()
+        dlg.destroy()
+        return True
 
     def on_msg(self, ucm, result):
         """网页调 window.webkit.messageHandlers.gk.postMessage(JSON) → 这里执行。

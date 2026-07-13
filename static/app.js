@@ -110,6 +110,7 @@ function render() {
   // 离开「题目解析」就别再轮询进度了（dqPoll 是顶层 let，不挂在 window 上）
   if (st.view !== 'docqa' && dqPoll) { clearInterval(dqPoll); dqPoll = null; }
   if (window.__padView) window.__padView(st.view);        // 做题页才出现草稿纸按钮
+  if (st.view !== 'slgrade' && matInited && !$('#matpad').classList.contains('hidden')) matClose();
 }
 function push(state) { stack.push(state); render(); }
 function back() { if (stack.length > 1) { stack.pop(); render(); } }
@@ -3997,8 +3998,7 @@ $('#sl-types').addEventListener('click', e => {
 /* ---- 真题卷：上传 → 自动拆题 ---- */
 $('#sl-essays').onclick = () => openEssays();
 $('#sl-upload').onclick = () => $('#sl-file').click();
-$('#sl-file').addEventListener('change', async e => {
-  const file = e.target.files[0]; e.target.value = '';
+async function slUploadPaper(file) {
   if (!file) return;
   toast('正在识别题目…（扫描件需 OCR，可能要 1 分钟）');
   const fd = new FormData();
@@ -4009,7 +4009,26 @@ $('#sl-file').addEventListener('change', async e => {
     loadSlPapers();
     openSlPaper(d.id);
   } catch (err) { toast(err.message, true); }
+}
+$('#sl-file').addEventListener('change', e => {
+  const f = e.target.files[0]; e.target.value = '';
+  slUploadPaper(f);
 });
+/* 真题卷：整个页面都能拖进来（PDF / Word / 图片都行），不用非得点按钮 */
+(function () {
+  const v = $('#view-shenlun');
+  if (!v) return;
+  const on = (e) => { e.preventDefault(); v.classList.add('drag-on'); };
+  const off = (e) => { if (e.target === v || !v.contains(e.relatedTarget)) v.classList.remove('drag-on'); };
+  v.addEventListener('dragover', on);
+  v.addEventListener('dragenter', on);
+  v.addEventListener('dragleave', off);
+  v.addEventListener('drop', e => {
+    e.preventDefault(); v.classList.remove('drag-on');
+    const f = [...(e.dataTransfer ? e.dataTransfer.files : [])][0];
+    if (f) slUploadPaper(f);
+  });
+})();
 
 async function loadSlPapers() {
   try {
@@ -4154,6 +4173,7 @@ function slCountWords() {
 $('#slg-a').addEventListener('input', slCountWords);
 
 function openSlGrade(t) {          // 自由练：自己贴题干和材料
+  $('#slg-mat').classList.add('hidden');
   slType = t; slQuestion = null;
   push({ view: 'slgrade', title: t.name + ' · 批改' });
   $('#slg-type').innerHTML = `<span class="slg-badge" style="background:${t.color}">${esc(t.name)}</span>`;
@@ -4173,6 +4193,11 @@ function openSlGradeQ(q) {         // 真题：题干/材料/满分/字数都锁
   $('#slg-fixed').innerHTML = `<div class="slf-stem">${esc(q.stem)}</div>
     <div class="slf-meta">${q.full} 分 · 要求 ${q.word_min}-${q.word_max} 字</div>`;
   slSetupAnswer(q.full, q.word_min, q.word_max);
+  // 作答时要看得到给定资料（考场上就是拿笔在材料上划重点）
+  const mat = (slPaper && slPaper.material) || '';
+  $('#slg-mat').classList.toggle('hidden', !mat);
+  $('#slg-mat').onclick = () => matOpen(mat, 'p' + (slPaper ? slPaper.id : 0));
+  if (mat && !IS_MOBILE) matOpen(mat, 'p' + slPaper.id);      // 电脑端直接半屏摆出来
 }
 $('#slg-go').onclick = async () => {
   const answer = $('#slg-a').value.trim();
@@ -4262,9 +4287,15 @@ function renderSlResult(r) {
 
   const rw = r.ref_words || slWords(r.reference);
   const refOk = !hasReq || (rw >= r.word_min && rw <= r.word_max);
-  $('#slr-ref').innerHTML = `<div class="slt-sec">参考范文（${esc(r.type_name || '')}）</div>
-    <div class="slr-wtag ${refOk ? '' : 'warn'}">${rw} 字${hasReq ? ` · 题目要求 ${r.word_min}-${r.word_max} 字` : ''}</div>
-    <div class="slr-reftext">${esc(r.reference || '（AI 未给出参考范文）').replace(/\n/g, '<br>')}</div>`;
+  // 范文是批改之外的一次独立 AI 调用，超时就会是空的 → 给个单独重生成的按钮，不用重跑整份批改
+  $('#slr-ref').innerHTML = r.reference
+    ? `<div class="slt-sec">参考范文（${esc(r.type_name || '')}）</div>
+       <div class="slr-wtag ${refOk ? '' : 'warn'}">${rw} 字${hasReq ? ` · 题目要求 ${r.word_min}-${r.word_max} 字` : ''}</div>
+       <div class="slr-reftext">${esc(r.reference).replace(/\n/g, '<br>')}</div>`
+    : `<div class="slt-sec">参考范文（${esc(r.type_name || '')}）</div>
+       <p class="empty">这次没生成出范文（生成范文是批改之外单独的一次 AI 调用，超时/失败就会空着）。<br>
+       点下面的按钮单独重生成，不用重跑整份批改。</p>
+       ${r.id ? `<button class="btn primary" id="slr-regen" data-rid="${r.id}">🔄 重新生成参考范文</button>` : ''}`;
 
   $('#slr-orig').innerHTML = `<div class="slt-sec">题干</div>
     <div class="slr-reftext">${esc(r.question || '').replace(/\n/g, '<br>')}</div>
@@ -4283,6 +4314,18 @@ function slrTab(t) {
 }
 document.querySelector('.slr-tabs').addEventListener('click', e => {
   const b = e.target.closest('[data-slrt]'); if (b) slrTab(b.dataset.slrt);
+});
+$('#slr-ref').addEventListener('click', async e => {
+  const b = e.target.closest('#slr-regen'); if (!b) return;
+  b.disabled = true; b.textContent = '生成中…（约 30 秒）';
+  try {
+    const d = await api('/api/shenlun/record/' + b.dataset.rid + '/reference', { method: 'POST' });
+    await openSlRecord(b.dataset.rid);
+    toast('范文已生成（' + d.ref_words + ' 字）');
+  } catch (err) {
+    toast(err.message, true);
+    b.disabled = false; b.textContent = '🔄 重新生成参考范文';
+  }
 });
 
 /* ================= 常考（高频考点合集） + 上位词 ================= */
@@ -6218,7 +6261,7 @@ addEventListener('load', () => requestAnimationFrame(fabClamp));
 /* 停靠面板占屏后，把页面内容挤到剩下的可见区（卡片会自动重排，不再被盖住） */
 function applyPush() {
   const p = { left: 0, right: 0, top: 0, bottom: 0 };
-  [$('#pad'), $('#ai-panel')].forEach(el => {
+  [$('#pad'), $('#ai-panel'), $('#matpad')].forEach(el => {
     if (!el || el.classList.contains('hidden') || el.classList.contains('dk-full')) return;
     const d = Object.keys(DOCK_NAME).find(k => el.classList.contains('dk-' + k));
     if (!d || d === 'full') return;
@@ -6236,7 +6279,7 @@ function applyPush() {
 function avoidFab() {
   const fab = $('#fab');
   if (!fab || !innerWidth) return;
-  const open = [$('#pad'), $('#ai-panel')].filter(p => p && !p.classList.contains('hidden'));
+  const open = [$('#pad'), $('#ai-panel'), $('#matpad')].filter(p => p && !p.classList.contains('hidden'));
   document.body.classList.toggle('pad-full', open.some(p => p.classList.contains('dk-full')));
   if (!open.length || document.body.classList.contains('pad-full')) return;
   for (const p of open) {
@@ -6465,3 +6508,137 @@ function pgInit() {
   $('#pg-top').oncontextmenu = (e) => { e.preventDefault(); back(); };
 }
 pgInit();
+
+/* ================= 给定资料面板（申论作答时看材料 + 手写笔勾画） =================
+   考场上就是拿笔在材料上划重点的。这里把材料做成可停靠的半屏面板（和 AI/草稿纸同一套停靠），
+   上面盖一层透明画布：荧光笔划重点、笔写批注、橡皮擦掉。勾画按材料存本地，下次打开还在。 */
+const MAT_COLORS = ['#f0a500', '#2fa36c', '#e05a7d', '#1a6fb5'];
+let matDk = null, matInited = false;
+let matKey = '', matStrokes = [], matCur = null, matDrawing = false, matSawPen = false;
+let matTool = 'hl', matColor = MAT_COLORS[0], matRaf = 0;
+let matCv, matCtx;
+
+const matW = () => matCv.clientWidth || 1;
+function matPt(e) {
+  const r = matCv.getBoundingClientRect(), w = r.width || 1;
+  return { x: (e.clientX - r.left) / w, y: (e.clientY - r.top) / w,
+    p: (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0 };
+}
+function matDrawStroke(ctx, s, W) {
+  const pts = s.pts;
+  if (!pts || !pts.length) return;
+  ctx.save();
+  ctx.lineJoin = ctx.lineCap = 'round';
+  if (s.tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; ctx.lineWidth = 22; }
+  else if (s.tool === 'hl') { ctx.strokeStyle = s.color; ctx.globalAlpha = .32; ctx.lineWidth = 15; ctx.lineCap = 'butt'; }
+  else { ctx.strokeStyle = s.color; ctx.lineWidth = 2.4; }
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x * W, pts[0].y * W);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * W, pts[i].y * W);
+  if (pts.length === 1) ctx.lineTo(pts[0].x * W + .1, pts[0].y * W + .1);
+  ctx.stroke();
+  ctx.restore();
+}
+function matPaint() {
+  const w = matCv.clientWidth, h = matCv.clientHeight;
+  matCtx.clearRect(0, 0, w, h);
+  const W = matW();
+  for (const s of matStrokes) matDrawStroke(matCtx, s, W);
+  if (matCur) matDrawStroke(matCtx, matCur, W);
+}
+function matFit() {
+  const inner = $('#mat-inner');
+  if (!inner || !matCv) return;
+  const w = inner.clientWidth, h = Math.max(inner.scrollHeight, $('#mat-scroll').clientHeight);
+  if (!w) return;
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  matCv.style.width = w + 'px'; matCv.style.height = h + 'px';
+  matCv.width = Math.round(w * dpr); matCv.height = Math.round(h * dpr);
+  matCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  matPaint();
+}
+function matSave() {
+  if (!matKey) return;
+  const r = (n) => Math.round(n * 1e4) / 1e4;
+  try {
+    localStorage.setItem(matKey, JSON.stringify(matStrokes.map(s => ({
+      t: s.tool, c: s.color, p: s.pts.map(q => [r(q.x), r(q.y)]),
+    }))));
+  } catch (_) {}
+}
+function matLoad(key) {
+  matKey = key; matStrokes = [];
+  try {
+    const d = JSON.parse(localStorage.getItem(key) || 'null');
+    if (d) matStrokes = d.map(s => ({ tool: s.t, color: s.c, pts: (s.p || []).map(q => ({ x: q[0], y: q[1] })) }));
+  } catch (_) {}
+}
+function matSyncUI() {
+  document.querySelectorAll('#matpad [data-mt]').forEach(b => b.classList.toggle('on', b.dataset.mt === matTool));
+  $('#mat-colors').innerHTML = MAT_COLORS.map(c =>
+    `<i class="pad-c${c === matColor && matTool !== 'eraser' ? ' on' : ''}" data-mc="${c}" style="background:${c}"></i>`).join('');
+}
+function matInit() {
+  matInited = true;
+  matCv = $('#mat-cv'); matCtx = matCv.getContext('2d');
+  matDk = createDock($('#matpad'), 'matDock', IS_MOBILE ? 'bottom' : 'right', matFit);
+
+  matCv.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'pen') matSawPen = true;
+    if (e.pointerType === 'touch' && matSawPen) return;   // 用过笔就防手掌误触
+    if (e.button > 0) return;
+    e.preventDefault();
+    try { matCv.setPointerCapture(e.pointerId); } catch (_) {}
+    matDrawing = true;
+    matCur = { tool: matTool, color: matColor, pts: [matPt(e)] };
+    matPaint();
+  });
+  matCv.addEventListener('pointermove', e => {
+    if (!matDrawing || !matCur) return;
+    e.preventDefault();
+    let evs = [];
+    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
+    if (!evs.length) evs = [e];
+    for (const ev of evs) matCur.pts.push(matPt(ev));
+    if (!matRaf) matRaf = requestAnimationFrame(() => { matRaf = 0; matPaint(); });
+  });
+  const up = () => {
+    if (!matDrawing) return;
+    matDrawing = false;
+    if (matCur) { matStrokes.push(matCur); matCur = null; matPaint(); matSave(); }
+  };
+  matCv.addEventListener('pointerup', up);
+  matCv.addEventListener('pointercancel', up);
+  matCv.addEventListener('pointerleave', up);
+
+  $('#matpad').addEventListener('click', e => {
+    const t = e.target.closest('[data-mt]');
+    if (t) { matTool = t.dataset.mt; matSyncUI(); return; }
+    const c = e.target.closest('[data-mc]');
+    if (c) { matColor = c.dataset.mc; if (matTool === 'eraser') matTool = 'hl'; matSyncUI(); }
+  });
+  $('#mat-clear').onclick = async () => {
+    if (!matStrokes.length) return;
+    if (!await appConfirm('清除这份材料上的全部勾画？', { title: '给定资料', okText: '清除' })) return;
+    matStrokes = []; matPaint(); matSave(); toast('已清除');
+  };
+  $('#mat-dock').addEventListener('pointerdown', (e) => matDk.dockDrag(e));
+  $('#mat-full').onclick = () => matDk.toggleFull();
+  $('#mat-close').onclick = matClose;
+  addEventListener('resize', () => { if (!$('#matpad').classList.contains('hidden')) matFit(); });
+}
+function matOpen(text, key) {
+  if (!matInited) matInit();
+  $('#mat-text').textContent = text || '（这份卷子没有给定资料）';
+  matLoad('matmark:' + key);
+  $('#matpad').classList.remove('hidden');
+  matSyncUI();
+  matDk.apply(false);
+  requestAnimationFrame(() => { matFit(); applyPush(); avoidFab(); });
+}
+function matClose() {
+  matSave();
+  $('#matpad').classList.add('hidden');
+  document.body.classList.remove('pad-full');
+  applyPush(); avoidFab();
+}

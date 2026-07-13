@@ -2397,3 +2397,24 @@ body.dark .pgbtn{background:#1b2231;border-color:#2f3a4d;}
 .pgbar{right:calc(14px + var(--push-r,0px));}
 @media(max-width:900px){body.has-pen .pgbar{display:none;}}
 .pgbtn svg{width:20px;height:20px;}
+/* 真题卷：拖文件进来上传（PDF/Word/图片都行） */
+#view-shenlun{position:relative;}
+#view-shenlun.drag-on::after{content:"松手即可上传真题（PDF / Word / 图片都行）";
+  position:absolute;inset:8px;border:2.5px dashed var(--blue);border-radius:16px;
+  background:rgba(26,111,181,.08);display:grid;place-items:center;
+  font-size:16px;font-weight:600;color:var(--blue);pointer-events:none;z-index:5;}
+
+/* ================= 给定资料面板（可停靠 + 手写笔勾画） ================= */
+.matpad{z-index:68;background:var(--card);}
+.mat-bar{flex:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  padding:8px 10px;border-bottom:1px solid var(--line);}
+.mat-t{font-size:13.5px;font-weight:700;margin-right:4px;}
+.mat-colors{display:flex;gap:4px;}
+.mat-right{margin-left:auto;display:flex;gap:4px;}
+.mat-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;}
+.mat-inner{position:relative;padding:14px 16px 40px;}
+.mat-text{font-size:15px;line-height:2;color:var(--text);white-space:pre-wrap;
+  word-break:break-word;text-align:justify;}
+#mat-cv{position:absolute;left:0;top:0;touch-action:none;cursor:crosshair;}  /* 铺满整块内容区，坐标才和文字对得上 */
+body.dark .matpad{background:#151b27;}
+@media(max-width:520px){.mat-text{font-size:14.5px;line-height:1.95;}}

@@ -1,5 +1,5 @@
 {
-  "version_code": 33,
-  "version_name": "3.3",
-  "notes": "修中文输入法（fcitx 候选框）、接系统朗读、侧边翻页键"
+  "version_code": 34,
+  "version_name": "3.4",
+  "notes": "新增自动检查更新与更新提示；支持下载文件（更新包存到「下载」文件夹）。"
 }

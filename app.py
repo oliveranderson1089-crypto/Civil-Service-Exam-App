@@ -5994,6 +5994,27 @@ def shenlun_grade():
     return jsonify(res)
 
 
+@app.post("/api/shenlun/record/<int:rid>/reference")
+def sl_regen_reference(rid):
+    """单独重生成参考范文：批改时这一步是独立的一次 AI 调用，超时/失败就会是空的，
+       没必要为了一篇范文把整个批改重跑一遍（那要两次调用）。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM shenlun_grade WHERE id=? AND user_id=?", (rid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "记录不存在"}), 404
+    res = json.loads(r["result"] or "{}")
+    t = _SL_TYPES.get(r["qtype"]) or {"name": r["type_name"] or "申论", "key": r["qtype"]}
+    ref = _gen_reference(t, r["question"] or "", r["material"] or "",
+                         r["word_min"] or 200, r["word_max"] or 400)
+    if not ref:
+        return jsonify({"error": "AI 还是没给出范文，请稍后再试"}), 502
+    res["reference"] = ref
+    res["ref_words"] = _sl_words(ref)
+    db.execute("UPDATE shenlun_grade SET result=? WHERE id=?", (json.dumps(res, ensure_ascii=False), rid))
+    db.commit()
+    return jsonify({"reference": ref, "ref_words": res["ref_words"]})
+
+
 @app.get("/api/shenlun/history")
 def shenlun_history():
     rows = get_db().execute(
