@@ -2366,3 +2366,34 @@ body.has-wall .poly-card,body.has-wall .pd-item{backdrop-filter:blur(2px);}
 .skin-dim label{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;}
 .skin-dim label span{color:var(--blue);font-weight:600;}
 .skin-dim input[type=range]{width:100%;accent-color:var(--blue);}
+
+/* ---- 夜间模式：草稿本/草稿纸里几个按钮之前几乎看不清（颜色没跟着翻） ---- */
+body.dark .pad-t{background:#1b2231;color:#cfd5e0;border-color:#2f3a4d;}
+body.dark .pad-t:hover{border-color:var(--blue);color:#8fc2ee;}
+body.dark .pad-t.on{background:var(--blue);border-color:var(--blue);color:#fff;}
+body.dark .pad-t:disabled{opacity:.28;}
+body.dark .pad-title{color:#e6ebf3;}
+body.dark .pad-st{color:#8e97a6;}
+body.dark .pad-grip::before{background:#39445a;}
+body.dark .dr-card{background:#151b27;border-color:#2a3345;}
+body.dark .dr-t{color:#e6ebf3;}
+body.dark .dr-del{color:#8e97a6;}
+body.dark .ch-tbtn{background:#1b2231;border-color:#2f3a4d;color:#8fc2ee;}
+body.dark .ch-tb th{background:rgba(63,146,214,.14);}
+body.dark .wq-tools .btn,body.dark .pl-link-btn{color:#cfd5e0;}
+
+/* ---- 电脑端：侧边翻页 + 回到顶部（给手写笔用，笔没有滚轮/中键） ---- */
+.pgbar{position:fixed;right:14px;top:50%;transform:translateY(-50%);z-index:60;
+  display:none;flex-direction:column;gap:8px;}
+body.has-pen .pgbar{display:flex;}          /* 只有电脑端才出现 */
+.pgbtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);
+  background:var(--card);color:var(--text);font-size:16px;cursor:pointer;
+  box-shadow:var(--shadow);display:grid;place-items:center;opacity:.82;transition:.15s;}
+.pgbtn:hover{opacity:1;border-color:var(--blue);color:var(--blue);transform:scale(1.06);}
+.pgbtn:active{transform:scale(.94);}
+.pgbtn.top{font-size:14px;}
+body.dark .pgbtn{background:#1b2231;border-color:#2f3a4d;}
+/* 有停靠面板时让开（跟着 --push-r 走） */
+.pgbar{right:calc(14px + var(--push-r,0px));}
+@media(max-width:900px){body.has-pen .pgbar{display:none;}}
+.pgbtn svg{width:20px;height:20px;}

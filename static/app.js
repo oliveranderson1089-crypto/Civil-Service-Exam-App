@@ -11,6 +11,10 @@ const api = (u, o) => fetch(u, o).then(async r => {
   if (!r.ok) throw new Error('请求失败');
   return r;
 });
+/* 中文输入法正在组字时，回车是「确认候选词」，不是「提交」。
+   所有回车处理都必须先问一句 composing(e)，否则 fcitx/搜狗打中文时会被打断，
+   表现就是「只打得出英文字母、候选框弹不出来」。 */
+const composing = (e) => e.isComposing || e.keyCode === 229;
 const IN_APP = navigator.userAgent.includes('GongkaoApp');
 /* 桌面版（原生 GTK 壳）会注入 window.__desktop / __desktopVer；普通浏览器里没有 */
 const IS_DESKTOP = !!window.__desktop;
@@ -574,7 +578,7 @@ function addTagsFrom(raw) {
   return added;
 }
 $('#cp-taginput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
+  if (!composing(e) && e.key === 'Enter') {
     e.preventDefault();
     if (addTagsFrom(e.target.value)) renderComposer();
     e.target.value = '';
@@ -1340,7 +1344,7 @@ $('#list').addEventListener('click', async e => {
 });
 $('#lookup-btn').onclick = doLookup;
 $('#pv-ai').onclick = doAiExplain;
-$('#word-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLookup(); });
+$('#word-input').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') doLookup(); });
 $('#save-btn').onclick = doSave;
 $('#filters').addEventListener('click', e => {
   const c = e.target.closest('.chip'); if (!c) return;
@@ -1608,7 +1612,7 @@ function kbpClose(v) { $('#kb-prompt').classList.add('hidden'); if (_kbpResolve)
 $('#kbp-cancel').onclick = () => kbpClose(null);
 $('#kbp-ok').onclick = () => kbpClose($('#kbp-input').value.trim());
 $('#kb-prompt').addEventListener('click', e => { if (e.target.id === 'kb-prompt') kbpClose(null); });
-$('#kbp-input').addEventListener('keydown', e => { if (e.key === 'Enter') kbpClose($('#kbp-input').value.trim()); });
+$('#kbp-input').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') kbpClose($('#kbp-input').value.trim()); });
 $('#nb-edit').onclick = () => { if (KB.nb) openNbModal(KB.nb); };
 
 /* ============ 文档块编辑器 ============ */
@@ -1715,7 +1719,7 @@ $('#doc-blocks').addEventListener('keydown', e => {
   const edit = e.target.closest('.blk-edit'); if (!edit) return;
   const blk = edit.closest('[data-b]'); const id = blk.dataset.b; const t = blk.dataset.t;
   const b = DOC.blocks.find(x => x.id === id); const idx = DOC.blocks.indexOf(b);
-  if (e.key === 'Enter' && !e.shiftKey && t !== 'code') {
+  if (!composing(e) && e.key === 'Enter' && !e.shiftKey && t !== 'code') {
     e.preventDefault();
     if ((b.type === 'list' || b.type === 'todo') && stripHtml(b.text) === '') { b.type = 'text'; b.data = {}; renderDoc(); focusBlock(id); markDirty(); return; }
     const nt = (b.type === 'list' || b.type === 'todo') ? b.type : 'text';
@@ -1734,7 +1738,7 @@ $('#doc-title').addEventListener('input', () => {
   if (!DOC) return; const t = $('#doc-title').textContent;
   stack[stack.length - 1].title = t || '无标题文档'; markDirty();
 });
-$('#doc-title').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); if (DOC && DOC.blocks[0]) focusBlock(DOC.blocks[0].id); } });
+$('#doc-title').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') { e.preventDefault(); if (DOC && DOC.blocks[0]) focusBlock(DOC.blocks[0].id); } });
 
 /* 光标定位 */
 function focusBlock(id) {
@@ -2313,7 +2317,7 @@ $('#ai-panel').addEventListener('click', async e => {
 });
 $('#ai-close').onclick = () => { $('#ai-panel').classList.add('hidden'); applyPush(); avoidFab(); };
 $('#ai-text').addEventListener('input', aiGrow);
-$('#ai-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); } });
+$('#ai-text').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); aiSend(); } });
 
 /* ================= 全文搜索 ================= */
 let searchData = { q: '', filter: 'all', results: [] };
@@ -3429,7 +3433,7 @@ $('#pl-add').onclick = async () => {
     $('#pl-in').value = ''; loadPlan();
   } catch (e) { toast(e.message, true); }
 };
-$('#pl-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#pl-add').click(); });
+$('#pl-in').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') $('#pl-add').click(); });
 $('#pl-list').addEventListener('click', async e => {
   const go = e.target.closest('[data-plgo]');
   if (go) { e.stopPropagation(); ntfGo(go.dataset.plgo); return; }   // 复用消息中心那套跳转
@@ -3764,7 +3768,15 @@ $('#dt-body').addEventListener('click', e => {
   const i = +o.dataset.dtq;
   if (dtRevealedAt(i)) return;              // 已揭晓的题不能再改
   dtChosen[i] = o.dataset.dtl;
-  if (!dtIsTest()) dtRevealed[i] = true;    // 背题模式：选完立刻揭晓这题
+  if (!dtIsTest()) {
+    dtRevealed[i] = true;                   // 背题模式：选完立刻揭晓这题
+    if ((dtAns(i) || '').toUpperCase() !== dtChosen[i]) {   // 选错了 → 自动进错题本
+      api('/api/dtest/wrong', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idx: i, choice: dtChosen[i] }),
+      }).then(d => { if (d.added) toast('这题错了，已收进错题本'); }).catch(() => {});
+    }
+  }
   renderDtest();
 });
 /* 测试记录：列表 + 回看某次作答 */
@@ -3827,7 +3839,7 @@ $('#tk-daily-add').onclick = async () => {
   const v = $('#tk-daily-in').value.trim(); if (!v) return;
   try { await api('/api/daily_tasks/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-daily-in').value = ''; loadDaily(); } catch (e) { toast(e.message, true); }
 };
-$('#tk-daily-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-daily-add').click(); });
+$('#tk-daily-in').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') $('#tk-daily-add').click(); });
 
 let tkMembers = [], tkMeId = 0, tkTeam = null;
 /* 先看组队状态：没组队 → 组队 UI；已组队 → 队头 + 互监清单 */
@@ -3858,7 +3870,7 @@ function renderTeamSetup(t) {
     ${inc ? `<div class="tm-sec"><div class="tm-sec-t">收到的组队申请</div>${inc}</div>` : ''}
     ${out ? `<div class="tm-sec"><div class="tm-sec-t">我发出的申请</div>${out}</div>` : ''}`;
   $('#tm-search-btn').onclick = tmSearch;
-  $('#tm-q').addEventListener('keydown', e => { if (e.key === 'Enter') tmSearch(); });
+  $('#tm-q').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') tmSearch(); });
 }
 function renderTeamHeader(t) {
   const p = t.team.partner;
@@ -3958,7 +3970,7 @@ $('#tk-shared-add').onclick = async () => {
   const v = $('#tk-shared-in').value.trim(); if (!v) return;
   try { await api('/api/shared_todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-shared-in').value = ''; loadSharedBoard(); } catch (e) { toast(e.message, true); }
 };
-$('#tk-shared-in').addEventListener('keydown', e => { if (e.key === 'Enter') $('#tk-shared-add').click(); });
+$('#tk-shared-in').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') $('#tk-shared-add').click(); });
 
 /* ================= 申论：真题卷 + 题型讲义 + AI 逐点批改 ================= */
 let slType = null, slQuestion = null, slPaper = null, slResult = null;
@@ -4834,6 +4846,15 @@ $('#pd-list').addEventListener('click', e => {
   const it = e.target.closest('.pd-item'); if (it) it.classList.toggle('revealed');
 });
 
+/* 桌面版（GTK/WebKit）没有 speechSynthesis，朗读要借壳调系统 TTS */
+const deskTTS = () => !!(window.__desktopTTS && window.webkit && window.webkit.messageHandlers
+  && window.webkit.messageHandlers.gk);
+function deskMsg(o) {
+  try { window.webkit.messageHandlers.gk.postMessage(JSON.stringify(o)); } catch (_) {}
+}
+const deskSay = (text, rate) => deskMsg({ a: 'tts', text, rate });
+const deskStop = () => { if (deskTTS()) deskMsg({ a: 'tts_stop' }); };
+
 /* ================= 逐条朗读（安卓 TTS 桥 / 浏览器 speechSynthesis） ================= */
 // 会自动注入 🔊 按钮的内容条目选择器（新渲染的列表/卡片自动获得朗读按钮）
 const READ_ITEM_SEL = '.gk-card, .pd-item, .poly-card, .cd-sec, .cd-body, .item, .poly-reader, #viewer-reader, .cs-ov-body, .cs-kq, .ai-msg.assistant, .sc-body-solo, .rv-flash';
@@ -4881,6 +4902,12 @@ window.Reader = {
       this._waitId = 'r' + myGen;
       try { window.GongkaoNative.ttsSpeak(this._waitId, seg, this.rate()); }
       catch (_) { this.stop(); }
+    } else if (deskTTS()) {
+      // 电脑桌面版：WebKit 根本没有 speechSynthesis，借壳去调系统 speech-dispatcher。
+      // 它不回调「读完了」，所以按字数估个时长，到点接着读下一段。
+      deskSay(seg, this.rate());
+      const ms = Math.max(1200, seg.length * 260 / this.rate());
+      this._deskT = setTimeout(() => { if (this.playing && myGen === this.gen) { this.idx++; this.next(); } }, ms);
     } else if (window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(seg);
       u.lang = 'zh-CN'; u.rate = this.rate();
@@ -4895,6 +4922,7 @@ window.Reader = {
     this.gen++;
     try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
+    deskStop(); clearTimeout(this._deskT);
     setTimeout(() => this.next(), 60);
   },
   stop() {
@@ -4902,6 +4930,7 @@ window.Reader = {
     if (this.card) { this.card.classList.remove('reading-src'); this.card = null; }
     try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
+    deskStop(); clearTimeout(this._deskT);
     this.ui();
   },
   ui() {
@@ -6411,3 +6440,28 @@ $('#skin-dim').addEventListener('input', e => {
   $('#skin-dimv').textContent = e.target.value + '%';
   applySkin();
 });
+
+/* ================= 侧边翻页条（电脑端）=================
+   手写笔没有滚轮、没有中键，光靠拖滚动条很别扭。这里给一排大按钮：
+   上下翻一屏、直接回顶（回顶时如果不在首页，顺便把「返回」按钮亮出来）、到底部。 */
+function pgScroll(dy) {
+  const el = document.scrollingElement || document.documentElement;
+  el.scrollBy({ top: dy, behavior: 'smooth' });
+}
+function pgInit() {
+  // 触屏手机不需要；桌面版和电脑网页才显示
+  document.body.classList.toggle('has-pen', !IS_MOBILE);
+  $('#pg-up').onclick = () => pgScroll(-(innerHeight * 0.85));
+  $('#pg-dn').onclick = () => pgScroll(innerHeight * 0.85);
+  $('#pg-end').onclick = () => {
+    const el = document.scrollingElement || document.documentElement;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  };
+  $('#pg-top').onclick = () => {
+    const el = document.scrollingElement || document.documentElement;
+    el.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  // 长按/右键「回到顶部」= 直接返回上一页，省得回顶再去点返回
+  $('#pg-top').oncontextmenu = (e) => { e.preventDefault(); back(); };
+}
+pgInit();

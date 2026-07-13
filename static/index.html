@@ -1229,6 +1229,18 @@
   </div>
 </div>
 
+<!-- 侧边翻页条（电脑端）：手写笔没有滚轮/中键，用它翻页和回顶 -->
+<div class="pgbar" id="pgbar">
+  <button class="pgbtn" id="pg-top" title="回到顶部（右键=直接返回上一页）">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="4" x2="19" y2="4"/><polyline points="7 13 12 8 17 13"/><polyline points="7 19 12 14 17 19"/></svg></button>
+  <button class="pgbtn" id="pg-up" title="上翻一屏">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
+  <button class="pgbtn" id="pg-dn" title="下翻一屏">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+  <button class="pgbtn" id="pg-end" title="到底部">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 5 12 10 17 5"/><polyline points="7 11 12 16 17 11"/><line x1="5" y1="20" x2="19" y2="20"/></svg></button>
+</div>
+
 <!-- 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；长按可拖动 -->
 <div id="fab" class="fab">
   <button class="fab-act" id="fab-pad" title="草稿纸">📝<i>草稿纸</i></button>

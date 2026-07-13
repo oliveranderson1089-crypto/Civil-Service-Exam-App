@@ -5209,8 +5209,63 @@ def dtest_grade():
         detail.append({"q": it.get("q", ""), "options": it.get("options") or [], **res})
     db.execute("INSERT INTO dtest_records(user_id,date,score,total,detail_json) VALUES(?,?,?,?,?)",
                (uid(), today, score, len(items), json.dumps(detail, ensure_ascii=False)))
+    _dtest_to_wrongq(db, items, results)      # 做错的自动收进错题本
     db.commit()
     return jsonify({"score": score, "total": len(items), "results": results})
+
+
+@app.post("/api/dtest/wrong")
+def dtest_wrong():
+    """背题模式（做一题看一题答案）里选错了，也要进错题本。"""
+    d = request.get_json(silent=True) or {}
+    db = get_db()
+    today = datetime.now().strftime("%Y-%m-%d")
+    r = db.execute("SELECT questions_json FROM daily_quiz WHERE user_id=? AND date=?", (uid(), today)).fetchone()
+    if not r:
+        return jsonify({"ok": False})
+    items = json.loads(r["questions_json"])
+    try:
+        i = int(d.get("idx"))
+        it = items[i]
+    except Exception:
+        return jsonify({"ok": False})
+    your = (str(d.get("choice") or "")).strip().upper()
+    ans = (it.get("answer") or "").strip().upper()
+    if not your or your == ans:
+        return jsonify({"ok": True, "added": 0})
+    n = _dtest_to_wrongq(db, [it], [{"your": your, "answer": ans, "correct": False}])
+    db.commit()
+    return jsonify({"ok": True, "added": n})
+
+
+def _dtest_to_wrongq(db, items, results):
+    """巩固测试做错的题自动进错题本：带题干、选项、正确答案、解析和板块。
+       图形推理的题干是图，没法存成文字，改存一句说明 + 考点（错题本只认文字/图片）。"""
+    n = 0
+    for it, r in zip(items, results):
+        if r.get("correct") or not r.get("your"):     # 答对的、没作答的都不收
+            continue
+        opts = "\n".join(it.get("options") or [])
+        q = (it.get("q") or "").strip()
+        if it.get("figs"):
+            q = "【图形推理】" + q + "\n（图形题：%s。到「巩固测试记录」里可回看原图）" % (it.get("source") or "")
+        elif it.get("material"):
+            m = it["material"]
+            q = "【资料分析】材料：%s\n%s" % (m.get("title") or "", q)
+        text = (q + ("\n" + opts if opts else ""))[:2000]
+        board = it.get("module") or "行测"
+        # 同一道题别重复收
+        dup = db.execute("SELECT 1 FROM wrong_questions WHERE user_id=? AND question=?", (uid(), text)).fetchone()
+        if dup:
+            continue
+        db.execute("INSERT INTO wrong_questions(user_id,board,question,answer,qtype,points,note) "
+                   "VALUES(?,?,?,?,?,?,?)",
+                   (uid(), board, text,
+                    "正确答案 %s。%s" % (r.get("answer") or "", it.get("explain") or ""),
+                    it.get("source") or board, (it.get("source") or "").split("-")[-1],
+                    "来自巩固测试（我选了 %s）" % (r.get("your") or "")))
+        n += 1
+    return n
 
 
 @app.get("/api/dtest/records")

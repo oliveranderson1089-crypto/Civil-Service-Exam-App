@@ -2,7 +2,15 @@
 # 公考助手 桌面版（原生 GTK + 系统 WebKit2GTK，不依赖 Chrome）。
 # 用系统 python3（自带 gi）运行；一个真·原生窗口加载网页版。
 import os
+import shutil
+import subprocess
 from urllib.parse import urlparse
+
+# 中文输入法：GTK3 要靠 im module 才能弹候选框。从桌面菜单启动时环境可能是空的，
+# 这里兜个底（系统里装的是 fcitx5）。必须在 import gi / Gtk 初始化之前设。
+os.environ.setdefault("GTK_IM_MODULE", "fcitx")
+os.environ.setdefault("XMODIFIERS", "@im=fcitx")
+os.environ.setdefault("QT_IM_MODULE", "fcitx")
 
 import gi
 gi.require_version("Gtk", "3.0")
@@ -10,7 +18,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "3.2"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "3.3"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -70,13 +78,17 @@ class Gongkao(Gtk.Application):
         except Exception:
             pass
 
-        # 注入「我是桌面版 + 版本号」，网页端据此显示检查更新/更新弹窗
+        # 注入「我是桌面版 + 版本号 + 有没有系统朗读」，网页端据此走对应实现
         ucm = WebKit2.UserContentManager()
+        self.tts_ok = bool(shutil.which("spd-say"))     # WebKit 没有 speechSynthesis，只能借系统 TTS
         try:
             ucm.add_script(WebKit2.UserScript.new(
-                "window.__desktop=true;window.__desktopVer='%s';" % DESKTOP_VER,
+                "window.__desktop=true;window.__desktopVer='%s';window.__desktopTTS=%s;"
+                % (DESKTOP_VER, "true" if self.tts_ok else "false"),
                 WebKit2.UserContentInjectedFrames.TOP_FRAME,
                 WebKit2.UserScriptInjectionTime.START, None, None))
+            ucm.register_script_message_handler("gk")   # 网页 → 壳 的桥
+            ucm.connect("script-message-received::gk", self.on_msg)
         except Exception:
             pass
         # 下载（更新用的 .deb、导出的文件等）默认存到「下载」文件夹
@@ -119,6 +131,41 @@ class Gongkao(Gtk.Application):
             self.web.set_zoom_level(1.0)
             return True
         return False
+
+    def on_msg(self, ucm, result):
+        """网页调 window.webkit.messageHandlers.gk.postMessage(JSON) → 这里执行。
+           目前用于朗读：WebKit 里没有 speechSynthesis，借系统的 speech-dispatcher 发声。"""
+        try:
+            import json
+            d = json.loads(result.get_js_value().to_string())
+        except Exception:
+            return
+        act = d.get("a")
+        if act == "tts":
+            self._tts_stop()
+            text = (d.get("text") or "")[:4000]
+            if not text:
+                return
+            rate = int(max(-80, min(80, (float(d.get("rate") or 1.0) - 1.0) * 60)))   # 1.0 → 0
+            try:
+                self._tts = subprocess.Popen(["spd-say", "-l", "zh", "-r", str(rate), "-w", "--", text],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+        elif act == "tts_stop":
+            self._tts_stop()
+
+    def _tts_stop(self):
+        try:
+            subprocess.run(["spd-say", "-C"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        except Exception:
+            pass
+        p = getattr(self, "_tts", None)
+        if p and p.poll() is None:
+            try:
+                p.terminate()
+            except Exception:
+                pass
 
     def on_download(self, ctx, download):
         download.connect("decide-destination", self._dl_dest)
