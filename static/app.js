@@ -5058,6 +5058,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     const p = JSON.parse(localStorage.getItem('aifab') || 'null');
     if (p) { fab.style.left = p.x + 'px'; fab.style.top = p.y + 'px'; fab.style.right = 'auto'; fab.style.bottom = 'auto'; }
   } catch (_) {}
+  requestAnimationFrame(fabClamp);          // 上次记的位置可能落在这个窗口外面，先夹回来
 
   function dirs() {                       // 扇出方向：别扇到屏幕外
     const r = fab.getBoundingClientRect();
@@ -6031,10 +6032,28 @@ function createDock(el, key, defDock, onChange) {
   return { st, apply, set, toggleFull, dockDrag, isFull: () => st.dock === 'full' };
 }
 
+/* 记住的位置要按「当前窗口」夹回来：换台设备 / 桌面版窗口更小时，
+   否则球会停在窗口外面，看起来就是「悬浮球不见了」。 */
+function fabClamp() {
+  const fab = $('#fab');
+  if (!fab || !innerWidth || !innerHeight) return;      // 还没完成布局就先别动
+  if (!fab.style.left && !fab.style.top) return;        // 没拖过 → 用 CSS 默认角落，不用管
+  const r = fab.getBoundingClientRect();
+  const w = r.width || 50, h = r.height || 50;
+  const x = Math.min(Math.max(4, r.left), innerWidth - w - 4);
+  const y = Math.min(Math.max(4, r.top), innerHeight - h - 4);
+  if (Math.abs(x - r.left) < .5 && Math.abs(y - r.top) < .5) return;
+  fab.style.left = x + 'px'; fab.style.top = y + 'px';
+  fab.style.right = 'auto'; fab.style.bottom = 'auto';
+  try { localStorage.setItem('aifab', JSON.stringify({ x, y })); } catch (_) {}
+}
+addEventListener('resize', fabClamp);
+addEventListener('load', () => requestAnimationFrame(fabClamp));
+
 /* 悬浮球别被面板压住：挡住就挪到面板外；面板全屏时藏起来 */
 function avoidFab() {
   const fab = $('#fab');
-  if (!fab) return;
+  if (!fab || !innerWidth) return;
   const open = [$('#pad'), $('#ai-panel')].filter(p => p && !p.classList.contains('hidden'));
   document.body.classList.toggle('pad-full', open.some(p => p.classList.contains('dk-full')));
   if (!open.length || document.body.classList.contains('pad-full')) return;
