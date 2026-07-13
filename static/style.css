@@ -2275,3 +2275,6 @@ body.pad-full .fab{display:none;}      /* 草稿纸全屏书写时，悬浮球�
 .pad.narrow .pad-c{width:18px;height:18px;}
 .pad.narrow .pad-pg{min-width:38px;font-size:12px;}
 .pad.narrow .pad-doc{max-width:100%;}
+/* 巩固测试：题目上的板块标签（行测五个板块都会出现） */
+.dt-mod{display:inline-block;margin-right:7px;padding:1px 7px;border-radius:20px;
+  font-size:11.5px;font-weight:600;color:#fff;vertical-align:1px;}

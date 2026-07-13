@@ -2379,7 +2379,7 @@ const FEATURES = [
   { name: '应用文上位词', desc: '应用文 · 公文规范上位表述，按场景归类', kw: '应用文上位词公文规范表述通知意见倡议书规范用语提法', open: () => openGongwen() },
   { name: '错题本', desc: '拍照/输入 · AI 判题型给解析', kw: '错题刷题', open: () => openWrongq() },
   { name: '草稿本', desc: '错题本 · 平时打草稿/演算，手写不识别，自动保存', kw: '草稿本草稿纸打草稿演算竖式手写画板白板涂鸦计算', open: () => openDrafts() },
-  { name: '巩固测试', desc: '任务清单 · 按当天计划出题，背题/测试两种模式', kw: '巩固测试测验做题背题模式服务端判分每日测试', open: () => { openTasks(); setTimeout(() => tkSwitch('todo'), 60); } },
+  { name: '巩固测试', desc: '任务清单 · 每日任务里，按当天计划出题，背题/测试两种模式', kw: '巩固测试测验做题背题模式服务端判分每日测试', open: () => { openTasks(); setTimeout(() => tkSwitch('daily'), 60); } },
   { name: '计划记录', desc: '任务清单 · 历史计划回看 + 进度分析', kw: '计划记录历史回看进度分析冷落模块', open: () => openPlanLog() },
   { name: '经典著作', desc: '毛泽东选集 · 全文精读 + AI 导读', kw: '经典著作毛选毛泽东选集精读朗读', open: () => openWorks() },
   { name: '今日复习', desc: '遗忘曲线 · 该复习的都在这', kw: '复习遗忘曲线艾宾浩斯背诵', open: () => openReview() },
@@ -3612,7 +3612,8 @@ function renderDtest() {
     }).join('');
     const e = dtExp(i);
     const exp = revealed ? `<div class="dt-exp"><b>正确答案 ${esc(dtAns(i))}</b>${e.explain ? ' · ' + esc(e.explain) : ''}${e.source ? ` <span class="dt-src">${esc(e.source)}</span>` : ''}</div>` : '';
-    return `<div class="dt-q"><div class="dt-qt">${i + 1}. ${esc(it.q)}</div><div class="dt-opts">${opts}</div>${exp}</div>`;
+    const mod = it.module ? `<span class="dt-mod" style="background:${PL_MOD_COLOR[it.module] || '#6b7280'}">${esc(it.module)}</span>` : '';
+    return `<div class="dt-q"><div class="dt-qt">${mod}${i + 1}. ${esc(it.q)}</div><div class="dt-opts">${opts}</div>${exp}</div>`;
   }).join('');
   let foot;
   if (dtSubmitted) {
@@ -5350,7 +5351,7 @@ function ntfGo(link) {
     works: () => openWorks(),
     partydict: () => openPartyDict(),
     policydoc: () => openPolicyDocs(),
-    dtest: () => { openTasks(); setTimeout(() => tkSwitch('todo'), 60); },
+    dtest: () => { openTasks(); setTimeout(() => tkSwitch('daily'), 60); },   // 巩固测试在「每日任务」里
     plan: () => { openTasks(); setTimeout(() => tkSwitch('plan'), 60); },
   }[k];
   if (go) go(); else toast('这条消息没有可跳转的位置');

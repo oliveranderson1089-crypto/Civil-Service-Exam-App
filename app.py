@@ -4529,8 +4529,8 @@ ROADMAP_40 = {
                     "只保 10 题左右的会做题，其余果断放弃换时间——140 分不是靠数量关系堆出来的。",
     # 每日固定动作：直接用 App 里已有的内容，不用另外找资料
     "fixed": [
-        {"t": "晨读 30 分钟：成语 + 实词辨析", "link": "idiom",
-         "note": "起床先背，别碰手机。App「成语词语积累」+「常考·高频成语/实词」就是你的《实词辨析1500》"},
+        {"t": "晨读 30 分钟：读「常考」里的高频成语 / 实词 / 上位词", "link": "changkao",
+         "note": "起床先背，别碰手机。读 App「常考」里按真题考频排的新词（不是复习你已收录的——那是「今日复习」的活，别重复）"},
         {"t": "碎片时间刷时政（替代刷短视频）", "link": "news",
          "note": "App「每日时政」每天自动更新，通勤/排队/洗漱时看，相当于半月谈每日时政"},
         {"t": "睡前 20 分钟：理论 / 要文 / 习语金句", "link": "theory",
@@ -4540,7 +4540,7 @@ ROADMAP_40 = {
         {"t": "到期复习（遗忘曲线）", "link": "review",
          "note": "App「今日复习」按艾宾浩斯到期推送，先清它再学新的"},
         {"t": "巩固测试 10~15 题", "link": "dtest",
-         "note": "任务清单里的「巩固测试」，按当天计划出题，用「测试模式」自测"},
+         "note": "在「任务清单 → 每日任务」里，按当天计划出题（行测五个板块都有），用「测试模式」自测"},
         {"t": "演算用草稿纸 / 草稿本", "link": "drafts",
          "note": "做题时左下角「📝 草稿纸」，平时演算用错题本里的「📓 草稿本」"},
     ],
@@ -4802,6 +4802,9 @@ def _roadmap_prompt(rm):
         "· 模块优先级：%s" % d.get("priority", ""),
         "· 每日固定动作（这些也要排成任务）：%s" % "；".join(x["t"] for x in d.get("fixed", [])),
     ]
+    lines.append("· link 必须选对地方：晨读/背高频词 → changkao（读「常考」里的新词，"
+                 "**不要**和「到期复习」重复，那是 review 的活）；巩固测试 → dtest（在「任务清单·每日任务」里，"
+                 "**不是**题库 quiz）；到期复习 → review；错题 → wrongq；刷套卷 → quiz；申论 → shenlun。")
     if rm["review_day"]:
         lines.append("· ★ 今天是【复盘日】：上午一套行测限时套题（严格 120 分钟），下午全套订正 + 错因归因，"
                      "晚上错题过筛 + 看进度分析；把刷新题的量减下来，别再堆新知识。")
@@ -4994,44 +4997,85 @@ def plan_restore(log_id):
 
 
 # ---------------------------------------------------------------- 每日巩固测试（按当天学的内容出小测）
+# 巩固测试的模块配额：行测五个板块都要有，不能只出常识
+DTEST_QUOTA = {
+    10: {"言语理解": 3, "判断推理": 2, "资料分析": 1, "数量关系": 1, "常识判断": 3},
+    15: {"言语理解": 4, "判断推理": 3, "资料分析": 2, "数量关系": 2, "常识判断": 4},
+}
+
+
 def _dtest_material(db, today):
-    """凑出今天/最近学的可考内容：常识、时政、成语、素材。太少就往前放宽几天。"""
-    parts = []
+    """凑出可考素材，按板块分开给：常识/时政（常识判断）、成语实词上位词（言语理解）、我的错题（出变式题）。"""
+    m = {"常识": [], "言语": [], "错题": []}
     cs = db.execute("SELECT board, COALESCE(NULLIF(title,''),topic) t, content FROM changshi_items "
-                    "WHERE date=? LIMIT 14", (today,)).fetchall()
+                    "WHERE date=? LIMIT 12", (today,)).fetchall()
     if len(cs) < 4:
         cs = db.execute("SELECT board, COALESCE(NULLIF(title,''),topic) t, content FROM changshi_items "
-                        "WHERE date>=date('now','localtime','-3 day') ORDER BY date DESC LIMIT 14").fetchall()
+                        "WHERE date>=date('now','localtime','-3 day') ORDER BY date DESC LIMIT 12").fetchall()
     for r in cs:
-        parts.append("【常识·%s】%s：%s" % (r["board"] or "", r["t"] or "", (r["content"] or "")[:120]))
-    nw = db.execute("SELECT title, ai_summary FROM news_items WHERE date(created_at)=? LIMIT 8", (today,)).fetchall()
-    if len(nw) < 3:
-        nw = db.execute("SELECT title, ai_summary FROM news_items "
-                        "WHERE date(created_at)>=date('now','localtime','-3 day') ORDER BY id DESC LIMIT 8").fetchall()
+        m["常识"].append("【常识·%s】%s：%s" % (r["board"] or "", r["t"] or "", (r["content"] or "")[:110]))
+    nw = db.execute("SELECT title, ai_summary FROM news_items "
+                    "WHERE date(created_at)>=date('now','localtime','-3 day') ORDER BY id DESC LIMIT 8").fetchall()
     for r in nw:
-        parts.append("【时政】%s：%s" % (r["title"] or "", (r["ai_summary"] or "")[:120]))
-    for r in db.execute("SELECT word, explanation FROM entries WHERE user_id=? ORDER BY id DESC LIMIT 12", (uid(),)):
-        parts.append("【成语】%s：%s" % (r["word"] or "", (r["explanation"] or "")[:100]))
-    for r in db.execute("SELECT kind, topic, content FROM sucai_items WHERE date=? LIMIT 6", (today,)):
-        parts.append("【素材·%s】%s：%s" % (r["kind"] or "", r["topic"] or "", (r["content"] or "")[:100]))
-    return parts
+        m["常识"].append("【时政】%s：%s" % (r["title"] or "", (r["ai_summary"] or "")[:110]))
+    for r in db.execute("SELECT title, content FROM theory_items ORDER BY RANDOM() LIMIT 4"):
+        m["常识"].append("【理论】%s：%s" % (r["title"] or "", (r["content"] or "")[:90]))
+    # 言语：我收录的成语词语 + 常考里的高频成语/实词/上位词
+    for r in db.execute("SELECT word, explanation FROM entries WHERE user_id=? ORDER BY RANDOM() LIMIT 8", (uid(),)):
+        m["言语"].append("【成语/词语】%s：%s" % (r["word"] or "", (r["explanation"] or "")[:90]))
+    for r in db.execute("SELECT board, title, content FROM changkao_items "
+                        "WHERE board IN ('高频成语','实词搭配','上位词') ORDER BY RANDOM() LIMIT 10"):
+        m["言语"].append("【常考·%s】%s：%s" % (r["board"] or "", r["title"] or "", (r["content"] or "")[:90]))
+    # 错题：按板块给，出「同考点变式题」最有价值
+    for r in db.execute("SELECT board, qtype, question, points FROM wrong_questions "
+                        "WHERE user_id=? ORDER BY id DESC LIMIT 8", (uid(),)):
+        m["错题"].append("【错题·%s】%s｜考点：%s" % (r["board"] or r["qtype"] or "", (r["question"] or "")[:80],
+                                              (r["points"] or "")[:50]))
+    return m
 
 
 def _gen_dtest(db, today, n=10):
     n = 15 if int(n) >= 15 else 10          # 题量只支持 10 / 15
-    mats = _dtest_material(db, today)
-    if len(mats) < 4:
-        return None, "今天还没积累够可测的内容（常识/时政/成语等），先学一会儿再来测～"
+    m = _dtest_material(db, today)
+    quota = DTEST_QUOTA[n]
+    if not m["常识"] and not m["言语"]:
+        return None, "还没积累够可测的内容（常识/时政/成语等），先学一会儿再来测～"
+
+    mat = ""
+    for k, title in (("常识", "常识 / 时政 / 理论素材（出常识判断题用）"),
+                     ("言语", "成语 / 实词 / 上位词素材（出言语理解题用）"),
+                     ("错题", "他最近做错的题（优先出同考点的变式题）")):
+        if m[k]:
+            mat += "\n【%s】\n" % title + "\n".join("· " + x for x in m[k][:14]) + "\n"
+
     prompt = (
-        "下面是一名公考考生最近学习的内容（常识、时政、成语、素材）。请据此出一份「巩固小测」，"
-        "正好 %d 道**单选题**，考点必须来自下面材料、答案唯一且明确，难度贴近公考常识判断。\n"
-        "每题：题干清楚；4 个选项 A/B/C/D；answer 是正确选项字母；explain 一句话解析；"
-        "source 标这题考的是哪条（如「时政-乡村振兴」「成语-抑扬顿挫」）。\n"
-        '只输出 JSON：{"items":[{"q":"","options":["A. …","B. …","C. …","D. …"],"answer":"A","explain":"","source":""}]}\n\n'
-        % n + "\n".join("· " + m for m in mats[:40]))
+        "给一名四川省考考生出一份「每日巩固小测」，正好 %d 道**单选题**，"
+        "**行测五个板块都要覆盖**，严格按这个配额出：%s。\n\n"
+        "每个板块怎么出：\n"
+        "· 常识判断：只能考下面给的常识/时政/理论素材里的考点。\n"
+        "· 言语理解：用下面给的成语/实词/上位词，出**逻辑填空**（题干要有完整语境，四个近义词选项）"
+        "或**语句衔接/病句**，考的是辨析而不是背释义。\n"
+        "· 判断推理：出**纯文字**题型——类比推理 / 定义判断 / 逻辑判断（翻译推理、削弱加强）。"
+        "**绝对不要出图形推理**（这里显示不了图）。\n"
+        "· 资料分析：题干里**自己给一小段可计算的统计数据**（文字表述即可，如「2024 年 A 市 GDP 3200 亿元，"
+        "同比增长 5.2%%，其中第三产业 1920 亿元…」），再问增长率 / 比重 / 倍数 / 平均数，"
+        "**数字必须真的算得出来**，选项要有干扰性。\n"
+        "· 数量关系：出工程 / 行程 / 利润 / 排列组合 / 容斥这类经典计算题。\n"
+        "· **计算题（资料分析、数量关系）必须自查一遍**：把数字设计成能算出**干净答案**的（整数或标准百分数）；"
+        "正确选项要明显唯一，不能出现两个选项都「约等于」结果的情况；"
+        "如果结果不是整数，题干要问「约为多少」并保证正确项明显最接近；工程/人数这类必须是整数的，题目就设计成整除。\n"
+        "· 如果给了「他做错的题」，优先出**同考点的变式题**（换个数据/换个情境，考同一个知识点）。\n\n"
+        "每题字段：q 题干；options 四个选项（形如 \"A. …\"）；answer 正确选项字母；"
+        "explain 一句话解析（讲清为什么，别只说答案）；module 板块名（必须是 言语理解/判断推理/资料分析/数量关系/常识判断 之一）；"
+        "source 这题考什么（如「时政-乡村振兴」「成语-抑扬顿挫」「错题变式-资料分析比重」）。\n"
+        '只输出 JSON：{"items":[{"q":"","options":["A. …","B. …","C. …","D. …"],"answer":"A",'
+        '"explain":"","module":"","source":""}]}\n'
+        % (n, "、".join("%s %d 题" % (k, v) for k, v in quota.items())) + mat)
+
     rep, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是公考命题老师，只根据给定材料出单选题，答案准确、解析简明，严格输出 JSON。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=4000, timeout=180, json_mode=True)
+        [{"role": "system", "content": "你是四川省考命题老师。按要求的板块配额出单选题，"
+                                       "答案唯一且经得起推敲，计算题的数字必须算得出来。严格输出 JSON。"},
+         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=6000, timeout=240, json_mode=True)
     if err:
         return None, "AI 出题失败，请稍后再试"
     try:
@@ -5048,10 +5092,11 @@ def _gen_dtest(db, today, n=10):
 
 
 def _dtest_public(items, exam):
-    """服务端判分模式(exam)下，发到前端的题目去掉答案与解析，交卷才由服务端判。"""
+    """服务端判分模式(exam)下，发到前端的题目去掉答案与解析，交卷才由服务端判（板块标签保留）。"""
     if not exam:
         return items
-    return [{"q": it.get("q", ""), "options": it.get("options") or []} for it in items]
+    return [{"q": it.get("q", ""), "options": it.get("options") or [],
+             "module": it.get("module", "")} for it in items]
 
 
 @app.get("/api/dtest")
