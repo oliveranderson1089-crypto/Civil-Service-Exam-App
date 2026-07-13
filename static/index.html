@@ -475,6 +475,42 @@
     </div>
 
     <div class="acct-sec">
+      <div class="acct-sec-t">🖼️ 外观定制</div>
+      <p class="acct-hint">换头像和壁纸。图片只存在你自己的账号下，手机和电脑同步。</p>
+      <div class="skin-row">
+        <div class="skin-item">
+          <div class="skin-prev skin-av" id="sk-avatar"><span>公</span></div>
+          <div class="skin-lb">头像<span>左上角那个</span></div>
+          <div class="skin-btns">
+            <label class="btn tiny">更换<input type="file" accept="image/*" hidden data-skin="avatar"></label>
+            <button class="btn tiny" data-skindel="avatar">恢复默认</button>
+          </div>
+        </div>
+        <div class="skin-item">
+          <div class="skin-prev" id="sk-wall_app"><span>无</span></div>
+          <div class="skin-lb">应用内壁纸<span>做背景，自动加蒙版保证看得清</span></div>
+          <div class="skin-btns">
+            <label class="btn tiny">更换<input type="file" accept="image/*" hidden data-skin="wall_app"></label>
+            <button class="btn tiny" data-skindel="wall_app">清除</button>
+          </div>
+        </div>
+        <div class="skin-item">
+          <div class="skin-prev" id="sk-wall_login"><span>无</span></div>
+          <div class="skin-lb">登录 / 加载页壁纸<span>打开应用第一眼看到的</span></div>
+          <div class="skin-btns">
+            <label class="btn tiny">更换<input type="file" accept="image/*" hidden data-skin="wall_login"></label>
+            <button class="btn tiny" data-skindel="wall_login">清除</button>
+          </div>
+        </div>
+      </div>
+      <div class="skin-dim" id="skin-dim-row">
+        <label>壁纸蒙版浓度<span id="skin-dimv">55%</span></label>
+        <input type="range" id="skin-dim" min="0" max="90" step="5" value="55">
+        <p class="acct-hint">壁纸太花会看不清字，这个把它压暗/压淡一点。</p>
+      </div>
+    </div>
+
+    <div class="acct-sec">
       <div class="acct-sec-t">📥 下载客户端</div>
       <p class="acct-hint">装成独立应用更顺手：自己的图标、独立窗口、单独登录。</p>
       <a class="btn acct-btn" href="/apk" download="gongkao.apk">📱 安卓手机版（.apk）</a>

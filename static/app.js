@@ -147,6 +147,7 @@ async function init() {
     SECTIONS = d.sections; IDIOM_BOARD = d.idiom_board;
     ALL_BOARDS = SECTIONS.flatMap(s => s.boards);
   } catch (e) { return; }
+  loadSkin();                      // 头像 / 壁纸（不 await，别拖慢首屏）
   $('#admin-btn').classList.toggle('hidden', !ME.is_admin);
   $('#home-cards').innerHTML =
     SECTIONS.map(s => `
@@ -4984,6 +4985,7 @@ async function openAccount() {
       .forEach(b => b.classList.toggle('hidden', !IN_APP));
     $('#acct-app-hint').classList.toggle('hidden', !IS_DESKTOP);
     $('#acct-dver').textContent = 'v' + (DESKTOP_VER || '?');
+    renderSkinPrev();
     refreshNotifyBtn();
   } catch (e) { toast(e.message, true); }
 }
@@ -6328,3 +6330,84 @@ $('#wq-drafts').onclick = openDrafts;
    若直接用同名守卫(window.padRebuild)，脚本刚开始就会被误判为"已就绪"而提前调用。 */
 window.__padView = padOnView;
 window.__padTheme = () => { if (padInited && !$('#pad').classList.contains('hidden')) padRebuild(); };
+
+/* ================= 外观：头像 / 壁纸 =================
+   壁纸铺在 body 上（fixed，不跟着滚），上面盖一层可调浓度的蒙版保证正文看得清。
+   登录页在没登录时读不到接口，所以把壁纸 URL 缓存进 localStorage，login.html 自己取。 */
+let SKIN = { avatar: '', wall_app: '', wall_login: '' };
+const skinDim = () => Math.min(90, Math.max(0, parseInt(localStorage.getItem('skinDim') || '55', 10)));
+
+function applySkin() {
+  // 左上角头像
+  const logo = $('#brand-logo');
+  if (logo) {
+    if (SKIN.avatar) {
+      logo.style.backgroundImage = 'url("' + SKIN.avatar + '")';
+      logo.classList.add('has-img');
+      logo.textContent = '';
+    } else {
+      logo.style.backgroundImage = '';
+      logo.classList.remove('has-img');
+      logo.textContent = '公';
+    }
+  }
+  // 应用内壁纸
+  const b = document.body;
+  b.classList.toggle('has-wall', !!SKIN.wall_app);
+  b.style.setProperty('--wall', SKIN.wall_app ? 'url("' + SKIN.wall_app + '")' : 'none');
+  b.style.setProperty('--wall-dim', (skinDim() / 100).toFixed(2));
+  // 登录页要用的，缓存到本地（它没登录，拿不到接口）
+  try {
+    localStorage.setItem('wallLogin', SKIN.wall_login || '');
+    localStorage.setItem('skinDim', String(skinDim()));
+  } catch (_) {}
+}
+async function loadSkin() {
+  try {
+    SKIN = await api('/api/skin');
+    applySkin();
+  } catch (_) {}
+}
+function renderSkinPrev() {
+  [['avatar', '公'], ['wall_app', '无'], ['wall_login', '无']].forEach(([k, empty]) => {
+    const el = $('#sk-' + k);
+    if (!el) return;
+    if (SKIN[k]) { el.style.backgroundImage = 'url("' + SKIN[k] + '")'; el.innerHTML = ''; }
+    else { el.style.backgroundImage = ''; el.innerHTML = '<span>' + empty + '</span>'; }
+  });
+  $('#skin-dim').value = skinDim();
+  $('#skin-dimv').textContent = skinDim() + '%';
+  $('#skin-dim-row').classList.toggle('hidden', !SKIN.wall_app && !SKIN.wall_login);
+}
+document.addEventListener('change', async e => {
+  const inp = e.target.closest('input[data-skin]');
+  if (!inp || !inp.files || !inp.files[0]) return;
+  const kind = inp.dataset.skin, f = inp.files[0];
+  inp.value = '';
+  if (f.size > 12 * 1024 * 1024) { toast('图片太大了（超过 12MB）', true); return; }
+  toast('上传中…');
+  try {
+    const fd = new FormData(); fd.append('file', f);
+    const d = await api('/api/skin/' + kind, { method: 'POST', body: fd });
+    SKIN[kind] = d.url + '?t=' + Date.now();      // 加时间戳，绕过缓存立刻看到新图
+    applySkin(); renderSkinPrev();
+    toast(kind === 'avatar' ? '头像已更换' : '壁纸已更换');
+  } catch (err) { toast(err.message, true); }
+});
+$('#view-account').addEventListener('click', async e => {
+  const del = e.target.closest('[data-skindel]');
+  if (!del) return;
+  const kind = del.dataset.skindel;
+  if (!SKIN[kind]) return;
+  if (!await appConfirm(kind === 'avatar' ? '恢复成默认头像？' : '清除这张壁纸？', { title: '外观定制' })) return;
+  try {
+    await api('/api/skin/' + kind, { method: 'DELETE' });
+    SKIN[kind] = ''; applySkin(); renderSkinPrev();
+    toast('已恢复默认');
+  } catch (err) { toast(err.message, true); }
+});
+$('#skin-dim').addEventListener('input', e => {
+  localStorage.setItem('skinDim', e.target.value);
+  $('#skin-dimv').textContent = e.target.value + '%';
+  applySkin();
+});

@@ -2330,3 +2330,39 @@ body.dark{--c1:#3f92d6;--c2:#cf7c33;--c3:#2fa36c;--c4:#8d72d1;
 .qz-figopt{position:relative;display:grid !important;place-items:center;padding:10px 4px !important;}
 .qz-figopt .fg{width:60px;height:60px;color:var(--text);}
 @media(max-width:480px){.qz-opts.qz-figs{grid-template-columns:repeat(2,1fr);}}
+
+/* ================= 外观定制：头像 / 壁纸 ================= */
+/* 壁纸固定铺底（不跟着滚），上面一层可调浓度的蒙版——壁纸再花也不会看不清字 */
+body.has-wall{background:transparent;}
+body.has-wall::before{content:"";position:fixed;inset:0;z-index:-2;
+  background:var(--wall) center/cover no-repeat;}
+body.has-wall::after{content:"";position:fixed;inset:0;z-index:-1;
+  background:rgba(244,246,249,calc(1 - var(--wall-dim,.55)));}
+body.has-wall.dark::after{background:rgba(15,20,30,calc(1 - var(--wall-dim,.55)));}
+body.has-wall main{background:transparent;}
+/* 有壁纸时卡片稍微透一点，才看得出底图 */
+body.has-wall .home-card,body.has-wall .gk-card,body.has-wall .acct-sec,
+body.has-wall .poly-card,body.has-wall .pd-item{backdrop-filter:blur(2px);}
+
+/* 左上角头像 */
+.logo-min.has-img{background:center/cover no-repeat;background-image:inherit;
+  color:transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);}
+
+/* 账户页的外观定制区 */
+.skin-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;}
+.skin-item{text-align:center;}
+.skin-prev{height:84px;border-radius:12px;border:1.5px dashed var(--line);
+  background:var(--bg) center/cover no-repeat;display:grid;place-items:center;margin-bottom:7px;}
+.skin-prev span{font-size:13px;color:var(--muted);}
+.skin-prev.skin-av{width:64px;height:64px;border-radius:16px;margin:0 auto 7px;
+  background:linear-gradient(135deg,var(--blue),#2c8fd6);border:none;}
+.skin-prev.skin-av span{font-size:26px;font-weight:700;color:#fff;}
+.skin-lb{font-size:13.5px;font-weight:600;margin-bottom:6px;}
+.skin-lb span{display:block;font-size:11.5px;font-weight:400;color:var(--muted);line-height:1.5;}
+.skin-btns{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;}
+.skin-btns .btn.tiny{padding:4px 10px;font-size:12.5px;}
+.skin-btns label.btn{cursor:pointer;}
+.skin-dim{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);}
+.skin-dim label{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;}
+.skin-dim label span{color:var(--blue);font-weight:600;}
+.skin-dim input[type=range]{width:100%;accent-color:var(--blue);}

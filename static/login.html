@@ -8,8 +8,13 @@
 <link rel="icon" href="icon-192.png">
 <link rel="stylesheet" href="style.css">
 <style>
-  body{display:grid;place-items:center;min-height:100vh;
+  body{display:grid;place-items:center;min-height:100vh;position:relative;
     background:linear-gradient(135deg,#1a6fb5,#2c8fd6);}
+  /* 自定义登录壁纸（URL 缓存在 localStorage，未登录也能显示）；上面盖一层蒙版保证输入框看得清 */
+  body.has-wall::before{content:"";position:fixed;inset:0;z-index:-2;
+    background:var(--wall) center/cover no-repeat;}
+  body.has-wall::after{content:"";position:fixed;inset:0;z-index:-1;
+    background:rgba(10,25,45,var(--wall-dim,.55));}
   .login-box{background:#fff;border-radius:18px;padding:30px 26px;width:100%;
     max-width:340px;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:16px;}
   .login-logo{width:56px;height:56px;border-radius:14px;
@@ -52,6 +57,17 @@
   </p>
 </form>
 <script>
+/* 登录页壁纸：登录后 app 会把 URL 缓存到 localStorage，这里直接取（本页没登录，问不到接口） */
+(function () {
+  try {
+    const w = localStorage.getItem('wallLogin');
+    if (!w) return;
+    const dim = Math.min(90, Math.max(0, parseInt(localStorage.getItem('skinDim') || '55', 10))) / 100;
+    document.body.style.setProperty('--wall', 'url("' + w + '")');
+    document.body.style.setProperty('--wall-dim', dim.toFixed(2));
+    document.body.classList.add('has-wall');
+  } catch (_) {}
+})();
 const form = document.getElementById('form');
 const $ = (id) => document.getElementById(id);
 let capId = '';
