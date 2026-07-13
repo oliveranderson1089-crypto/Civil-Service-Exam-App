@@ -2286,3 +2286,42 @@ body{
   padding-top:var(--push-t,0px);  padding-bottom:var(--push-b,0px);
   transition:padding .18s ease;
 }
+
+/* ================= 巩固测试：图形推理 + 资料分析材料（表格/图表） =================
+   图表配色经色盲分离度与对比度校验（validate_palette.js 全 PASS）：
+   日间 #1a6fb5 #c4661f #1e8449 #7a5cc0 / 夜间 #3f92d6 #cf7c33 #2fa36c #8d72d1 */
+:root{--c1:#1a6fb5;--c2:#c4661f;--c3:#1e8449;--c4:#7a5cc0;
+  --ch-grid:rgba(20,40,80,.10);--ch-mut:#7b8494;}
+body.dark{--c1:#3f92d6;--c2:#cf7c33;--c3:#2fa36c;--c4:#8d72d1;
+  --ch-grid:rgba(180,200,230,.13);--ch-mut:#8e97a6;}
+
+/* 图形推理 */
+.dt-seq{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 12px;}
+.dt-seq .fg{width:64px;height:64px;flex:none;color:var(--text);
+  border:1px solid var(--line);border-radius:10px;padding:4px;background:var(--card);}
+.dt-qm{width:64px;height:64px;flex:none;display:grid;place-items:center;font-size:26px;font-weight:700;
+  color:var(--blue);border:1.5px dashed var(--blue);border-radius:10px;}
+.dt-opts.dt-figs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.dt-figopt{position:relative;display:grid;place-items:center;padding:8px 4px !important;}
+.dt-figopt .fg{width:58px;height:58px;color:var(--text);}
+.dt-figl{position:absolute;top:4px;left:7px;font-size:11.5px;font-weight:700;color:var(--muted);}
+@media(max-width:480px){.dt-opts.dt-figs{grid-template-columns:repeat(2,1fr);}}
+
+/* 资料分析材料 */
+.dt-mat{background:var(--bg);border:1px solid var(--line);border-radius:12px;
+  padding:11px 12px;margin-bottom:11px;overflow-x:auto;}
+.dt-mt{font-size:13.5px;font-weight:700;margin-bottom:8px;display:flex;gap:8px;align-items:baseline;}
+.dt-mt span{font-size:11.5px;font-weight:400;color:var(--muted);}
+.ch{width:100%;height:auto;max-width:560px;display:block;}
+.ch-gr{stroke:var(--ch-grid);stroke-width:1;}
+.ch-ax{fill:var(--ch-mut);font-size:11px;}
+.ch-dl{fill:var(--text);font-size:11px;font-weight:600;}
+.ch-lg{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--text);margin-top:4px;}
+.ch-lg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;}
+.ch-tbtn{margin-top:8px;border:1px solid var(--line);background:var(--card);color:var(--blue);
+  font-size:12.5px;padding:4px 10px;border-radius:8px;cursor:pointer;}
+.ch-tb{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px;}
+.ch-tb th,.ch-tb td{border:1px solid var(--line);padding:6px 9px;text-align:left;}
+.ch-tb th{background:rgba(26,111,181,.07);font-weight:700;}
+.ch-tb td.num{text-align:right;font-variant-numeric:tabular-nums;}
+.dt-same{font-size:12.5px;color:var(--muted);margin-bottom:8px;}

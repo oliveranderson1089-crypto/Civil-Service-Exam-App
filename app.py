@@ -10,7 +10,9 @@ import base64
 import hashlib
 import io
 import json
+import math
 import os
+import random
 import re
 import secrets
 import shutil
@@ -5003,6 +5005,163 @@ DTEST_QUOTA = {
     15: {"言语理解": 4, "判断推理": 3, "资料分析": 2, "数量关系": 2, "常识判断": 4},
 }
 
+# ---------------------------------------------------------------- 图形推理：程序化出题
+# 不让 AI 画图：它画得出 SVG，但「图形规律」和它自己给的答案经常对不上。
+# 这里由代码按规律生成图形，**答案是构造出来的，必然正确**；干扰项也是按「差一个属性」造的。
+_FIG_STROKE = 'fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"'
+
+
+def _fig(inner):
+    return '<svg viewBox="0 0 88 88" xmlns="http://www.w3.org/2000/svg" class="fg">%s</svg>' % inner
+
+
+def _fig_rot(pts, deg, cx=44.0, cy=44.0):
+    a = math.radians(deg)
+    ca, sa = math.cos(a), math.sin(a)
+    return [((x - cx) * ca - (y - cy) * sa + cx, (x - cx) * sa + (y - cy) * ca + cy) for x, y in pts]
+
+
+def _fig_poly(pts):
+    return '<polygon points="%s" %s/>' % (" ".join("%.1f,%.1f" % p for p in pts), _FIG_STROKE)
+
+
+_FIG_L = [(26, 18), (64, 18), (64, 34), (42, 34), (42, 70), (26, 70)]      # 不对称的 L 形
+
+
+def _figq_rotate():
+    seq = [_fig(_fig_poly(_fig_rot(_FIG_L, d))) for d in (0, 90, 180)]
+    right = _fig(_fig_poly(_fig_rot(_FIG_L, 270)))
+    wrong = [_fig(_fig_poly(_fig_rot(_FIG_L, 0))),
+             _fig(_fig_poly(_fig_rot(_FIG_L, 90))),
+             _fig(_fig_poly([(88 - x, y) for x, y in _fig_rot(_FIG_L, 270)]))]   # 镜像，旋转得不到
+    return seq, right, wrong, "图形每次顺时针旋转 90°：0°→90°→180°，问号处应是 270°。注意有个选项是它的镜像——镜像靠旋转是得不到的。", "图形推理-旋转"
+
+
+def _figq_dots():
+    def f(n):
+        s = '<rect x="10" y="10" width="68" height="68" rx="8" %s/>' % _FIG_STROKE
+        for i in range(n):
+            a = math.radians(-90 + i * 360.0 / n)
+            s += '<circle cx="%.1f" cy="%.1f" r="6" fill="currentColor"/>' % (44 + 24 * math.cos(a), 44 + 24 * math.sin(a))
+        return _fig(s)
+    return [f(2), f(3), f(4)], f(5), [f(3), f(4), f(6)], "框里的黑点数依次是 2、3、4，成等差数列，问号处应有 5 个。", "图形推理-元素数量"
+
+
+def _figq_sides():
+    def f(n):
+        pts = [(44 + 30 * math.cos(math.radians(-90 + i * 360.0 / n)),
+                44 + 30 * math.sin(math.radians(-90 + i * 360.0 / n))) for i in range(n)]
+        return _fig(_fig_poly(pts))
+    return [f(3), f(4), f(5)], f(6), [f(5), f(7), f(8)], "边数依次为 3、4、5，问号处应是六边形。", "图形推理-边数递增"
+
+
+def _figq_lines():
+    def f(n):
+        s = '<circle cx="44" cy="44" r="34" %s/>' % _FIG_STROKE
+        for i in range(n):
+            a = math.radians(-90 + i * 360.0 / n)
+            s += ('<line x1="44" y1="44" x2="%.1f" y2="%.1f" stroke="currentColor" '
+                  'stroke-width="2.6" stroke-linecap="round"/>' % (44 + 32 * math.cos(a), 44 + 32 * math.sin(a)))
+        return _fig(s)
+    return [f(2), f(3), f(4)], f(5), [f(4), f(6), f(3)], "圆里的线段数依次为 2、3、4，问号处应有 5 条。", "图形推理-线条数"
+
+
+def _figq_regions():
+    def f(n):
+        s = '<rect x="10" y="24" width="68" height="40" %s/>' % _FIG_STROKE
+        for i in range(1, n):
+            x = 10 + 68.0 * i / n
+            s += ('<line x1="%.1f" y1="24" x2="%.1f" y2="64" stroke="currentColor" stroke-width="2.4"/>' % (x, x))
+        return _fig(s)
+    return [f(1), f(2), f(3)], f(4), [f(3), f(5), f(2)], "封闭区域数依次为 1、2、3，问号处应有 4 个封闭区域。", "图形推理-封闭区域数"
+
+
+# ---------------------------------------------------------------- 资料分析：程序化出题
+# 同样不让 AI 出：它会写「根据材料…」却根本不给材料，或者数字对不上。
+# 这里先造一份**内部自洽的统计数据**（等差设计，比重/增长率都是整数），再由代码算出答案。
+_ZL_CITY = ["A 市", "B 市", "C 市", "甲市", "乙市"]
+
+
+def _gen_ziliao(n_q=1):
+    """造一份材料 + n_q 道题（题目共用同一份材料）。数字都是设计好的，答案精确。"""
+    city = random.choice(_ZL_CITY)
+    rate = random.choice([4, 5, 6, 8])                 # 2024 年同比增速（%）
+    g2 = random.choice([2500, 3000, 3200, 3600, 4000])  # 2023 年 GDP
+    d = g2 * rate // 100                                # 等差步长，保证增速是整数
+    years = ["2021", "2022", "2023", "2024"]
+    gdp = [g2 - 2 * d, g2 - d, g2, g2 + d]
+    pct3 = random.choice([55, 60, 65])                  # 2024 年三产占比（整数）
+    s3 = gdp[3] * pct3 // 100
+    while gdp[3] * pct3 % 100:                          # 保证三产是整数
+        gdp = [x + 1 for x in gdp]
+        s3 = gdp[3] * pct3 // 100
+    third = [round(gdp[i] * (pct3 - 6 + 2 * i) / 100) for i in range(3)] + [s3]
+    first = [round(g * 0.05) for g in gdp]
+    second = [gdp[i] - first[i] - third[i] for i in range(4)]
+
+    mtype = random.choice(["table", "bar", "line"])
+    if mtype == "table":
+        material = {"type": "table", "title": "%s 2021—2024 年地区生产总值构成" % city, "unit": "亿元",
+                    "headers": ["年份", "地区生产总值", "第一产业", "第二产业", "第三产业"],
+                    "rows": [[years[i], gdp[i], first[i], second[i], third[i]] for i in range(4)]}
+    else:
+        material = {"type": mtype, "title": "%s 2021—2024 年地区生产总值与第三产业增加值" % city,
+                    "unit": "亿元", "labels": years,
+                    "series": [{"name": "地区生产总值", "data": gdp},
+                               {"name": "第三产业增加值", "data": third}]}
+
+    kinds = random.sample(["比重", "增长率", "年均增长量", "倍数"], k=min(n_q, 4))
+    out = []
+    for k in kinds:
+        if k == "比重":
+            ans = "%d%%" % pct3
+            wrong = ["%d%%" % (pct3 - 5), "%d%%" % (pct3 + 5),
+                     "%.1f%%" % (third[3] / gdp[2] * 100)]          # 分母用错年份
+            q = "2024 年 %s 第三产业增加值占地区生产总值的比重约为：" % city
+            ex = "比重 = 第三产业 ÷ 地区生产总值 = %d ÷ %d = %d%%。" % (third[3], gdp[3], pct3)
+        elif k == "增长率":
+            ans = "%d%%" % rate
+            wrong = ["%d%%" % (rate + 2), "%d%%" % max(1, rate - 2),
+                     "%.1f%%" % ((gdp[3] - gdp[1]) / gdp[1] * 100)]  # 多算了一年
+            q = "2024 年 %s 地区生产总值同比增长约：" % city
+            ex = "同比增长率 =（2024 − 2023）÷ 2023 =（%d − %d）÷ %d = %d%%。" % (gdp[3], gdp[2], gdp[2], rate)
+        elif k == "年均增长量":
+            ans = "%d 亿元" % d
+            wrong = ["%d 亿元" % (d * 2), "%d 亿元" % round((gdp[3] - gdp[0]) / 4),  # 除以 4 而不是 3
+                     "%d 亿元" % round(d * 1.5)]
+            q = "2021—2024 年 %s 地区生产总值的年均增长量约为：" % city
+            ex = "年均增长量 =（末年 − 初年）÷ 间隔年数 =（%d − %d）÷ 3 = %d 亿元（注意是 3 年间隔，不是 4）。" % (gdp[3], gdp[0], d)
+        else:
+            times = third[3] / first[3]
+            ans = "%.1f 倍" % times
+            wrong = ["%.1f 倍" % (times + 1), "%.1f 倍" % max(1.0, times - 1), "%.1f 倍" % (times / 2)]
+            q = "2024 年 %s 第三产业增加值约为第一产业的多少倍？" % city
+            ex = "倍数 = 第三产业 ÷ 第一产业 = %d ÷ %d ≈ %.1f 倍。" % (third[3], first[3], times)
+
+        opts = wrong + [ans]
+        random.shuffle(opts)
+        out.append({
+            "q": q,
+            "options": ["%s. %s" % ("ABCD"[i], o) for i, o in enumerate(opts)],
+            "answer": "ABCD"[opts.index(ans)], "explain": ex,
+            "module": "资料分析", "source": "资料分析-" + k, "material": material,
+        })
+    return out
+
+
+def _gen_figure_q():
+    """出一道图形推理：答案由构造保证正确，AI 碰都不碰。"""
+    seq, right, wrong, explain, source = random.choice(
+        [_figq_rotate, _figq_dots, _figq_sides, _figq_lines, _figq_regions])()
+    opts = wrong + [right]
+    random.shuffle(opts)
+    return {
+        "q": "从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性。",
+        "options": [], "figs": {"seq": seq, "opts": opts},
+        "answer": "ABCD"[opts.index(right)], "explain": explain,
+        "module": "判断推理", "source": source,
+    }
+
 
 def _dtest_material(db, today):
     """凑出可考素材，按板块分开给：常识/时政（常识判断）、成语实词上位词（言语理解）、我的错题（出变式题）。"""
@@ -5034,12 +5193,21 @@ def _dtest_material(db, today):
     return m
 
 
+DTEST_ORDER = ["言语理解", "判断推理", "资料分析", "数量关系", "常识判断"]
+
+
 def _gen_dtest(db, today, n=10):
     n = 15 if int(n) >= 15 else 10          # 题量只支持 10 / 15
     m = _dtest_material(db, today)
-    quota = DTEST_QUOTA[n]
+    quota = dict(DTEST_QUOTA[n])
     if not m["常识"] and not m["言语"]:
         return None, "还没积累够可测的内容（常识/时政/成语等），先学一会儿再来测～"
+
+    # 图形推理、资料分析都由代码出：答案是构造出来的，必然正确，材料也一定在
+    figs = [_gen_figure_q() for _ in range(1 if quota["判断推理"] >= 2 else 0)]
+    quota["判断推理"] -= len(figs)
+    zl = _gen_ziliao(quota["资料分析"]) if quota["资料分析"] else []
+    quota["资料分析"] = 0
 
     mat = ""
     for k, title in (("常识", "常识 / 时政 / 理论素材（出常识判断题用）"),
@@ -5048,20 +5216,19 @@ def _gen_dtest(db, today, n=10):
         if m[k]:
             mat += "\n【%s】\n" % title + "\n".join("· " + x for x in m[k][:14]) + "\n"
 
+    n_ai = n - len(figs) - len(zl)          # 图形题/资料分析已由程序出好，AI 只出剩下的
     prompt = (
-        "给一名四川省考考生出一份「每日巩固小测」，正好 %d 道**单选题**，"
-        "**行测五个板块都要覆盖**，严格按这个配额出：%s。\n\n"
+        "给一名四川省考考生出一份「每日巩固小测」的一部分：正好 %d 道**单选题**，"
+        "**严格按这个配额出，不要多出、不要凑数**：%s。\n\n"
         "每个板块怎么出：\n"
         "· 常识判断：只能考下面给的常识/时政/理论素材里的考点。\n"
         "· 言语理解：用下面给的成语/实词/上位词，出**逻辑填空**（题干要有完整语境，四个近义词选项）"
         "或**语句衔接/病句**，考的是辨析而不是背释义。\n"
         "· 判断推理：出**纯文字**题型——类比推理 / 定义判断 / 逻辑判断（翻译推理、削弱加强）。"
-        "**绝对不要出图形推理**（这里显示不了图）。\n"
-        "· 资料分析：题干里**自己给一小段可计算的统计数据**（文字表述即可，如「2024 年 A 市 GDP 3200 亿元，"
-        "同比增长 5.2%%，其中第三产业 1920 亿元…」），再问增长率 / 比重 / 倍数 / 平均数，"
-        "**数字必须真的算得出来**，选项要有干扰性。\n"
+        "图形推理已经由程序另外出好了，你**不要**出图形推理。\n"
+        "· 资料分析：已由程序另外出好（带真表格 / 图表），你**不要**出资料分析题。\n"
         "· 数量关系：出工程 / 行程 / 利润 / 排列组合 / 容斥这类经典计算题。\n"
-        "· **计算题（资料分析、数量关系）必须自查一遍**：把数字设计成能算出**干净答案**的（整数或标准百分数）；"
+        "· **计算题必须自查一遍**：把数字设计成能算出**干净答案**的（整数或标准百分数）；"
         "正确选项要明显唯一，不能出现两个选项都「约等于」结果的情况；"
         "如果结果不是整数，题干要问「约为多少」并保证正确项明显最接近；工程/人数这类必须是整数的，题目就设计成整除。\n"
         "· 如果给了「他做错的题」，优先出**同考点的变式题**（换个数据/换个情境，考同一个知识点）。\n\n"
@@ -5070,7 +5237,7 @@ def _gen_dtest(db, today, n=10):
         "source 这题考什么（如「时政-乡村振兴」「成语-抑扬顿挫」「错题变式-资料分析比重」）。\n"
         '只输出 JSON：{"items":[{"q":"","options":["A. …","B. …","C. …","D. …"],"answer":"A",'
         '"explain":"","module":"","source":""}]}\n'
-        % (n, "、".join("%s %d 题" % (k, v) for k, v in quota.items())) + mat)
+        % (n_ai, "、".join("%s %d 题" % (k, v) for k, v in quota.items() if v)) + mat)
 
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是四川省考命题老师。按要求的板块配额出单选题，"
@@ -5080,23 +5247,64 @@ def _gen_dtest(db, today, n=10):
         return None, "AI 出题失败，请稍后再试"
     try:
         items = [x for x in (json.loads(rep).get("items") or [])
-                 if x.get("q") and (x.get("options") or []) and x.get("answer")][:n]
+                 if x.get("q") and (x.get("options") or []) and x.get("answer")]
     except Exception:
         return None, "AI 返回格式异常，请重试"
     if not items:
         return None, "没能出出题目，请重试"
+
+    for it in items:                                  # 材料数据不干净就退回纯文字题干，别渲染出个空图
+        if not _dtest_ok_material(it.get("material")):
+            it.pop("material", None)
+
+    seen, uniq = set(), []
+    for it in items:                                  # AI 偶尔会重复出同一道题，去掉
+        k = (it.get("q") or "").strip()[:40]
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(it)
+    items = uniq[:n_ai] + figs + zl
+    items.sort(key=lambda x: DTEST_ORDER.index(x.get("module")) if x.get("module") in DTEST_ORDER else 99)
     db.execute("INSERT OR REPLACE INTO daily_quiz(user_id,date,questions_json) VALUES(?,?,?)",
                (uid(), today, json.dumps(items, ensure_ascii=False)))
     db.commit()
     return items, None
 
 
+def _dtest_ok_material(m):
+    """资料分析的材料必须是干净的结构化数据，数字得真是数字。"""
+    if not isinstance(m, dict):
+        return False
+    t = m.get("type")
+    if t == "table":
+        rows = m.get("rows") or []
+        return bool(m.get("headers")) and rows and all(isinstance(r, list) and r for r in rows)
+    if t in ("bar", "line", "pie"):
+        labels, series = m.get("labels") or [], m.get("series") or []
+        if not labels or not series:
+            return False
+        for s in series:
+            data = s.get("data") or []
+            if len(data) != len(labels) or not all(isinstance(v, (int, float)) for v in data):
+                return False
+        return True
+    return False
+
+
 def _dtest_public(items, exam):
     """服务端判分模式(exam)下，发到前端的题目去掉答案与解析，交卷才由服务端判（板块标签保留）。"""
     if not exam:
         return items
-    return [{"q": it.get("q", ""), "options": it.get("options") or [],
-             "module": it.get("module", "")} for it in items]
+    out = []
+    for it in items:
+        x = {"q": it.get("q", ""), "options": it.get("options") or [], "module": it.get("module", "")}
+        if it.get("material"):
+            x["material"] = it["material"]        # 资料分析的表格/图表要看得见
+        if it.get("figs"):
+            x["figs"] = it["figs"]                # 图形推理的图要看得见
+        out.append(x)
+    return out
 
 
 @app.get("/api/dtest")

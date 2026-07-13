@@ -3600,20 +3600,119 @@ function dtScore() {
   if (dtResults) return dtResults.reduce((n, r) => n + (r.correct ? 1 : 0), 0);
   return dtItems.reduce((n, it, i) => n + (dtChosen[i] === (it.answer || '').toUpperCase() ? 1 : 0), 0);
 }
+/* ---------- 资料分析的材料：表格 / 柱状图 / 折线图 / 饼图（内联 SVG，无外部库） ----------
+   颜色用 CSS 变量（--c1..--c4），日/夜间自动切换，不用重新渲染。配色经色盲分离度与对比度校验。 */
+function dtNum(v) { return (Math.round(v * 100) / 100).toLocaleString('zh-CN'); }
+function dtLegend(series) {
+  if (series.length < 2) return '';                 // 单系列不需要图例（标题已经说明它是什么）
+  return `<div class="ch-lg">${series.map((s, i) =>
+    `<span><i style="background:var(--c${i + 1})"></i>${esc(s.name)}</span>`).join('')}</div>`;
+}
+function dtChart(m) {
+  const W = 560, H = 250, PL = 52, PR = 14, PT = 14, PB = 34;   // 画布与内边距
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const labels = m.labels || [], series = m.series || [];
+  if (m.type === 'pie') {
+    const data = (series[0] || {}).data || [];
+    const tot = data.reduce((a, b) => a + b, 0) || 1;
+    let a0 = -Math.PI / 2, arcs = '';
+    data.forEach((v, i) => {
+      const a1 = a0 + v / tot * Math.PI * 2, big = (a1 - a0) > Math.PI ? 1 : 0;
+      const R = 92, cx = 150, cy = 125;
+      const x0 = cx + R * Math.cos(a0), y0 = cy + R * Math.sin(a0);
+      const x1 = cx + R * Math.cos(a1), y1 = cy + R * Math.sin(a1);
+      // 2px 表面间隙：扇区之间留一条底色描边，不靠颜色硬碰硬
+      arcs += `<path d="M${cx},${cy} L${x0.toFixed(1)},${y0.toFixed(1)} A${R},${R} 0 ${big} 1 ${x1.toFixed(1)},${y1.toFixed(1)} Z"
+        fill="var(--c${(i % 4) + 1})" stroke="var(--card)" stroke-width="2"><title>${esc(labels[i] || '')} ${dtNum(v)}${esc(m.unit || '')}</title></path>`;
+      const am = (a0 + a1) / 2, lx = cx + (R + 26) * Math.cos(am), ly = cy + (R + 26) * Math.sin(am);
+      arcs += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" class="ch-dl" text-anchor="${Math.cos(am) < -0.1 ? 'end' : (Math.cos(am) > 0.1 ? 'start' : 'middle')}">${esc(labels[i] || '')} ${dtNum(v)}${esc(m.unit || '')}</text>`;
+      a0 = a1;
+    });
+    return `<svg viewBox="0 0 ${W} ${H}" class="ch" role="img">${arcs}</svg>`;
+  }
+  const all = series.flatMap(s => s.data);
+  const max = Math.max(...all, 0), min = Math.min(...all, 0);
+  const top = max > 0 ? max * 1.12 : 1, bot = min < 0 ? min * 1.12 : 0;
+  // band 刻度（每个类别占一格、点画在格子中心）：柱组不会压住 Y 轴刻度，也不会被右边裁掉
+  const band = iw / Math.max(labels.length, 1);
+  const X = (i) => PL + band * (i + 0.5);
+  const Y = (v) => PT + ih - (v - bot) / (top - bot || 1) * ih;
+  let g = '';
+  for (let k = 0; k <= 4; k++) {                     // 网格线：弱化，不抢笔迹
+    const y = PT + ih * k / 4, v = top - (top - bot) * k / 4;
+    g += `<line x1="${PL}" y1="${y.toFixed(1)}" x2="${W - PR}" y2="${y.toFixed(1)}" class="ch-gr"/>
+      <text x="${PL - 8}" y="${(y + 4).toFixed(1)}" class="ch-ax" text-anchor="end">${dtNum(v)}</text>`;
+  }
+  g += labels.map((L, i) => `<text x="${X(i).toFixed(1)}" y="${H - 12}" class="ch-ax" text-anchor="middle">${esc(L)}</text>`).join('');
+  let marks = '';
+  if (m.type === 'bar') {
+    const bw = Math.min(28, band * 0.72 / Math.max(series.length, 1));   // 一格里放得下这组柱子
+    labels.forEach((L, i) => series.forEach((s, j) => {
+      const v = s.data[i], x = X(i) - (series.length * bw) / 2 + j * bw, y = Y(Math.max(v, 0)), h = Math.abs(Y(v) - Y(0));
+      // 数据端 4px 圆角、锚在基线；相邻柱之间留 2px 底色间隙
+      marks += `<rect x="${(x + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${Math.max(h, 1).toFixed(1)}"
+        rx="4" fill="var(--c${(j % 4) + 1})"><title>${esc(L)} · ${esc(s.name)} ${dtNum(v)}${esc(m.unit || '')}</title></rect>`;
+      if (series.length * labels.length <= 8)        // 点数少才直接标数值，多了就只留悬停
+        marks += `<text x="${(x + bw / 2).toFixed(1)}" y="${(y - 6).toFixed(1)}" class="ch-dl" text-anchor="middle">${dtNum(v)}</text>`;
+    }));
+  } else {
+    series.forEach((s, j) => {
+      const pts = s.data.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+      marks += `<polyline points="${pts}" fill="none" stroke="var(--c${(j % 4) + 1})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+      marks += s.data.map((v, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="4.5"
+        fill="var(--c${(j % 4) + 1})" stroke="var(--card)" stroke-width="2"><title>${esc(labels[i])} · ${esc(s.name)} ${dtNum(v)}${esc(m.unit || '')}</title></circle>`).join('');
+    });
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" class="ch" role="img">${g}${marks}</svg>`;
+}
+function dtTable(m) {
+  return `<table class="ch-tb"><thead><tr>${(m.headers || []).map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+    <tbody>${(m.rows || []).map(r => `<tr>${r.map((c, i) => `<td${i ? ' class="num"' : ''}>${esc(String(c))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+let _dtLastMat = '';
+function dtMaterial(m, i) {
+  if (!m) { _dtLastMat = ''; return ''; }
+  const key = JSON.stringify(m);
+  if (key === _dtLastMat) return '<div class="dt-same">↑ 根据上面这份材料作答</div>';  // 两题共用一份材料，不重复渲染
+  _dtLastMat = key;
+  const head = `<div class="dt-mt">${esc(m.title || '根据下列资料，回答问题')}${m.unit ? `<span>单位：${esc(m.unit)}</span>` : ''}</div>`;
+  if (m.type === 'table') return `<div class="dt-mat">${head}${dtTable(m)}</div>`;
+  // 图表另附「看数据表」，方便核对数字（也是无障碍要求：不能只靠图形）
+  const tb = { headers: ['项目', ...(m.labels || [])],
+    rows: (m.series || []).map(s => [s.name, ...s.data.map(v => dtNum(v))]) };
+  return `<div class="dt-mat">${head}${dtChart(m)}${dtLegend(m.series || [])}
+    <button class="ch-tbtn" data-chtb="${i}">📋 看数据表</button>
+    <div class="ch-tbwrap hidden" id="chtb-${i}">${dtTable(tb)}</div></div>`;
+}
+
 function renderDtest() {
+  _dtLastMat = '';
   const qs = dtItems.map((it, i) => {
     const revealed = dtRevealedAt(i);
-    const opts = (it.options || []).map((o, j) => {
-      const L = DT_L[j], chosen = dtChosen[i] === L, isAns = (dtAns(i) || '').toUpperCase() === L;
-      let cls = 'dt-opt';
-      if (revealed) { if (isAns) cls += ' correct'; else if (chosen) cls += ' wrong'; }
-      else if (chosen) cls += ' chosen';
-      return `<button class="${cls}" data-dtq="${i}" data-dtl="${L}" ${revealed ? 'disabled' : ''}>${esc(o)}</button>`;
-    }).join('');
+    const isFig = !!(it.figs && it.figs.opts);
+    const opts = isFig
+      ? it.figs.opts.map((svg, j) => {
+        const L = DT_L[j], chosen = dtChosen[i] === L, isAns = (dtAns(i) || '').toUpperCase() === L;
+        let cls = 'dt-opt dt-figopt';
+        if (revealed) { if (isAns) cls += ' correct'; else if (chosen) cls += ' wrong'; }
+        else if (chosen) cls += ' chosen';
+        return `<button class="${cls}" data-dtq="${i}" data-dtl="${L}" ${revealed ? 'disabled' : ''}>
+          <span class="dt-figl">${L}</span>${svg}</button>`;
+      }).join('')
+      : (it.options || []).map((o, j) => {
+        const L = DT_L[j], chosen = dtChosen[i] === L, isAns = (dtAns(i) || '').toUpperCase() === L;
+        let cls = 'dt-opt';
+        if (revealed) { if (isAns) cls += ' correct'; else if (chosen) cls += ' wrong'; }
+        else if (chosen) cls += ' chosen';
+        return `<button class="${cls}" data-dtq="${i}" data-dtl="${L}" ${revealed ? 'disabled' : ''}>${esc(o)}</button>`;
+      }).join('');
     const e = dtExp(i);
     const exp = revealed ? `<div class="dt-exp"><b>正确答案 ${esc(dtAns(i))}</b>${e.explain ? ' · ' + esc(e.explain) : ''}${e.source ? ` <span class="dt-src">${esc(e.source)}</span>` : ''}</div>` : '';
     const mod = it.module ? `<span class="dt-mod" style="background:${PL_MOD_COLOR[it.module] || '#6b7280'}">${esc(it.module)}</span>` : '';
-    return `<div class="dt-q"><div class="dt-qt">${mod}${i + 1}. ${esc(it.q)}</div><div class="dt-opts">${opts}</div>${exp}</div>`;
+    const mat = dtMaterial(it.material, i);
+    const seq = isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : '';
+    return `<div class="dt-q">${mat}<div class="dt-qt">${mod}${i + 1}. ${esc(it.q)}</div>${seq}
+      <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>${exp}</div>`;
   }).join('');
   let foot;
   if (dtSubmitted) {
@@ -3653,6 +3752,13 @@ async function dtFinish() {   // 背题模式做完，记录成绩
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 $('#dt-body').addEventListener('click', e => {
+  const tb = e.target.closest('[data-chtb]');          // 图表下方的「看数据表」
+  if (tb) {
+    const box = $('#chtb-' + tb.dataset.chtb);
+    const hidden = box.classList.toggle('hidden');
+    tb.textContent = hidden ? '📋 看数据表' : '📊 收起数据表';
+    return;
+  }
   const o = e.target.closest('[data-dtq]'); if (!o) return;
   const i = +o.dataset.dtq;
   if (dtRevealedAt(i)) return;              // 已揭晓的题不能再改
