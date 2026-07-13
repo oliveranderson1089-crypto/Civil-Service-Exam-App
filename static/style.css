@@ -1209,11 +1209,7 @@ img,svg,video{max-width:100%;}
 .aih-del:active{color:#e0524d;}
 .ai-backbtn{border:none;background:transparent;color:#fff;font-size:24px;cursor:pointer;
   padding:0 10px 2px 0;-webkit-tap-highlight-color:transparent;}
-#ai-fab{position:fixed;right:16px;bottom:calc(86px + env(safe-area-inset-bottom));z-index:58;
-  width:50px;height:50px;border-radius:50%;border:none;cursor:pointer;
-  background:linear-gradient(135deg,#7a5cc0,#5b8def);color:#fff;font-size:16px;font-weight:800;
-  box-shadow:0 5px 16px rgba(90,92,192,.45);-webkit-tap-highlight-color:transparent;}
-#ai-fab:active{transform:scale(.94);}
+/* 悬浮球样式见文件末尾 .fab */
 
 /* 习语金句 / 经典著作 */
 .xy-quote{font-family:"Kaiti SC","STKaiti","KaiTi","楷体",serif;font-size:17px;line-height:1.9;
@@ -1261,7 +1257,7 @@ img,svg,video{max-width:100%;}
 .ai-msg.assistant.ai-typing{padding-bottom:12px;}
 
 /* 修复：悬浮球拖动跟手（阻止浏览器把手势当页面滚动） */
-#ai-fab{touch-action:none;}
+#fab{touch-action:none;}
 /* 修复：对话菜单要显示在 AI 面板(z-index:90)之上 */
 #ai-chatmenu{z-index:130;}
 .chip-newcat{border-style:dashed;color:var(--blue);border-color:#a9c6ec;}
@@ -1357,7 +1353,7 @@ body.dark .theme-opt.on{background:#1c2a45;color:#7fb0ff;border-color:#3a6ad0;}
 /* PDF 全屏：顶栏、工具条、悬浮球全部让位，只留一个退出按钮 */
 body.viewer-full .topbar,
 body.viewer-full .viewer-bar,
-body.viewer-full #ai-fab{display:none !important;}
+body.viewer-full #fab{display:none !important;}
 body.viewer-full main{padding:0;}
 body.viewer-full #view-viewer{position:fixed;inset:0;z-index:95;background:#fff;}
 body.viewer-full #viewer-frame{width:100%;height:100%;border:0;padding:0;}
@@ -2095,20 +2091,32 @@ body.dark .plh-dhead b,body.dark .plh-title{color:#e2e7ef !important;}
 body.dark .plh-restore{background:#172234 !important;border-color:#26405f !important;color:#7fb3e8 !important;}
 
 /* ================= 草稿纸（做题演算，不做识别） ================= */
-#pad-fab{position:fixed;left:16px;bottom:calc(86px + env(safe-area-inset-bottom));z-index:58;
-  width:50px;height:50px;border-radius:50%;border:none;cursor:pointer;
-  background:linear-gradient(135deg,#f0a500,#e07b39);color:#fff;font-size:22px;
-  box-shadow:0 5px 16px rgba(224,123,57,.42);-webkit-tap-highlight-color:transparent;}
-#pad-fab:active{transform:scale(.94);}
-
-.pad{position:fixed;left:0;right:0;bottom:0;z-index:70;height:46vh;min-height:190px;
-  display:flex;flex-direction:column;background:var(--card);
-  border-top:1px solid var(--line);border-radius:16px 16px 0 0;
-  box-shadow:0 -8px 30px rgba(20,40,80,.18);touch-action:none;}
-.pad.full{top:0;height:100%;border-radius:0;}
-.pad.full .pad-grip{display:none;}
-.pad-grip{height:14px;flex:none;cursor:ns-resize;display:grid;place-items:center;}
-.pad-grip::before{content:"";width:44px;height:4px;border-radius:3px;background:var(--line);}
+.pad{position:fixed;z-index:70;display:flex;flex-direction:column;background:var(--card);
+  border:1px solid var(--line);box-shadow:0 -8px 30px rgba(20,40,80,.18);touch-action:none;}
+/* 停靠位：下 / 上 / 右 / 左 / 全屏（手柄 ✥ 拖到屏幕边缘即吸附） */
+.pad.dk-bottom{left:0;right:0;bottom:0;height:var(--pad-h,46vh);min-height:190px;
+  border-radius:16px 16px 0 0;padding-top:14px;}
+.pad.dk-top{left:0;right:0;top:0;height:var(--pad-h,46vh);min-height:190px;
+  border-radius:0 0 16px 16px;padding-bottom:14px;}
+.pad.dk-right{right:0;top:0;bottom:0;width:var(--pad-w,50vw);min-width:280px;
+  border-radius:16px 0 0 16px;padding-left:12px;}
+.pad.dk-left{left:0;top:0;bottom:0;width:var(--pad-w,50vw);min-width:280px;
+  border-radius:0 16px 16px 0;padding-right:12px;}
+.pad.dk-full{inset:0;border-radius:0;padding:0;}
+.pad.dk-full .pad-grip{display:none;}
+.pad.dragging{opacity:.55;}
+/* 吸附预览：拖动时高亮将要停靠的半边 */
+.pad-snap{position:fixed;z-index:69;border-radius:14px;pointer-events:none;
+  background:rgba(26,111,181,.16);border:2px dashed var(--blue);transition:all .12s;}
+/* 拖动条：贴在「靠里的那条边」上，拖它改大小 */
+.pad-grip{position:absolute;z-index:2;display:grid;place-items:center;}
+.pad-grip::before{content:"";border-radius:3px;background:var(--line);}
+.pad.dk-bottom>.pad-grip{left:0;right:0;top:0;height:14px;cursor:ns-resize;}
+.pad.dk-top>.pad-grip{left:0;right:0;bottom:0;height:14px;cursor:ns-resize;}
+.pad.dk-bottom>.pad-grip::before,.pad.dk-top>.pad-grip::before{width:44px;height:4px;}
+.pad.dk-right>.pad-grip{top:0;bottom:0;left:0;width:12px;cursor:ew-resize;}
+.pad.dk-left>.pad-grip{top:0;bottom:0;right:0;width:12px;cursor:ew-resize;}
+.pad.dk-right>.pad-grip::before,.pad.dk-left>.pad-grip::before{width:4px;height:44px;}
 .pad-bar{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;
   padding:4px 10px 7px;border-bottom:1px solid var(--line);}
 .pad-grp{display:flex;align-items:center;gap:4px;}
@@ -2130,7 +2138,7 @@ body.dark .plh-restore{background:#172234 !important;border-color:#26405f !impor
   display:block;background:#fff;}
 /* 草稿纸(z70)之上仍要能弹确认框；开着草稿纸时收起 AI 球免得挡笔 */
 #app-dialog,#upd-modal{z-index:3100;}
-body.pad-open #ai-fab{display:none;}
+
 body.dark .pad{background:#151b27;}
 body.dark .pad-t{background:#1b2231;}
 body.dark #pad-cv{background:#0f141e;}
@@ -2220,3 +2228,32 @@ body:not(.mobile-ui) #view-changshi,body:not(.mobile-ui) #view-quiz{max-width:15
 body.dark .plr-tip{background:rgba(240,165,0,.14);color:#e9c07a;}
 body.dark .plr-warn{background:rgba(192,57,43,.16);color:#e39a90;}
 body.dark .plr-q{background:rgba(44,143,214,.14);}
+
+/* ================= 悬浮工具球（点一下扇出 AI / 草稿纸） ================= */
+.fab{position:fixed;right:16px;bottom:calc(86px + env(safe-area-inset-bottom));z-index:76;
+  width:50px;height:50px;-webkit-tap-highlight-color:transparent;}
+.fab-main{position:absolute;inset:0;width:50px;height:50px;border-radius:50%;border:none;cursor:pointer;
+  background:linear-gradient(135deg,#7a5cc0,#5b8def);color:#fff;font-size:20px;font-weight:800;
+  box-shadow:0 5px 16px rgba(90,92,192,.45);transition:transform .22s;display:grid;place-items:center;}
+.fab-main:active{transform:scale(.94);}
+.fab.open .fab-main{transform:rotate(135deg);}
+.fab-act{position:absolute;left:3px;top:3px;width:44px;height:44px;border-radius:50%;border:none;
+  cursor:pointer;display:grid;place-items:center;font-size:17px;font-weight:800;color:#fff;
+  background:linear-gradient(135deg,#5b8def,#2c8fd6);box-shadow:0 4px 14px rgba(30,80,160,.4);
+  opacity:0;transform:scale(.4);pointer-events:none;transition:transform .22s cubic-bezier(.2,1.4,.4,1),opacity .18s;}
+#fab-pad{background:linear-gradient(135deg,#f0a500,#e07b39);box-shadow:0 4px 14px rgba(224,123,57,.42);}
+.fab.open .fab-act{opacity:1;pointer-events:auto;}
+/* 扇出方向随球的位置自动翻转，别扇到屏幕外 */
+.fab.open.dir-l #fab-ai{transform:translate(-64px,0);}
+.fab.open.dir-r #fab-ai{transform:translate(64px,0);}
+.fab.open.dir-up #fab-pad{transform:translate(0,-64px);}
+.fab.open.dir-dn #fab-pad{transform:translate(0,64px);}
+.fab-act i{position:absolute;font-style:normal;font-size:11px;font-weight:600;white-space:nowrap;
+  background:rgba(20,30,50,.82);color:#fff;padding:2px 7px;border-radius:20px;
+  top:50%;transform:translateY(-50%);opacity:0;transition:opacity .18s;}
+.fab.open .fab-act i{opacity:1;}
+.fab.dir-l #fab-ai i{right:52px;}
+.fab.dir-r #fab-ai i{left:52px;}
+.fab.dir-l #fab-pad i{right:52px;}
+.fab.dir-r #fab-pad i{left:52px;}
+body.pad-full .fab{display:none;}      /* 草稿纸全屏书写时，悬浮球让路（用纸上的 ✕ 关） */

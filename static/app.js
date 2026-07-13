@@ -2237,7 +2237,7 @@ async function aiSend() {
 }
 function aiGrow() { const t = $('#ai-text'); t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
 $('#ai-send').onclick = aiSend;
-$('#ai-fab').onclick = () => openAI();
+/* AI 入口在悬浮工具球里（#fab-ai），见文件末尾的悬浮球逻辑 */
 // AI 面板：从上方下滑关闭/返回上一层（替代点右上角✕）
 (function () {
   const panel = $('#ai-panel'); if (!panel) return;
@@ -5038,39 +5038,57 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   } catch (err) { toast(err.message, true); }
 });
 
-/* AI 悬浮球：可拖动（位置记忆），小位移视为点击 */
+/* 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；按住可拖到任意位置（位置记忆） */
 (function () {
-  const fab = $('#ai-fab'); if (!fab) return;
+  const fab = $('#fab'), main = $('#fab-btn');
+  if (!fab || !main) return;
   try {
     const p = JSON.parse(localStorage.getItem('aifab') || 'null');
     if (p) { fab.style.left = p.x + 'px'; fab.style.top = p.y + 'px'; fab.style.right = 'auto'; fab.style.bottom = 'auto'; }
   } catch (_) {}
+
+  function dirs() {                       // 扇出方向：别扇到屏幕外
+    const r = fab.getBoundingClientRect();
+    fab.classList.toggle('dir-l', r.left > innerWidth / 2);
+    fab.classList.toggle('dir-r', r.left <= innerWidth / 2);
+    fab.classList.toggle('dir-up', r.top > innerHeight * .22);
+    fab.classList.toggle('dir-dn', r.top <= innerHeight * .22);
+  }
+  window.fabClose = () => fab.classList.remove('open');
+  function toggle() { dirs(); fab.classList.toggle('open'); }
+
   let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, dragging = false;
-  fab.addEventListener('pointerdown', e => {
+  main.addEventListener('pointerdown', e => {
     dragging = true; moved = false;
     sx = e.clientX; sy = e.clientY;
     const r = fab.getBoundingClientRect(); ox = r.left; oy = r.top;
-    fab.setPointerCapture(e.pointerId);
+    main.setPointerCapture(e.pointerId);
   });
-  fab.addEventListener('pointermove', e => {
+  main.addEventListener('pointermove', e => {
     if (!dragging) return;
     const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (Math.abs(dx) + Math.abs(dy) > 6) moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 6) { moved = true; fab.classList.remove('open'); }
     if (!moved) return;
-    let x = Math.min(Math.max(4, ox + dx), window.innerWidth - fab.offsetWidth - 4);
-    let y = Math.min(Math.max(4, oy + dy), window.innerHeight - fab.offsetHeight - 4);
+    const x = Math.min(Math.max(4, ox + dx), innerWidth - fab.offsetWidth - 4);
+    const y = Math.min(Math.max(4, oy + dy), innerHeight - fab.offsetHeight - 4);
     fab.style.left = x + 'px'; fab.style.top = y + 'px';
     fab.style.right = 'auto'; fab.style.bottom = 'auto';
   });
-  fab.addEventListener('pointerup', e => {
+  main.addEventListener('pointerup', e => {
     dragging = false;
     if (moved) {
       const r = fab.getBoundingClientRect();
       try { localStorage.setItem('aifab', JSON.stringify({ x: r.left, y: r.top })); } catch (_) {}
-      e.preventDefault(); e.stopPropagation();
-    }
+      dirs(); e.preventDefault(); e.stopPropagation();
+    } else toggle();
   });
-  fab.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
+  main.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
+
+  $('#fab-ai').onclick = () => { fabClose(); openAI(); };
+  $('#fab-pad').onclick = () => { fabClose(); padToggle(); };
+  document.addEventListener('pointerdown', e => {          // 点别处收起扇出
+    if (fab.classList.contains('open') && !e.target.closest('#fab')) fabClose();
+  }, true);
 })();
 
 /* 资料库条目 ⋮ 菜单：分享 / 重命名 / 复制 / 下载 / 删除 */
@@ -5607,7 +5625,9 @@ $('#acct-notifytest').onclick = () => {
 /* ================= 草稿纸（做题时演算用；只写不识别） =================
    笔/荧光笔/橡皮 · 数位板压感 · 撤销重做 · 多页 · 方格/横线纸 · 存为图片 ·
    自动保存到本地（切题、刷新、关掉再开都还在）。 */
-const PAD_VIEWS = new Set(['quizrun', 'dtest']);        // 做题的页面才出现草稿纸按钮
+/* 草稿纸随时可调用（悬浮球里点开），停靠位可拖：下/右/左/上/全屏 */
+const PAD_DOCKS = ['bottom', 'right', 'left', 'top', 'full'];
+let padDock = 'bottom', padDH = 0, padDW = 0;
 const PAD_INK = '#1a2230';                              // 默认墨色（夜间自动转浅）
 const PAD_COLORS = [PAD_INK, '#1a6fb5', '#c0392b', '#1e8449', '#f0a500'];
 const PAD_BGICON = ['▢', '⊞', '☰'];                     // 空白 / 方格 / 横线
@@ -5826,6 +5846,7 @@ function padInit() {
   padInited = true;
   padCv = $('#pad-cv'); padCtx = padCv.getContext('2d');
   padBase = document.createElement('canvas'); padBaseCtx = padBase.getContext('2d');
+  padLoadDock();
   padLoad();
 
   padCv.addEventListener('pointerdown', padDown);
@@ -5872,20 +5893,14 @@ function padInit() {
     document.body.appendChild(a); a.click(); a.remove();
     toast('已保存为图片');
   };
-  $('#pad-mode').onclick = () => { $('#pad').classList.toggle('full'); requestAnimationFrame(padFit); };
+  let padPrevDock = 'bottom';
+  $('#pad-mode').onclick = () => {                                 // 全屏 ⇄ 还原到上次的停靠位
+    if (padDock === 'full') padSetDock(padPrevDock);
+    else { padPrevDock = padDock; padSetDock('full'); }
+  };
   $('#pad-close').onclick = padClose;
-
-  $('#pad-grip').addEventListener('pointerdown', e => {           // 拖动上边缘改高度
-    if ($('#pad').classList.contains('full')) return;
-    e.preventDefault();
-    const mv = (ev) => {
-      const h = Math.min(innerHeight * .92, Math.max(190, innerHeight - ev.clientY));
-      $('#pad').style.height = h + 'px';
-      if (!padRaf) padRaf = requestAnimationFrame(() => { padRaf = 0; padFit(); });
-    };
-    const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); padFit(); };
-    addEventListener('pointermove', mv); addEventListener('pointerup', up);
-  });
+  $('#pad-dock').addEventListener('pointerdown', padDockDrag);     // 按住拖到边缘 → 吸附那半屏
+  $('#pad-grip').addEventListener('pointerdown', padResizeDrag);   // 拖内侧边 → 改大小
 
   let rzT = null;
   addEventListener('resize', () => {
@@ -5902,31 +5917,126 @@ function padInit() {
   });
 }
 
+/* ---------- 停靠：下 / 右 / 左 / 上 / 全屏（✥ 手柄拖到屏幕边缘即吸附） ---------- */
+function padApplyDock(save) {
+  const el = $('#pad');
+  PAD_DOCKS.forEach(d => el.classList.toggle('dk-' + d, d === padDock));
+  el.style.setProperty('--pad-h', (padDH || Math.round(innerHeight * .46)) + 'px');
+  el.style.setProperty('--pad-w', (padDW || Math.round(innerWidth * .5)) + 'px');
+  if (save) { try { localStorage.setItem('padDock', JSON.stringify({ d: padDock, h: padDH, w: padDW })); } catch (_) {} }
+  requestAnimationFrame(() => { padFit(); padAvoidFab(); });
+}
+/* 悬浮球别压在草稿纸上：挡住了就自动挪到纸外面（全屏时干脆藏起来） */
+function padAvoidFab() {
+  const fab = $('#fab'), pad = $('#pad');
+  if (!fab || pad.classList.contains('hidden')) { document.body.classList.remove('pad-full'); return; }
+  document.body.classList.toggle('pad-full', padDock === 'full');
+  if (padDock === 'full') return;
+  const p = pad.getBoundingClientRect(), f = fab.getBoundingClientRect();
+  const hit = f.left < p.right && f.right > p.left && f.top < p.bottom && f.bottom > p.top;
+  if (!hit) return;
+  let x = f.left, y = f.top;
+  if (padDock === 'right') x = p.left - f.width - 12;
+  else if (padDock === 'left') x = p.right + 12;
+  else if (padDock === 'bottom') y = p.top - f.height - 12;
+  else if (padDock === 'top') y = p.bottom + 12;
+  x = Math.min(Math.max(4, x), innerWidth - f.width - 4);
+  y = Math.min(Math.max(4, y), innerHeight - f.height - 4);
+  fab.style.left = x + 'px'; fab.style.top = y + 'px';
+  fab.style.right = 'auto'; fab.style.bottom = 'auto';
+  try { localStorage.setItem('aifab', JSON.stringify({ x, y })); } catch (_) {}
+}
+function padLoadDock() {
+  try {
+    const d = JSON.parse(localStorage.getItem('padDock') || 'null');
+    if (d && PAD_DOCKS.includes(d.d)) { padDock = d.d; padDH = d.h || 0; padDW = d.w || 0; }
+  } catch (_) {}
+}
+function padSetDock(d) {
+  if (!PAD_DOCKS.includes(d)) return;
+  padDock = d;
+  padApplyDock(true);
+  toast({ bottom: '已停靠：下半屏', top: '已停靠：上半屏', right: '已停靠：右半屏', left: '已停靠：左半屏', full: '全屏书写' }[d]);
+}
+const PAD_SNAP_BOX = {                      // 吸附预览框（也是最终停靠位）
+  left: () => ({ left: 0, top: 0, width: innerWidth * .5, height: innerHeight }),
+  right: () => ({ left: innerWidth * .5, top: 0, width: innerWidth * .5, height: innerHeight }),
+  top: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight * .46 }),
+  bottom: () => ({ left: 0, top: innerHeight * .54, width: innerWidth, height: innerHeight * .46 }),
+  full: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight }),
+};
+function padZoneAt(x, y) {                  // 光标离哪条边近，就吸到哪半边；正中间 = 全屏
+  const w = innerWidth, h = innerHeight;
+  if (x < w * .18) return 'left';
+  if (x > w * .82) return 'right';
+  if (y < h * .15) return 'top';
+  if (y > h * .85) return 'bottom';
+  return 'full';
+}
+function padSnapShow(zone) {
+  const s = $('#pad-snap'), b = PAD_SNAP_BOX[zone]();
+  s.style.left = b.left + 'px'; s.style.top = b.top + 'px';
+  s.style.width = b.width + 'px'; s.style.height = b.height + 'px';
+  s.classList.remove('hidden');
+}
+function padDockDrag(e) {                   // 按住 ✥ 拖动 → 松手吸附
+  e.preventDefault();
+  const el = $('#pad');
+  el.classList.add('dragging');
+  let zone = padDock;
+  const mv = (ev) => { zone = padZoneAt(ev.clientX, ev.clientY); padSnapShow(zone); };
+  const up = () => {
+    removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+    el.classList.remove('dragging');
+    $('#pad-snap').classList.add('hidden');
+    if (zone !== padDock) {                 // 换半边时把尺寸复位成一半，符合「拖到右边就占右半屏」
+      if (zone === 'left' || zone === 'right') padDW = Math.round(innerWidth * .5);
+      if (zone === 'top' || zone === 'bottom') padDH = Math.round(innerHeight * .46);
+      padSetDock(zone);
+    }
+  };
+  padSnapShow(zone);
+  addEventListener('pointermove', mv); addEventListener('pointerup', up);
+}
+function padResizeDrag(e) {                 // 拖内侧那条边改大小（方向随停靠位变）
+  if (padDock === 'full') return;
+  e.preventDefault();
+  const mv = (ev) => {
+    if (padDock === 'bottom') padDH = Math.min(innerHeight * .95, Math.max(190, innerHeight - ev.clientY));
+    else if (padDock === 'top') padDH = Math.min(innerHeight * .95, Math.max(190, ev.clientY));
+    else if (padDock === 'right') padDW = Math.min(innerWidth * .95, Math.max(280, innerWidth - ev.clientX));
+    else if (padDock === 'left') padDW = Math.min(innerWidth * .95, Math.max(280, ev.clientX));
+    padApplyDock(false);
+  };
+  const up = () => {
+    removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+    padApplyDock(true);
+  };
+  addEventListener('pointermove', mv); addEventListener('pointerup', up);
+}
+
 function padOpen() {
   if (!padInited) padInit();
   $('#pad').classList.remove('hidden');
   document.body.classList.add('pad-open');
-  requestAnimationFrame(padFit);
+  padApplyDock(false);
 }
 function padClose() {
   const wasDraft = padMode === 'draft';
   clearTimeout(padSaveT);
   if (wasDraft) padDraftSave(); else padSave();
   $('#pad').classList.add('hidden');
-  document.body.classList.remove('pad-open');
+  document.body.classList.remove('pad-open', 'pad-full');
   if (wasDraft) {                                                 // 退出草稿本 → 回列表，恢复随手草稿纸
     padMode = 'scratch'; padDraftId = null;
     $('#pad-doc').classList.add('hidden');
-    $('#pad').classList.remove('full');
     padLoad();
     loadDrafts();
   }
 }
 function padToggle() { $('#pad').classList.contains('hidden') ? padOpen() : padClose(); }
-function padOnView(v) {                                           // 只在做题页出现；离开就收起（内容已存）
-  $('#pad-fab').classList.toggle('hidden', !PAD_VIEWS.has(v));
-  if (padMode === 'draft') return;                                // 草稿本是整页打开的，不受视图影响
-  if (!PAD_VIEWS.has(v) && !$('#pad').classList.contains('hidden')) padClose();
+function padOnView() {
+  /* 草稿纸现在是全局悬浮的：换页面不再收起——正好可以一边看成语词语、一边在旁边练着写。 */
 }
 
 /* ---------- 草稿本：错题本里，平时打草稿用（多本 / 云端保存 / 手机电脑同步） ---------- */
@@ -5981,7 +6091,6 @@ async function openDraft(id) {
     padSetData(d.data);
     $('#pad-title').textContent = d.title || '未命名';
     $('#pad-doc').classList.remove('hidden');
-    $('#pad').classList.add('full');                              // 打草稿就整页写，写得开
     padStatus('已保存');
     padOpen();
   } catch (e) { toast(e.message, true); }
@@ -6000,7 +6109,6 @@ $('#pad-name').onclick = async () => {
   } catch (e) { toast(e.message, true); }
 };
 $('#wq-drafts').onclick = openDrafts;
-$('#pad-fab').onclick = padToggle;
 /* 对外钩子放在最后才挂：顶层 function 声明会自动成为 window 属性，
    若直接用同名守卫(window.padRebuild)，脚本刚开始就会被误判为"已就绪"而提前调用。 */
 window.__padView = padOnView;

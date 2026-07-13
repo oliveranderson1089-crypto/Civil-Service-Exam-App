@@ -1193,13 +1193,17 @@
   </div>
 </div>
 
-<!-- 全局 AI 悬浮按钮 -->
-<button id="ai-fab" title="AI 助手">AI</button>
+<!-- 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；长按可拖动 -->
+<div id="fab" class="fab">
+  <button class="fab-act" id="fab-pad" title="草稿纸">📝<i>草稿纸</i></button>
+  <button class="fab-act" id="fab-ai" title="AI 助手">AI<i>AI 助手</i></button>
+  <button class="fab-main" id="fab-btn" title="工具">✦</button>
+</div>
 
-<!-- ===== 草稿纸（做题时演算用；只写不识别） ===== -->
-<button id="pad-fab" class="pad-fab hidden" title="草稿纸（做题时演算）">📝</button>
-<div id="pad" class="pad hidden">
-  <div class="pad-grip" id="pad-grip" title="上下拖动可改高度"></div>
+<!-- ===== 草稿纸（随时可调用；只写不识别） ===== -->
+<div id="pad-snap" class="pad-snap hidden"></div>
+<div id="pad" class="pad hidden dk-bottom">
+  <div class="pad-grip" id="pad-grip" title="拖动可改大小"></div>
   <div class="pad-bar">
     <div class="pad-grp pad-doc hidden" id="pad-doc">
       <button class="pad-t" id="pad-name" title="点一下改名">📓</button>
@@ -1227,7 +1231,8 @@
     </div>
     <div class="pad-grp pad-right">
       <button class="pad-t" id="pad-png" title="保存为图片">⤓</button>
-      <button class="pad-t" id="pad-mode" title="半屏 / 全屏">⛶</button>
+      <button class="pad-t" id="pad-dock" title="按住拖到屏幕任一边 → 停靠到那半边（松手即吸附）">✥</button>
+      <button class="pad-t" id="pad-mode" title="全屏 / 还原">⛶</button>
       <button class="pad-t" id="pad-close" title="收起草稿纸">✕</button>
     </div>
   </div>
