@@ -5627,7 +5627,8 @@ $('#acct-notifytest').onclick = () => {
    自动保存到本地（切题、刷新、关掉再开都还在）。 */
 /* 草稿纸随时可调用（悬浮球里点开），停靠位可拖：下/右/左/上/全屏 */
 const PAD_DOCKS = ['bottom', 'right', 'left', 'top', 'full'];
-let padDock = 'bottom', padDH = 0, padDW = 0;
+let padDock = 'bottom';
+let padSizes = { bottom: 0, top: 0, right: 0, left: 0 };   // 每个停靠位各自记住你拖成的大小
 const PAD_INK = '#1a2230';                              // 默认墨色（夜间自动转浅）
 const PAD_COLORS = [PAD_INK, '#1a6fb5', '#c0392b', '#1e8449', '#f0a500'];
 const PAD_BGICON = ['▢', '⊞', '☰'];                     // 空白 / 方格 / 横线
@@ -5717,6 +5718,7 @@ function padRebuild() {                                           // 重建"已�
 }
 function padFit() {
   const w = padCv.clientWidth, h = padCv.clientHeight;
+  $('#pad').classList.toggle('narrow', $('#pad').clientWidth < 470);   // 纸窄了工具栏就用紧凑排版
   if (!w || !h) return;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   padCv.width = padBase.width = Math.round(w * dpr);
@@ -5900,7 +5902,13 @@ function padInit() {
   };
   $('#pad-close').onclick = padClose;
   $('#pad-dock').addEventListener('pointerdown', padDockDrag);     // 按住拖到边缘 → 吸附那半屏
-  $('#pad-grip').addEventListener('pointerdown', padResizeDrag);   // 拖内侧边 → 改大小
+  $('#pad-grip').addEventListener('pointerdown', padResizeDrag);   // 拖交界处那条线 → 改大小
+  $('#pad-grip').addEventListener('dblclick', () => {              // 双击复位成一半
+    if (padDock === 'full') return;
+    padSizes[padDock] = 0;
+    padApplyDock(true);
+    toast('已复位成一半');
+  });
 
   let rzT = null;
   addEventListener('resize', () => {
@@ -5917,14 +5925,113 @@ function padInit() {
   });
 }
 
-/* ---------- 停靠：下 / 右 / 左 / 上 / 全屏（✥ 手柄拖到屏幕边缘即吸附） ---------- */
+/* ---------- 停靠：下 / 右 / 左 / 上 / 全屏（✥ 手柄拖到屏幕边缘即吸附） ----------
+   半屏只是默认值：交界处那条分隔线可以直接拖着改大小，比例按「每个停靠位」分别记住。 */
+function padInit() {
+  padInited = true;
+  padCv = $('#pad-cv'); padCtx = padCv.getContext('2d');
+  padBase = document.createElement('canvas'); padBaseCtx = padBase.getContext('2d');
+  padLoadDock();
+  padLoad();
+
+  padCv.addEventListener('pointerdown', padDown);
+  padCv.addEventListener('pointermove', padMove);
+  padCv.addEventListener('pointerup', padUp);
+  padCv.addEventListener('pointercancel', padUp);
+  padCv.addEventListener('pointerleave', padUp);
+
+  $('#pad').addEventListener('click', e => {
+    const t = e.target.closest('.pad-t[data-tool]');
+    if (t) { padTool = t.dataset.tool; padSyncUI(); return; }
+    const c = e.target.closest('.pad-c');
+    if (c) { padColor = c.dataset.c; if (padTool === 'eraser') padTool = 'pen'; padSyncUI(); }
+  });
+  $('#pad-size').oninput = (e) => { padSize = +e.target.value; };
+  $('#pad-undo').onclick = padUndo;
+  $('#pad-redo').onclick = padRedo;
+  $('#pad-prev').onclick = () => padGo(padPg - 1);
+  $('#pad-next').onclick = () => padGo(padPg + 1);
+  $('#pad-add').onclick = () => {
+    if (padPages.length >= 20) { toast('最多 20 页', true); return; }
+    padPages.splice(padPg + 1, 0, { st: [], rd: [] });
+    padGo(padPg + 1); toast('已新增一页');
+  };
+  $('#pad-bg').onclick = () => { padBg = (padBg + 1) % 3; padPaint(); padSyncUI(); padSaveSoon(); };
+  $('#pad-clear').onclick = async () => {
+    const many = padPages.length > 1;
+    const r = await appConfirm('清空这一页的草稿？' + (many ? '（也可以直接删掉这一页）' : ''),
+      { title: '草稿纸', okText: '清空本页', altText: many ? '删除本页' : '', altDanger: true });
+    if (r === 'alt') { padPages.splice(padPg, 1); padGo(Math.min(padPg, padPages.length - 1)); toast('已删除本页'); }
+    else if (r === true) { padPages[padPg] = { st: [], rd: [] }; padRebuild(); padSaveSoon(); toast('本页已清空'); }
+  };
+  $('#pad-png').onclick = () => {                                 // 导出白底黑字，方便打印/贴到错题本
+    const w = padCv.clientWidth, h = padCv.clientHeight, k = 2;
+    const c = document.createElement('canvas');
+    c.width = w * k; c.height = h * k;
+    const x = c.getContext('2d');
+    x.setTransform(k, 0, 0, k, 0, 0);
+    padPaper(x, w, h, false);
+    for (const s of padPages[padPg].st) padDraw(x, s, w, false);
+    const a = document.createElement('a');
+    a.download = '草稿-第' + (padPg + 1) + '页.png';
+    a.href = c.toDataURL('image/png');
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('已保存为图片');
+  };
+  let padPrevDock = 'bottom';
+  $('#pad-mode').onclick = () => {                                 // 全屏 ⇄ 还原到上次的停靠位
+    if (padDock === 'full') padSetDock(padPrevDock);
+    else { padPrevDock = padDock; padSetDock('full'); }
+  };
+  $('#pad-close').onclick = padClose;
+  $('#pad-dock').addEventListener('pointerdown', padDockDrag);     // 按住拖到边缘 → 吸附那半屏
+  $('#pad-grip').addEventListener('pointerdown', padResizeDrag);   // 拖交界处那条线 → 改大小
+  $('#pad-grip').addEventListener('dblclick', () => {              // 双击复位成一半
+    if (padDock === 'full') return;
+    padSizes[padDock] = 0;
+    padApplyDock(true);
+    toast('已复位成一半');
+  });
+
+  let rzT = null;
+  addEventListener('resize', () => {
+    if ($('#pad').classList.contains('hidden')) return;
+    clearTimeout(rzT); rzT = setTimeout(padFit, 120);
+  });
+  document.addEventListener('keydown', e => {
+    if ($('#pad').classList.contains('hidden')) return;
+    const k = (e.key || '').toLowerCase();
+    if (e.ctrlKey && k === 'z') { e.preventDefault(); e.shiftKey ? padRedo() : padUndo(); }
+    else if (e.ctrlKey && k === 'y') { e.preventDefault(); padRedo(); }
+    else if (e.ctrlKey && k === 's') { e.preventDefault(); if (padMode === 'draft') { clearTimeout(padSaveT); padDraftSave(); } }
+    else if (e.key === 'Escape') padClose();
+  });
+}
+
+/* ---------- 停靠：下 / 右 / 左 / 上 / 全屏（✥ 手柄拖到屏幕边缘即吸附） ----------
+   半屏只是默认值：交界处那条分隔线可以直接拖着改大小，比例按「每个停靠位」分别记住。 */
+const padIsV = () => padDock === 'left' || padDock === 'right';   // 左右停靠 = 改宽度
+function padDefSize(d) {
+  return (d === 'left' || d === 'right') ? Math.round(innerWidth * .5) : Math.round(innerHeight * .46);
+}
+function padDockSize(d) {                       // 该停靠位记住的大小（没有就用默认的一半）
+  const v = padSizes[d] || padDefSize(d);
+  const max = (d === 'left' || d === 'right') ? innerWidth * .95 : innerHeight * .95;
+  const min = (d === 'left' || d === 'right') ? 280 : 190;
+  return Math.round(Math.min(max, Math.max(min, v)));            // 换了屏幕尺寸也不会越界
+}
 function padApplyDock(save) {
   const el = $('#pad');
   PAD_DOCKS.forEach(d => el.classList.toggle('dk-' + d, d === padDock));
-  el.style.setProperty('--pad-h', (padDH || Math.round(innerHeight * .46)) + 'px');
-  el.style.setProperty('--pad-w', (padDW || Math.round(innerWidth * .5)) + 'px');
-  if (save) { try { localStorage.setItem('padDock', JSON.stringify({ d: padDock, h: padDH, w: padDW })); } catch (_) {} }
+  if (padDock !== 'full') {
+    if (padIsV()) el.style.setProperty('--pad-w', padDockSize(padDock) + 'px');
+    else el.style.setProperty('--pad-h', padDockSize(padDock) + 'px');
+  }
+  if (save) padSaveDock();
   requestAnimationFrame(() => { padFit(); padAvoidFab(); });
+}
+function padSaveDock() {
+  try { localStorage.setItem('padDock', JSON.stringify({ d: padDock, sizes: padSizes })); } catch (_) {}
 }
 /* 悬浮球别压在草稿纸上：挡住了就自动挪到纸外面（全屏时干脆藏起来） */
 function padAvoidFab() {
@@ -5949,7 +6056,13 @@ function padAvoidFab() {
 function padLoadDock() {
   try {
     const d = JSON.parse(localStorage.getItem('padDock') || 'null');
-    if (d && PAD_DOCKS.includes(d.d)) { padDock = d.d; padDH = d.h || 0; padDW = d.w || 0; }
+    if (!d) return;
+    if (PAD_DOCKS.includes(d.d)) padDock = d.d;
+    if (d.sizes) Object.assign(padSizes, d.sizes);
+    else {                                   // 兼容旧格式 {d,h,w}
+      if (d.h) { padSizes.bottom = d.h; padSizes.top = d.h; }
+      if (d.w) { padSizes.left = d.w; padSizes.right = d.w; }
+    }
   } catch (_) {}
 }
 function padSetDock(d) {
@@ -5958,11 +6071,12 @@ function padSetDock(d) {
   padApplyDock(true);
   toast({ bottom: '已停靠：下半屏', top: '已停靠：上半屏', right: '已停靠：右半屏', left: '已停靠：左半屏', full: '全屏书写' }[d]);
 }
-const PAD_SNAP_BOX = {                      // 吸附预览框（也是最终停靠位）
-  left: () => ({ left: 0, top: 0, width: innerWidth * .5, height: innerHeight }),
-  right: () => ({ left: innerWidth * .5, top: 0, width: innerWidth * .5, height: innerHeight }),
-  top: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight * .46 }),
-  bottom: () => ({ left: 0, top: innerHeight * .54, width: innerWidth, height: innerHeight * .46 }),
+/* 吸附预览框 = 最终停靠位；用「这个停靠位上次拖成的大小」，不是永远一半 */
+const PAD_SNAP_BOX = {
+  left: () => ({ left: 0, top: 0, width: padDockSize('left'), height: innerHeight }),
+  right: () => ({ left: innerWidth - padDockSize('right'), top: 0, width: padDockSize('right'), height: innerHeight }),
+  top: () => ({ left: 0, top: 0, width: innerWidth, height: padDockSize('top') }),
+  bottom: () => ({ left: 0, top: innerHeight - padDockSize('bottom'), width: innerWidth, height: padDockSize('bottom') }),
   full: () => ({ left: 0, top: 0, width: innerWidth, height: innerHeight }),
 };
 function padZoneAt(x, y) {                  // 光标离哪条边近，就吸到哪半边；正中间 = 全屏
@@ -5989,27 +6103,30 @@ function padDockDrag(e) {                   // 按住 ✥ 拖动 → 松手吸�
     removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
     el.classList.remove('dragging');
     $('#pad-snap').classList.add('hidden');
-    if (zone !== padDock) {                 // 换半边时把尺寸复位成一半，符合「拖到右边就占右半屏」
-      if (zone === 'left' || zone === 'right') padDW = Math.round(innerWidth * .5);
-      if (zone === 'top' || zone === 'bottom') padDH = Math.round(innerHeight * .46);
-      padSetDock(zone);
-    }
+    if (zone !== padDock) padSetDock(zone);   // 大小沿用这个停靠位上次拖成的比例（没拖过才是一半）
   };
   padSnapShow(zone);
   addEventListener('pointermove', mv); addEventListener('pointerup', up);
 }
-function padResizeDrag(e) {                 // 拖内侧那条边改大小（方向随停靠位变）
+/* 交界处那条分隔线：像编辑器分栏一样直接拖着改大小；松手记住这个停靠位的比例 */
+function padResizeDrag(e) {
   if (padDock === 'full') return;
   e.preventDefault();
+  document.body.classList.add(padIsV() ? 'pad-rz-x' : 'pad-rz-y');   // 拖动时全局锁光标、别选中文字
+  $('#pad-grip').classList.add('on');
   const mv = (ev) => {
-    if (padDock === 'bottom') padDH = Math.min(innerHeight * .95, Math.max(190, innerHeight - ev.clientY));
-    else if (padDock === 'top') padDH = Math.min(innerHeight * .95, Math.max(190, ev.clientY));
-    else if (padDock === 'right') padDW = Math.min(innerWidth * .95, Math.max(280, innerWidth - ev.clientX));
-    else if (padDock === 'left') padDW = Math.min(innerWidth * .95, Math.max(280, ev.clientX));
+    padSizes[padDock] =
+      padDock === 'bottom' ? innerHeight - ev.clientY
+        : padDock === 'top' ? ev.clientY
+          : padDock === 'right' ? innerWidth - ev.clientX
+            : ev.clientX;                                            // left
     padApplyDock(false);
   };
   const up = () => {
     removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+    document.body.classList.remove('pad-rz-x', 'pad-rz-y');
+    $('#pad-grip').classList.remove('on');
+    padSizes[padDock] = padDockSize(padDock);                            // 夹到合法范围再存
     padApplyDock(true);
   };
   addEventListener('pointermove', mv); addEventListener('pointerup', up);
