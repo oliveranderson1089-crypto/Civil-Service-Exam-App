@@ -2810,27 +2810,118 @@ $('#news-list').addEventListener('click', async e => {
   }
   const c = e.target.closest('[data-news]'); if (c) openNewsItem(+c.dataset.news);
 });
+/* 时政的重点标注：四类考点，颜色一一对应 */
+const NW_KIND = { 提法: { c: '#c4661f', d: '新表述/新概念，常识判断爱考' },
+  数据: { c: '#1e8449', d: '具体数字/时间，最容易做成选项' },
+  政策: { c: '#1a6fb5', d: '文件名/举措/目标' },
+  金句: { c: '#7a5cc0', d: '能直接写进申论的表述' } };
+let nwCur = null;
+
+/* 把 AI 逐字挑出的句子，原样标回原文里（它们都经服务端核对过，必然能命中） */
+function nwMarkup(content, marks) {
+  const esc1 = (t) => esc(t);
+  if (!marks || !marks.length) return esc1(content);
+  // 长句优先标，避免短句先命中把长句切碎
+  const ms = [...marks].sort((a, b) => b.quote.length - a.quote.length);
+  const hits = [];
+  ms.forEach((m, i) => {
+    let from = 0, at;
+    while ((at = content.indexOf(m.quote, from)) !== -1) {
+      if (!hits.some(h => at < h.end && at + m.quote.length > h.start))   // 不和已标的重叠
+        hits.push({ start: at, end: at + m.quote.length, m, i: marks.indexOf(m) });
+      from = at + m.quote.length;
+    }
+  });
+  hits.sort((a, b) => a.start - b.start);
+  let out = '', pos = 0;
+  for (const h of hits) {
+    out += esc1(content.slice(pos, h.start));
+    const k = NW_KIND[h.m.kind] || NW_KIND['提法'];
+    // 注意：标签必须写成一行——外面会按 \n 切段落，标签里夹了换行就会被劈开，属性会漏成正文
+    const tip = esc1(h.m.kind + '：' + (h.m.why || '')).replace(/"/g, '&quot;');
+    out += `<mark class="nw-mk" style="--mk:${k.c}" data-nwm="${h.i}" title="${tip}">${esc1(h.m.quote)}<i>${esc1(h.m.kind)}</i></mark>`;
+    pos = h.end;
+  }
+  out += esc1(content.slice(pos));
+  return out;
+}
+
 async function openNewsItem(id) {
   push({ view: 'newsd', title: '时政详情' });
   $('#news-wrap').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/news/' + id);
+    nwCur = d;
     stack[stack.length - 1].title = d.title; $('#top-title').textContent = d.title;
-    const body = (d.content || '').split('\n').filter(x => x.trim()).map(p => {
-      const s = p.trim();
-      return isDocHeading(s) ? `<p class="poly-h">${emKey(s)}</p>` : `<p>${emKey(s)}</p>`;
-    }).join('');
-    const ai = d.ai_summary
-      ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 摘要 · 考点</div><div class="cd-sec-b">${mdToHtml(d.ai_summary)}</div></div>` : '';
-    $('#news-wrap').innerHTML = `
-      <div class="poly-head"><h2>${esc(d.title)}</h2>
-        <div class="news-date">🗓 ${esc(d.pub_date || '')} · ${esc(d.source || '')}</div>
-        <a class="poly-src" href="${esc(d.url)}" target="_blank" rel="noopener">原文来源 ↗</a></div>
-      ${ai}
-      <div class="poly-readert">全文</div>
-      <div class="poly-reader">${body}</div>`;
+    nwRender(d);
   } catch (e) { $('#news-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
+
+function nwRender(d) {
+  const marks = d.marks || [];
+  // 重点清单：先看这个就够了，没时间就别读全文
+  const list = marks.length ? `
+    <div class="cd-sec nw-marks"><div class="cd-sec-t">🖍 重点 · 考点（${marks.length} 处，原文里已划出）</div>
+      ${marks.map((m, i) => {
+        const k = NW_KIND[m.kind] || NW_KIND['提法'];
+        return `<div class="nw-m" data-nwgo="${i}" style="--mk:${k.c}">
+          <span class="nw-k">${esc(m.kind)}</span>
+          <span class="nw-q">${esc(m.quote)}</span>
+          <span class="nw-w">${esc(m.why || '')}</span>
+        </div>`;
+      }).join('')}
+      <div class="nw-legend">${Object.entries(NW_KIND).map(([k, v]) =>
+        `<span style="--mk:${v.c}"><i></i>${k}：${v.d}</span>`).join('')}</div>
+    </div>`
+    : `<div class="cd-sec nw-marks">
+        <div class="cd-sec-t">🖍 重点 · 考点</div>
+        <p class="empty" style="padding:6px 0 12px">还没划重点。点一下，AI 会在原文里把该记的地方标出来（约 20 秒），不用通读全文。</p>
+        <button class="btn primary" id="nw-mark">🖍 帮我划重点</button>
+      </div>`;
+
+  const ai = d.ai_summary
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 摘要 · 三行式</div><div class="cd-sec-b">${mdToHtml(d.ai_summary)}</div></div>` : '';
+
+  // 原文：把逐字挑出的重点句原样标出来（服务端核对过，必然命中）
+  const marked = nwMarkup(d.content || '', marks);
+  const body = marked.split('\n').filter(x => x.trim()).map(p =>
+    `<p>${p}</p>`).join('');
+
+  $('#news-wrap').innerHTML = `
+    <div class="poly-head"><h2>${esc(d.title)}</h2>
+      <div class="news-date">🗓 ${esc(d.pub_date || '')} · ${esc(d.source || '')}</div>
+      <a class="poly-src" href="${esc(d.url)}" target="_blank" rel="noopener">原文来源 ↗</a></div>
+    ${list}
+    ${ai}
+    <div class="poly-readert">全文（重点已划出）${marks.length ? `<button class="btn tiny" id="nw-remark">重划</button>` : ''}</div>
+    <div class="poly-reader nw-reader">${body}</div>`;
+  injectReadBtns();
+}
+$('#news-wrap').addEventListener('click', async e => {
+  const go = e.target.closest('[data-nwgo]');            // 点重点清单 → 滚到原文里那一句
+  if (go) {
+    const el = $('#news-wrap').querySelector(`mark[data-nwm="${go.dataset.nwgo}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 1400);
+    }
+    return;
+  }
+  const b = e.target.closest('#nw-mark, #nw-remark');
+  if (!b || !nwCur) return;
+  b.disabled = true; b.textContent = '正在划重点…（约 20 秒）';
+  try {
+    const d = await api('/api/news/' + nwCur.id + '/marks' + (b.id === 'nw-remark' ? '?force=1' : ''),
+      { method: 'POST' });
+    nwCur.marks = d.marks;
+    nwRender(nwCur);
+    toast('划出 ' + d.marks.length + ' 处重点');
+  } catch (err) {
+    toast(err.message, true);
+    b.disabled = false; b.textContent = '🖍 帮我划重点';
+  }
+});
 
 /* ============= 申论 · 概括句积累（每日由时政生成，按日期查看） ============= */
 let gkDate = '';
@@ -4411,7 +4502,8 @@ function renderCkList() {
       <div class="cki-t">${esc(it.title)}${freq}${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
       ${it.content ? `<div class="cki-c">${esc(it.content)}</div>` : ''}
       ${note ? `<div class="cki-n">${ckKind === 'classic' ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
-      ${ckKind === 'hyper' ? '<div class="cki-more">点开看每个下位词的典故 / 出处 / 怎么考 ›</div>' : ''}
+      ${ckKind === 'hyper' ? '<div class="cki-more">点开看每个下位词的典故 / 出处 / 怎么考 ›</div>'
+        : (ckBoard === '成语' || ckBoard === '实词') ? '<div class="cki-more">点开看典故 / 出处 / 怎么考 ›</div>' : ''}
     </div>`;
   }).join('');
 }
@@ -4428,8 +4520,32 @@ $('#ckb-list').addEventListener('click', async e => {
   const it = e.target.closest('[data-cki]');
   if (!it) return;
   if (ckKind === 'classic') openClassicDetail(+it.dataset.cki);
-  else if (ckKind === 'hyper') openHyper(+it.dataset.cki);     // 上位词也能点开看典故/来源
+  else if (ckKind === 'hyper') openHyper(+it.dataset.cki);     // 上位词：点开看典故/来源
+  else if (ckBoard === '成语' || ckBoard === '实词') openCkStory(+it.dataset.cki);   // 成语/实词：点开看典故
 });
+
+/* 成语/实词的典故：出处原文 + 故事 + 本义怎么引申成今义 + 公考怎么考。
+   看懂来历自然就记住了，不用死背释义。AI 讲一次就缓存，之后秒开。 */
+async function openCkStory(cid) {
+  push({ view: 'cdetail', title: '典故' });
+  $('#cd-wrap').innerHTML = '<p class="empty">正在讲典故…（第一次约 20 秒，之后秒开）</p>';
+  try {
+    const d = await api('/api/changkao/' + cid + '/story');
+    const s = d.story || {};
+    $('#cd-wrap').innerHTML = `
+      <div class="cd-head"><div class="cd-title">${esc(d.title)}</div>
+        <div class="cd-meta">常考 · ${esc(d.board || '')}${d.freq ? ` · 考频 ${d.freq} 次` : ''}</div></div>
+      ${d.content ? `<div class="cd-sec"><div class="cd-sec-t">释义</div><div class="cd-sec-b">${esc(d.content)}</div></div>` : ''}
+      ${s.origin ? `<div class="cd-sec"><div class="cd-sec-t">📜 出处</div><div class="cd-sec-b ck-origin">${esc(s.origin)}</div></div>` : ''}
+      ${s.story ? `<div class="cd-sec"><div class="cd-sec-t">📖 典故</div><div class="cd-sec-b ck-story">${esc(s.story)}</div></div>` : ''}
+      ${s.evolve ? `<div class="cd-sec"><div class="cd-sec-t">🔗 本义 → 今义</div><div class="cd-sec-b">${esc(s.evolve)}</div></div>` : ''}
+      ${s.usage ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🎯 公考怎么考</div><div class="cd-sec-b">${esc(s.usage)}</div></div>` : ''}`;
+    window.scrollTo(0, 0);
+    injectReadBtns();
+  } catch (e) {
+    $('#cd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>';
+  }
+}
 
 /* 上位词详解：每个下位词的出处、典故、公考考点（AI 讲一次就缓存，之后秒开） */
 async function openHyper(hid) {

@@ -630,6 +630,12 @@ def init_db():
     # 上位词：补「典故/来源」列（AI 讲一次就缓存，像古诗文赏析那样点开即看）
     if "story" not in _cols(con, "hyper_items"):
         con.execute("ALTER TABLE hyper_items ADD COLUMN story TEXT")
+    # 常考成语/实词：补「典故」列（看懂来历自然就记住了，不用死背）
+    if "story" not in _cols(con, "changkao_items"):
+        con.execute("ALTER TABLE changkao_items ADD COLUMN story TEXT")
+    # 每日时政：补「重点标注」列（在原文里划出考点，不用通读全文）
+    if "marks" not in _cols(con, "news_items"):
+        con.execute("ALTER TABLE news_items ADD COLUMN marks TEXT")
     # 古诗文考频排序
     if "freq" not in _cols(con, "classics"):
         con.execute("ALTER TABLE classics ADD COLUMN freq INTEGER DEFAULT 0")
@@ -3297,9 +3303,79 @@ def news_detail(nid):
     r = get_db().execute("SELECT * FROM news_items WHERE id=?", (nid,)).fetchone()
     if not r:
         return jsonify({"error": "未找到"}), 404
+    try:
+        marks = json.loads(r["marks"] or "[]") if "marks" in r.keys() else []
+    except Exception:
+        marks = []
     return jsonify({"id": r["id"], "title": r["title"], "url": r["url"], "source": r["source"],
                     "pub_date": r["pub_date"], "content": r["content"] or "",
-                    "ai_summary": r["ai_summary"] or ""})
+                    "ai_summary": r["ai_summary"] or "", "marks": marks})
+
+
+# 时政重点标注的四类考点（颜色/含义在前端一一对应）
+NEWS_MARK_KINDS = ["提法", "数据", "政策", "金句"]
+
+
+@app.post("/api/news/<int:nid>/marks")
+def news_marks(nid):
+    """在原文里划重点：让 AI **逐字挑出**原文中的要害句，并说明是什么考点。
+       关键是「逐字」——挑出来的句子必须能在原文里原样找到，否则前端根本标不上去。
+       服务端会逐条核对，对不上的直接丢掉（宁可少标，不能标错位置）。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM news_items WHERE id=?", (nid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    content = (r["content"] or "").strip()
+    if len(content) < 40:
+        return jsonify({"marks": []})
+    try:
+        old = json.loads(r["marks"] or "[]")
+    except Exception:
+        old = []
+    if old and not request.args.get("force"):
+        return jsonify({"marks": old, "cached": True})
+
+    prompt = (
+        "下面是一篇时政原文。考生没时间通读，请在原文里**划重点**：挑出 4~8 处最该记的地方，"
+        "每处**必须从原文里逐字复制**（一字不差，含标点），否则没法在原文上标出来。\n\n"
+        "每处给：\n"
+        "· quote：从原文逐字复制的句子或短语（10~60 字，别整段抄）\n"
+        "· kind：属于哪类考点，只能填 提法 / 数据 / 政策 / 金句 之一\n"
+        "  （提法=新表述新概念，常识判断爱考；数据=具体数字时间，容易出选项；"
+        "政策=文件名/举措/目标；金句=可直接用进申论的表述）\n"
+        "· why：为什么要记它（一句话，讲清考点在哪，别复述原文）\n\n"
+        '只输出 JSON：{"marks":[{"quote":"","kind":"","why":""}]}\n\n【原文】\n' + content[:4000])
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是公考时政老师，只从原文里逐字摘句，绝不改写、不编造。严格输出 JSON。"},
+         {"role": "user", "content": prompt}], temperature=0.3, max_tokens=2000, timeout=180, json_mode=True)
+    if err:
+        return err
+    try:
+        got = json.loads(rep).get("marks") or []
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+
+    marks, seen = [], set()
+    for m in got:
+        q = (m.get("quote") or "").strip()
+        if not q or q in seen:
+            continue
+        if q not in content:                 # 对不上原文就丢掉——标错位置比不标更糟
+            q2 = re.sub(r"\s+", "", q)
+            hit = next((x for x in [q2] if q2 and q2 in re.sub(r"\s+", "", content)), None)
+            if not hit:
+                continue
+            q = q2                            # 只是空白差异，用去空白版再试
+            if q not in content:
+                continue
+        seen.add(q)
+        kind = m.get("kind") if m.get("kind") in NEWS_MARK_KINDS else "提法"
+        marks.append({"quote": q, "kind": kind, "why": (m.get("why") or "").strip()[:120]})
+    if not marks:
+        return jsonify({"error": "AI 挑出的句子和原文对不上，请重试"}), 502
+    db.execute("UPDATE news_items SET marks=? WHERE id=?", (json.dumps(marks, ensure_ascii=False), nid))
+    db.commit()
+    return jsonify({"marks": marks})
 
 
 # ---------------------------------------------------------------- 申论概括句积累（每日生成，全局共享）
@@ -6134,6 +6210,47 @@ def changkao_items():
     rows = db.execute("SELECT id, title, content, note, freq FROM changkao_items WHERE board=? "
                       "ORDER BY id LIMIT 1000", (board,)).fetchall()
     return jsonify({"board": board, "kind": "text", "items": [dict(r) for r in rows]})
+
+
+@app.get("/api/changkao/<int:cid>/story")
+def changkao_story(cid):
+    """成语/实词的典故：出处原文、故事、本义→引申义怎么来的、易错点。
+       看懂来历自然就记住了，比死背释义牢。AI 讲一次就缓存进 changkao_items.story。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM changkao_items WHERE id=?", (cid,)).fetchone()
+    if not r:
+        return jsonify({"error": "词条不存在"}), 404
+    if r["story"]:
+        return jsonify({"id": cid, "title": r["title"], "board": r["board"],
+                        "content": r["content"], "note": r["note"],
+                        "freq": r["freq"], "story": json.loads(r["story"])})
+    word, mean = r["title"] or "", (r["content"] or "")[:120]
+    is_idiom = (r["board"] or "") == "成语"
+    prompt = (
+        "讲清「%s」的来历，让考生理解了再记，而不是死背释义。释义：%s\n\n"
+        "给这几项：\n"
+        "· origin：出处（哪本书、哪个人、什么年代；有原文就把**原句**引出来，注明篇目）\n"
+        "· story：%s（80~160 字，有人物有情节，讲得让人记得住）\n"
+        "· evolve：本义是什么 → 怎么引申成今天这个意思的（这一步最关键，理解了就不会用错）\n"
+        "· usage：公考里怎么考它——常和哪些词辨析、什么语境用、褒贬中性、易错点\n\n"
+        '只输出 JSON：{"origin":"","story":"","evolve":"","usage":""}'
+        % (word, mean,
+           "典故 / 历史故事" if is_idiom else "这个词的来源与用法演变（没有典故就讲它的构词与语感来源）"))
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是语文与公考言语老师，讲典故有据可查、不编造出处，语言生动。严格输出 JSON。"},
+         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=1600, timeout=180, json_mode=True)
+    if err:
+        return err
+    try:
+        st = json.loads(rep)
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+    if not (st.get("story") or st.get("origin")):
+        return jsonify({"error": "没能讲出典故，请重试"}), 502
+    db.execute("UPDATE changkao_items SET story=? WHERE id=?", (json.dumps(st, ensure_ascii=False), cid))
+    db.commit()
+    return jsonify({"id": cid, "title": r["title"], "board": r["board"],
+                    "content": r["content"], "note": r["note"], "freq": r["freq"], "story": st})
 
 
 @app.get("/api/hyper/<int:hid>")
