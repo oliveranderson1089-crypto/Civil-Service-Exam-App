@@ -639,8 +639,15 @@
     </div>
     <div id="wr-yingyong" class="wr-pane hidden">
       <div class="pd-intro">应用文和大作文不是一回事：大作文考<b>怎么论证</b>，应用文考<b>格式 + 要点 + 语言得体</b>。
-        所以先定「<b>什么文种 · 就什么事 · 我是谁 · 写给谁</b>」，再出范文
-        —— 而且<b>逐段带批注</b>：每段是哪个部件、为什么这么写。</div>
+        每个文种都给两样：<b>🧭 提纲</b>（框架式要点式，看清由哪几块组成）和 <b>📄 范文</b>（成篇，逐段带批注）。
+        <b>提纲本身不是文种</b>，是一种呈现方式，任何文种都能套。</div>
+      <div class="wr-bar">
+        <button class="btn primary" id="yy-batch">⚡ 一键铺开所有文种</button>
+        <span id="yy-bfmsg" class="wr-bfmsg"></span>
+      </div>
+      <div id="yy-cats"></div>
+
+      <div class="sl-hist-head"><span>针对某个文种，换个话题再写一篇</span></div>
       <div class="gw-form">
         <div class="gw-row"><label>文种</label><div id="yy-types" class="gw-chips"></div></div>
         <div class="gw-fmt" id="yy-fmt"></div>
@@ -654,10 +661,14 @@
           <div class="gw-row"><label>写给谁看</label>
             <input id="yy-aud" type="text" placeholder="如：全体社区居民"></div>
         </div>
+        <div class="gw-row"><label>要哪种</label>
+          <div class="gw-chips" id="yy-forms">
+            <button class="chip active" data-yyf="full">📄 范文（成篇）</button>
+            <button class="chip" data-yyf="outline">🧭 提纲（框架要点）</button>
+          </div>
+        </div>
         <button class="btn primary" id="yy-go">✍️ 写这一篇</button>
       </div>
-      <div class="sl-hist-head"><span>写过的</span></div>
-      <div id="yy-list" class="sl-hist"></div>
     </div>
   </section>
 
