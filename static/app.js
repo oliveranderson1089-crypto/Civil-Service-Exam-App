@@ -72,13 +72,16 @@ const BOARD_FEATURES = {
     { key: 'drill', name: '专项练', desc: '8 类题型 · 计时 · 秒杀技巧 · 薄弱优先', icon: 'target' },
   ],
   '常识判断': [
+    { key: 'drill', name: '专项练', desc: '7 类考点 · 三档难度 · 计时 · 薄弱优先', icon: 'target' },
     { key: 'changshi', name: '常识积累', desc: '人文/科技/法律… 七大板块 每日更新', icon: 'bulb' },
   ],
   '言语理解与表达': [
+    { key: 'drill', name: '专项练', desc: '逻辑填空/片段阅读/语句排序/病句 · 三档难度', icon: 'target' },
     { key: 'idiom', name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', icon: 'book' },
     { key: 'hyper', name: '上位词积累', desc: '逻辑填空概括词提示 · 每日推荐', icon: 'layers' },
   ],
   '政治理论': [
+    { key: 'drill', name: '专项练', desc: '马原/毛概/中特/习思想 · 三档难度', icon: 'target' },
     { key: 'news', name: '每日时政', desc: '每天自动更新 · AI 摘要+考点', icon: 'feather' },
     { key: 'policydoc', name: '时政要文库', desc: '二十大·十五五·两会报告 全文+AI解读', icon: 'book' },
     { key: 'partydict', name: '党的创新理论学习词典', desc: '两个确立·四个意识… 12371 术语速查', icon: 'book' },
@@ -110,8 +113,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'find', 'findrun'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', find: '小题训练', findrun: '' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -3608,11 +3611,15 @@ async function frDoGrade() {
   } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = '交给我批'; }
 }
 
-/* ============= 专项练（资料分析 / 判断推理 / 数量关系）=============
-   这三块和常识不一样：题型固定、有套路、拼速度 —— 靠练不靠背。
-   所以：按题型分开刷 + 每题计时 + 做完给这一类的秒杀技巧 + 薄弱题型排最前。
-   题全是程序化生成的（figgen.py），答案由构造保证。 */
-let drBoard = '', drType = '', drItems = [], drIdx = 0, drAns = [], drSec = [], drT0 = 0, drTimer = 0, drLimit = 60;
+/* ============= 专项练（行测六大板块）=============
+   资料分析 / 判断推理 / 数量关系 —— 题型固定、有套路、拼速度，**题由程序生成**，答案由构造保证。
+   常识判断 / 政治理论 / 言语理解 —— 考的是知识，构造不出来，**由 AI 按考试标准出题**；
+     出好的题攒进题库（drill_bank），下次直接取，不用每次等十几秒。
+   三档难度**真正改变题目**（不是贴个标签）；难度系数 = 预期得分率，做完告诉你比预期高还是低。
+   两种模式：背题（选完即判 + 解析）/ 测试（做完交卷、服务端判分）。题量 5/10/15/20。
+   每次做完**留一条完整记录**，可以回看每一题 —— 不是做完就丢。 */
+let drBoard = '', drType = '', drItems = [], drIdx = 0, drAns = [], drSec = [], drT0 = 0, drTimer = 0;
+let drLimit = 60, drLevel = 'mid', drN = 10, drMode = 'study', drToken = '', drCoef = 0.6, drLevels = [];
 
 function openDrill(board) {
   drBoard = board;
@@ -3623,11 +3630,18 @@ async function loadDrillTypes() {
   const box = $('#dr-types');
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
-    const d = await api('/api/drill/types?board=' + encodeURIComponent(drBoard));
-    drLimit = d.limit;
+    const d = await api(`/api/drill/types?board=${encodeURIComponent(drBoard)}&level=${drLevel}`);
+    drLimit = d.limit; drLevels = d.levels; drCoef = d.coef;
+    $('#dr-intro').innerHTML = d.ai
+      ? `这一块考的是<b>知识</b>，题由 AI 按考试标准出（某个题型第一次出题约 10 秒，之后从题库秒取）。每题限时 ${d.limit} 秒。`
+      : `这一块靠<b>练</b>不靠背：题型固定、有套路、拼速度。题由<b>程序生成</b>，答案由构造保证。每题限时 ${d.limit} 秒，做完给这一类的秒杀技巧。`;
+    $('#dr-levels').innerHTML = d.levels.map(l =>
+      `<button class="dr-lv${l.k === drLevel ? ' on' : ''}" data-drl="${l.k}">
+         <b>${esc(l.name)}</b><span>${l.coef.toFixed(2)}</span></button>`).join('');
+    drCoefTip();
     box.innerHTML = d.types.map(t => {
       const done = t.n > 0;
-      const weak = done && t.acc < 70;
+      const weak = done && t.acc < Math.round(drCoef * 100);   // 低于这个难度的预期得分率 = 薄弱
       return `<div class="dr-card${weak ? ' weak' : ''}" data-drt="${esc(t.type)}">
         <div class="dr-card-h">
           <b>${esc(t.type)}</b>
@@ -3640,19 +3654,51 @@ async function loadDrillTypes() {
       <p class="dr-desc">所有题型随机出，模拟真实考场</p><div class="dr-meta">限时 ${drLimit} 秒/题</div></div>`;
   } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
+function drCoefTip() {
+  const l = drLevels.find(x => x.k === drLevel) || {};
+  // 「难度系数」在公考里就是**得分率**。必须说清它是什么，不然「0.40」看着像分数
+  $('#dr-coef').innerHTML = `<b>难度系数 ${(l.coef || 0).toFixed(2)}</b>
+    <span>= 这个难度下<b>预期能做对 ${Math.round((l.coef || 0) * 100)}%</b>。${esc(l.desc || '')}。
+    做完会告诉你<b>比预期高还是低</b>，心里有数。</span>`;
+}
+$('#dr-levels').addEventListener('click', e => {
+  const b = e.target.closest('[data-drl]'); if (!b) return;
+  drLevel = b.dataset.drl;
+  loadDrillTypes();
+});
+$('#dr-ns').addEventListener('click', e => {
+  const b = e.target.closest('[data-drn]'); if (!b) return;
+  drN = +b.dataset.drn;
+  document.querySelectorAll('#dr-ns .chip').forEach(x => x.classList.toggle('active', x === b));
+});
+$('#dr-modes').addEventListener('click', e => {
+  const b = e.target.closest('[data-drm]'); if (!b) return;
+  drMode = b.dataset.drm;
+  document.querySelectorAll('#dr-modes .chip').forEach(x => x.classList.toggle('active', x === b));
+  drModeTip();
+});
+function drModeTip() {
+  $('#dr-modetip').textContent = drMode === 'exam'
+    ? '答案不提前下发，全部做完交卷、由服务端判分，更像考试'
+    : '每题选完立刻判、马上给解析和秒杀技巧 —— 边做边学';
+}
+drModeTip();
 $('#dr-types').addEventListener('click', e => {
   const c = e.target.closest('[data-drt]'); if (!c) return;
   drStart(c.dataset.drt);
 });
+$('#dr-recs').onclick = () => openDrillRecs();
 
 async function drStart(type) {
   drType = type;
+  toast('出题中…');
   try {
     const d = await api('/api/drill/quiz', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ board: drBoard, type, n: 5 }),
+      body: JSON.stringify({ board: drBoard, type, n: drN, level: drLevel, exam: drMode === 'exam' }),
     });
-    drItems = d.items; drLimit = d.limit; drIdx = 0; drAns = []; drSec = [];
+    drItems = d.items; drLimit = d.limit; drCoef = d.coef; drToken = d.token || '';
+    drIdx = 0; drAns = []; drSec = [];
     push({ view: 'drillrun', title: (type || '混合') + ' · 专项练' });
     drRender();
   } catch (e) { toast(e.message, true); }
@@ -3663,27 +3709,44 @@ function drRender() {
   if (drIdx >= drItems.length) { drResult(); return; }
   const it = drItems[drIdx];
   const isFig = !!(it.figs && it.figs.seq);
+  const lvName = (drLevels.find(x => x.k === drLevel) || {}).name || '';
   $('#dr-head').innerHTML = `
     <div class="dr-prog">第 <b>${drIdx + 1}</b> / ${drItems.length} 题
-      <span class="dr-tag">${esc(it.qtype || '')}</span></div>
+      <span class="dr-tag">${esc(it.qtype || '')}</span>
+      <span class="dr-tag lv">${esc(lvName)}</span></div>
     <div class="dr-clock" id="dr-clock">0 秒</div>`;
+  const chosen = drAns[drIdx];
   const opts = isFig
-    ? it.figs.opts.map((svg, j) => `<button class="dt-opt dt-figo" data-dro="${DT_L[j]}">
-        <span class="dt-figl">${DT_L[j]}</span>${svg}</button>`).join('')
-    : (it.options || []).map((o, j) => `<button class="dt-opt" data-dro="${DT_L[j]}">${esc(o)}</button>`).join('');
+    ? it.figs.opts.map((svg, j) => `<button class="dt-opt dt-figo${chosen === DT_L[j] ? ' chosen' : ''}"
+        data-dro="${DT_L[j]}"><span class="dt-figl">${DT_L[j]}</span>${svg}</button>`).join('')
+    : (it.options || []).map((o, j) => `<button class="dt-opt${chosen === DT_L[j] ? ' chosen' : ''}"
+        data-dro="${DT_L[j]}">${esc(o)}</button>`).join('');
   const seq = isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : '';
   _dtLastMat = '';                                    // 每题独立渲染材料，别被上一题的缓存吃掉
+  // 测试模式要能翻回去改（考场就是这样），所以给上下题按钮；背题模式选完即判，不用
+  const nav = drMode === 'exam' ? `<div class="dr-nav">
+      <button class="btn" id="dr-prev" ${drIdx ? '' : 'disabled'}>← 上一题</button>
+      <button class="btn primary" id="dr-nextq">${drIdx + 1 >= drItems.length ? '交卷看结果' : '下一题 →'}</button>
+    </div>` : '';
   $('#dr-body').innerHTML = `<div class="dt-q">${dtMaterial(it.material, drIdx)}
     <div class="dt-qt">${esc(it.q)}</div>${seq}
     <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>
-    <div id="dr-exp"></div></div>`;
+    <div id="dr-exp"></div>${nav}</div>`;
+  if (drMode === 'exam') {
+    $('#dr-prev').onclick = () => { drStopTimer(); drIdx--; drRender(); };
+    $('#dr-nextq').onclick = () => { drStopTimer(); drIdx++; drRender(); };
+  }
   drT0 = Date.now();
   drTimer = setInterval(() => {
-    const s = Math.round((Date.now() - drT0) / 1000);
+    const s = Math.round((Date.now() - drT0) / 1000 + (drSec[drIdx] || 0));
     const el = $('#dr-clock'); if (!el) { clearInterval(drTimer); return; }
     el.textContent = s + ' 秒';
     el.classList.toggle('over', s > drLimit);        // 超时只是提醒，不打断（考场上超时也得做完）
   }, 500);
+}
+function drStopTimer() {
+  clearInterval(drTimer);
+  drSec[drIdx] = (drSec[drIdx] || 0) + (Date.now() - drT0) / 1000;
 }
 
 $('#dr-body').addEventListener('click', e => {
@@ -3693,11 +3756,17 @@ $('#dr-body').addEventListener('click', e => {
 });
 
 function drPick(letter) {
-  if (drAns[drIdx] !== undefined) return;             // 已经答过了
-  clearInterval(drTimer);
   const it = drItems[drIdx];
-  const sec = (Date.now() - drT0) / 1000;
-  drAns[drIdx] = letter; drSec[drIdx] = sec;
+  if (drMode === 'exam') {          // 测试模式：只记选择，不判、不给解析（答案本来也没下发到前端）
+    drAns[drIdx] = letter;
+    document.querySelectorAll('#dr-body [data-dro]').forEach(b =>
+      b.classList.toggle('chosen', b.dataset.dro === letter));
+    return;
+  }
+  if (drAns[drIdx] !== undefined) return;             // 背题模式：答过就不能改
+  drStopTimer();
+  const sec = drSec[drIdx];
+  drAns[drIdx] = letter;
   const ok = letter === it.answer;
   document.querySelectorAll('#dr-body [data-dro]').forEach(b => {
     b.disabled = true;
@@ -3705,40 +3774,109 @@ function drPick(letter) {
     else if (b.dataset.dro === letter) b.classList.add('wrong');
   });
   const over = sec > drLimit;
+  const bold = (t) => esc(t || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
   $('#dr-exp').innerHTML = `
     <div class="dr-verdict ${ok ? 'ok' : 'no'}">${ok ? '✅ 对了' : '❌ 错了'}
       · 用时 <b class="${over ? 'over' : ''}">${sec.toFixed(0)} 秒</b>${over ? `（限时 ${drLimit} 秒，慢了）` : ''}
       · 正确答案 <b>${esc(it.answer)}</b></div>
-    <div class="dt-exp">${esc(it.explain || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</div>
-    ${it.tip ? `<div class="dr-tip">⚡ <b>秒杀技巧</b>：${esc(it.tip).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</div>` : ''}
+    <div class="dt-exp">${bold(it.explain)}</div>
+    ${it.tip ? `<div class="dr-tip">⚡ <b>秒杀技巧</b>：${bold(it.tip)}</div>` : ''}
     <button class="btn primary" id="dr-next">${drIdx + 1 >= drItems.length ? '看结果' : '下一题 →'}</button>`;
 }
 
 async function drResult() {
-  const items = drItems.map((it, i) => ({ ...it, your: drAns[i] || '', seconds: drSec[i] || 0 }));
+  drStopTimer();
   $('#dr-head').innerHTML = '';
-  $('#dr-body').innerHTML = '<p class="empty">记录中…</p>';
+  $('#dr-body').innerHTML = '<p class="empty">判分中…</p>';
+  const answers = {}, seconds = {};
+  drItems.forEach((_, i) => { answers[i] = drAns[i] || ''; seconds[i] = drSec[i] || 0; });
+  const body = { board: drBoard, type: drType, level: drLevel, exam: drMode === 'exam', answers, seconds };
+  if (drToken) body.token = drToken;      // 测试模式：题在服务端，前端手里根本没有答案
+  else body.items = drItems;
   try {
     const r = await api('/api/drill/done', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ board: drBoard, items }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const avg = drSec.reduce((a, b) => a + b, 0) / (drSec.length || 1);
     const slow = drSec.filter(s => s > drLimit).length;
+    const pct = Math.round(r.acc * 100), exp = Math.round(r.coef * 100);
+    const good = r.vs >= 0;
     $('#dr-body').innerHTML = `
       <div class="dr-done">
         <div class="dr-score">${r.ok} / ${r.total}</div>
+        <div class="dr-vs ${good ? 'good' : 'bad'}">
+          正确率 <b>${pct}%</b> · 这个难度预期 ${exp}%
+          → <b>${good ? '高出' : '低了'} ${Math.abs(Math.round(r.vs * 100))} 个点</b>
+        </div>
         <div class="dr-sub">平均用时 <b class="${avg > drLimit ? 'over' : ''}">${avg.toFixed(0)} 秒</b>
           ${slow ? `· 有 ${slow} 题超时（限时 ${drLimit} 秒）` : `· 都在 ${drLimit} 秒内 👍`}</div>
         ${r.wrong_added ? `<p class="dr-wq">错的 ${r.wrong_added} 题已自动进错题本</p>` : ''}
         <div class="dr-acts">
-          <button class="btn primary" id="dr-again">🔄 再来 5 题</button>
+          <button class="btn primary" id="dr-again">🔄 再来 ${drN} 题</button>
+          <button class="btn" id="dr-see">📋 看每题详情</button>
           <button class="btn" id="dr-back">换个题型</button>
         </div>
       </div>`;
     $('#dr-again').onclick = () => drStart(drType);
+    $('#dr-see').onclick = () => openDrillRec(r.rid);
     $('#dr-back').onclick = () => { back(); loadDrillTypes(); };
   } catch (e) { $('#dr-body').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+
+/* ---- 做题记录：做过的都留着，可以回看每一题（不是做完就丢） ---- */
+async function openDrillRecs() {
+  push({ view: 'drillrec', title: '做题记录' });
+  const box = $('#drr-list');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/drill/records');
+    box.innerHTML = d.items.length ? d.items.map(x => {
+      const acc = Math.round(100 * x.correct / (x.total || 1));
+      const good = acc >= Math.round(x.coef * 100);      // 和这个难度的预期得分率比
+      return `<div class="wr-day done" data-drrec="${x.id}">
+        <div class="wr-day-d">${esc(x.board)}</div>
+        <div class="wr-day-m">
+          <b>${esc(x.qtype || '混合')}</b>
+          <span class="wr-tag">${esc(x.level_name)}</span>
+          <span class="wr-tag">${x.mode === 'exam' ? '测试' : '背题'}</span>
+          <span class="dr-acc${good ? '' : ' bad'}">${x.correct}/${x.total} · ${acc}%</span>
+          <span class="wr-w">${Math.round(x.seconds)} 秒 · ${esc((x.created_at || '').slice(5, 16))}</span>
+        </div>
+      </div>`;
+    }).join('') : '<p class="empty">还没做过题。</p>';
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#drr-list').addEventListener('click', e => {
+  const c = e.target.closest('[data-drrec]'); if (c) openDrillRec(+c.dataset.drrec);
+});
+async function openDrillRec(rid) {
+  push({ view: 'drillrecd', title: '这次做的题' });
+  $('#drd-head').innerHTML = '<p class="empty">加载中…</p>';
+  $('#drd-body').innerHTML = '';
+  try {
+    const d = await api('/api/drill/record/' + rid);
+    const acc = Math.round(100 * d.correct / (d.total || 1));
+    $('#drd-head').innerHTML = `<div class="dr-prog">${esc(d.board)} · ${esc(d.qtype || '混合')}
+      <span class="dr-tag lv">${esc(d.level)}</span></div>
+      <div class="dr-clock">${d.correct}/${d.total} · ${acc}%</div>`;
+    _dtLastMat = '';
+    $('#drd-body').innerHTML = d.items.map((it, i) => {
+      const r = d.answers[i] || {};
+      const isFig = !!(it.figs && it.figs.seq);
+      const cls = (L) => (L === it.answer ? ' correct' : (L === r.your ? ' wrong' : ''));
+      const opts = isFig
+        ? it.figs.opts.map((svg, j) => `<button class="dt-opt dt-figo${cls(DT_L[j])}" disabled>
+            <span class="dt-figl">${DT_L[j]}</span>${svg}</button>`).join('')
+        : (it.options || []).map((o, j) => `<button class="dt-opt${cls(DT_L[j])}" disabled>${esc(o)}</button>`).join('');
+      return `<div class="dt-q">${dtMaterial(it.material, i)}
+        <div class="dt-qt">${r.correct ? '✅' : '❌'} ${i + 1}. ${esc(it.q)}</div>
+        ${isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : ''}
+        <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>
+        <div class="dt-exp"><b>正确答案 ${esc(it.answer)}</b>${r.your ? ` · 你选了 ${esc(r.your)}` : ' · 没作答'}
+          ${it.explain ? ' · ' + esc(it.explain) : ''}</div>
+      </div>`;
+    }).join('');
+  } catch (e) { $('#drd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 
 /* ============= 成文：把素材真正写成一篇大作文 ============= */

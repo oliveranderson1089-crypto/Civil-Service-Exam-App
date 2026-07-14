@@ -521,6 +521,26 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_dr_u ON drill_log(user_id, board, qtype);
+        -- 专项练题库：常识/政治理论/言语这三块出不了程序化题（考的是知识，不是构造），
+        -- 只能让 AI 出。但每次现出要等 20 秒 —— 所以**攒进题库**，用的时候直接取，
+        -- 不够了再后台补。按 (板块, 题型, 难度) 分桶。
+        CREATE TABLE IF NOT EXISTS drill_bank(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            board TEXT, qtype TEXT, level TEXT,
+            q TEXT, options TEXT, answer TEXT, explain TEXT, tip TEXT, source TEXT,
+            sig TEXT UNIQUE,                 -- 题干指纹，防止重复题
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_bank ON drill_bank(board, qtype, level);
+        -- 一次专项练的完整记录（题目 + 我的作答 + 用时），不做完就丢
+        CREATE TABLE IF NOT EXISTS drill_records(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            board TEXT, qtype TEXT, level TEXT, mode TEXT,
+            total INTEGER, correct INTEGER, seconds REAL,
+            items TEXT, answers TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_drrec ON drill_records(user_id, id DESC);
         -- 小题训练（找点 + 写点）：归纳概括/综合分析/提出对策的共同难点都是「从材料里找要点」。
         -- 要能判「找漏了/找错了/找重了」，就必须存下**采分点 ↔ 材料原文的逐字依据**：
         -- points = [{point:概括后的要点, evidence:逐字来自材料的原句, score:分值}]
@@ -674,6 +694,9 @@ def init_db():
     # 每日复习量：一天能背多少是因人而异的，原来写死 120 条（只能改环境变量），堆起来就不想背了
     if "rv_limits" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN rv_limits TEXT")
+    # 专项练加了难度档，统计要按难度分开（不然入门刷出来的高正确率会盖住真实水平）
+    if "level" not in _cols(con, "drill_log"):
+        con.execute("ALTER TABLE drill_log ADD COLUMN level TEXT DEFAULT 'mid'")
     # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
     if "mat_boards" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
@@ -6156,7 +6179,45 @@ def dtest_wrong():
 # 这三块和常识不一样：**题型固定、有套路、拼速度**。所以按题型分开刷、每题计时、
 # 做完给这一类的秒杀技巧，并统计「哪个题型最弱、平均要多久」——弱的排前面。
 # 题都是**程序化生成**的（figgen.py），答案由构造保证；AI 出这类题会算错，不用它。
-DRILL_LIMIT = {"资料分析": 60, "判断推理": 45, "数量关系": 70}     # 每题限时（秒），按真题节奏
+DRILL_LIMIT = {"资料分析": 60, "判断推理": 45, "数量关系": 70,
+               "常识判断": 30, "政治理论": 30, "言语理解与表达": 50}   # 每题限时（秒），按真题节奏
+
+# ---- 难度：三档，**真正改变题目**（程序化的三块由 figgen 按 level 造，AI 的三块写进提示词）----
+# 「难度系数」在公考里就是**得分率**（0~1，越高越简单）。这里给每个板块一个真实基准，
+# 让人心里有数：数量关系考场真实难度只有 0.40，做对 4 成不是你菜，是这题本来就难。
+DRILL_LEVELS = ["easy", "mid", "real"]
+DRILL_LV_NAME = {"easy": "入门", "mid": "进阶", "real": "考场真实"}
+# 难度的说明要**分板块写** —— 「数字整、要动笔」这话套到常识判断上驴唇不对马嘴
+DRILL_LV_DESC = {
+    "计算": {"easy": "一步套公式、数字整、干扰项一眼排除",
+             "mid": "常规两步、需要动笔算",
+             "real": "多步/要用技巧、数字不整得估算、干扰项贴着常见错法"},
+    "图形": {"easy": "规律直观（数元素、数边），干扰项差异明显",
+             "mid": "五类规律都可能，需要比对两三个属性",
+             "real": "偏隐蔽规律（线条数、封闭区域），且有镜像干扰项"},
+    "知识": {"easy": "单个知识点正面直问，四选项差异明显",
+             "mid": "需要辨析或两步推理，有一个较像的干扰项",
+             "real": "真题水平：干扰项贴着常见错法（易混概念、偷换时间/主体/范围），要真懂才选得对"},
+}
+_LV_KIND = {"资料分析": "计算", "数量关系": "计算", "判断推理": "图形",
+            "常识判断": "知识", "政治理论": "知识", "言语理解与表达": "知识"}
+
+
+def drill_levels(board):
+    d = DRILL_LV_DESC[_LV_KIND.get(board, "知识")]
+    return [{"k": k, "name": DRILL_LV_NAME[k], "desc": d[k], "coef": drill_coef(board, k)}
+            for k in DRILL_LEVELS]
+DRILL_BASE = {            # 该板块「考场真实难度」的得分率基准（接近真题平均正确率）
+    "资料分析": 0.65, "判断推理": 0.60, "数量关系": 0.40,
+    "常识判断": 0.55, "政治理论": 0.60, "言语理解与表达": 0.62,
+}
+_LV_BONUS = {"easy": 0.25, "mid": 0.10, "real": 0.0}
+
+
+def drill_coef(board, level):
+    """难度系数 = 预期得分率。入门在基准上加 25 个点，进阶加 10 个点，真实就是基准。"""
+    return round(min(0.92, DRILL_BASE.get(board, 0.6) + _LV_BONUS.get(level, 0.1)), 2)
+
 
 DRILL_TYPES = {
     "资料分析": [
@@ -6169,14 +6230,26 @@ DRILL_TYPES = {
     ],
     "判断推理": [
         ("旋转", "图形按固定角度转"),
-        ("元素数", "点/线/块的个数成规律"),
-        ("边数", "边数递增或递减"),
+        ("元素数量", "点/线/块的个数成规律"),
+        ("边数递增", "边数递增或递减"),
         ("线条数", "笔画/线段数成规律"),
-        ("封闭区域", "封闭区域数成规律"),
+        ("封闭区域数", "封闭区域数成规律"),
     ],
     "数量关系": [(k, "") for k in ("工程", "行程", "利润", "浓度", "容斥", "排列组合", "周期", "年龄")],
+    # ---- 下面三块出不了程序化题（考的是知识，不是构造），走 AI + 题库缓存 ----
+    "常识判断": [(b, "") for b in ("人文常识", "科技常识", "法律常识", "地理常识",
+                                   "经济常识", "管理常识", "公文常识")],
+    "政治理论": [(b, "") for b in ("马克思主义基本原理", "毛泽东思想",
+                                   "中国特色社会主义理论体系", "习近平新时代中国特色社会主义思想")],
+    "言语理解与表达": [
+        ("逻辑填空", "选词填空：四个近义成语/实词里挑最合语境的"),
+        ("片段阅读", "找中心句/主旨概括"),
+        ("语句排序", "把打乱的句子排回去"),
+        ("病句辨析", "挑出有语病的一句"),
+    ],
 }
-# 资料分析/图形推理的技巧（数量关系的技巧每道题自己带）
+AI_BOARDS = ("常识判断", "政治理论", "言语理解与表达")     # 这三块靠 AI 出题 + 题库缓存
+
 DRILL_TIP = {
     "比重": "部分 ÷ 整体。**先看单位和年份别看错**——这类题错的多半不是算错，是看错行。",
     "增长率": "(今年 − 去年) ÷ 去年。**除的是去年**，不是今年——这是最经典的坑。",
@@ -6185,33 +6258,162 @@ DRILL_TIP = {
     "倍数": "A ÷ B。问「是几倍」用除，问「多几倍」要再减 1 —— 一字之差。",
     "比重变化": "两个比重相减，单位是**百分点**不是百分比。",
     "旋转": "先看是不是**镜像**：镜像图形靠旋转永远得不到，这是最常见的干扰项。",
-    "元素数": "数点、数块、数交点——**数之前先想清楚数的是什么**。",
-    "边数": "边数递增/递减，或成等差。先把每个图的边数写出来再找规律。",
+    "元素数量": "数点、数块、数交点——**数之前先想清楚数的是什么**。",
+    "边数递增": "边数递增/递减，或成等差。先把每个图的边数写出来再找规律。",
     "线条数": "数线段（不是数边）。曲线和直线要分开数。",
-    "封闭区域": "被完全围起来的区域才算。**图形外面那片不算**。",
+    "封闭区域数": "被完全围起来的区域才算。**图形外面那片不算**。",
+    "逻辑填空": "先看**空前空后的搭配和感情色彩**，再辨析词义。别只凭语感。",
+    "片段阅读": "找**转折词后面**那句（但是/然而/其实），主旨十有八九在那儿。",
+    "语句排序": "先找**不能当首句的**（含指代词、关联词后半句），排除法比正着排快。",
+    "病句辨析": "先看**主谓宾齐不齐**，再看搭配、语序、成分赘余。",
+}
+
+_LV_PROMPT = {
+    "easy": "**入门难度**：只考单个知识点，正面直问，四个选项差异明显，一眼能排除两个。",
+    "mid": "**进阶难度**：需要辨析或两步推理，有一个较像的干扰项。",
+    "real": "**考场真实难度**：按真题水平出——设置**贴着常见错法**的干扰项（易混概念、"
+            "偷换时间/主体/范围），正确项不能一眼看出，要真懂才选得对。",
 }
 
 
-def _drill_gen(board, qtype, n):
-    """出 n 道某个题型的题。全部程序化生成，答案由构造保证。"""
+def _bank_material(db, board, qtype, n=14):
+    """从已有素材里取出题的原料 —— 题必须**考我们库里有的东西**，不然练了也对不上。"""
+    if board == "常识判断":
+        rows = db.execute("SELECT title, content FROM changshi_items WHERE board=? "
+                          "ORDER BY RANDOM() LIMIT ?", (qtype, n)).fetchall()
+        return ["%s：%s" % (r["title"], (r["content"] or "")[:110]) for r in rows]
+    if board == "政治理论":
+        rows = db.execute("SELECT title, content FROM theory_items WHERE board=? "
+                          "ORDER BY RANDOM() LIMIT ?", (qtype, n)).fetchall()
+        return ["%s：%s" % (r["title"], (r["content"] or "")[:110]) for r in rows]
+    if qtype == "逻辑填空":
+        rows = db.execute("SELECT title, content FROM changkao_items WHERE board IN ('成语','实词') "
+                          "ORDER BY RANDOM() LIMIT ?", (n * 2,)).fetchall()
+        return ["%s：%s" % (r["title"], (r["content"] or "")[:60]) for r in rows]
+    return []          # 片段阅读/语句排序/病句：不依赖词库，AI 自己命制
+
+
+def _bank_fill(db, board, qtype, level, want=8):
+    """题库不够了就补一批。返回新增数量。"""
+    mat = _bank_material(db, board, qtype)
+    tip = DRILL_TIP.get(qtype, "")
+    extra = ""
+    if board in ("常识判断", "政治理论"):
+        if not mat:
+            return 0
+        extra = ("\n【只能考下面这些考点】（一道题考一个，别超纲）\n"
+                 + "\n".join("· " + x for x in mat))
+    elif qtype == "逻辑填空":
+        # ⚠️ 从词库随机抽的词彼此**不相关**，直接丢给 AI 当四个选项，它就拿来凑数了
+        #    （实测出过「施行 / 掩饰 / 减轻 / 接二连三」—— 一眼就能选，这题白出）。
+        #    正确答案从我们库里挑（保证考的是积累过的词），**另外三个近义混淆项让 AI 自己造**。
+        extra = ("\n【正确答案必须从下面这些词里挑一个】（这是他积累过的词，要考这些）\n"
+                 + "\n".join("· " + x for x in mat[:12])
+                 + "\n\n⚠️ 另外三个选项**必须是正确答案的近义词/易混词**（你自己造），"
+                   "四个词要**放在一起才需要辨析**（如「施行/实行/执行/推行」）。"
+                   "**绝不能**拿不相干的词凑数（「施行/掩饰/减轻/接二连三」这种一眼就能排除，这题就白出了）。"
+                   "解析要讲清**这四个词的区别**在哪。")
+
+    prompt = (
+        "给四川省考考生出 %d 道**%s · %s**的单选题。\n\n%s\n\n"
+        "【每道题】\n"
+        "· q：题干（%s）\n"
+        "· options：四个选项，形如 \"A. …\"\n"
+        "· answer：正确选项字母\n"
+        "· explain：解析，讲清**为什么对、为什么其他三个错**（不是只说答案）\n"
+        "· source：这题考的具体考点（如「人文常识-唐宋八大家」「逻辑填空-一蹴而就」）\n\n"
+        "【硬要求】\n"
+        "1. 答案**唯一且经得起推敲**，不能出现两个都对或都说得通的选项。\n"
+        "2. 四个选项**互不相同**、长度相当（别让正确项特别长，那等于送分）。\n"
+        "3. 一道题**围绕一个考点**。四个选项可以是关于同一事物的四种说法（这很常见），"
+        "但**不能横跨四个不相干的知识点**——那是在考运气，不是考掌握。\n\n"
+        '只输出 JSON：{"items":[{"q":"","options":["A. …","B. …","C. …","D. …"],'
+        '"answer":"A","explain":"","source":""}]}'
+        % (want, board, qtype, _LV_PROMPT.get(level, ""),
+           "语境完整，一个空" if qtype == "逻辑填空" else "一句话把问题问清楚",
+           )) + extra
+
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是四川省考命题老师。答案唯一、干扰项讲究，"
+                                       "解析要说清其他三个为什么错。严格输出 JSON。"},
+         {"role": "user", "content": prompt}],
+        temperature=0.6, max_tokens=3500, timeout=300, json_mode=True)
+    if err:
+        return 0
+    try:
+        got = json.loads(rep).get("items") or []
+    except Exception:
+        return 0
+    n = 0
+    for it in got:
+        q = (it.get("q") or "").strip()
+        opts = it.get("options") or []
+        ans = (it.get("answer") or "").strip().upper()[:1]
+        # 逐条把关：四选项、答案字母合法、选项不重复 —— AI 这三样都会翻车
+        if not q or len(opts) != 4 or ans not in "ABCD":
+            continue
+        body = [re.sub(r"^[A-D][.、．)]\s*", "", str(o)).strip() for o in opts]
+        if len(set(body)) != 4 or not all(body):
+            continue
+        sig = hashlib.md5((board + qtype + re.sub(r"\s", "", q)).encode()).hexdigest()
+        try:
+            db.execute("INSERT INTO drill_bank(board,qtype,level,q,options,answer,explain,tip,source,sig) "
+                       "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                       (board, qtype, level, q,
+                        json.dumps(["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)], ensure_ascii=False),
+                        ans, (it.get("explain") or "").strip(), tip,
+                        (it.get("source") or ("%s-%s" % (board, qtype))).strip(), sig))
+            n += 1
+        except sqlite3.IntegrityError:
+            pass               # 撞指纹 = 出过一样的题，跳过
+    db.commit()
+    return n
+
+
+def _bank_take(db, board, qtype, level, n):
+    """从题库取 n 道；不够就现补（第一次会慢一点，之后秒开）。"""
+    def grab():
+        return [dict(r) for r in db.execute(
+            "SELECT * FROM drill_bank WHERE board=? AND qtype=? AND level=? "
+            "ORDER BY RANDOM() LIMIT ?", (board, qtype, level, n))]
+    got = grab()
+    if len(got) < n:
+        _bank_fill(db, board, qtype, level, want=max(8, n - len(got) + 4))
+        got = grab()
+    out = []
+    for r in got:
+        out.append({"q": r["q"], "options": json.loads(r["options"]), "answer": r["answer"],
+                    "explain": r["explain"], "tip": r["tip"], "module": board,
+                    "source": r["source"], "qtype": qtype, "level": level})
+    return out
+
+
+def _drill_gen(db, board, qtype, n, level="mid"):
+    """出 n 道题。程序化的三块由代码造（答案由构造保证）；另三块从题库取。"""
+    if board in AI_BOARDS:
+        types = [t[0] for t in DRILL_TYPES[board]]
+        if qtype in types:
+            return _bank_take(db, board, qtype, level, n)
+        out = []                                   # 混合练：题型轮着来
+        for i in range(n):
+            out += _bank_take(db, board, types[i % len(types)], level, 1)
+        return out[:n]
+
     out = []
     for _ in range(n):
         if board == "数量关系":
-            q = _gen_math_q(qtype if qtype in _MATH_GEN else None)
+            q = _gen_math_q(qtype if qtype in _MATH_GEN else None, level)
         elif board == "判断推理":
-            q = _gen_figure_q()                       # 图形推理：随机 5 类规律
-            for _ in range(12):                       # 想要指定规律就多摇几次（生成器不收参数）
-                if not qtype or q["source"].endswith(qtype):
-                    break
-                q = _gen_figure_q()
+            q = _gen_figure_q(qtype or None, level)
         else:
-            q = _gen_ziliao(1)[0]
+            q = _gen_ziliao(1, level)[0]
             for _ in range(12):
                 if not qtype or q["source"].endswith(qtype):
                     break
-                q = _gen_ziliao(1)[0]
+                q = _gen_ziliao(1, level)[0]
         q["qtype"] = q.get("source", "").split("-")[-1]
         q.setdefault("tip", DRILL_TIP.get(q["qtype"], ""))
+        q["level"] = level
         out.append(q)
     return out
 
@@ -6220,22 +6422,35 @@ def _drill_gen(board, qtype, n):
 def drill_types():
     """题型清单 + 我在每个题型上的正确率和平均用时。弱的排前面 —— 该练哪个不用自己想。"""
     board = (request.args.get("board") or "").strip()
+    level = (request.args.get("level") or "mid").strip()
     if board not in DRILL_TYPES:
         return jsonify({"error": "这个板块没有专项练"}), 400
-    stat = {r["qtype"]: dict(r) for r in get_db().execute(
+    db = get_db()
+    stat = {r["qtype"]: dict(r) for r in db.execute(
         "SELECT qtype, COUNT(*) n, SUM(correct) ok, AVG(seconds) sec FROM drill_log "
-        "WHERE user_id=? AND board=? GROUP BY qtype", (uid(), board))}
+        "WHERE user_id=? AND board=? AND level=? GROUP BY qtype", (uid(), board, level))}
     items = []
     for k, desc in DRILL_TYPES[board]:
-        s = stat.get(k) or {}
-        n = s.get("n") or 0
-        acc = round(100.0 * (s.get("ok") or 0) / n) if n else None
+        st = stat.get(k) or {}
+        n = st.get("n") or 0
+        acc = round(100.0 * (st.get("ok") or 0) / n) if n else None
         items.append({"type": k, "desc": desc, "n": n, "acc": acc,
-                      "sec": round(s.get("sec") or 0) if n else None,
+                      "sec": round(st.get("sec") or 0) if n else None,
                       "tip": DRILL_TIP.get(k, "")})
-    # 排序：练过且正确率低的排最前 → 没练过的 → 练过且正确率高的
     items.sort(key=lambda x: (x["acc"] is None) * 1000 + (x["acc"] if x["acc"] is not None else 0))
-    return jsonify({"board": board, "limit": DRILL_LIMIT.get(board, 60), "types": items})
+    coef = drill_coef(board, level)
+    return jsonify({"board": board, "limit": DRILL_LIMIT.get(board, 60), "types": items,
+                    "levels": drill_levels(board),
+                    "level": level, "coef": coef, "base": DRILL_BASE.get(board, 0.6),
+                    "ai": board in AI_BOARDS})
+
+
+@app.get("/api/drill/boards")
+def drill_boards():
+    """哪些板块有专项练（首页/板块页要用）。"""
+    return jsonify({"boards": [{"board": b, "n_types": len(DRILL_TYPES[b]),
+                                "ai": b in AI_BOARDS, "base": DRILL_BASE.get(b, 0.6)}
+                               for b in DRILL_TYPES]})
 
 
 @app.post("/api/drill/quiz")
@@ -6245,31 +6460,103 @@ def drill_quiz():
     if board not in DRILL_TYPES:
         return jsonify({"error": "这个板块没有专项练"}), 400
     qtype = (d.get("type") or "").strip()
-    n = max(1, min(20, int(d.get("n") or 5)))
-    return jsonify({"board": board, "type": qtype, "limit": DRILL_LIMIT.get(board, 60),
-                    "items": _drill_gen(board, qtype, n)})
+    level = d.get("level") if d.get("level") in ("easy", "mid", "real") else "mid"
+    n = max(1, min(30, int(d.get("n") or 5)))
+    exam = bool(d.get("exam"))                    # 测试模式：答案不下发
+    items = _drill_gen(get_db(), board, qtype, n, level)
+    if not items:
+        return jsonify({"error": "这个题型暂时出不了题，换一个或稍后再试"}), 502
+    pub = []
+    for it in items:
+        x = dict(it)
+        if exam:
+            x.pop("answer", None)
+            x.pop("explain", None)
+            x.pop("tip", None)
+        pub.append(x)
+    return jsonify({"board": board, "type": qtype, "level": level, "exam": exam,
+                    "coef": drill_coef(board, level),
+                    "limit": DRILL_LIMIT.get(board, 60), "items": pub,
+                    "full": items if not exam else None,
+                    "token": _drill_stash(items) if exam else ""})
+
+
+# 测试模式下答案不下发，题目暂存在服务端（进程内，够用；重启就没了，反正是当次做的）
+_DRILL_STASH = {}
+
+
+def _drill_stash(items):
+    tok = secrets.token_hex(8)
+    _DRILL_STASH[tok] = items
+    if len(_DRILL_STASH) > 400:                   # 别无限涨
+        for k in list(_DRILL_STASH)[:100]:
+            _DRILL_STASH.pop(k, None)
+    return tok
 
 
 @app.post("/api/drill/done")
 def drill_done():
-    """交卷：记成绩（用来算薄弱题型），错题自动进错题本。"""
+    """交卷：判分、记成绩（用来算薄弱题型）、错题自动进错题本、**留一条完整记录**。"""
     d = request.get_json(silent=True) or {}
     board = (d.get("board") or "").strip()
-    items = d.get("items") or []
+    level = d.get("level") if d.get("level") in ("easy", "mid", "real") else "mid"
+    mode = "exam" if d.get("exam") else "study"
+    items = _DRILL_STASH.pop(d.get("token"), None) if d.get("token") else None
+    if items is None:
+        items = d.get("items") or []              # 背题模式：题目本来就在前端手里
+    answers = d.get("answers") or {}
     if board not in DRILL_TYPES or not items:
         return jsonify({"error": "参数不对"}), 400
+
     db = get_db()
-    results = []
-    for it in items:
-        ok = (it.get("your") or "") == (it.get("answer") or "")
-        db.execute("INSERT INTO drill_log(user_id,board,qtype,correct,seconds) VALUES(?,?,?,?,?)",
-                   (uid(), board, it.get("qtype") or "", 1 if ok else 0,
-                    float(it.get("seconds") or 0)))
-        results.append({"correct": ok, "your": it.get("your") or "", "answer": it.get("answer") or ""})
-    added = _dtest_to_wrongq(db, items, results)      # 做错的收进错题本，和巩固测试同一套
-    db.commit()
+    results, secs = [], []
+    for i, it in enumerate(items):
+        your = (answers.get(str(i)) or answers.get(i) or it.get("your") or "").strip().upper()[:1]
+        sec = float((d.get("seconds") or {}).get(str(i)) or it.get("seconds") or 0)
+        ok = bool(your) and your == (it.get("answer") or "")
+        secs.append(sec)
+        db.execute("INSERT INTO drill_log(user_id,board,qtype,level,correct,seconds) VALUES(?,?,?,?,?,?)",
+                   (uid(), board, it.get("qtype") or "", level, 1 if ok else 0, sec))
+        results.append({"correct": ok, "your": your, "answer": it.get("answer") or "",
+                        "explain": it.get("explain") or "", "tip": it.get("tip") or ""})
+    for it, r in zip(items, results):
+        it["your"], it["seconds"] = r["your"], 0
+    added = _dtest_to_wrongq(db, items, results)
     ok_n = sum(1 for r in results if r["correct"])
-    return jsonify({"ok": ok_n, "total": len(items), "wrong_added": added, "results": results})
+    cur = db.execute(
+        "INSERT INTO drill_records(user_id,board,qtype,level,mode,total,correct,seconds,items,answers) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (uid(), board, (d.get("type") or "").strip(), level, mode, len(items), ok_n,
+         sum(secs), json.dumps(items, ensure_ascii=False), json.dumps(results, ensure_ascii=False)))
+    db.commit()
+    acc = ok_n / len(items) if items else 0
+    coef = drill_coef(board, level)
+    return jsonify({"ok": ok_n, "total": len(items), "wrong_added": added, "results": results,
+                    "rid": cur.lastrowid, "coef": coef, "acc": round(acc, 2),
+                    "vs": round(acc - coef, 2)})     # 和难度系数（预期得分率）比，高出多少
+
+
+@app.get("/api/drill/records")
+def drill_records():
+    rows = get_db().execute(
+        "SELECT id,board,qtype,level,mode,total,correct,seconds,created_at FROM drill_records "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 60", (uid(),)).fetchall()
+    lv = DRILL_LV_NAME
+    return jsonify({"items": [dict(r, level_name=lv.get(r["level"], r["level"]),
+                                   coef=drill_coef(r["board"], r["level"])) for r in rows]})
+
+
+@app.get("/api/drill/record/<int:rid>")
+def drill_record(rid):
+    r = get_db().execute("SELECT * FROM drill_records WHERE id=? AND user_id=?",
+                         (rid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "记录不存在"}), 404
+    d = dict(r)
+    d["items"] = json.loads(d["items"] or "[]")
+    d["answers"] = json.loads(d["answers"] or "[]")
+    d["coef"] = drill_coef(r["board"], r["level"])
+    return jsonify(d)
 
 
 def _dtest_to_wrongq(db, items, results):

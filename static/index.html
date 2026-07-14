@@ -630,9 +630,37 @@
 
   <!-- ===== 专项练（资料分析 / 判断推理 / 数量关系）===== -->
   <section id="view-drill" class="view hidden">
-    <div class="pd-intro">这三块靠<b>练</b>提分，不靠背：题型固定、有套路、拼速度。
-      按题型分开刷，<b>每题计时</b>，做完给这一类的秒杀技巧。<b>你最弱的题型排在最前面。</b></div>
+    <div class="pd-intro" id="dr-intro"></div>
+    <div class="dr-cfg">
+      <div class="dr-cfg-row"><label>难度</label><div id="dr-levels" class="dr-lvs"></div></div>
+      <div class="dr-coef" id="dr-coef"></div>
+      <div class="dr-cfg-row"><label>题量</label>
+        <div id="dr-ns" class="chip-row">
+          <button class="chip" data-drn="5">5 题</button>
+          <button class="chip active" data-drn="10">10 题</button>
+          <button class="chip" data-drn="15">15 题</button>
+          <button class="chip" data-drn="20">20 题</button>
+        </div>
+      </div>
+      <div class="dr-cfg-row"><label>模式</label>
+        <div id="dr-modes" class="chip-row">
+          <button class="chip active" data-drm="study">📖 背题模式</button>
+          <button class="chip" data-drm="exam">📝 测试模式</button>
+        </div>
+      </div>
+      <div class="dr-modetip" id="dr-modetip"></div>
+      <button class="btn tiny" id="dr-recs">📋 做题记录</button>
+    </div>
+    <div class="sl-hist-head"><span>选题型开练（<b>你最弱的排在最前面</b>）</span></div>
     <div id="dr-types" class="dr-types"></div>
+  </section>
+
+  <section id="view-drillrec" class="view hidden">
+    <div id="drr-list" class="sl-hist"></div>
+  </section>
+  <section id="view-drillrecd" class="view hidden">
+    <div id="drd-head" class="dr-head"></div>
+    <div id="drd-body"></div>
   </section>
 
   <section id="view-drillrun" class="view hidden">

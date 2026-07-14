@@ -10,6 +10,16 @@
 import math
 import random
 
+# 难度分三档，**真正改变题目**（不是只换个标签）：
+#   easy 入门 —— 一步就能算、数字整、干扰项差得远
+#   mid  进阶 —— 常规两步、数字仍整
+#   real 考场真实 —— 多步/需要技巧、数字更「脏」（要估算）、干扰项贴着常见错法造
+LEVELS = ("easy", "mid", "real")
+
+
+def _lv(level):
+    return level if level in LEVELS else "mid"
+
 # ---------------------------------------------------------------- 图形推理：程序化出题
 # 不让 AI 画图：它画得出 SVG，但「图形规律」和它自己给的答案经常对不上。
 # 这里由代码按规律生成图形，**答案是构造出来的，必然正确**；干扰项也是按「差一个属性」造的。
@@ -87,10 +97,21 @@ def _figq_regions():
 _ZL_CITY = ["A 市", "B 市", "C 市", "甲市", "乙市"]
 
 
-def _gen_ziliao(n_q=1):
+# 资料分析的题型也按「要几步」分档：
+#   入门 = 直接读数一步（比重、倍数）；进阶 = 两步（增长量、增长率）；
+#   真实 = 多步/易混（年均增长量的年份差、比重变化的百分点）—— 真题最爱在这两处埋坑
+_ZL_BY_LEVEL = {
+    "easy": ["比重", "倍数", "增长量"],
+    "mid":  ["比重", "增长率", "增长量", "倍数"],
+    "real": ["年均增长量", "比重变化", "增长率", "比重"],
+}
+
+
+def _gen_ziliao(n_q=1, level="mid"):
     """造一份材料 + n_q 道题（题目共用同一份材料）。数字都是设计好的，答案精确。"""
+    lv = _lv(level)
     city = random.choice(_ZL_CITY)
-    rate = random.choice([4, 5, 6, 8])                 # 2024 年同比增速（%）
+    rate = random.choice([4, 5, 6, 8] if lv != "real" else [3, 7, 9, 11])  # 真实档增速不那么圆整
     g2 = random.choice([2500, 3000, 3200, 3600, 4000])  # 2023 年 GDP
     d = g2 * rate // 100                                # 等差步长，保证增速是整数
     years = ["2021", "2022", "2023", "2024"]
@@ -115,7 +136,10 @@ def _gen_ziliao(n_q=1):
                     "series": [{"name": "地区生产总值", "data": gdp},
                                {"name": "第三产业增加值", "data": third}]}
 
-    kinds = random.sample(["比重", "增长率", "年均增长量", "倍数", "增长量", "比重变化"], k=min(n_q, 6))
+    pool = _ZL_BY_LEVEL[lv]
+    kinds = random.sample(pool, k=min(n_q, len(pool)))
+    while len(kinds) < n_q:                       # 要的题比池子里的题型多，就允许重复
+        kinds.append(random.choice(pool))
     out = []
     for k in kinds:
         if k == "比重":
@@ -164,22 +188,40 @@ def _gen_ziliao(n_q=1):
             "q": q,
             "options": ["%s. %s" % ("ABCD"[i], o) for i, o in enumerate(opts)],
             "answer": "ABCD"[opts.index(ans)], "explain": ex,
-            "module": "资料分析", "source": "资料分析-" + k, "material": material,
+            "module": "资料分析", "source": "资料分析-" + k, "material": material, "level": lv,
         })
     return out
 
 
-def _gen_figure_q():
+# 规律按「一眼能不能看出来」分档：数元素最直观，封闭区域/线条数最隐蔽（真题常考这两个）
+_FIG_BY_LEVEL = {
+    "easy": [_figq_dots, _figq_sides, _figq_rotate],
+    "mid":  [_figq_rotate, _figq_dots, _figq_sides, _figq_lines, _figq_regions],
+    "real": [_figq_rotate, _figq_lines, _figq_regions, _figq_sides],
+}
+
+
+def _gen_figure_q(kind=None, level="mid"):
     """出一道图形推理：答案由构造保证正确，AI 碰都不碰。"""
-    seq, right, wrong, explain, source = random.choice(
-        [_figq_rotate, _figq_dots, _figq_sides, _figq_lines, _figq_regions])()
-    opts = wrong + [right]
+    lv = _lv(level)
+    pool = _FIG_BY_LEVEL[lv] if not kind else [_figq_rotate, _figq_dots, _figq_sides,
+                                               _figq_lines, _figq_regions]
+    seq, right, wrong, explain, source = random.choice(pool)()
+    if kind:                                   # 指定了规律就摇到为止
+        for _ in range(20):
+            if source.endswith(kind):
+                break
+            seq, right, wrong, explain, source = random.choice(pool)()
+    if lv == "easy":
+        # 入门：干扰项只留「差一个属性」的，把镜像这种最容易看走眼的去掉
+        wrong = [w for w in wrong if "镜像" not in explain][:3] or wrong[:3]
+    opts = list(wrong)[:3] + [right]
     random.shuffle(opts)
     return {
         "q": "从所给的四个选项中，选择最合适的一个填入问号处，使之呈现一定的规律性。",
         "options": [], "figs": {"seq": seq, "opts": opts},
         "answer": "ABCD"[opts.index(right)], "explain": explain,
-        "module": "判断推理", "source": source,
+        "module": "判断推理", "source": source, "level": lv,
     }
 
 
@@ -188,10 +230,15 @@ def _gen_figure_q():
 # 同样不交给 AI：它算错的概率高得离谱（尤其排列组合、容斥、浓度），而且答案和解析常常自相矛盾。
 # 这里**先定答案、再倒推题面**，数字都挑成能整除的，保证：算得出、算得整、解析和答案必然一致。
 # 每类都附「秒杀技巧」——数量关系提分靠的就是这个，不是硬算。
-def _mq(q, ans, wrong, ex, kind, tip, unit="", step=1):
-    """选项统一在这里格式化。两条硬约束（都是实测踩出来的）：
+def _mq(q, ans, wrong, ex, kind, tip, unit="", step=1, level="mid"):
+    """选项统一在这里格式化。三条硬约束（前两条是实测踩出来的）：
        · 四个选项**必须互不相同** —— 干扰项撞上答案，这题就有两个正确选项了；
-       · 四个选项**格式必须一致** —— 「29.0% / 23.0% / 35.0% / 26%」等于把答案写脸上。"""
+       · 四个选项**格式必须一致** —— 「29.0% / 23.0% / 35.0% / 26%」等于把答案写脸上；
+       · **干扰项的贴近程度按难度走** —— 入门把干扰项推远（一眼排除），
+         考场真实则贴着常见错法（用平均数、用错公式），逼你真算。"""
+    lv = _lv(level)
+    if lv == "easy":                 # 入门：把干扰项推开，别在几个相近数之间纠结
+        wrong = [w + (i + 1) * step * 2 for i, w in enumerate(float(x) for x in wrong)]
     vals = [float(ans)]
     for w in wrong:                       # 撞车的就挪开，直到四个都不一样
         v, guard = float(w), 0
@@ -214,9 +261,13 @@ def _mq(q, ans, wrong, ex, kind, tip, unit="", step=1):
     }
 
 
-def _mq_engineer():
+def _mq_engineer(level="mid"):
     """工程问题：设总量为工期的最小公倍数，效率就都是整数。"""
-    a, b = random.choice([(10, 15), (12, 18), (20, 30), (6, 12), (15, 10)])
+    a, b = random.choice({                       # 入门：合作天数是整数；真实：会出小数，得算准
+        "easy": [(6, 12), (10, 15), (12, 4)],
+        "mid":  [(10, 15), (12, 18), (20, 30), (6, 12), (15, 10)],
+        "real": [(9, 14), (13, 17), (21, 28), (11, 16), (18, 24)],
+    }[_lv(level)])
     total = a * b // math.gcd(a, b)
     ea, eb = total // a, total // b
     together = round(total / (ea + eb), 1)
@@ -226,14 +277,18 @@ def _mq_engineer():
         "设工程总量为 %d（%d 和 %d 的最小公倍数）。甲效率 %d/天，乙效率 %d/天，"
         "合作效率 %d/天。%d ÷ %d = {ans}。" % (total, a, b, ea, eb, ea + eb, total, ea + eb),
         "工程", "**设总量为最小公倍数**，效率立刻变整数——别去通分算 1/a+1/b，那是给自己找麻烦。",
-        unit="天", step=0.5)
+        unit="天", step=0.5, level=level)
 
 
-def _mq_travel():
+def _mq_travel(level="mid"):
     """行程：相遇/追及。速度和距离都挑成整除的。"""
     if random.random() < 0.5:
-        v1, v2 = random.choice([(60, 40), (50, 30), (70, 50), (45, 35)])
-        t = random.choice([2, 3, 4])
+        v1, v2 = random.choice({
+            "easy": [(60, 40), (50, 50), (70, 30)],       # 速度和是整百，好算
+            "mid":  [(60, 40), (50, 30), (70, 50), (45, 35)],
+            "real": [(68, 47), (53, 39), (72, 58), (46, 37)],   # 数字「脏」，逼你估算
+        }[_lv(level)])
+        t = random.choice([2, 3, 4] if _lv(level) != "real" else [3, 4, 5, 6])
         d = (v1 + v2) * t
         return _mq(
             "甲、乙两地相距 %d 千米。两车分别从两地同时相向出发，速度分别为 %d 千米/时和 %d 千米/时，"
@@ -241,7 +296,7 @@ def _mq_travel():
             t, [t + 1, t + 2, round(d / v1, 1)],
             "相遇问题：路程 ÷ 速度和 = %d ÷ (%d+%d) = {ans}。" % (d, v1, v2),
             "行程", "相遇看**速度和**，追及看**速度差**——先判断是哪一类，公式就出来了。",
-            unit="小时", step=0.5)
+            unit="小时", step=0.5, level=level)
     v1, v2 = random.choice([(60, 40), (75, 50), (80, 60)])
     t = random.choice([3, 4, 5])
     d = (v1 - v2) * t
@@ -251,14 +306,16 @@ def _mq_travel():
         t, [t + 1, round(d / (v1 + v2), 1), t * 2],
         "追及问题：路程差 ÷ 速度差 = %d ÷ (%d−%d) = {ans}。" % (d, v1, v2),
         "行程", "相遇看**速度和**，追及看**速度差**——先判断是哪一类，公式就出来了。",
-        unit="小时", step=0.5)
+        unit="小时", step=0.5, level=level)
 
 
-def _mq_profit():
+def _mq_profit(level="mid"):
     """利润：成本取整百，折扣取整。"""
-    cost = random.choice([200, 300, 400, 500])
-    up = random.choice([50, 80, 100])          # 加价率 %
-    disc = random.choice([8, 9, 7])            # 打几折
+    lv = _lv(level)
+    cost = random.choice({"easy": [100, 200], "mid": [200, 300, 400, 500],
+                          "real": [180, 260, 340, 480]}[lv])
+    up = random.choice({"easy": [100], "mid": [50, 80, 100], "real": [40, 60, 75, 120]}[lv])
+    disc = random.choice({"easy": [8], "mid": [8, 9, 7], "real": [6, 7, 8, 9]}[lv])
     price = cost * (100 + up) // 100
     sell = price * disc // 10
     profit = sell - cost
@@ -268,13 +325,18 @@ def _mq_profit():
         "标价 = %d × (1+%d%%) = %d 元；售价 = %d × %d折 = %d 元；"
         "利润 = 售价 − 进价 = %d − %d = {ans}。" % (cost, up, price, price, disc, sell, sell, cost),
         "利润", "**成本设成 100**（或题给的整数），标价、折扣、利润全是百分比乘除，别设未知数。",
-        unit="元", step=10)
+        unit="元", step=10, level=level)
 
 
-def _mq_solution():
+def _mq_solution(level="mid"):
     """浓度：用十字交叉法，溶质守恒。"""
-    c1, c2 = random.choice([(10, 30), (20, 50), (5, 25), (15, 40)])
-    m1, m2 = random.choice([(200, 300), (100, 300), (300, 200), (400, 100)])
+    lv = _lv(level)
+    c1, c2 = random.choice({"easy": [(10, 30), (20, 40)],
+                            "mid": [(10, 30), (20, 50), (5, 25), (15, 40)],
+                            "real": [(8, 27), (13, 42), (6, 31), (17, 44)]}[lv])
+    m1, m2 = random.choice({"easy": [(100, 100), (200, 200)],   # 等量混合，就是平均数
+                            "mid": [(200, 300), (100, 300), (300, 200), (400, 100)],
+                            "real": [(240, 360), (150, 350), (320, 180)]}[lv])
     solute = c1 * m1 + c2 * m2
     c = round(solute / (m1 + m2), 1)
     return _mq(
@@ -284,10 +346,10 @@ def _mq_solution():
         "注意**不是两个浓度的平均数**——那是最常见的错法（%.1f%%）。"
         % (m1, c1, m2, c2, m1, m2, (c1 + c2) / 2),
         "浓度", "**十字交叉法**：两溶液质量比 = 浓度差的反比。看到「混合」先想它，比列方程快得多。",
-        unit="%", step=1)
+        unit="%", step=1, level=level)
 
 
-def _mq_incl():
+def _mq_incl(level="mid"):
     """容斥：两集合。"""
     total = random.choice([40, 50, 60])
     a = random.choice([25, 30, 32])
@@ -305,13 +367,14 @@ def _mq_incl():
         "|A∩B| = |A| + |B| − |A∪B| = %d + %d − %d = {ans}。"
         % (total, neither, total - neither, a, b, total - neither),
         "容斥", "先算**至少参加一项**（总数 − 都不参加），再套 A+B−A∪B。别一上来就画文氏图。",
-        unit="人", step=2)
+        unit="人", step=2, level=level)
 
 
-def _mq_combi():
+def _mq_combi(level="mid"):
     """排列组合：小数字，能手算验证。"""
-    n = random.choice([5, 6, 7])
-    k = random.choice([2, 3])
+    lv = _lv(level)
+    n = random.choice({"easy": [4, 5], "mid": [5, 6, 7], "real": [7, 8, 9]}[lv])
+    k = random.choice({"easy": [2], "mid": [2, 3], "real": [3, 4]}[lv])
     val = math.comb(n, k)
     return _mq(
         "从 %d 个人中选出 %d 人组成一个小组（不分职务），有多少种不同的选法？" % (n, k),
@@ -320,14 +383,15 @@ def _mq_combi():
         "如果分职务（比如选组长和副组长）才是排列 A(%d,%d) = %d 种——"
         "这两个混淆是最常见的错。" % (n, k, n, k, math.perm(n, k)),
         "排列组合", "先问一句：**换个顺序算不算新方案？** 算 → 排列 A；不算 → 组合 C。",
-        unit="种", step=3)
+        unit="种", step=3, level=level)
 
 
-def _mq_cycle():
+def _mq_cycle(level="mid"):
     """周期：星期/余数。"""
     start = random.choice(["星期一", "星期二", "星期三", "星期四", "星期五"])
     week = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
-    days = random.choice([100, 200, 365, 500])
+    days = random.choice({"easy": [10, 15, 20], "mid": [100, 200, 365, 500],
+                          "real": [1234, 2025, 3650, 8888]}[_lv(level)])
     idx = (week.index(start) + days) % 7
     ans = week[idx]
     # 答案是「星期几」不是数值，_mq 那套数值去重用不上；这三个偏移量本来就互不相同，直接拼
@@ -344,7 +408,7 @@ def _mq_cycle():
     }
 
 
-def _mq_age():
+def _mq_age(level="mid"):
     """年龄：年龄差不变。"""
     diff = random.choice([24, 26, 28, 30])
     k = random.choice([3, 4, 5])                # 若干年后父是子的 k 倍
@@ -363,7 +427,8 @@ def _mq_age():
         "**年龄差永远不变**，是 %d 岁。设那时儿子 x 岁，父亲 %dx 岁，"
         "%dx − x = %d → x = %d。所以是 %d − %d = {ans}后。"
         % (diff, k, k, diff, son_then, son_then, son_now),
-        "年龄", "抓住**年龄差不变**这个不变量——所有年龄题都是围着它转的。", unit="年", step=2)
+        "年龄", "抓住**年龄差不变**这个不变量——所有年龄题都是围着它转的。",
+        unit="年", step=2, level=level)
 
 
 _MATH_GEN = {
@@ -372,8 +437,19 @@ _MATH_GEN = {
 }
 
 
-def _gen_math_q(kind=None):
-    """出一道数量关系。kind 不给就随机。"""
+# 题型也分档：入门只出「一个公式套完」的，真实才上排列组合/容斥这些绕的
+_MATH_BY_LEVEL = {
+    "easy": ["工程", "行程", "利润", "周期"],
+    "mid":  ["工程", "行程", "利润", "浓度", "容斥", "排列组合", "周期", "年龄"],
+    "real": ["浓度", "容斥", "排列组合", "年龄", "工程", "行程"],
+}
+
+
+def _gen_math_q(kind=None, level="mid"):
+    """出一道数量关系。kind 不给就按难度从对应题型池里随机。"""
+    lv = _lv(level)
     if kind not in _MATH_GEN:
-        kind = random.choice(list(_MATH_GEN))
-    return _MATH_GEN[kind]()
+        kind = random.choice(_MATH_BY_LEVEL[lv])
+    q = _MATH_GEN[kind](lv)
+    q["level"] = lv
+    return q

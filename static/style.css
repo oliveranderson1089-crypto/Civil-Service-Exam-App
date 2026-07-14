@@ -2773,3 +2773,30 @@ body.dark .cp-thumb.busy::after{background-color:rgba(20,27,41,.6);}
 
 /* 账户页顶部的大头像：换了自定义头像后要显示图（原来是写死的「公」字） */
 .acct-avatar.has-img{background-size:cover;background-position:center;color:transparent;}
+
+/* ---- 专项练：难度 / 题量 / 模式 ---- */
+.dr-cfg{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:13px 15px;margin-bottom:14px;}
+.dr-cfg-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;flex-wrap:wrap;}
+.dr-cfg-row>label{flex:0 0 34px;font-size:12.5px;font-weight:600;color:var(--muted);}
+.dr-lvs{display:flex;gap:7px;flex-wrap:wrap;}
+.dr-lv{display:flex;align-items:baseline;gap:6px;border:1.5px solid var(--line);border-radius:11px;
+  background:transparent;padding:6px 13px;cursor:pointer;color:var(--text);}
+.dr-lv b{font-size:13.5px;}
+.dr-lv span{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;}
+.dr-lv.on{border-color:var(--blue);background:#eef4fb;}
+.dr-lv.on b,.dr-lv.on span{color:var(--blue);}
+.chip-row{display:flex;gap:6px;flex-wrap:wrap;}
+.dr-coef{margin:-2px 0 10px;padding:9px 12px;border-radius:10px;background:#f3f7fb;
+  font-size:12.5px;line-height:1.75;color:var(--muted);}
+.dr-coef b{color:var(--text);}
+.dr-modetip{font-size:12.2px;color:var(--muted);margin:-2px 0 10px;}
+.dr-tag.lv{background:#fff2e6;color:#c2410c;}
+.dr-nav{display:flex;gap:10px;margin-top:14px;}
+.dr-nav .btn{flex:1;}
+.dr-vs{margin-top:8px;font-size:13.5px;}
+.dr-vs.good{color:#1e8449;}
+.dr-vs.bad{color:#c2410c;}
+body.dark .dr-cfg{background:#141b29;}
+body.dark .dr-lv.on{background:#1c2a45;}
+body.dark .dr-coef{background:#1a2434;}
+body.dark .dr-tag.lv{background:#3a2416;color:#e8905e;}
