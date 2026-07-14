@@ -100,15 +100,18 @@ const BOARD_FEATURES = {
 const SECTION_FEATURES = {};
 // 挂在大板块底部、但不属于「资料分类」的入口（所以不写进 SECTIONS.boards）
 const SECTION_EXTRA = {
-  shenlun: [{ name: '真题批改', badge: 'AI 逐点批改', go: 'shenlun' }],
+  shenlun: [
+    { name: '小题训练', badge: '找点 + 写点', go: 'find' },
+    { name: '真题批改', badge: 'AI 逐点批改', go: 'shenlun' },
+  ],
 };
 
 let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'find', 'findrun'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', find: '小题训练', findrun: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -416,7 +419,11 @@ function openSection(key) {
 }
 $('#board-grid').addEventListener('click', e => {
   const x = e.target.closest('[data-secgo]');
-  if (x) { if (x.dataset.secgo === 'shenlun') openShenlun(); return; }
+  if (x) {
+    if (x.dataset.secgo === 'shenlun') openShenlun();
+    else if (x.dataset.secgo === 'find') openFind();
+    return;
+  }
   const c = e.target.closest('[data-board]'); if (!c) return;
   openBoard(c.dataset.board);
 });
@@ -3275,6 +3282,271 @@ document.addEventListener('click', e => {
     }
   }
 });
+
+/* ============= 小题训练：找点 + 写点 =============
+   归纳概括 / 综合分析 / 提出对策，难点是同一个：从材料里把要点找出来。
+   所以拆成两步，每步单独纠错：
+     第一步「找点」—— 只勾画不写字，判**找漏 / 找错 / 找重**
+     第二步「写点」—— 照着勾到的地方写，判**概括到不到位**
+   勾画粒度是**句**：申论找点本来就是找句子，句子边界明确才判得准
+   （自由划词的区间对不齐采分点，判定必然变成玄学）。 */
+let fdPaper = null, fdPicked = new Set(), fdStep = 1, fdCheck = null, fdDrag = null;
+
+function openFind() {
+  push({ view: 'find', title: '小题训练' });
+  loadFindTypes();
+  loadFindList();
+}
+async function loadFindTypes() {
+  try {
+    const d = await api('/api/find/types');
+    $('#fd-types').innerHTML = d.types.map((t, i) => `
+      <div class="fd-type${i === 0 ? ' on' : ''}" data-fdt="${t.key}">
+        <div class="fd-type-h"><b>${esc(t.name)}</b><span>${t.full} 分 · ${t.word_min}~${t.word_max} 字</span></div>
+        <p>${esc(t.tip)}</p>
+        <div class="fd-type-n">${t.n ? '练过 ' + t.n + ' 道' : '还没练过'}</div>
+      </div>`).join('');
+  } catch (e) { $('#fd-types').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#fd-types').addEventListener('click', e => {
+  const t = e.target.closest('[data-fdt]'); if (!t) return;
+  document.querySelectorAll('#fd-types .fd-type').forEach(x => x.classList.toggle('on', x === t));
+});
+const fdType = () => (document.querySelector('#fd-types .fd-type.on') || {}).dataset?.fdt || 'guina';
+
+async function loadFindList() {
+  const box = $('#fd-list');
+  try {
+    const d = await api('/api/find/papers');
+    box.innerHTML = d.items.length ? d.items.map(x => `
+      <div class="wr-day done" data-fdp="${x.id}">
+        <div class="wr-day-d">${esc(x.type_name)}</div>
+        <div class="wr-day-m"><b>${esc((x.stem || '').slice(0, 40))}</b>
+          <span class="wr-w">${x.full} 分</span>
+          <span class="wr-tag">${esc(x.source || '')}</span>
+          ${x.done ? `<span class="fd-done">练过 ${x.done} 次</span>` : ''}</div>
+      </div>`).join('') : '<p class="empty">还没有题。上面点「出一道」，或上传一份真题。</p>';
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#fd-list').addEventListener('click', e => {
+  const c = e.target.closest('[data-fdp]'); if (c) openFindRun(+c.dataset.fdp);
+});
+$('#fd-gen').onclick = async () => {
+  const b = $('#fd-gen'); b.disabled = true; b.textContent = '出题中…（约 20 秒）';
+  $('#fd-msg').textContent = 'AI 正在造材料（会故意掺入干扰信息）并标采分点…';
+  try {
+    const d = await api('/api/find/gen', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qtype: fdType(), topic: $('#fd-topic').value.trim() }),
+    });
+    $('#fd-msg').textContent = '';
+    openFindRun(d.id); loadFindList(); loadFindTypes();
+  } catch (e) { toast(e.message, true); $('#fd-msg').textContent = ''; }
+  b.disabled = false; b.textContent = '✍️ 出一道';
+};
+$('#fd-up').onclick = () => $('#fd-file').click();
+$('#fd-file').onchange = async () => {
+  const f = $('#fd-file').files[0]; if (!f) return;
+  $('#fd-msg').textContent = '正在识别真题（拆材料和小题，再逐题标采分点，可能要一两分钟）…';
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const d = await api('/api/find/upload', { method: 'POST', body: fd });
+    $('#fd-msg').textContent = '';
+    toast(`识别出 ${d.made.length} 道可练的小题` + (d.skipped.length ? `（${d.skipped.join('、')} 不属于找点训练，已跳过）` : ''));
+    loadFindList(); loadFindTypes();
+  } catch (e) { toast(e.message, true); $('#fd-msg').textContent = ''; }
+  $('#fd-file').value = '';
+};
+
+/* ---- 做题：材料按句勾画 ---- */
+async function openFindRun(pid) {
+  fdPaper = null; fdPicked = new Set(); fdStep = 1; fdCheck = null;
+  push({ view: 'findrun', title: '找点训练' });
+  $('#fr-head').innerHTML = '<p class="empty">加载中…</p>';
+  $('#fr-mat').innerHTML = ''; $('#fr-foot').innerHTML = '';
+  try {
+    fdPaper = await api('/api/find/paper/' + pid);
+    frRender();
+  } catch (e) { $('#fr-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+
+function frRender() {
+  const p = fdPaper;
+  $('#fr-head').innerHTML = `
+    <div class="fr-step">
+      <span class="${fdStep === 1 ? 'on' : 'done'}">① 找点</span>
+      <span class="${fdStep === 2 ? 'on' : (fdStep > 2 ? 'done' : '')}">② 写点</span>
+      <span class="${fdStep === 3 ? 'on' : ''}">③ 批改</span>
+    </div>
+    <div class="fr-stem">${esc(p.stem)}</div>
+    <div class="fr-meta">${esc(p.type_name)} · ${p.full} 分 · ${p.word_min}~${p.word_max} 字
+      · <b>共 ${p.n_points} 个采分点</b> · ${esc(p.source || '')}</div>`;
+  frMat();
+  frFoot();
+}
+
+function frMat() {
+  const p = fdPaper;
+  let html = '', lastP = -1;
+  p.sents.forEach(s => {
+    if (s.p !== lastP) { if (lastP >= 0) html += '</p>'; html += '<p class="fr-para">'; lastP = s.p; }
+    if (s.head) { html += `<span class="fr-s fr-h">${esc(s.t)}</span>`; return; }
+    const cls = ['fr-s'];
+    if (fdPicked.has(s.i)) cls.push('on');
+    if (fdCheck) {                               // 判完了：把对/错/漏直接标在原文上
+      if (fdCheck.okSents.has(s.i)) cls.push('ok');
+      else if (fdCheck.wrongSents.has(s.i)) cls.push('bad');
+      else if (fdCheck.missSents.has(s.i)) cls.push('miss');
+    }
+    html += `<span class="${cls.join(' ')}" data-fs="${s.i}">${esc(s.t)}</span>`;
+  });
+  if (lastP >= 0) html += '</p>';
+  $('#fr-mat').innerHTML = html;
+}
+
+// 勾画：点一句 = 选中/取消；按住拖过多句 = 连着选（鼠标和手写笔都走 pointer 事件）
+$('#fr-mat').addEventListener('pointerdown', e => {
+  if (fdStep !== 1) return;
+  const s = e.target.closest('[data-fs]'); if (!s) return;
+  const i = +s.dataset.fs;
+  fdDrag = fdPicked.has(i) ? 'off' : 'on';       // 起手是选中的 → 这一拖都是取消
+  frToggle(i, fdDrag === 'on');
+  e.preventDefault();
+});
+$('#fr-mat').addEventListener('pointerover', e => {
+  if (!fdDrag || fdStep !== 1) return;
+  const s = e.target.closest('[data-fs]'); if (!s) return;
+  frToggle(+s.dataset.fs, fdDrag === 'on');
+});
+document.addEventListener('pointerup', () => { fdDrag = null; });
+function frToggle(i, on) {
+  if (on) fdPicked.add(i); else fdPicked.delete(i);
+  const el = document.querySelector(`[data-fs="${i}"]`);
+  if (el) el.classList.toggle('on', on);
+  const n = $('#fr-n'); if (n) n.textContent = fdPicked.size;
+}
+
+function frFoot() {
+  const p = fdPaper;
+  if (fdStep === 1) {
+    $('#fr-foot').innerHTML = `
+      <div class="fr-tip">🖍 在材料里<b>点句子</b>勾出你认为的要点（按住拖可以连选）。
+        这一步<b>只找不写</b> —— 共 ${p.n_points} 个采分点，你勾了 <b id="fr-n">${fdPicked.size}</b> 句。</div>
+      <button class="btn primary" id="fr-check">看看我找得对不对</button>`;
+    $('#fr-check').onclick = frDoCheck;
+    return;
+  }
+  if (fdStep === 2) {
+    const picked = fdPaper.sents.filter(s => fdPicked.has(s.i));
+    $('#fr-foot').innerHTML = `
+      <div class="fr-tip">✍️ 照着<b>你勾到的（绿色）</b>写要点。要<b>概括</b>，不是抄原文；<b>分条写</b>。
+        ${p.word_min}~${p.word_max} 字。</div>
+      <div class="fr-picked">${picked.map(s => `<div>· ${esc(s.t)}</div>`).join('') || '<i>你没勾到任何要点</i>'}</div>
+      <textarea id="fr-ans" placeholder="一、…\n二、…\n三、…"></textarea>
+      <div class="fr-wc"><span id="fr-wc">0</span> / ${p.word_max} 字</div>
+      <button class="btn primary" id="fr-grade">交给我批</button>`;
+    $('#fr-ans').oninput = () => {
+      $('#fr-wc').textContent = $('#fr-ans').value.replace(/\s/g, '').length;
+    };
+    $('#fr-grade').onclick = frDoGrade;
+  }
+}
+
+async function frDoCheck() {
+  if (!fdPicked.size) { toast('先在材料里勾几句', true); return; }
+  const b = $('#fr-check'); b.disabled = true; b.textContent = '判定中…';
+  try {
+    const r = await api('/api/find/check', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paper_id: fdPaper.id, sents: [...fdPicked] }),
+    });
+    // 把判定结果落到句子上：找对=绿，找错=红，找漏=黄（漏的句子考生本来没勾，这里直接点出来）
+    r.okSents = new Set(r.ok.flatMap(x => x.sents));
+    r.wrongSents = new Set(r.wrong.map(x => x.i));
+    r.missSents = new Set(r.missed.flatMap(x => x.sents));
+    fdCheck = r;
+    frMat();
+    $('#fr-foot').innerHTML = `
+      <div class="fr-res">
+        <div class="fr-score">找到 <b>${r.found}</b> / ${r.total} 个采分点
+          <span class="fr-acc${r.acc < 60 ? ' bad' : ''}">${r.acc}%</span></div>
+        ${r.missed.length ? `<div class="fr-sec miss"><div class="fr-sec-t">❌ 找漏了 ${r.missed.length} 个</div>
+          ${r.missed.map(x => `<div class="fr-item">
+            <b>[${x.score} 分] ${esc(x.point)}</b>
+            <div class="fr-ev" data-fsgo="${x.sents[0]}">↗ 就在这句：${esc(x.evidence.slice(0, 50))}…</div>
+          </div>`).join('')}</div>` : ''}
+        ${r.wrong.length ? `<div class="fr-sec bad"><div class="fr-sec-t">⚠️ 找错了 ${r.wrong.length} 处
+            <i>（这些是干扰信息，不是采分点）</i></div>
+          ${r.wrong.map(x => `<div class="fr-item"><div class="fr-ev" data-fsgo="${x.i}">↗ ${esc(x.t.slice(0, 50))}…</div></div>`).join('')}</div>` : ''}
+        ${r.dup.length ? `<div class="fr-sec dup"><div class="fr-sec-t">🔁 找重了 ${r.dup.length} 处</div>
+          ${r.dup.map(x => `<div class="fr-item"><b>${esc(x.point)}</b>
+            <div class="fr-ev">这一个点你勾了 ${x.sents.length} 句 —— 材料里换了个说法而已，答案里只算一个点</div>
+          </div>`).join('')}</div>` : ''}
+        ${r.ok.length ? `<div class="fr-sec ok"><div class="fr-sec-t">✅ 找对了 ${r.ok.length} 个</div>
+          ${r.ok.map(x => `<div class="fr-item"><b>[${x.score} 分] ${esc(x.point)}</b></div>`).join('')}</div>` : ''}
+      </div>
+      <div class="fr-acts">
+        <button class="btn" id="fr-redo">🔄 重新找一遍</button>
+        <button class="btn primary" id="fr-next">下一步：照着写点子 →</button>
+      </div>`;
+    $('#fr-redo').onclick = () => { fdCheck = null; fdPicked = new Set(); frMat(); frFoot(); };
+    $('#fr-next').onclick = () => {
+      // 漏掉的点也补进勾画（不然第二步照着写，注定还是漏）—— 但它们在原文里仍标成黄的
+      fdCheck.missSents.forEach(i => fdPicked.add(i));
+      fdCheck.wrongSents.forEach(i => fdPicked.delete(i));
+      fdStep = 2; frRender();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+  } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = '看看我找得对不对'; }
+}
+$('#fr-foot').addEventListener('click', e => {
+  const g = e.target.closest('[data-fsgo]');    // 点一下跳到原文那句
+  if (!g) return;
+  const el = document.querySelector(`[data-fs="${g.dataset.fsgo}"]`);
+  if (el) {
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 1400);
+  }
+});
+
+async function frDoGrade() {
+  const ans = $('#fr-ans').value.trim();
+  if (ans.replace(/\s/g, '').length < 20) { toast('写太少了', true); return; }
+  const b = $('#fr-grade'); b.disabled = true; b.textContent = '批改中…（约 20 秒）';
+  try {
+    const g = await api('/api/find/grade', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paper_id: fdPaper.id, answer: ans, sents: [...fdPicked] }),
+    });
+    fdStep = 3;
+    const M = { full: ['✅', 'ok'], part: ['⚠️', 'part'], miss: ['❌', 'miss'] };
+    $('#fr-head').innerHTML = `
+      <div class="fr-step"><span class="done">① 找点</span><span class="done">② 写点</span><span class="on">③ 批改</span></div>
+      <div class="fr-final"><b>${g.score}</b> / ${g.full} 分</div>`;
+    $('#fr-mat').innerHTML = '';
+    $('#fr-foot').innerHTML = `
+      <div class="fr-res">
+        <div class="fr-sec-t">逐个采分点</div>
+        ${(g.items || []).map(it => {
+          const m = M[it.got] || M.miss;
+          return `<div class="fr-item fr-g ${m[1]}">
+            <b>${m[0]} [${it.score} 分] ${esc(it.point || '')}</b>
+            <div class="fr-gc">${esc(it.comment || '')}</div></div>`;
+        }).join('')}
+        ${(g.style || []).length ? `<div class="fr-sec bad"><div class="fr-sec-t">表述问题</div>
+          ${g.style.map(s => `<div class="fr-item">· ${esc(s)}</div>`).join('')}</div>` : ''}
+        ${g.advice ? `<div class="fr-adv">💡 ${esc(g.advice)}</div>` : ''}
+      </div>
+      <div class="fr-acts">
+        <button class="btn primary" id="fr-again">🔄 再练这道</button>
+        <button class="btn" id="fr-back">换一道</button>
+      </div>`;
+    $('#fr-again').onclick = () => openFindRun(fdPaper.id);
+    $('#fr-back').onclick = () => { back(); loadFindList(); };
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = '交给我批'; }
+}
 
 /* ============= 专项练（资料分析 / 判断推理 / 数量关系）=============
    这三块和常识不一样：题型固定、有套路、拼速度 —— 靠练不靠背。

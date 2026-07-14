@@ -521,6 +521,27 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_dr_u ON drill_log(user_id, board, qtype);
+        -- 小题训练（找点 + 写点）：归纳概括/综合分析/提出对策的共同难点都是「从材料里找要点」。
+        -- 要能判「找漏了/找错了/找重了」，就必须存下**采分点 ↔ 材料原文的逐字依据**：
+        -- points = [{point:概括后的要点, evidence:逐字来自材料的原句, score:分值}]
+        -- 没有 evidence 就只能凭感觉批，那等于没批。
+        CREATE TABLE IF NOT EXISTS find_papers(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            qtype TEXT, type_name TEXT, stem TEXT, requirement TEXT,
+            full INTEGER, word_min INTEGER, word_max INTEGER,
+            material TEXT, points TEXT, source TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS find_records(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            paper_id INTEGER NOT NULL,
+            marks TEXT,          -- 我勾画的句子下标
+            find_result TEXT,    -- 找点判定结果
+            answer TEXT,         -- 我写的点子
+            grade TEXT,          -- 写点批改结果
+            score REAL, full INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         -- 常考收藏：六个小模块的数据来自三张不同的表（changkao_items / hyper_items / classics），
         -- 所以这里按 (board, item_id) 存，并把标题正文快照下来 —— 收藏列表要能直接显示，
         -- 不用回头去三张表里各查一遍。
@@ -6736,6 +6757,367 @@ def _classify_questions(qs):
         return {int(x["seq"]): x for x in json.loads(rep).get("items", [])}
     except Exception:
         return {}
+
+
+# ---------------------------------------------------------------- 小题训练：找点 + 写点
+# 归纳概括 / 综合分析 / 提出对策，难点是同一个：**从材料里把要点找出来**。
+# 所以拆成两步练，每步都能单独纠错：
+#   第一步「找点」——在材料上勾画，判**找漏 / 找错 / 找重**（这一步不写字，只找）
+#   第二步「写点」——照着勾画的地方写要点，判**概括到不到位**（抄原文、并成一坨、漏关键词）
+#
+# 判定的前提是：出题时就得存下「采分点 ↔ 材料原文的逐字依据」。没有依据就只能凭感觉批，
+# 等于没批。所以 AI 出的每个采分点都要给 evidence，且**必须逐字出现在材料里**，服务端逐条核对。
+FIND_TYPES = {
+    "guina": ("归纳概括题", 15, 150, 250,
+              "把材料里的同类信息抽出来、合并、分条 —— 不评价、不引申，材料有什么就写什么"),
+    "zonghe": ("综合分析题", 20, 250, 350,
+               "先亮观点/解释，再分层分析（是什么→为什么→怎么样），最后落回结论"),
+    "duice": ("提出对策题", 20, 300, 400,
+              "对策必须**从材料的问题里长出来**，一个问题对一条对策；要具体可执行，不许喊口号"),
+}
+# 断句：申论找点就是找句子，句子边界明确才判得准（自由划词区间对不齐，判定必然是玄学）。
+# 两个坑（实测踩出来的）：
+#   · 引号里的句号会把句子劈开，末尾剩个孤零零的「”」——闭引号/闭括号要并回上一句
+#   · 「材料一」这种标题行也会成为「可勾画的句子」——要标成 head，不让点
+_SENT_END = re.compile(r"(?<=[。！？；!?;])")
+_CLOSERS = "”’\"'）)》】」』"
+_MAT_HEAD = re.compile(r"^[（(]?\s*(?:给定)?[材资]\s*料\s*[一二三四五六七八九十\d]{1,3}\s*[）)]?[.、：:]?$")
+
+
+def _find_sents(material):
+    """材料 → 句子数组。前端按句渲染，勾画粒度就是句。head=True 的是标题行，不可勾画。"""
+    out = []
+    for pi, para in enumerate(material.split("\n")):
+        para = para.strip()
+        if not para:
+            continue
+        if _MAT_HEAD.match(para) or (len(para) <= 8 and not re.search(r"[。！？；，]", para)):
+            out.append({"p": pi, "t": para, "head": True})
+            continue
+        parts = [x for x in _SENT_END.split(para) if x]
+        merged = []
+        for x in parts:
+            # 「…了。」「”」被切成两段 —— 闭引号/闭括号开头的碎片并回上一句
+            if merged and x[0] in _CLOSERS:
+                merged[-1] += x
+            elif merged and len(x.strip()) <= 3 and not re.search(r"[\u4e00-\u9fa5]", x):
+                merged[-1] += x                     # 纯标点碎片也并回去
+            else:
+                merged.append(x)
+        for x in merged:
+            x = x.strip()
+            if x:
+                out.append({"p": pi, "t": x, "head": False})
+    return out
+
+
+def _find_locate(sents, evidence):
+    """采分点的原文依据 → 落到哪几句上。整句包含、或句子被依据包含，都算。"""
+    ev = re.sub(r"\s", "", evidence)
+    hit = []
+    for i, s in enumerate(sents):
+        t = re.sub(r"\s", "", s["t"])
+        if not t:
+            continue
+        if t in ev or ev in t:
+            hit.append(i)
+    return hit
+
+
+def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requirement=""):
+    """材料 + 题干 → AI 标出采分点（逐字依据），存成一套可判的题。"""
+    name, dfull, dmin, dmax = FIND_TYPES[qtype][0], FIND_TYPES[qtype][1], FIND_TYPES[qtype][2], FIND_TYPES[qtype][3]
+    prompt = (
+        "下面是一道申论**%s**的给定资料和题干。请像阅卷组一样，把**采分点**标出来。\n\n"
+        "【题干】%s\n\n【给定资料】\n%s\n\n"
+        "【要求】\n"
+        "1. 一个采分点 = 一个独立的得分要点。%d 分的题一般 5~8 个点。\n"
+        "2. 每个点给：\n"
+        "   · point：概括后的要点表述（12~30 字，这是**答案里该写的话**，不是原文）\n"
+        "   · evidence：这个点在材料里的依据，**从材料里逐字复制**（一句或连续两句，"
+        "一字不差，含标点）—— 对不上原文的点我会直接丢掉\n"
+        "   · score：分值（所有点加起来 = %d 分）\n"
+        "3. **材料里有干扰信息**（背景铺垫、无关细节、重复表述），不要把它们标成采分点。\n"
+        "4. 同一个意思在材料里出现两次的，**只标一个点**，evidence 取最完整的那处。\n\n"
+        '只输出 JSON：{"points":[{"point":"","evidence":"","score":0}]}'
+        % (name, stem, material[:8000], full or dfull, full or dfull))
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论阅卷组组长。采分点的依据必须逐字来自材料，"
+                                       "绝不改写、不编造。严格输出 JSON。"},
+         {"role": "user", "content": prompt}],
+        temperature=0.3, max_tokens=2500, timeout=300, json_mode=True)
+    if err:
+        return None, err
+    try:
+        got = json.loads(rep).get("points") or []
+    except Exception:
+        return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
+
+    sents = _find_sents(material)
+    flat = re.sub(r"\s", "", material)
+    points = []
+    for p in got:
+        ev = (p.get("evidence") or "").strip()
+        pt = (p.get("point") or "").strip()
+        if not ev or not pt:
+            continue
+        if re.sub(r"\s", "", ev) not in flat:      # 对不上原文的直接丢（宁可少，不能错）
+            continue
+        hit = _find_locate(sents, ev)
+        if not hit:
+            continue
+        points.append({"point": pt, "evidence": ev, "score": float(p.get("score") or 0), "sents": hit})
+    if len(points) < 3:
+        return None, (jsonify({"error": "AI 标出的采分点太少或对不上原文，请重试"}), 502)
+
+    cur = db.execute(
+        "INSERT INTO find_papers(user_id,qtype,type_name,stem,requirement,full,word_min,word_max,"
+        "material,points,source) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (uid_, qtype, name, stem, requirement, full or dfull, wmin or dmin, wmax or dmax,
+         material, json.dumps(points, ensure_ascii=False), source))
+    db.commit()
+    return cur.lastrowid, None
+
+
+@app.get("/api/find/types")
+def find_types():
+    db = get_db()
+    n = {r["qtype"]: r["c"] for r in db.execute(
+        "SELECT qtype, COUNT(*) c FROM find_papers WHERE user_id=? GROUP BY qtype", (uid(),))}
+    return jsonify({"types": [
+        {"key": k, "name": v[0], "full": v[1], "word_min": v[2], "word_max": v[3],
+         "tip": v[4], "n": n.get(k, 0)} for k, v in FIND_TYPES.items()]})
+
+
+@app.post("/api/find/gen")
+def find_gen():
+    """AI 按考试标准出一道：先造材料（含干扰信息），再标采分点。"""
+    d = request.get_json(silent=True) or {}
+    qtype = (d.get("qtype") or "guina").strip()
+    if qtype not in FIND_TYPES:
+        return jsonify({"error": "题型不对"}), 400
+    topic = (d.get("topic") or "").strip()
+    name, full, wmin, wmax, tip = FIND_TYPES[qtype]
+
+    db = get_db()
+    if not topic:                                    # 话题从最近的时政/概括句里挑，贴近真考
+        r = db.execute("SELECT topic FROM gaikuo_items WHERE topic!='' "
+                       "ORDER BY RANDOM() LIMIT 1").fetchone()
+        topic = r[0] if r else "基层治理"
+
+    prompt = (
+        "命制一道申论**%s**（%d 分，%d~%d 字）。话题：%s。\n\n"
+        "【给定资料要求】\n"
+        "1. 3~4 则材料，每则 200~350 字，**总共 900~1200 字**。\n"
+        "2. 要像真题：有具体的人、地、事、数据，有干部/群众的原话。\n"
+        "3. **必须掺入干扰信息**——背景铺垫、无关细节、和要点重复的同义表述。"
+        "找点训练的价值全在这儿：材料里如果句句是要点，那就没什么可练的。\n"
+        "4. 每则材料用「材料一」「材料二」…开头，各占一段。\n\n"
+        "【题干要求】一句话，明确作答对象和范围。%s\n\n"
+        '只输出 JSON：{"stem":"题干","material":"给定资料全文（材料N 各占一行）"}'
+        % (name, full, wmin, wmax, topic, tip))
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论命题人。材料要像真题：有细节、有原话、"
+                                       "**有干扰信息**。严格输出 JSON。"},
+         {"role": "user", "content": prompt}],
+        temperature=0.7, max_tokens=3000, timeout=300, json_mode=True)
+    if err:
+        return err
+    try:
+        j = json.loads(rep)
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+    material = (j.get("material") or "").strip()
+    stem = (j.get("stem") or "").strip()
+    if len(material) < 400 or not stem:
+        return jsonify({"error": "AI 没出好材料，请重试"}), 502
+
+    pid, err = _find_build(db, uid(), qtype, stem, material, full, wmin, wmax, "AI 命题 · " + topic)
+    if err:
+        return err
+    return jsonify({"id": pid}), 201
+
+
+@app.get("/api/find/papers")
+def find_papers():
+    rows = get_db().execute(
+        "SELECT id,qtype,type_name,stem,full,source,created_at,"
+        "(SELECT COUNT(*) FROM find_records r WHERE r.paper_id=find_papers.id) done "
+        "FROM find_papers WHERE user_id=? ORDER BY id DESC LIMIT 100", (uid(),)).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+def _find_paper(db, pid):
+    r = db.execute("SELECT * FROM find_papers WHERE id=? AND user_id=?", (pid, uid())).fetchone()
+    return r
+
+
+@app.get("/api/find/paper/<int:pid>")
+def find_paper(pid):
+    """做题用：只给材料（按句切好）和题干 —— **采分点绝不下发**，否则前端一翻就看见答案了。"""
+    db = get_db()
+    r = _find_paper(db, pid)
+    if not r:
+        return jsonify({"error": "题目不存在"}), 404
+    sents = _find_sents(r["material"])
+    npt = len(json.loads(r["points"] or "[]"))
+    return jsonify({"id": r["id"], "qtype": r["qtype"], "type_name": r["type_name"],
+                    "stem": r["stem"], "full": r["full"],
+                    "word_min": r["word_min"], "word_max": r["word_max"],
+                    "source": r["source"], "n_points": npt,
+                    "sents": [{"i": i, "p": s["p"], "t": s["t"]} for i, s in enumerate(sents)]})
+
+
+@app.post("/api/find/check")
+def find_check():
+    """第一步判定：我勾画的这些句子，找对了没有？找漏了什么？找错了什么？找重了什么？"""
+    d = request.get_json(silent=True) or {}
+    pid = int(d.get("paper_id") or 0)
+    picked = sorted({int(x) for x in (d.get("sents") or [])})
+    db = get_db()
+    r = _find_paper(db, pid)
+    if not r:
+        return jsonify({"error": "题目不存在"}), 404
+    if not picked:
+        return jsonify({"error": "先在材料里勾画你认为的要点句"}), 400
+    points = json.loads(r["points"] or "[]")
+    sents = _find_sents(r["material"])
+
+    hit_by_point = []          # 每个采分点被我勾中了几句
+    for p in points:
+        ps = set(p["sents"])
+        got = [i for i in picked if i in ps]
+        hit_by_point.append(got)
+
+    got_points = [i for i, g in enumerate(hit_by_point) if g]
+    missed = [i for i, g in enumerate(hit_by_point) if not g]
+    # 找错：勾了但不属于任何采分点 —— 这就是被干扰信息骗了
+    all_pt_sents = {i for p in points for i in p["sents"]}
+    wrong = [i for i in picked if i not in all_pt_sents]
+    # 找重：同一个采分点勾了不止一句（同义重复／把整段都涂了）
+    dup = [{"point": points[i]["point"], "sents": g} for i, g in enumerate(hit_by_point) if len(g) > 1]
+
+    acc = round(100.0 * len(got_points) / len(points)) if points else 0
+    return jsonify({
+        "total": len(points), "found": len(got_points), "acc": acc,
+        "ok": [{"point": points[i]["point"], "score": points[i]["score"],
+                "sents": hit_by_point[i]} for i in got_points],
+        "missed": [{"point": points[i]["point"], "score": points[i]["score"],
+                    "sents": points[i]["sents"],
+                    "evidence": points[i]["evidence"]} for i in missed],
+        "wrong": [{"i": i, "t": sents[i]["t"]} for i in wrong if i < len(sents)],
+        "dup": dup,
+    })
+
+
+@app.post("/api/find/grade")
+def find_grade():
+    """第二步判定：照着找到的点写出来的答案，概括到不到位。"""
+    d = request.get_json(silent=True) or {}
+    pid = int(d.get("paper_id") or 0)
+    answer = (d.get("answer") or "").strip()
+    picked = sorted({int(x) for x in (d.get("sents") or [])})
+    db = get_db()
+    r = _find_paper(db, pid)
+    if not r:
+        return jsonify({"error": "题目不存在"}), 404
+    if len(answer) < 20:
+        return jsonify({"error": "答案太短了"}), 400
+    points = json.loads(r["points"] or "[]")
+    std = "\n".join("%d. %s（%g 分）依据：%s" % (i + 1, p["point"], p["score"], p["evidence"][:60])
+                    for i, p in enumerate(points))
+
+    prompt = (
+        "批改一道申论**%s**（%d 分，要求 %d~%d 字）。\n\n"
+        "【题干】%s\n\n"
+        "【采分点】（阅卷标准，考生看不到）\n%s\n\n"
+        "【考生答案】\n%s\n\n"
+        "【怎么批】\n"
+        "1. 逐个采分点判：**写到了 / 沾边但不到位 / 没写**。判「写到了」的标准是"
+        "**意思对上**，不要求用词一样。\n"
+        "2. 「沾边但不到位」要说清差在哪：是抄原文没概括？是几个点并成了一坨？"
+        "还是漏了关键限定词？\n"
+        "3. 另外指出**表述问题**：有没有抄原文、有没有加自己的评论（归纳概括题不许评价）、"
+        "有没有分条、字数够不够（当前 %d 字）。\n"
+        "4. 给分要实在，别送分。\n\n"
+        "只输出 JSON：\n"
+        '{"score":0,"items":[{"point":"采分点原话","got":"full|part|miss","score":0,'
+        '"comment":"一句话说清写到没写到、差在哪"}],'
+        '"style":["表述问题，每条一句话"],"advice":"一句话：下次怎么改进"}'
+        % (r["type_name"], r["full"], r["word_min"], r["word_max"], r["stem"], std, answer,
+           len(re.sub(r"\s", "", answer))))
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论阅卷组组长。逐个采分点对照批改，"
+                                       "给分实在，说清差在哪。严格输出 JSON。"},
+         {"role": "user", "content": prompt}],
+        temperature=0.3, max_tokens=2500, timeout=300, json_mode=True)
+    if err:
+        return err
+    try:
+        g = json.loads(rep)
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+
+    score = float(g.get("score") or 0)
+    db.execute("INSERT INTO find_records(user_id,paper_id,marks,find_result,answer,grade,score,full) "
+               "VALUES(?,?,?,?,?,?,?,?)",
+               (uid(), pid, json.dumps(picked), json.dumps(d.get("find_result") or {}, ensure_ascii=False),
+                answer, json.dumps(g, ensure_ascii=False), score, r["full"]))
+    db.commit()
+    g["full"] = r["full"]
+    return jsonify(g)
+
+
+@app.post("/api/find/upload")
+def find_upload():
+    """上传真题文档 → 拆出材料和小题 → 只留归纳概括/综合分析/提出对策，各标一套采分点。
+       抽文本、拆题、判题型全部复用真题批改那条管线（_split_paper / _classify_questions）。"""
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "请选择文件"}), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    mime = (f.mimetype or "").lower()
+    tmp = os.path.join(tempfile.gettempdir(), "find_" + uuid.uuid4().hex + ext)
+    f.save(tmp)
+    try:
+        text = _ocr_image(tmp) if (mime.startswith("image/") or ext in IMAGE_EXT) \
+            else _pdf_text_or_ocr(tmp, ext)
+    except Exception:
+        text = ""
+    finally:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+    text = (text or "").strip()
+    if len(text) < 200:
+        return jsonify({"error": "没能从文件里读到足够的文字（扫描件太糊或是纯图片）"}), 400
+
+    material, _qtext, qs = _split_paper(text)
+    if not qs:
+        return jsonify({"error": "没识别出题目。请确认文件里有「作答要求」部分"}), 400
+    cls = _classify_questions(qs)
+
+    db = get_db()
+    made, skipped = [], []
+    for q in qs:
+        c = cls.get(q["seq"], {})
+        key = c.get("qtype") or "guina"
+        if key not in FIND_TYPES:                 # 贯彻执行、大作文不属于「找点」训练
+            skipped.append(_SL_TYPES.get(key, {}).get("name") or key)
+            continue
+        lo, hi = _sl_word_range(q["body"])
+        m = _SL_SCORE.search(q["body"])
+        full = int(m.group(1)) if m else int(c.get("full") or FIND_TYPES[key][1])
+        pid, err = _find_build(db, uid(), key, q["body"][:1200], material, full,
+                               lo or int(c.get("word_min") or 0), hi or int(c.get("word_max") or 0),
+                               "真题 · " + os.path.splitext(f.filename)[0][:40])
+        if not err:
+            made.append({"id": pid, "type": FIND_TYPES[key][0], "seq": q["seq"]})
+    if not made:
+        return jsonify({"error": "这份卷子里没有归纳概括/综合分析/提出对策题"
+                                 + ("（识别到：%s）" % "、".join(skipped) if skipped else "")}), 400
+    return jsonify({"made": made, "skipped": skipped}), 201
 
 
 @app.post("/api/shenlun/paper/upload")

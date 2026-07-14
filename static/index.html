@@ -603,6 +603,31 @@
     <div id="gw-list" class="gw-list"></div>
   </section>
 
+  <!-- ===== 小题训练：找点 + 写点 ===== -->
+  <section id="view-find" class="view hidden">
+    <div class="pd-intro">归纳概括 / 综合分析 / 提出对策，难点是<b>同一个</b>：从材料里<b>把要点找出来</b>。
+      所以拆成两步练：<b>第一步只找不写</b>——在材料上勾画，我判你<b>找漏 / 找错 / 找重</b>；
+      <b>第二步照着找到的点写</b>——我判你<b>概括到不到位</b>。</div>
+    <div class="fd-gen">
+      <div id="fd-types" class="fd-types"></div>
+      <div class="fd-bar">
+        <input id="fd-topic" type="text" placeholder="话题（留空则自动从近期时政里挑）">
+        <button class="btn primary" id="fd-gen">✍️ 出一道</button>
+        <button class="btn" id="fd-up">📄 上传真题</button>
+        <input id="fd-file" type="file" accept=".pdf,.doc,.docx,.txt,image/*" class="hidden">
+      </div>
+      <div id="fd-msg" class="fd-msg"></div>
+    </div>
+    <div class="sl-hist-head"><span>我的题</span></div>
+    <div id="fd-list" class="sl-hist"></div>
+  </section>
+
+  <section id="view-findrun" class="view hidden">
+    <div id="fr-head" class="fr-head"></div>
+    <div id="fr-mat" class="fr-mat"></div>
+    <div id="fr-foot" class="fr-foot"></div>
+  </section>
+
   <!-- ===== 专项练（资料分析 / 判断推理 / 数量关系）===== -->
   <section id="view-drill" class="view hidden">
     <div class="pd-intro">这三块靠<b>练</b>提分，不靠背：题型固定、有套路、拼速度。
