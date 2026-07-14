@@ -2915,8 +2915,10 @@ body.dark .rv-ex{background:#141b29;border-left-color:#3a6ad0;}
 .vd-card{display:flex;gap:13px;border:1px solid var(--line);border-radius:14px;background:var(--card);
   padding:11px;transition:border-color .15s;}
 .vd-card:hover{border-color:var(--blue);}
+/* 封面是个 button（点了在 APP 里放，不再往外跳浏览器）—— 得把按钮的默认边框/内边距清掉 */
 .vd-cover{flex:0 0 168px;height:96px;border-radius:10px;background:#1a2434 center/cover no-repeat;
-  position:relative;display:grid;place-items:center;text-decoration:none;overflow:hidden;}
+  position:relative;display:grid;place-items:center;text-decoration:none;overflow:hidden;
+  border:none;padding:0;cursor:pointer;font:inherit;}
 .vd-play{width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;
   display:grid;place-items:center;font-size:14px;padding-left:2px;}
 .vd-cover:hover .vd-play{background:var(--blue);}
@@ -2952,3 +2954,42 @@ body.dark .rv-ex{background:#141b29;border-left-color:#3a6ad0;}
 body.dark .vd-card{background:#141b29;}
 body.dark .vd-why,body.dark .vd-brief{background:#1a2434;}
 body.dark .vd-tags span{background:#1c2a45;color:#7fb0ff;}
+
+/* ---- APP 内播放器（不再跳浏览器）---- */
+.vp-mask{position:fixed;inset:0;z-index:6000;background:rgba(8,12,20,.82);
+  display:grid;place-items:center;padding:20px;}
+.vp-box{width:min(940px,96vw);background:#0e1521;border-radius:14px;overflow:hidden;
+  box-shadow:0 24px 70px rgba(0,0,0,.55);display:flex;flex-direction:column;}
+.vp-head{display:flex;align-items:center;gap:10px;padding:11px 14px;background:#131c2b;}
+.vp-t{flex:1;min-width:0;color:#eaf0f7;font-size:14.5px;font-weight:600;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vp-src{font-size:11.5px;color:#7f93ad;white-space:nowrap;}
+.vp-x{border:none;background:transparent;color:#8fa3ba;font-size:17px;cursor:pointer;line-height:1;}
+.vp-x:hover{color:#fff;}
+.vp-stage{position:relative;background:#000;aspect-ratio:16/9;width:100%;}
+.vp-v,.vp-if{position:absolute;inset:0;width:100%;height:100%;border:none;display:block;}
+.vp-v{object-fit:contain;background:#000;cursor:pointer;}
+.vp-big{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:62px;height:62px;border-radius:50%;border:none;background:rgba(0,0,0,.5);
+  color:#fff;font-size:22px;cursor:pointer;transition:opacity .2s;padding-left:3px;}
+.vp-big:hover{background:var(--blue);}
+.vp-big.hide{opacity:0;pointer-events:none;}
+.vp-spin{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  padding:6px 14px;border-radius:20px;background:rgba(0,0,0,.6);color:#fff;font-size:12.5px;}
+.vp-bar{display:flex;align-items:center;gap:10px;padding:9px 13px;background:#131c2b;}
+.vp-pp,.vp-fs{border:none;background:transparent;color:#cfdcea;font-size:15px;cursor:pointer;
+  line-height:1;padding:2px 3px;}
+.vp-pp:hover,.vp-fs:hover{color:#fff;}
+.vp-time,.vp-total{font-size:12px;color:#9db1c8;font-variant-numeric:tabular-nums;min-width:44px;}
+.vp-total{text-align:right;}
+.vp-seek{flex:1;min-width:60px;accent-color:var(--blue);cursor:pointer;height:4px;}
+.vp-rate{background:#1c2739;color:#cfdcea;border:1px solid #2a3a52;border-radius:6px;
+  font-size:11.5px;padding:2px 4px;cursor:pointer;}
+.vp-foot{padding:8px 14px;background:#0e1521;text-align:right;}
+.vp-out{font-size:12px;color:#7f93ad;text-decoration:none;}
+.vp-out:hover{color:#9db1c8;text-decoration:underline;}
+@media (max-width:640px){
+  .vp-mask{padding:0;place-items:stretch;}
+  .vp-box{width:100%;height:100%;border-radius:0;justify-content:center;}
+  .vp-rate{display:none;}                     /* 手机上挤不下，长按视频也能变速的场合很少 */
+}

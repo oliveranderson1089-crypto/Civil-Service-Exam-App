@@ -742,6 +742,17 @@ def init_db():
     for col in ("derivation", "example"):
         if col not in _cols(con, "ci_ai"):
             con.execute("ALTER TABLE ci_ai ADD COLUMN %s TEXT" % col)
+    # 视频要能在 APP 里直接播（原来点播放键是往外跳浏览器 —— 桌面版还跳不动）。
+    #   kind: 决定用哪种播法 —— cctv=自己拿 mp4 分段放；bili=嵌官方播放器；sc=川观（抓到直链才能放）
+    #   play: 抓取时就把播放地址算好存下来，用户点播放时不用现去请求人家的接口（快，也不容易失败）
+    for col in ("kind", "play"):
+        if col not in _cols(con, "video_items"):
+            con.execute("ALTER TABLE video_items ADD COLUMN %s TEXT" % col)
+    # 老数据没有 kind：按 guid 的长相反推（BV 开头是 B 站，32 位十六进制是央视，剩下的是川观）
+    con.execute("UPDATE video_items SET kind = CASE "
+                "WHEN guid LIKE 'BV%' THEN 'bili' "
+                "WHEN guid GLOB '[0-9a-f]*' AND length(guid)=32 THEN 'cctv' "
+                "ELSE 'sc' END WHERE kind IS NULL OR kind=''")
     # 习语金句：补 关键词/申论运用 列
     for col in ("keyword", "apply"):
         if col not in _cols(con, "xiyu_items"):
@@ -3383,6 +3394,8 @@ def partydict_list():
 # ---------------------------------------------------------------- 每日时政（爬虫 + AI，全局共享）
 # ---------------------------------------------------------------- 每日新闻视频（筛过的）
 VIDEO_BOARDS = ["国内", "国际", "四川"]
+UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/120.0.0.0 Safari/537.36")
 
 
 @app.get("/api/videos")
@@ -3437,6 +3450,90 @@ def video_star(vid):
     return jsonify({"starred": True})
 
 
+# 画质档：chapters=418kbps、chapters2=818kbps、chapters3=1.2M、chapters4=2M。
+# 优先 chapters2 —— 清晰度够看字幕，又不至于卡。
+CCTV_TIERS = ("chapters2", "chapters3", "chapters", "chapters4")
+
+
+def cctv_play(guid):
+    """问央视网要这条片子的可播地址。
+
+    优先拿 **mp4 分段**：那是普通渐进式 mp4，`<video>` 原生就能放 —— 不用 hls.js、
+    不依赖 MSE，桌面壳那个 WebKit 也吃得下。代价是一集切成好几段，得自己接成一条时间轴。
+
+    但**不是每条都有 mp4**：像《今日关注》，四个画质档的 url 全是空串（没转码），
+    只有 HLS。所以拿不到 mp4 时退回 m3u8，前端用 hls.js 放。
+    两种流实测都没有防盗链、CORS 全开，能直接放进我们自己的页面。
+    """
+    r = urllib.request.Request(
+        "https://vdn.apps.cntv.cn/api/getHttpVideoInfo.do?pid=" + str(guid),
+        headers={"User-Agent": UA})
+    with urllib.request.urlopen(r, timeout=12) as x:
+        d = json.loads(x.read().decode("utf-8", "ignore"))
+    vid = d.get("video") or {}
+    title = (d.get("title") or "").strip()
+
+    for tier in CCTV_TIERS:
+        chs = [{"url": c["url"], "dur": float(c.get("duration") or 0)}
+               for c in (vid.get(tier) or []) if c.get("url")]
+        if chs:
+            return {"mode": "mp4", "chapters": chs,
+                    "total": sum(c["dur"] for c in chs), "title": title}
+
+    if d.get("hls_url"):
+        return {"mode": "hls", "src": d["hls_url"],
+                "total": float(vid.get("totalLength") or 0), "title": title}
+    raise RuntimeError("央视网这条既没有 mp4 也没有 HLS")
+
+
+@app.get("/api/videos/<int:vid>/play")
+def video_play(vid):
+    """给前端播放器：这条视频怎么播。
+
+    三种播法（`kind` 决定）：
+      cctv → 自己放：央视网给的 mp4 分段，我们的播放器把它们接成一条连续的时间轴
+      bili → 嵌 B 站官方播放器（人家的 iframe 没有任何嵌入限制，实测可用）
+      sc   → 川观：抓取时如果拿到了直链就自己放；没拿到就只能跳出去（老实说明）
+    """
+    db = get_db()
+    r = db.execute("SELECT * FROM video_items WHERE id=?", (vid,)).fetchone()
+    if not r:
+        return jsonify({"error": "视频不存在"}), 404
+    row = dict(r)
+    kind = row.get("kind") or "sc"
+    base = {"id": vid, "kind": kind, "title": row.get("title") or "",
+            "url": row.get("url") or "", "source": row.get("source") or ""}
+
+    if kind == "bili":
+        bv = row.get("guid") or ""
+        return jsonify(dict(base, mode="iframe", embed=(
+            "https://player.bilibili.com/player.html?bvid=%s&autoplay=0&danmaku=0&high_quality=1"
+            % bv)))
+
+    # 抓取时算好的播放地址，直接用（不用每次点播放都去请求人家的接口）
+    try:
+        cached = json.loads(row.get("play") or "null")
+    except Exception:
+        cached = None
+    if cached and (cached.get("chapters") or cached.get("src")):
+        return jsonify(dict(base, **cached))
+
+    if kind == "cctv":
+        try:
+            info = cctv_play(row.get("guid") or "")
+        except Exception as e:
+            app.logger.warning("央视取流失败 vid=%s: %s", vid, e)
+            return jsonify(dict(base, mode="external",
+                                note="央视网这会儿没给出播放地址，先在浏览器里看")), 200
+        db.execute("UPDATE video_items SET play=? WHERE id=?",
+                   (json.dumps(info, ensure_ascii=False), vid))
+        db.commit()
+        return jsonify(dict(base, **info))
+
+    # 川观：抓取时没拿到直链就没辙了（它的直链藏在 JS 里，得渲染页面才拿得到）
+    return jsonify(dict(base, mode="external", note="这条只能在浏览器里看"))
+
+
 @app.post("/api/videos/refresh")
 def videos_refresh():
     """手动刷一次（平时是定时器每天跑）。抓取要开无头浏览器，放后台。"""
@@ -3445,7 +3542,7 @@ def videos_refresh():
     def run():
         con = sqlite3.connect(DB, timeout=60)
         try:
-            _bg_set(con, tid, status="running", message="正在抓取央视网 / 川观新闻…")
+            _bg_set(con, tid, status="running", message="正在抓取央视网 / B站官方号 / 川观新闻…")
             r = subprocess.run(
                 [os.path.join(BASE, ".venv/bin/python3"), os.path.join(BASE, "crawl_video.py")],
                 cwd=BASE, capture_output=True, text=True, timeout=600)

@@ -1,5 +1,5 @@
 {
-  "version_code": 41,
-  "version_name": "4.1",
+  "version_code": 43,
+  "version_name": "4.3",
   "notes": "新增自动检查更新与更新提示；支持下载文件（更新包存到「下载」文件夹）。"
 }

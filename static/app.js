@@ -3132,11 +3132,11 @@ async function loadVideos() {
     box.innerHTML = d.items.map(v => {
       const long = /^(0?[3-9]|[1-9]\d):/.test(v.duration || '');   // 超过 3 分钟的标一下
       return `<div class="vd-card">
-        <a class="vd-cover" href="${esc(v.url)}" target="_blank" rel="noopener"
+        <button class="vd-cover" data-vdplay="${v.id}"
            style="${v.cover ? `background-image:url('${esc(v.cover)}')` : ''}">
           <span class="vd-play">▶</span>
           ${v.duration ? `<span class="vd-dur">${esc(v.duration)}</span>` : ''}
-        </a>
+        </button>
         <div class="vd-body">
           <div class="vd-top">
             <span class="vd-board vd-${esc(v.board)}">${esc(v.board)}</span>
@@ -3145,7 +3145,7 @@ async function loadVideos() {
             <button class="vd-star${v.starred ? ' on' : ''}" data-vdstar="${v.id}"
               title="收藏（可当申论素材）">${v.starred ? '★' : '☆'}</button>
           </div>
-          <a class="vd-title" href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title)}</a>
+          <a class="vd-title" href="#" data-vdplay="${v.id}">${esc(v.title)}</a>
           ${v.why ? `<div class="vd-why"><b>为什么值得看</b>${esc(v.why)}</div>` : ''}
           ${(v.tags || []).length ? `<div class="vd-tags">${v.tags.map(t =>
             `<span>${esc(t)}</span>`).join('')}</div>` : ''}
@@ -3166,6 +3166,8 @@ $('#vd-tabs').addEventListener('click', e => {
   loadVideos();
 });
 $('#vd-list').addEventListener('click', async e => {
+  const p = e.target.closest('[data-vdplay]');
+  if (p) { e.preventDefault(); playVideo(p.dataset.vdplay); return; }
   const b = e.target.closest('[data-vdbrief]');
   if (b) {
     const box = $('#vdb-' + b.dataset.vdbrief);
@@ -3207,6 +3209,225 @@ $('#vd-refresh').onclick = async () => {
     }, 3000);
   } catch (e) { toast(e.message, true); b.disabled = false; $('#vd-msg').textContent = ''; }
 };
+
+/* ---------------- APP 内播放器 ----------------
+   以前点播放是往外跳浏览器（桌面壳里还跳不动 —— WebKit 把新窗口请求吞了）。现在自己放。
+
+   三种片源，四种放法：
+     央视  多数给的是**分段 mp4**（每段 5 分钟，一集切 4~6 段）。`<video>` 原生就能放 ——
+           实测桌面壳那个 WebKit 也吃得下，所以优先走它。代价是得自己把几段接成一条
+           连续的时间轴：进度条走的是**全片的秒数**，拖动时先算落在第几段、再跳到段内偏移；
+           一段放完自动接下一段。
+           但不是每条都有 mp4（《今日关注》四个画质档的地址全是空的），那种只能走 HLS：
+           WebKit 和 Chrome 都不原生认 m3u8（实测 code=4 放不了），所以用 hls.js —— 它靠 MSE，
+           而 MSE 在真壳里实测是有的。hls.js 放在我们自己域下，用到才加载。
+     B站   嵌官方播放器（人家的 iframe 没有任何嵌入限制，实测可用）。
+     川观   抓取时渲染页面截到直链就能放；没截到就只能跳出去（会老实说明）。       */
+let vpS = null;                                  // 播放器状态（同一时刻只会有一个）
+let hlsLib = null;                               // hls.js 用到才加载（400KB，别让没看视频的人也扛）
+
+function loadHls() {
+  if (hlsLib) return hlsLib;
+  hlsLib = new Promise((ok, no) => {
+    if (window.Hls) return ok(window.Hls);
+    const s = document.createElement('script');
+    s.src = '/vendor/hls.min.js';          // 静态文件挂在根上（app.py 里 static_folder=None），不是 /static/
+
+    s.onload = () => ok(window.Hls);
+    s.onerror = () => { hlsLib = null; no(new Error('播放组件加载失败')); };
+    document.head.appendChild(s);
+  });
+  return hlsLib;
+}
+
+function vpFmt(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  const p = n => String(n).padStart(2, '0');
+  return h ? `${h}:${p(m)}:${p(x)}` : `${m}:${p(x)}`;
+}
+
+async function playVideo(id) {
+  let d;
+  try { d = await api('/api/videos/' + id + '/play'); }
+  catch (e) { toast(e.message, true); return; }
+
+  if (d.mode === 'external') {                   // 放不了就老实跳出去，别假装能放
+    toast(d.note || '这条只能在浏览器里看');
+    openOut(d.url);
+    return;
+  }
+  vpClose();
+  const wrap = document.createElement('div');
+  wrap.className = 'vp-mask';
+  wrap.innerHTML = `
+    <div class="vp-box" role="dialog" aria-label="视频播放">
+      <div class="vp-head">
+        <div class="vp-t">${esc(d.title || '')}</div>
+        <div class="vp-src">${esc(d.source || '')}</div>
+        <button class="vp-x" title="关闭（Esc）">✕</button>
+      </div>
+      <div class="vp-stage">
+        ${d.mode === 'iframe'
+      ? `<iframe class="vp-if" src="${esc(d.embed)}" allowfullscreen scrolling="no"
+             frameborder="0" allow="autoplay; fullscreen; encrypted-media"></iframe>`
+      : `<video class="vp-v" playsinline preload="auto"></video>
+           <div class="vp-spin hidden">缓冲中…</div>
+           <button class="vp-big" title="播放/暂停">▶</button>`}
+      </div>
+      ${d.mode === 'iframe' ? '' : `
+      <div class="vp-bar">
+        <button class="vp-pp" title="播放/暂停（空格）">▶</button>
+        <span class="vp-time">0:00</span>
+        <input class="vp-seek" type="range" min="0" max="1000" value="0" step="1"
+               aria-label="进度">
+        <span class="vp-total">${vpFmt(d.total)}</span>
+        <select class="vp-rate" title="倍速">
+          <option value="0.75">0.75×</option><option value="1" selected>1×</option>
+          <option value="1.25">1.25×</option><option value="1.5">1.5×</option>
+          <option value="2">2×</option>
+        </select>
+        <button class="vp-fs" title="全屏">⛶</button>
+      </div>`}
+      <div class="vp-foot">
+        <a href="#" class="vp-out">在浏览器里打开 ↗</a>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  wrap.querySelector('.vp-x').onclick = vpClose;
+  wrap.querySelector('.vp-out').onclick = ev => { ev.preventDefault(); openOut(d.url); };
+  wrap.addEventListener('click', ev => { if (ev.target === wrap) vpClose(); });
+  vpS = { wrap, mode: d.mode, esc: null };
+  vpS.esc = ev => { if (ev.key === 'Escape') vpClose(); };
+  document.addEventListener('keydown', vpS.esc);
+
+  if (d.mode === 'iframe') return;               // B 站的播放器自己管，我们不插手
+  vpMedia(wrap, d);
+}
+
+function vpMedia(wrap, d) {
+  const v = wrap.querySelector('.vp-v');
+  const seek = wrap.querySelector('.vp-seek');
+  const tEl = wrap.querySelector('.vp-time');
+  const totEl = wrap.querySelector('.vp-total');
+  const pp = wrap.querySelector('.vp-pp');
+  const big = wrap.querySelector('.vp-big');
+  const spin = wrap.querySelector('.vp-spin');
+
+  // HLS 只有一条连续的流，没有分段 —— 但为了不写两套播放逻辑，
+  // 把它当成「只有一段的片子」，后面的时间轴/进度条代码就完全通用了。
+  const hls = d.mode === 'hls';
+  const chs = hls ? [{ url: d.src, dur: d.total || 0 }] : (d.chapters || []);
+  const off = [];
+  let acc = 0;
+  chs.forEach(c => { off.push(acc); acc += c.dur || 0; });
+  const S = Object.assign(vpS, { v, chs, off, cur: -1, total: d.total || 0, seeking: false, hls: null });
+
+  function gnow() { return (S.off[S.cur] || 0) + (v.currentTime || 0); }
+  function paint() {
+    if (S.seeking) return;
+    const g = gnow();
+    tEl.textContent = vpFmt(g);
+    if (S.total > 0) seek.value = Math.round(g / S.total * 1000);
+  }
+  function ready(at, go) {
+    // 川观那种只有一段、时长未知的：直接拿视频自己的时长当全长
+    if (!S.total && isFinite(v.duration)) { S.total = v.duration; totEl.textContent = vpFmt(S.total); }
+    if (at) v.currentTime = at;
+    if (go) v.play().catch(() => { });
+  }
+  function load(i, at, go) {
+    S.cur = i;
+    if (hls) {                                   // m3u8：WebKit / Chrome 都不原生认，得靠 hls.js
+      spin.classList.remove('hidden');
+      loadHls().then(Hls => {
+        if (!vpS || vpS.v !== v) return;         // 加载期间用户关掉了
+        if (S.hls) S.hls.destroy();
+        S.hls = new Hls({ maxBufferLength: 30 });
+        S.hls.loadSource(chs[i].url);
+        S.hls.attachMedia(v);
+        S.hls.on(Hls.Events.MANIFEST_PARSED, () => ready(at, go));
+        S.hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (!data.fatal) return;
+          spin.classList.add('hidden');
+          toast('这条流加载失败了，可以点「在浏览器里打开」', true);
+        });
+      }).catch(e => { spin.classList.add('hidden'); toast(e.message, true); });
+      return;
+    }
+    v.src = chs[i].url;
+    v.load();
+    v.addEventListener('loadedmetadata', () => ready(at, go), { once: true });
+  }
+  function seekTo(g) {
+    g = Math.max(0, Math.min((S.total || 1) - 0.4, g));
+    let i = 0;
+    while (i < S.off.length - 1 && g >= S.off[i + 1]) i++;
+    const local = g - (S.off[i] || 0);
+    if (i !== S.cur) load(i, local, !v.paused);
+    else v.currentTime = local;
+  }
+
+  const toggle = () => { v.paused ? v.play().catch(() => { }) : v.pause(); };
+  pp.onclick = toggle;
+  big.onclick = toggle;
+  v.onclick = toggle;
+  v.onplay = () => { pp.textContent = big.textContent = '⏸'; big.classList.add('hide'); };
+  v.onpause = () => { pp.textContent = big.textContent = '▶'; big.classList.remove('hide'); };
+  v.ontimeupdate = paint;
+  v.onwaiting = () => spin.classList.remove('hidden');
+  v.onplaying = () => spin.classList.add('hidden');
+  v.oncanplay = () => spin.classList.add('hidden');
+  v.onended = () => {                            // 一段放完，无缝接下一段
+    if (S.cur < chs.length - 1) load(S.cur + 1, 0, true);
+    else { pp.textContent = big.textContent = '▶'; big.classList.remove('hide'); }
+  };
+  v.onerror = () => {
+    spin.classList.add('hidden');
+    toast('这一段加载失败了，可以点「在浏览器里打开」', true);
+  };
+  seek.oninput = () => {
+    S.seeking = true;
+    tEl.textContent = vpFmt(seek.value / 1000 * S.total);
+  };
+  seek.onchange = () => { S.seeking = false; seekTo(seek.value / 1000 * S.total); };
+  wrap.querySelector('.vp-rate').onchange = e => { v.playbackRate = +e.target.value; };
+  wrap.querySelector('.vp-fs').onclick = () => {
+    const st = wrap.querySelector('.vp-stage');
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (st.requestFullscreen) st.requestFullscreen().catch(() => { });
+  };
+  // 空格播放/暂停、左右各跳 10 秒（跟常见播放器一致）
+  S.keys = e => {
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || ''))) return;
+    if (e.key === ' ') { e.preventDefault(); toggle(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); seekTo(gnow() + 10); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); seekTo(gnow() - 10); }
+  };
+  document.addEventListener('keydown', S.keys);
+
+  load(0, 0, true);
+}
+
+function vpClose() {
+  if (!vpS) return;
+  const v = vpS.v;
+  if (vpS.hls) { try { vpS.hls.destroy(); } catch (_) { } }   // 不销毁会一直在后台下分片
+  if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) { } }
+  document.removeEventListener('keydown', vpS.esc);
+  if (vpS.keys) document.removeEventListener('keydown', vpS.keys);
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => { });
+  vpS.wrap.remove();
+  vpS = null;
+}
+
+/** 真要跳出去的时候才用（播放器放不了的那种）。桌面壳靠消息桥叫系统浏览器。 */
+function openOut(url) {
+  if (!url) return;
+  if (window.__desktop) deskMsg({ a: 'open', url });
+  else window.open(url, '_blank', 'noopener');
+}
 
 /* ============= 每日时政（爬虫 + AI 三行式；国内/四川/国际 三板块，全局共享） ============= */
 let newsBoard = '党内', newsDate = '';
@@ -8626,6 +8847,24 @@ function b64ToFile(b64, name) {
   const type = MIME[ext] || '';
   return new File([buf], name || ('文件_' + Date.now()), type ? { type } : undefined);
 }
+/* 桌面壳里 target="_blank" 是**死的**：WebKit 把新窗口请求直接吞掉（在 decide-policy 里
+   处理 NEW_WINDOW_ACTION 也没用，实测真机上就是不走）。所以桌面版**不指望 WebKit 的行为** ——
+   全局拦住 _blank 外链，直接让壳去调系统浏览器。手机/浏览器不受影响，照常开新标签页。 */
+document.addEventListener('click', e => {
+  if (!window.__desktop) return;
+  const a = e.target.closest('a[target="_blank"]');
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  if (!/^https?:\/\//i.test(href)) return;          // 站内相对链接不管
+  try {
+    const h = new URL(href, location.href).hostname;
+    if (h === location.hostname) return;             // 自己站的，也不管
+  } catch (_) { return; }
+  e.preventDefault();
+  deskMsg({ a: 'open', url: href });
+  toast('已在系统浏览器打开');
+}, true);
+
 /* 桌面壳（WebKitGTK）里 drop 事件拿不到文件（dataTransfer.files 是空的），
    图片由壳在 GTK 层截下来、转成 base64 再回调这里。所以**壳里的拖放/粘贴走的是这条路**，
    不是网页里那些 bindImgDrop/bindImgPaste —— 那两个只在浏览器里生效。

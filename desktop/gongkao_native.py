@@ -21,7 +21,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "4.1"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "4.3"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -107,7 +107,12 @@ class Gongkao(Gtk.Application):
 
         self.web = WebKit2.WebView(web_context=ctx, user_content_manager=ucm)
         try:
-            self.web.get_settings().set_property("enable-developer-extras", False)
+            st = self.web.get_settings()
+            st.set_property("enable-developer-extras", False)
+            # 视频在 APP 内播放：我们的播放器是「点封面 → 取播放地址 → 再 play()」，
+            # 中间隔了一次网络请求，用户手势早过期了 —— 不放开这条就会被当成自动播放拦下。
+            # （MSE 默认是开的，hls.js 靠它；这里不用动。）
+            st.set_property("media-playback-requires-user-gesture", False)
         except Exception:
             pass
         self.web.connect("decide-policy", self.on_decide)
@@ -285,6 +290,25 @@ class Gongkao(Gtk.Application):
             self._tts_stop()
         elif act == "shot":
             self.take_shot()
+        elif act == "open":
+            self.open_external(d.get("url") or "")
+
+    def open_external(self, uri):
+        """网页请求「用系统浏览器打开这个链接」。
+
+        为什么要有这条路：`target="_blank"` 在 WebKit 里走 NEW_WINDOW_ACTION，
+        **实测在真实的壳里根本走不通**（decide-policy 里加了处理也没用，新窗口请求就是被吞掉），
+        表现是点了完全没反应。所以不再指望 WebKit 的行为，改由网页**明确**告诉壳要打开什么。"""
+        if not uri.startswith(("http://", "https://")):
+            self._toast("这个链接打不开：" + uri[:50])
+            return
+        try:
+            ok = Gio.AppInfo.launch_default_for_uri(uri, None)
+        except Exception as e:
+            ok = False
+            self._toast("打开浏览器失败：" + str(e)[:50])
+        if not ok:
+            self._toast("没能调起系统浏览器")
 
     def take_shot(self):
         """截图：走 xdg-desktop-portal（GNOME 直接的 Screenshot D-Bus 接口是禁掉的）。
