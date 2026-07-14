@@ -54,6 +54,7 @@ const IC = {
   check: _svg('<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
   quote: _svg('<path d="M6 17h3l2-4V7H5v6h3z"/><path d="M14 17h3l2-4V7h-6v6h3z"/>'),
   target: _svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.4"/>'),
+  play: _svg('<rect x="2" y="4" width="20" height="16" rx="3"/><path d="M10 9l5 3-5 3z" fill="currentColor"/>'),
   layers: _svg('<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>'),
   compass: _svg('<circle cx="12" cy="12" r="9"/><polygon points="16.2 7.8 14.1 14.1 7.8 16.2 9.9 9.9 16.2 7.8"/>'),
   flag: _svg('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V4s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'),
@@ -83,6 +84,7 @@ const BOARD_FEATURES = {
   '政治理论': [
     { key: 'drill', name: '专项练', desc: '马原/毛概/中特/习思想 · 三档难度', icon: 'target' },
     { key: 'news', name: '每日时政', desc: '每天自动更新 · AI 摘要+考点', icon: 'feather' },
+    { key: 'videos', name: '每日新闻视频', desc: '官方媒体 · AI 筛出最值得看的 · 国内/国际/四川', icon: 'play' },
     { key: 'policydoc', name: '时政要文库', desc: '二十大·十五五·两会报告 全文+AI解读', icon: 'book' },
     { key: 'partydict', name: '党的创新理论学习词典', desc: '两个确立·四个意识… 12371 术语速查', icon: 'book' },
     { key: 'theory', name: '理论基础', desc: '马原 · 毛概 · 中特 · 习思想 考点速记', icon: 'compass' },
@@ -113,8 +115,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'videos'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', videos: '每日新闻视频' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -461,6 +463,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'partydict') openPartyDict();
   else if (c.dataset.feat === 'policydoc') openPolicyDocs();
   else if (c.dataset.feat === 'news') openNews();
+  else if (c.dataset.feat === 'videos') openVideos();
   else if (c.dataset.feat === 'gaikuo') openGaikuo();
   else if (c.dataset.feat === 'gongwen') openGongwen();
   else if (c.dataset.feat === 'drill') openDrill(curBoardFeat);
@@ -3091,6 +3094,119 @@ function emKey(text) {
 function isDocHeading(s) {
   return /^(第[一二三四五六七八九十百]+[篇章节]|[一二三四五六七八九十]+、|（[一二三四五六七八九十]+）|\([一二三四五六七八九十]+\)|\d+[、.．])/.test(s);
 }
+
+/* ============= 每日新闻视频（抓 → AI 按公考价值筛 → 只留最值得看的）=============
+   信源全是**白名单里的官方媒体**：央视网（新闻联播/焦点访谈/东方时空/今日关注/环球视线，
+   走 api.cntv.cn 的开放 JSON 接口）+ 川观新闻（四川日报社）。
+   为什么不接受「任意博主」：**没法自动确认一个账号是不是真的**，那等于把把关的活儿丢给用户。
+   核心价值不是「有视频看」，而是**帮你把不值得看的滤掉** —— 每条都说清「为什么值得看」。 */
+let vdBoard = '', vdPoll = 0;
+
+function openVideos() {
+  push({ view: 'videos', title: '每日新闻视频' });
+  loadVideos();
+}
+async function loadVideos() {
+  const box = $('#vd-list');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const q = vdBoard === 'star' ? '?star=1' : (vdBoard ? '?board=' + encodeURIComponent(vdBoard) : '');
+    const d = await api('/api/videos' + q);
+    $('#vd-last').textContent = d.last ? `· 最近更新 ${fmtDay(d.last)}` : '';
+    document.querySelectorAll('#vd-tabs .chip').forEach(c => {
+      const k = c.dataset.vdb;
+      c.classList.toggle('active', k === vdBoard);
+      if (k && k !== 'star') {
+        const n = (d.counts || {})[k] || 0;
+        c.textContent = c.textContent.replace(/\s\d+$/, '') + (n ? ' ' + n : '');
+      } else if (k === 'star') {
+        c.textContent = '⭐ 收藏' + (d.n_star ? ' ' + d.n_star : '');
+      }
+    });
+    if (!d.items.length) {
+      box.innerHTML = vdBoard === 'star'
+        ? '<p class="empty">还没收藏。看到有用的点 ☆ 收起来，做申论素材。</p>'
+        : '<p class="empty">还没有视频。点上面「手动刷新」抓一批，或等每天 07:20 自动更新。</p>';
+      return;
+    }
+    box.innerHTML = d.items.map(v => {
+      const long = /^(0?[3-9]|[1-9]\d):/.test(v.duration || '');   // 超过 3 分钟的标一下
+      return `<div class="vd-card">
+        <a class="vd-cover" href="${esc(v.url)}" target="_blank" rel="noopener"
+           style="${v.cover ? `background-image:url('${esc(v.cover)}')` : ''}">
+          <span class="vd-play">▶</span>
+          ${v.duration ? `<span class="vd-dur">${esc(v.duration)}</span>` : ''}
+        </a>
+        <div class="vd-body">
+          <div class="vd-top">
+            <span class="vd-board vd-${esc(v.board)}">${esc(v.board)}</span>
+            <span class="vd-col">${esc(v.column_name || '')}</span>
+            <span class="vd-score" title="AI 打的「值得看」分">★ ${v.score}</span>
+            <button class="vd-star${v.starred ? ' on' : ''}" data-vdstar="${v.id}"
+              title="收藏（可当申论素材）">${v.starred ? '★' : '☆'}</button>
+          </div>
+          <a class="vd-title" href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title)}</a>
+          ${v.why ? `<div class="vd-why"><b>为什么值得看</b>${esc(v.why)}</div>` : ''}
+          ${(v.tags || []).length ? `<div class="vd-tags">${v.tags.map(t =>
+            `<span>${esc(t)}</span>`).join('')}</div>` : ''}
+          <div class="vd-foot">
+            <span class="vd-src-n">📺 ${esc(v.source || '')}</span>
+            <span>${esc((v.pub_date || '').slice(0, 16))}</span>
+            ${v.brief ? `<button class="vd-more" data-vdbrief="${v.id}">内容提要 ▾</button>` : ''}
+          </div>
+          ${v.brief ? `<div class="vd-brief hidden" id="vdb-${v.id}">${esc(v.brief)}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#vd-tabs').addEventListener('click', e => {
+  const c = e.target.closest('[data-vdb]'); if (!c) return;
+  vdBoard = c.dataset.vdb;
+  loadVideos();
+});
+$('#vd-list').addEventListener('click', async e => {
+  const b = e.target.closest('[data-vdbrief]');
+  if (b) {
+    const box = $('#vdb-' + b.dataset.vdbrief);
+    const open = box.classList.toggle('hidden');
+    b.textContent = open ? '内容提要 ▾' : '收起 ▴';
+    return;
+  }
+  const s = e.target.closest('[data-vdstar]');
+  if (s) {
+    e.preventDefault();
+    s.disabled = true;
+    try {
+      const r = await api('/api/videos/' + s.dataset.vdstar + '/star', { method: 'POST' });
+      s.textContent = r.starred ? '★' : '☆';
+      s.classList.toggle('on', r.starred);
+      toast(r.starred ? '已收藏（可当申论素材）' : '已取消收藏');
+      if (vdBoard === 'star') loadVideos();
+    } catch (err) { toast(err.message, true); }
+    s.disabled = false;
+  }
+});
+$('#vd-refresh').onclick = async () => {
+  const b = $('#vd-refresh'); b.disabled = true;
+  $('#vd-msg').textContent = '正在抓取（要开无头浏览器渲染川观新闻，约 1 分钟）…';
+  try {
+    const d = await api('/api/videos/refresh', { method: 'POST' });
+    clearInterval(vdPoll);
+    vdPoll = setInterval(async () => {
+      try {
+        const t = await api('/api/write/task/' + d.task);      // 后台任务表是共用的
+        $('#vd-msg').textContent = t.message || '';
+        if (t.status === 'done' || t.status === 'error') {
+          clearInterval(vdPoll); vdPoll = 0;
+          b.disabled = false;
+          loadVideos();
+          toast(t.status === 'done' ? '刷新完成' : t.message, t.status !== 'done');
+        }
+      } catch (_) { clearInterval(vdPoll); vdPoll = 0; b.disabled = false; }
+    }, 3000);
+  } catch (e) { toast(e.message, true); b.disabled = false; $('#vd-msg').textContent = ''; }
+};
 
 /* ============= 每日时政（爬虫 + AI 三行式；国内/四川/国际 三板块，全局共享） ============= */
 let newsBoard = '党内', newsDate = '';

@@ -521,6 +521,29 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_dr_u ON drill_log(user_id, board, qtype);
+        -- 每日新闻视频：抓 → AI 按公考价值筛 → 只留最值得看的几条。
+        -- 信源只用白名单里的官方媒体（央视网 / 川观新闻）—— 没法自动确认「某个博主是不是真的」，
+        -- 所以不接受任意来源，那等于把把关的活儿丢给用户自己。
+        CREATE TABLE IF NOT EXISTS video_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            board TEXT,              -- 国内 / 国际 / 四川
+            column_name TEXT,        -- 栏目（新闻联播 / 今日关注 / 川观新闻…）
+            source TEXT,             -- 信源（央视网 · CCTV-1 …）
+            title TEXT, url TEXT, cover TEXT, duration TEXT,
+            pub_date TEXT,
+            brief TEXT,              -- 本期内容提要（央视网自带，是筛选的依据）
+            why TEXT,                -- AI 说的「为什么值得看」（考点在哪）
+            tags TEXT, score INTEGER DEFAULT 5,
+            guid TEXT UNIQUE,        -- 同一条视频不重复收
+            pick_date TEXT,          -- 哪天选中的
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_vid ON video_items(pick_date DESC, board);
+        CREATE TABLE IF NOT EXISTS video_stars(
+            user_id INTEGER NOT NULL, video_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, video_id)
+        );
         -- 专项练题库：常识/政治理论/言语这三块出不了程序化题（考的是知识，不是构造），
         -- 只能让 AI 出。但每次现出要等 20 秒 —— 所以**攒进题库**，用的时候直接取，
         -- 不够了再后台补。按 (板块, 题型, 难度) 分桶。
@@ -3358,6 +3381,86 @@ def partydict_list():
 
 
 # ---------------------------------------------------------------- 每日时政（爬虫 + AI，全局共享）
+# ---------------------------------------------------------------- 每日新闻视频（筛过的）
+VIDEO_BOARDS = ["国内", "国际", "四川"]
+
+
+@app.get("/api/videos")
+def videos_list():
+    """每日新闻视频：只给**筛过的**（AI 按公考价值挑的），并附「为什么值得看」。
+       信源全是白名单里的官方媒体 —— 没法自动确认「某个博主是不是真的」，
+       所以不接受任意来源，那等于把把关的活儿丢给你自己。"""
+    db = get_db()
+    board = (request.args.get("board") or "").strip()
+    star = request.args.get("star") in ("1", "true")
+    where, args = [], []
+    if board in VIDEO_BOARDS:
+        where.append("v.board=?")
+        args.append(board)
+    if star:
+        where.append("s.user_id IS NOT NULL")
+    sql = ("SELECT v.*, (s.user_id IS NOT NULL) starred FROM video_items v "
+           "LEFT JOIN video_stars s ON s.video_id=v.id AND s.user_id=? ")
+    args = [uid()] + args
+    if where:
+        sql += "WHERE " + " AND ".join(where) + " "
+    sql += "ORDER BY v.pick_date DESC, v.score DESC, v.id DESC LIMIT 120"
+    rows = db.execute(sql, args).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["tags"] = json.loads(d.get("tags") or "[]")
+        except Exception:
+            d["tags"] = []
+        d["starred"] = bool(d.get("starred"))
+        out.append(d)
+    cnt = {r[0]: r[1] for r in db.execute(
+        "SELECT board, COUNT(*) FROM video_items GROUP BY board")}
+    last = db.execute("SELECT MAX(pick_date) FROM video_items").fetchone()[0] or ""
+    return jsonify({"items": out, "counts": cnt, "boards": VIDEO_BOARDS, "last": last,
+                    "n_star": db.execute("SELECT COUNT(*) FROM video_stars WHERE user_id=?",
+                                         (uid(),)).fetchone()[0]})
+
+
+@app.post("/api/videos/<int:vid>/star")
+def video_star(vid):
+    db = get_db()
+    have = db.execute("SELECT 1 FROM video_stars WHERE user_id=? AND video_id=?",
+                      (uid(), vid)).fetchone()
+    if have:
+        db.execute("DELETE FROM video_stars WHERE user_id=? AND video_id=?", (uid(), vid))
+        db.commit()
+        return jsonify({"starred": False})
+    db.execute("INSERT OR IGNORE INTO video_stars(user_id, video_id) VALUES(?,?)", (uid(), vid))
+    db.commit()
+    return jsonify({"starred": True})
+
+
+@app.post("/api/videos/refresh")
+def videos_refresh():
+    """手动刷一次（平时是定时器每天跑）。抓取要开无头浏览器，放后台。"""
+    tid = _bg_new(get_db(), "video", "刷新每日新闻视频", 1)
+
+    def run():
+        con = sqlite3.connect(DB, timeout=60)
+        try:
+            _bg_set(con, tid, status="running", message="正在抓取央视网 / 川观新闻…")
+            r = subprocess.run(
+                [os.path.join(BASE, ".venv/bin/python3"), os.path.join(BASE, "crawl_video.py")],
+                cwd=BASE, capture_output=True, text=True, timeout=600)
+            tail = (r.stdout or r.stderr or "").strip().splitlines()
+            _bg_set(con, tid, status="done", progress=1,
+                    message=(tail[-1] if tail else "完成"))
+        except Exception as ex:
+            _bg_set(con, tid, status="error", message=str(ex)[:150])
+        finally:
+            con.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"task": tid}), 202
+
+
 @app.get("/api/news")
 def news_list():
     board = (request.args.get("board") or "").strip()

@@ -568,6 +568,26 @@
     <div id="poly-wrap" class="poly-wrap"></div>
   </section>
 
+  <!-- ===== 每日新闻视频（抓官媒 → AI 按公考价值筛）===== -->
+  <section id="view-videos" class="view hidden">
+    <div class="pd-intro">每天从<b>官方媒体</b>抓新闻视频，AI 按<b>公考价值</b>筛一遍 ——
+      只留最值得看的，并说清<b>为什么值得看</b>（考点在哪、能当什么素材）。
+      <span id="vd-last" class="vd-last"></span></div>
+    <div class="date-strip" id="vd-tabs">
+      <button class="chip active" data-vdb="">全部</button>
+      <button class="chip" data-vdb="国内">🇨🇳 国内</button>
+      <button class="chip" data-vdb="国际">🌏 国际</button>
+      <button class="chip" data-vdb="四川">🐼 四川</button>
+      <button class="chip" data-vdb="star">⭐ 收藏</button>
+    </div>
+    <div class="vd-bar">
+      <button class="btn tiny" id="vd-refresh">🔄 手动刷新</button>
+      <span id="vd-msg" class="vd-msg"></span>
+      <span class="vd-src">信源：央视网（新闻联播/焦点访谈/东方时空/今日关注/环球视线）· 川观新闻（四川日报社）</span>
+    </div>
+    <div id="vd-list" class="vd-list"></div>
+  </section>
+
   <!-- ===== 每日时政（列表） ===== -->
   <section id="view-news" class="view hidden">
     <div class="pd-intro">每天自动抓取国内 / 四川 / 国际时政，AI 提炼「事件·角度·素材」供申论积累</div>
