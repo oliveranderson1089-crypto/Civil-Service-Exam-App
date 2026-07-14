@@ -1182,6 +1182,8 @@
     <div id="ai-atts" class="ai-atts"></div>
     <div class="ai-input">
       <button id="ai-attach" class="ai-attbtn" title="上传图片/文件">📎</button>
+      <button type="button" class="ai-attbtn hw-open-btn" data-hw="ai-text" title="手写输入（写完自动转文字）">✍️</button>
+      <button type="button" class="ai-attbtn hidden" id="ai-shot" title="截图（可用手写笔圈选）">📷</button>
       <textarea id="ai-text" rows="1" placeholder="问点什么…（可附图片/文件）"></textarea>
       <button id="ai-send" class="ai-sendbtn">发送</button>
     </div>
@@ -1228,6 +1230,19 @@
       <button data-mm="del" class="acm-danger">🗑 删除</button>
     </div>
   </div>
+</div>
+
+<!-- 截图裁剪层：拿到整张截图后，鼠标拖矩形 或 手写笔自由圈，圈完裁下来发给 AI -->
+<div id="shot" class="shot hidden">
+  <div class="shot-bar">
+    <span class="shot-t">📷 圈出要问 AI 的部分</span>
+    <span class="shot-hint">鼠标拖矩形 · 手写笔可自由圈</span>
+    <button class="btn tiny" id="shot-all">整张都要</button>
+    <button class="btn tiny" id="shot-redo">重圈</button>
+    <button class="btn primary tiny" id="shot-ok">✓ 发给 AI</button>
+    <button class="btn tiny" id="shot-cancel">取消</button>
+  </div>
+  <div class="shot-wrap"><canvas id="shot-cv"></canvas></div>
 </div>
 
 <!-- 给定资料面板：可停靠半屏、可拖大小、可用手写笔在原文上勾画（像考场划重点） -->

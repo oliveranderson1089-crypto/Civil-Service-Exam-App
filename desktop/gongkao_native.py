@@ -1,7 +1,9 @@
 #!/usr/bin/python3
 # 公考助手 桌面版（原生 GTK + 系统 WebKit2GTK，不依赖 Chrome）。
 # 用系统 python3（自带 gi）运行；一个真·原生窗口加载网页版。
+import base64
 import os
+import secrets
 import shutil
 import subprocess
 from urllib.parse import urlparse
@@ -18,7 +20,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "3.4"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "3.5"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -83,7 +85,7 @@ class Gongkao(Gtk.Application):
         self.tts_ok = bool(shutil.which("spd-say"))     # WebKit 没有 speechSynthesis，只能借系统 TTS
         try:
             ucm.add_script(WebKit2.UserScript.new(
-                "window.__desktop=true;window.__desktopVer='%s';window.__desktopTTS=%s;"
+                "window.__desktop=true;window.__desktopVer='%s';window.__desktopTTS=%s;window.__desktopShot=true;"
                 % (DESKTOP_VER, "true" if self.tts_ok else "false"),
                 WebKit2.UserContentInjectedFrames.TOP_FRAME,
                 WebKit2.UserScriptInjectionTime.START, None, None))
@@ -188,6 +190,57 @@ class Gongkao(Gtk.Application):
                 pass
         elif act == "tts_stop":
             self._tts_stop()
+        elif act == "shot":
+            self.take_shot()
+
+    def take_shot(self):
+        """截图：走 xdg-desktop-portal（GNOME 直接的 Screenshot D-Bus 接口是禁掉的）。
+           interactive=True → 弹 GNOME 自带的区域选择，鼠标拖、手写笔拖都行。
+           抓完把图变成 data URL 交回网页，网页那边可以再用笔自由圈一次。"""
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except Exception:
+            return
+        token = "gk%s" % secrets.token_hex(4)
+        sender = bus.get_unique_name()[1:].replace(".", "_")
+        req_path = "/org/freedesktop/portal/desktop/request/%s/%s" % (sender, token)
+
+        def on_response(conn, sender_, path, iface, signal, params):
+            try:
+                code, results = params.unpack()
+                bus.signal_unsubscribe(sub)
+                if code != 0:                       # 用户取消了
+                    return
+                uri = results.get("uri") or ""
+                p = GLib.filename_from_uri(uri, None)[0] if uri else ""
+                if not p or not os.path.exists(p):
+                    return
+                with open(p, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                try:
+                    os.remove(p)                    # portal 存的是临时文件，用完删掉
+                except Exception:
+                    pass
+                self.web.run_javascript(
+                    "window.__onShot && window.__onShot('data:image/png;base64,%s')" % b64,
+                    None, None, None)
+            except Exception:
+                pass
+
+        sub = bus.signal_subscribe("org.freedesktop.portal.Desktop",
+                                   "org.freedesktop.portal.Request", "Response",
+                                   req_path, None, Gio.DBusSignalFlags.NONE, on_response)
+        opts = GLib.Variant("a{sv}", {
+            "handle_token": GLib.Variant("s", token),
+            "interactive": GLib.Variant("b", True),     # 让 GNOME 自己弹区域选择
+        })
+        try:
+            bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                          "org.freedesktop.portal.Screenshot", "Screenshot",
+                          GLib.Variant("(sa{sv})", ("", opts)), None,
+                          Gio.DBusCallFlags.NONE, 5000, None)
+        except Exception:
+            bus.signal_unsubscribe(sub)
 
     def _tts_stop(self):
         try:
