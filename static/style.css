@@ -2928,6 +2928,7 @@ body.dark .rv-ex{background:#141b29;border-left-color:#3a6ad0;}
 .vd-top{display:flex;align-items:center;gap:7px;margin-bottom:5px;}
 .vd-board{padding:1px 8px;border-radius:20px;font-size:11px;font-weight:700;color:#fff;}
 .vd-国内{background:#c4661f;} .vd-国际{background:#1a6fb5;} .vd-四川{background:#1e8449;}
+.vd-备考{background:#7048e8;}   /* 备考=讲解课，不是新闻，颜色上也要一眼分开 */
 .vd-col{font-size:11.5px;color:var(--muted);}
 .vd-score{margin-left:auto;font-size:11.5px;color:#c2410c;font-weight:600;}
 .vd-star{border:none;background:transparent;font-size:17px;color:var(--muted);cursor:pointer;

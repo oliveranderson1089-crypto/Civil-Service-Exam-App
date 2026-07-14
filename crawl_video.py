@@ -238,6 +238,13 @@ BILI_UPS = [
     ("中国日报", 21778636, "B站 · 中国日报官方账号"),
     ("央视网快看", 451320374, "B站 · 央视网新闻频道官方账号"),
     ("四川观察", 487614876, "B站 · 四川广播电视台官方账号"),
+    # 半月谈（新华社旗下）。两个号性质完全不同：
+    #   · 杂志社主号：新闻向，但**最近几乎全是世界杯短视频**（7~12 秒）——
+    #     对公考没用的会被 AI 归类判「无」自然滤掉，收不到就收不到，不强求。
+    #   · 半月谈公考：申论/面试**讲解课**（「申论热点年中盘点」60 分钟这种）。
+    #     这不是新闻，塞进国内/国际/四川都别扭 —— 所以单开「备考」板块（见 bili_boards）。
+    ("半月谈", 421690942, "B站 · 半月谈杂志社官方账号"),
+    ("半月谈公考", 543235237, "B站 · 半月谈新媒体官方账号"),
 ]
 BILI_MIDS = {mid: (name, src) for name, mid, src in BILI_UPS}
 
@@ -323,7 +330,10 @@ def _bili_dur(s):
 def bili_boards(cands):
     """B 站这些条目属于哪个板块，得**逐条判**。
 
-    不能按「谁发的」定：四川观察一样会发世界杯、发国际新闻。所以让 AI 看标题+简介来归类，
+    不能按「谁发的」定，两头都会错：
+      · 四川观察一样会发世界杯、发国际新闻 —— 按发布者归到「四川」就错了。
+      · 半月谈公考发的是**申论/面试讲解课**，根本不是新闻 —— 归到国内/国际/四川都别扭，
+        所以有「备考」这个板块专门放它们。反过来，新闻不能混进备考。
     判不出来的就丢掉（宁可少给，也别把国际新闻塞进四川板块）。
     """
     if not cands:
@@ -331,15 +341,17 @@ def bili_boards(cands):
     lines = ["%d.【%s】%s %s" % (i + 1, c["column"], c["title"], (c["brief"][:60] or ""))
              for i, c in enumerate(cands)]
     prompt = (
-        "给下面每条新闻视频判一个板块，只能是这三个之一：国内 / 国际 / 四川。\n"
-        "· 四川：发生在四川、或与四川直接相关的\n"
-        "· 国际：涉外、国际时事、他国内政\n"
+        "给下面每条视频判一个板块，只能是这四个之一：国内 / 国际 / 四川 / 备考。\n"
+        "· 备考：**讲解课**，不是新闻 —— 申论/行测/面试的技巧讲解、考点解读、热点盘点、真题分析。"
+        "判断标准是「它在教你怎么考」，而不是「它在报道一件事」\n"
+        "· 四川：发生在四川、或与四川直接相关的新闻\n"
+        "· 国际：涉外、国际时事、他国内政的新闻\n"
         "· 国内：其余的国内新闻\n"
-        "· 娱乐、体育花边、生活趣闻这类**对公考没用**的，board 填「无」\n\n"
+        "· 娱乐、体育赛事花边、生活趣闻这类**对公考没用**的，board 填「无」\n\n"
         "%s\n\n"
-        '只输出 JSON：{"r":[{"i":序号,"board":"国内|国际|四川|无"}]}' % "\n".join(lines))
+        '只输出 JSON：{"r":[{"i":序号,"board":"国内|国际|四川|备考|无"}]}' % "\n".join(lines))
     rep, err = A._ai_call_or_error(
-        [{"role": "system", "content": "你给新闻分类。严格输出 JSON。"},
+        [{"role": "system", "content": "你给公考备考视频分类。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
         temperature=0.1, max_tokens=1200, timeout=120, json_mode=True)
     if err:
@@ -356,7 +368,7 @@ def bili_boards(cands):
         except Exception:
             continue
         b = (r.get("board") or "").strip()
-        if 0 <= k < len(cands) and b in ("国内", "国际", "四川"):
+        if 0 <= k < len(cands) and b in A.VIDEO_BOARDS:
             cands[k]["board"] = b
             out.append(cands[k])
     print("  · B 站 %d 条 → 归类后留下 %d 条" % (len(cands), len(out)))
@@ -364,7 +376,25 @@ def bili_boards(cands):
 
 
 # ---------------------------------------------------------------- AI 筛选
-PICK_N = {"国内": 4, "国际": 3, "四川": 3}
+PICK_N = {"国内": 4, "国际": 3, "四川": 3, "备考": 3}
+
+# 时间窗：新闻要新，讲解课不用 —— 上周的申论盘点照样值钱（默认走命令行的 --days）
+BOARD_DAYS = {"备考": 21}
+
+# 备考课和新闻的「好」不是一回事 —— 新闻看信息增量、看能不能当素材；
+# 讲解课看讲得实不实、能不能直接用在卷子上。而且**时长的判断正好相反**：
+# 新闻超过 30 分钟要往后排，但「申论热点年中盘点」60 分钟恰恰是它值钱的地方。
+PICK_RULES = {
+    "备考": ("· 讲的是**真考点**：申论/行测/面试的方法、热点盘点、真题拆解\n"
+             "· **能直接用**：有明确的答题思路、结构、话术，不是空喊「要多练」\n"
+             "· 系统性强的优先：成体系的专题课 > 零散的一分钟小技巧\n"
+             "· **别按时长排斥长视频**：60 分钟的热点盘点正是最值钱的那种，长不是缺点\n"
+             "· 纯招考公告、纯打鸡血、纯卖课的，不要\n"),
+    "": ("· 和**考点**沾边：时政热点、重大会议、新政策、新提法、国际大事（常识判断和申论都要）\n"
+         "· 能当**申论素材**：有具体案例、数据、做法、金句\n"
+         "· 有**信息增量**：不是重复报道、不是纯程序性播报\n"
+         "· 时长合理：太长的（超过 30 分钟）除非特别重要，否则往后排\n"),
+}
 
 
 def ai_pick(db, board, cands):
@@ -377,24 +407,25 @@ def ai_pick(db, board, cands):
         b = (" 内容提要：" + c["brief"][:220]) if c["brief"] else ""
         lines.append("%d.【%s】%s（%s）%s" % (i + 1, c["column"], c["title"], c["duration"], b))
 
+    kind = "备考讲解课" if board == "备考" else "新闻视频"
     prompt = (
-        "下面是今天「%s」板块的新闻视频候选。请挑出**对四川省考考生最值得看的 %d 条**。\n\n"
-        "【怎么算值得看】\n"
-        "· 和**考点**沾边：时政热点、重大会议、新政策、新提法、国际大事（常识判断和申论都要）\n"
-        "· 能当**申论素材**：有具体案例、数据、做法、金句\n"
-        "· 有**信息增量**：不是重复报道、不是纯程序性播报\n"
-        "· 时长合理：太长的（超过 30 分钟）除非特别重要，否则往后排\n\n"
+        "下面是今天「%s」板块的%s候选。请挑出**对四川省考考生最值得看的 %d 条**。\n\n"
+        "【怎么算值得看】\n%s\n"
         "【对每条被选中的，要说清】\n"
-        "· why：**为什么值得看**（一句话，讲清考点在哪 / 能当什么素材）—— 不要复述标题\n"
-        "· tags：2~3 个考点标签（如「人工智能」「基层治理」「南海问题」）\n"
+        "· why：**为什么值得看**（一句话，讲清考点在哪 / 能当什么素材 / 讲的是什么方法）—— 不要复述标题\n"
+        "· tags：2~3 个考点标签（如「人工智能」「基层治理」「申论归纳概括」）\n"
         "· score：值得看的程度 1~10\n\n"
         "**宁缺毋滥**：如果今天的候选里没那么多值得看的，就少挑几条，别凑数。\n\n"
         "候选：\n%s\n\n"
         '只输出 JSON：{"picks":[{"i":序号,"why":"","tags":["",""],"score":0}]}'
-        % (board, PICK_N.get(board, 3), "\n".join(lines)))
+        % (board, kind, PICK_N.get(board, 3),
+           PICK_RULES.get(board, PICK_RULES[""]), "\n".join(lines)))
 
+    role = ("你是公考申论/面试老师，在帮学生挑课。只挑真正讲到点子上的，宁缺毋滥。严格输出 JSON。"
+            if board == "备考" else
+            "你是公考时政老师。只挑真正对考试有用的，宁缺毋滥。严格输出 JSON。")
     rep, err = A._ai_call_or_error(
-        [{"role": "system", "content": "你是公考时政老师。只挑真正对考试有用的，宁缺毋滥。严格输出 JSON。"},
+        [{"role": "system", "content": role},
          {"role": "user", "content": prompt}],
         temperature=0.3, max_tokens=1500, timeout=180, json_mode=True)
     if err:
@@ -429,27 +460,43 @@ def main():
 
     db = sqlite3.connect(A.DB, timeout=60)
     db.row_factory = sqlite3.Row
+    # 已经收过的：**在送去 AI 之前**就剔掉。
+    # 新闻每天都是新的，本来也撞不上；但**备考的窗口有三周**，不剔的话同样那几条会天天
+    # 重新走一遍归类和筛选（入库时 guid 撞了才跳过）—— 白花钱，而且新课永远排不进来。
+    have = {r[0] for r in db.execute("SELECT guid FROM video_items")}
 
     print("抓取信源（都是白名单里的官方媒体）：")
     cands = fetch_cctv()
     ch = None
     try:
         ch = Chrome()                       # B 站和川观共用一个（开一次要 10 来秒，不重复开）
-        cands += fetch_bili_classified(ch, a.no_ai)
+        cands += fetch_bili_classified(ch, a.no_ai, have)
         cands += fetch_sichuan(ch)
     except Exception as e:
         print("  ✗ 无头浏览器不可用：%s（这轮只有央视网的）" % str(e)[:60])
     print("  合计候选 %d 条" % len(cands))
 
-    # 太老的不要（新闻联播那种每天一期的，只看最近两天）
-    cut = time.strftime("%Y-%m-%d", time.localtime(time.time() - a.days * 86400))
-    cands = [c for c in cands if (c["pub"][:10] or "9999") >= cut]
-    print("  最近 %d 天的：%d 条" % (a.days, len(cands)))
+    # 太老的不要（新闻联播那种每天一期的，只看最近两天）。
+    # 但**备考讲解课没有时效性** —— 上周的「申论热点年中盘点」照样值钱，
+    # 用新闻那两天的窗口去卡它，一天下来根本挑不出几条。所以单独放宽。
+    def old(c):
+        days = BOARD_DAYS.get(c["board"], a.days)
+        cut = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+        return (c["pub"][:10] or "9999") < cut
+
+    cands = [c for c in cands if not old(c)]
+    print("  最近 %d 天的（备考放宽到 %d 天）：%d 条"
+          % (a.days, BOARD_DAYS["备考"], len(cands)))
+
+    n0 = len(cands)                          # 央视/川观的也要剔（B 站的在归类前就剔过了）
+    cands = [c for c in cands if c["guid"] not in have]
+    if n0 != len(cands):
+        print("  去掉已经收过的 %d 条，还剩 %d 条" % (n0 - len(cands), len(cands)))
 
     today = time.strftime("%Y-%m-%d")
     n_new = 0
     try:
-        for board in ("国内", "国际", "四川"):
+        for board in A.VIDEO_BOARDS:      # 板块只在 app.py 定义一份，别抄第二遍
             sub = [c for c in cands if c["board"] == board]
             if not sub:
                 continue
@@ -483,9 +530,9 @@ def main():
     print("\n入库 %d 条新视频" % n_new)
 
 
-def fetch_bili_classified(ch, no_ai=False):
-    """B 站：抓 → 逐条判板块（不能按「谁发的」定，四川观察也发国际新闻）。"""
-    raw = fetch_bili(ch)
+def fetch_bili_classified(ch, no_ai=False, have=()):
+    """B 站：抓 → 剔掉已经收过的 → 逐条判板块（不能按「谁发的」定，四川观察也发国际新闻）。"""
+    raw = [c for c in fetch_bili(ch) if c["guid"] not in have]
     if not raw:
         return []
     if no_ai:                                # 调试时不调 AI，全塞进「国内」凑合看
