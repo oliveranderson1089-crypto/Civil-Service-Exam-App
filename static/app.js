@@ -24,6 +24,7 @@ const IS_MOBILE = IN_APP || window.matchMedia('(max-width:760px)').matches;
 document.body.classList.toggle('mobile-ui', IS_MOBILE);
 const PAGE_SIZE = 5;
 
+window.toast = toast;   // 桌面壳出错时要能弹提示
 function toast(msg, err) {
   const t = $('#toast');
   t.textContent = msg;

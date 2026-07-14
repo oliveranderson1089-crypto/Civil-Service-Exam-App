@@ -1,5 +1,5 @@
 {
-  "version_code": 35,
-  "version_name": "3.5",
-  "notes": "新增截图（可用手写笔圈选）；修中文输入法、文件选择器、系统朗读"
+  "version_code": 36,
+  "version_name": "3.6",
+  "notes": "修截图点了没反应（portal 调用参数构造错误）"
 }

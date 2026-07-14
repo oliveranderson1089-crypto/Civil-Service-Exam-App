@@ -2,6 +2,7 @@
 # 公考助手 桌面版（原生 GTK + 系统 WebKit2GTK，不依赖 Chrome）。
 # 用系统 python3（自带 gi）运行；一个真·原生窗口加载网页版。
 import base64
+import json
 import os
 import secrets
 import shutil
@@ -20,7 +21,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "3.5"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "3.6"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -172,7 +173,6 @@ class Gongkao(Gtk.Application):
         """网页调 window.webkit.messageHandlers.gk.postMessage(JSON) → 这里执行。
            目前用于朗读：WebKit 里没有 speechSynthesis，借系统的 speech-dispatcher 发声。"""
         try:
-            import json
             d = json.loads(result.get_js_value().to_string())
         except Exception:
             return
@@ -214,6 +214,7 @@ class Gongkao(Gtk.Application):
                 uri = results.get("uri") or ""
                 p = GLib.filename_from_uri(uri, None)[0] if uri else ""
                 if not p or not os.path.exists(p):
+                    self._toast("截图没拿到文件")
                     return
                 with open(p, "rb") as f:
                     b64 = base64.b64encode(f.read()).decode()
@@ -230,17 +231,30 @@ class Gongkao(Gtk.Application):
         sub = bus.signal_subscribe("org.freedesktop.portal.Desktop",
                                    "org.freedesktop.portal.Request", "Response",
                                    req_path, None, Gio.DBusSignalFlags.NONE, on_response)
-        opts = GLib.Variant("a{sv}", {
+        # 注意：a{sv} 这里要传**普通 dict**（值才是 Variant）。
+        # 之前先把它包成 GLib.Variant("a{sv}", …) 再塞进 (sa{sv})，PyGObject 会把这个 Variant
+        # 当 dict 去迭代 → KeyError(0)，调用根本没发出去 —— 表现就是「点了截图没反应」。
+        opts = {
             "handle_token": GLib.Variant("s", token),
-            "interactive": GLib.Variant("b", True),     # 让 GNOME 自己弹区域选择
-        })
+            "interactive": GLib.Variant("b", True),     # 让 GNOME 自己弹区域选择（鼠标/笔都能拖）
+        }
         try:
             bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
                           "org.freedesktop.portal.Screenshot", "Screenshot",
                           GLib.Variant("(sa{sv})", ("", opts)), None,
-                          Gio.DBusCallFlags.NONE, 5000, None)
-        except Exception:
+                          Gio.DBusCallFlags.NONE, 8000, None)
+        except Exception as e:
             bus.signal_unsubscribe(sub)
+            self._toast("截图失败：%s" % str(e)[:80])   # 别再静默失败了，出错要说话
+
+    def _toast(self, msg):
+        """把错误告诉网页（网页有 toast），不然壳里出问题用户只会看到「点了没反应」。"""
+        try:
+            self.web.run_javascript(
+                "window.toast && window.toast(%s, true)" % json.dumps(msg, ensure_ascii=False),
+                None, None, None)
+        except Exception:
+            pass
 
     def _tts_stop(self):
         try:
