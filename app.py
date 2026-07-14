@@ -615,6 +615,9 @@ def init_db():
     # ai_chats 补 starred（置顶）
     if "starred" not in _cols(con, "ai_chats"):
         con.execute("ALTER TABLE ai_chats ADD COLUMN starred INTEGER DEFAULT 0")
+    # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
+    if "mat_boards" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
     # 外观定制：头像 / 应用内壁纸 / 登录页壁纸（存文件名，图片放 uploads/skin/<uid>/）
     for col in ("avatar", "wall_app", "wall_login"):
         if col not in _cols(con, "users"):
@@ -1472,9 +1475,20 @@ def material_upload():
 
 @app.get("/api/materials/boards")
 def material_boards():
-    rows = get_db().execute(
+    """分类 = 已有资料反推出来的 + 用户自己存下来的。
+       只反推的话，新建了但还没往里传东西的分类（如「其它」）重启就没了 —— 这正是踩过的坑。"""
+    db = get_db()
+    rows = db.execute(
         "SELECT DISTINCT board FROM materials WHERE user_id=? AND board<>'' ORDER BY board", (uid(),)).fetchall()
-    return jsonify({"boards": [r["board"] for r in rows]})
+    boards = [r["board"] for r in rows]
+    r = db.execute("SELECT mat_boards FROM users WHERE id=?", (uid(),)).fetchone()
+    try:
+        for b in json.loads((r["mat_boards"] if r else None) or "[]"):
+            if b and b not in boards:
+                boards.append(b)
+    except Exception:
+        pass
+    return jsonify({"boards": boards})
 
 
 @app.get("/api/materials")
@@ -6985,6 +6999,17 @@ def app_version():
         "url": "/download/gongkao.apk",
         "available": os.path.exists(apk),
     })
+
+
+# ---------------------------------------------------------------- 资料库：自定义分类
+@app.post("/api/materials/boards")
+def mat_boards_set():
+    d = request.get_json(silent=True) or {}
+    boards = [str(x).strip()[:20] for x in (d.get("boards") or []) if str(x).strip()][:30]
+    db = get_db()
+    db.execute("UPDATE users SET mat_boards=? WHERE id=?", (json.dumps(boards, ensure_ascii=False), uid()))
+    db.commit()
+    return jsonify({"ok": True, "boards": boards})
 
 
 # ---------------------------------------------------------------- 资料库：共享给指定成员

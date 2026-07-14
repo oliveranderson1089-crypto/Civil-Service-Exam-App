@@ -829,6 +829,29 @@ async function renderMatFilter() {
     all.map(b => `<button class="chip ${b === matBoard ? 'active' : ''}" data-mb="${esc(b)}">${esc(b)}</button>`).join('') +
     `<button class="chip chip-newcat" id="mat-newcat">＋ 分类</button>`;
 }
+async function saveMatBoards() {
+  try {
+    await api('/api/materials/boards', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boards: matCustomBoards }),
+    });
+  } catch (_) {}
+}
+/* 长按/右键自定义分类 → 删掉它（里面的资料会回到「全部」，不会丢） */
+$('#mat-filter').addEventListener('contextmenu', async e => {
+  const c = e.target.closest('[data-mb]');
+  if (!c || !c.dataset.mb || !matCustomBoards.includes(c.dataset.mb)) return;
+  e.preventDefault();
+  const b = c.dataset.mb;
+  if (!await appConfirm('删除分类「' + b + '」？里面的资料不会删，只是回到「全部」。',
+    { title: '资料分类', okText: '删除分类' })) return;
+  matCustomBoards = matCustomBoards.filter(x => x !== b);
+  await saveMatBoards();
+  if (matBoard === b) matBoard = '';
+  renderMatFilter(); loadMaterials();
+  toast('分类已删除');
+});
+
 function openMaterials() {
   matBoard = '';
   renderMatFilter();
@@ -841,9 +864,10 @@ $('#mat-filter').addEventListener('click', async e => {
     const v = (name || '').trim().slice(0, 20);
     if (!v) return;
     if (!matCustomBoards.includes(v) && !ALL_BOARDS.includes(v)) matCustomBoards.push(v);
+    await saveMatBoards();            // 存到服务器：不然新建了但还没传东西的分类，重启就没了
     matBoard = v;                     // 选中新分类：之后上传/拍照默认归入它
     renderMatFilter(); loadMaterials();
-    toast('分类「' + v + '」已就绪，现在上传的资料会归入它');
+    toast('分类「' + v + '」已保存，现在上传的资料会归入它');
     return;
   }
   const c = e.target.closest('[data-mb]'); if (!c) return;
@@ -4138,6 +4162,7 @@ $('#sl-file').addEventListener('change', e => {
     e.preventDefault(); v.classList.remove('drag-on');
     const f = [...(e.dataTransfer ? e.dataTransfer.files : [])][0];
     if (f) slUploadPaper(f);
+    else if (!window.__desktop) toast('没拿到文件，换「📄 上传真题」按钮试试', true);
   });
 })();
 
@@ -4478,6 +4503,7 @@ $('#ck-daily').addEventListener('click', () => openCkBoard('上位词'));
 let ckBoard = '', ckItems = [], ckKind = 'text';
 async function openCkBoard(key) {
   ckBoard = key;
+  if (key === '成语' || key === '实词') loadCkStarred();   // 标出已收录的（实心★）
   push({ view: 'ckboard', title: key === '上位词' ? '上位词积累' : '常考 · ' + key });
   $('#ckb-search').value = '';
   $('#ckb-ai').classList.toggle('hidden', key !== '上位词');
@@ -4491,6 +4517,13 @@ async function openCkBoard(key) {
     renderCkList();
   } catch (e) { $('#ckb-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
+let ckStarred = new Set();      // 已经收进「成语词语积累」的词，卡片上标成实心★
+async function loadCkStarred() {
+  try {
+    const d = await api('/api/entries?size=1000');
+    ckStarred = new Set((d.items || []).map(x => x.word));
+  } catch (_) {}
+}
 function renderCkList() {
   const q = $('#ckb-search').value.trim();
   const list = q ? ckItems.filter(it =>
@@ -4499,8 +4532,12 @@ function renderCkList() {
   $('#ckb-list').innerHTML = list.map(it => {
     const freq = it.freq && ckBoard === '成语' ? `<span class="cki-freq">考频 ${it.freq}</span>` : '';
     const note = (it.note || '').replace(/^考频 \d+ 次(\s·\s)?/, '');   // 考频已单独成徽章
+    const canStar = ckBoard === '成语' || ckBoard === '实词';
     return `<div class="gk-card ck-item" data-cki="${it.id}">
-      <div class="cki-t">${esc(it.title)}${freq}${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
+      <div class="cki-t">${esc(it.title)}${freq}
+        ${canStar ? `<button class="cki-star${ckStarred.has(it.title) ? ' on' : ''}" data-ckstar="${esc(it.title)}"
+          title="收藏 → 收进「成语词语积累」">${ckStarred.has(it.title) ? '★' : '☆'}</button>` : ''}
+        ${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
       ${it.content ? `<div class="cki-c">${esc(it.content)}</div>` : ''}
       ${note ? `<div class="cki-n">${ckKind === 'classic' ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
       ${ckKind === 'hyper' ? '<div class="cki-more">点开看每个下位词的典故 / 出处 / 怎么考 ›</div>'
@@ -4510,6 +4547,25 @@ function renderCkList() {
 }
 $('#ckb-search').addEventListener('input', renderCkList);
 $('#ckb-list').addEventListener('click', async e => {
+  const star = e.target.closest('[data-ckstar]');
+  if (star) {                                   // 收藏 → 直接收进「言语理解 · 成语词语积累」
+    e.stopPropagation();
+    const w = star.dataset.ckstar;
+    if (star.classList.contains('on')) { toast('已经收录过了'); return; }
+    star.disabled = true;
+    try {
+      await api('/api/entries', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word: w }),
+      });
+      star.textContent = '★'; star.classList.add('on');
+      toast('已收进「成语词语积累」，明天开始进复习');
+    } catch (err) {
+      toast(err.message, true);
+      star.disabled = false;
+    }
+    return;
+  }
   const del = e.target.closest('[data-ckdel]');
   if (del) {
     e.stopPropagation();
@@ -5359,6 +5415,9 @@ async function uploadDropped(files) {
     e.preventDefault(); mv.classList.remove('drag-on');
     const fs = [...(e.dataTransfer ? e.dataTransfer.files : [])];
     if (fs.length) uploadDropped(fs);
+    // 桌面版本该由壳接管（GTK 层）。要是这里还被触发且没文件，说明壳没接管成功 → 说清楚，别静默
+    else if (window.__desktop) toast('桌面壳没接管拖放（请关掉应用重开一次）', true);
+    else toast('没拿到文件，换「+ 上传资料」按钮试试', true);
   });
   document.addEventListener('paste', e => {
     const st = stack[stack.length - 1];
@@ -6969,16 +7028,26 @@ shotBind();
 /* ================= 书签：看到哪了 =================
    长文（经典著作 / 要文库 / 范文 / 知识库文档）看到一半退出来，回头根本找不到位置。
    这里在阅读类页面自动记住滚动位置，回来时顶部给一条「上次看到这里 · 点我跳回」。 */
-const BM_VIEWS = { workd: '经典著作', policydocd: '时政要文', essayd: '范文', doc: '知识库文档', newsd: '时政' };
+/* 书签：任何会滚动的页面都记「看到哪了」——长文如此，长列表（如 894 条成语）更需要。
+   ref 用「视图 + 这一页的子标识」拼出来（板块名 / 文章 id / 分类…），换个板块就是另一条书签。 */
+const BM_SKIP = new Set(['home', 'account', 'search', 'slgrade', 'quizrun', 'dtest', 'notify']);
 let bmCur = null, bmT = null;
 
-function bmRef() {                       // 当前这篇的唯一标识
+function bmRef() {
   const st = stack[stack.length - 1];
-  if (!st || !BM_VIEWS[st.view]) return null;
-  const id = { workd: (window.wkCur && wkCur.id), policydocd: (window.pdCur && pdCur.id),
-    essayd: (window.esCur && esCur.id), doc: (window.DOC && DOC.id), newsd: (window.nwCur && nwCur.id) }[st.view];
-  if (!id) return null;
-  return { kind: st.view, ref: String(id), title: st.title || BM_VIEWS[st.view] };
+  if (!st || BM_SKIP.has(st.view)) return null;
+  // 顶层 let 不会挂到 window 上，直接引用（都在同一个脚本作用域里）
+  // 顶层 let 不会挂到 window 上，直接引用（同一脚本作用域）；标题足够区分的就用标题
+  const sub = {
+    doc: () => DOC && DOC.id,
+    newsd: () => nwCur && nwCur.id,
+    ckboard: () => ckBoard,
+    csboard: () => csBoard,
+    materials: () => matBoard || '全部',
+  }[st.view];
+  let id = '';
+  try { id = sub ? (sub() || '') : (st.title || ''); } catch (_) { id = st.title || ''; }
+  return { kind: st.view, ref: String(id || st.view), title: st.title || TITLES[st.view] || '' };
 }
 function bmScrollTop() { return (document.scrollingElement || document.documentElement).scrollTop; }
 function bmSave() {                      // 滚动停下来 1.5s 就记一次（不打扰、不刷接口）
@@ -6986,7 +7055,9 @@ function bmSave() {                      // 滚动停下来 1.5s 就记一次（
   if (!r) return;
   const el = document.scrollingElement || document.documentElement;
   const pos = el.scrollHeight > el.clientHeight ? bmScrollTop() / (el.scrollHeight - el.clientHeight) : 0;
-  if (pos < 0.02) return;                // 才刚打开，不算「看到哪了」
+  // 按「滚了多少像素」判断，不能按百分比：894 条成语那页有 15 万像素高，
+  // 滚了 3000px 也才 2%，用百分比阈值会直接把书签丢掉。
+  if (bmScrollTop() < 260) return;
   api('/api/bookmarks', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind: r.kind, ref: r.ref, title: r.title, pos }),
@@ -7004,7 +7075,9 @@ async function bmRestore() {             // 进阅读页时问一句：上次看
   try {
     const d = await api('/api/bookmarks');
     const b = (d.items || []).find(x => x.kind === r.kind && x.ref === r.ref);
-    if (!b || b.pos < 0.03) { $('#bm-tip').classList.add('hidden'); return; }
+    const el = document.scrollingElement || document.documentElement;
+    const px = b ? b.pos * (el.scrollHeight - el.clientHeight) : 0;
+    if (!b || px < 260) { $('#bm-tip').classList.add('hidden'); return; }
     bmCur = b;
     $('#bm-tip').innerHTML = `🔖 上次看到 <b>${Math.round(b.pos * 100)}%</b> 处 · <i>${(b.updated_at || '').slice(5, 16)}</i>
       <button class="btn tiny" id="bm-go">跳回去</button>

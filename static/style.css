@@ -2522,3 +2522,9 @@ mark.nw-mk.flash{animation:nwflash 1.2s ease;}
 .mk-lt{font-size:13.5px;font-weight:700;margin-bottom:6px;}
 body.dark .mk-bar,body.dark .mk-list{background:#1b2231;}
 body.mk-open .fab{display:none;}     /* 重点清单铺开时，悬浮球让位 */
+/* 常考成语/实词：收藏进「成语词语积累」 */
+.cki-star{float:right;border:none;background:none;cursor:pointer;font-size:19px;line-height:1;
+  color:var(--muted);padding:0 4px;margin-left:6px;transition:.15s;}
+.cki-star:hover{color:var(--gold);transform:scale(1.15);}
+.cki-star.on{color:var(--gold);}
+.cki-star:disabled{opacity:.5;}

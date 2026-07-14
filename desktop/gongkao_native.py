@@ -21,7 +21,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "3.7"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "3.8"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -111,10 +111,14 @@ class Gongkao(Gtk.Application):
 
         # 拖放：WebKitGTK 的 drop 事件里 dataTransfer.files 是空的（dragover 有效、drop 拿不到文件），
         # 所以从 GTK 这一层接管：自己收 uri-list，读出文件内容交给网页。
+        # ⚠️ WebView 自己也注册了拖放目标，必须先 unset 掉，否则 drop 被它先吃掉，我们的回调根本不触发。
+        self.web.drag_dest_unset()
         self.web.drag_dest_set(Gtk.DestDefaults.MOTION | Gtk.DestDefaults.DROP,
-                               [Gtk.TargetEntry.new("text/uri-list", 0, 0)], Gdk.DragAction.COPY)
+                               [Gtk.TargetEntry.new("text/uri-list", 0, 0),
+                                Gtk.TargetEntry.new("text/plain", 0, 1)], Gdk.DragAction.COPY)
         self.web.connect("drag-motion", self.on_drag_motion)
         self.web.connect("drag-leave", self.on_drag_leave)
+        self.web.connect("drag-drop", self.on_drag_drop)
         self.web.connect("drag-data-received", self.on_drag_data)
         self.web.load_uri(resolve_url())
         self.win.add(self.web)
@@ -192,6 +196,18 @@ class Gongkao(Gtk.Application):
 
     def on_drag_leave(self, widget, ctx, time):
         self._js("window.__onDragLeave && window.__onDragLeave()")
+
+    def on_drag_drop(self, widget, ctx, x, y, time):
+        """松手：主动去要 uri-list 数据（要到了才会触发 drag-data-received）。"""
+        target = None
+        for t in ctx.list_targets():
+            if t.name() == "text/uri-list":
+                target = t
+                break
+        if target is None:
+            return False
+        widget.drag_get_data(ctx, target, time)
+        return True
 
     def on_drag_data(self, widget, ctx, x, y, data, info, time):
         files = []
