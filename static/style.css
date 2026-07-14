@@ -1340,6 +1340,43 @@ body.dark .rv-back{border-color:#2a3345;}
 body.dark .read-item-btn{background:rgba(90,140,240,.15);}
 body.dark .empty,body.dark .cd-tip,body.dark .pd-intro{color:#7e8898;}
 body.dark .mat-meta,body.dark .aih-im,body.dark .item-py,body.dark .news-date{color:#7e8898;}
+/* ---- 成文（素材 → 大作文）---- */
+.wr-bar{display:flex;align-items:center;gap:10px;margin:10px 0;flex-wrap:wrap;}
+.wr-bfmsg{font-size:12.5px;color:var(--muted);}
+.wr-day{display:flex;align-items:center;gap:10px;padding:11px 13px;border:1px solid var(--line);
+  border-radius:12px;background:#fff;margin-bottom:8px;}
+.wr-day.done{cursor:pointer;}
+.wr-day.done:hover{border-color:var(--blue);background:#f6fafe;}
+.wr-day-d{flex:0 0 auto;font-size:13px;color:var(--muted);font-weight:600;}
+.wr-day-m{flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.wr-day-m b{font-size:14.5px;}
+.wr-n{font-size:12.5px;color:var(--muted);}
+.wr-tag{font-size:11.5px;padding:1px 7px;border-radius:6px;background:#eef4fb;color:#1a6fb5;}
+.wr-w{font-size:12px;color:var(--muted);}
+.wr-todo{text-align:center;padding:36px 20px;color:var(--muted);}
+.wr-todo-ic{font-size:42px;}
+.wr-todo-t{font-size:16px;font-weight:700;color:var(--fg);margin:8px 0 10px;}
+.wr-todo p{max-width:460px;margin:0 auto 8px;line-height:1.7;font-size:13.5px;}
+.wr-todo-hint{color:#1a6fb5;}
+.wd-head{padding:4px 0 10px;}
+.wd-title{font-size:19px;font-weight:700;line-height:1.5;margin:0 0 8px;}
+.wd-meta{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--muted);}
+.wd-w.bad{color:#c2410c;font-weight:600;}
+.wd-note{margin:10px 0 0;padding:8px 11px;border-radius:9px;background:#fff8e6;color:#8a5a00;
+  font-size:12.8px;line-height:1.6;}
+.wd-body p{text-indent:2em;line-height:2;margin:0 0 12px;font-size:15px;}
+.wd-ug{margin-bottom:14px;}
+.wd-ug-t{font-size:12.5px;font-weight:700;color:#1a6fb5;margin-bottom:6px;}
+.wd-ui{padding:8px 11px;border-left:3px solid #cfe0f2;background:#f7fafd;border-radius:0 8px 8px 0;
+  margin-bottom:6px;font-size:13.2px;line-height:1.7;}
+.wd-ol{padding-left:22px;line-height:1.9;font-size:14px;}
+.wd-ol li{margin-bottom:8px;}
+body.dark .wr-day{background:#141b29;}
+body.dark .wr-day.done:hover{background:#1a2434;}
+body.dark .wr-tag{background:#1c2a45;color:#7fb0ff;}
+body.dark .wd-note{background:#2a2312;color:#d8b25f;}
+body.dark .wd-ui{background:#141b29;border-left-color:#33507a;}
+
 .theme-row{display:flex;gap:8px;}
 #acct-tts select{width:100%;margin-top:8px;}
 #acct-tts #tts-try{margin-top:8px;}
@@ -2256,11 +2293,20 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
   opacity:0;transform:scale(.4);pointer-events:none;transition:transform .22s cubic-bezier(.2,1.4,.4,1),opacity .18s;}
 #fab-pad{background:linear-gradient(135deg,#f0a500,#e07b39);box-shadow:0 4px 14px rgba(224,123,57,.42);}
 .fab.open .fab-act{opacity:1;pointer-events:auto;}
-/* 扇出方向随球的位置自动翻转，别扇到屏幕外 */
-.fab.open.dir-l #fab-ai{transform:translate(-64px,0);}
-.fab.open.dir-r #fab-ai{transform:translate(64px,0);}
-.fab.open.dir-up #fab-pad{transform:translate(0,-64px);}
-.fab.open.dir-dn #fab-pad{transform:translate(0,64px);}
+/* 扇出：四个工具均分一个 90° 扇面（0°/30°/60°/90°，半径 68px）。
+   每个按钮只声明自己的偏移量，正负号由球所在的象限翻转 —— 以后加第五个工具，再给一组 --fx/--fy 就行。 */
+#fab-ai   {--fx:68px; --fy:0px;}
+#fab-mark {--fx:59px; --fy:34px;}
+#fab-read {--fx:34px; --fy:59px;}
+#fab-pad  {--fx:0px;  --fy:68px;}
+.fab.open.dir-r .fab-act{--sx:1;}
+.fab.open.dir-l .fab-act{--sx:-1;}
+.fab.open.dir-dn .fab-act{--sy:1;}
+.fab.open.dir-up .fab-act{--sy:-1;}
+.fab.open .fab-act{transform:translate(calc(var(--fx,0px) * var(--sx,1)), calc(var(--fy,0px) * var(--sy,1)));}
+#fab-read{background:linear-gradient(135deg,#2fa36c,#1e8449);box-shadow:0 4px 14px rgba(30,132,73,.42);}
+.fab.dir-l #fab-read i{right:52px;}
+.fab.dir-r #fab-read i{left:52px;}
 .fab-act i{position:absolute;font-style:normal;font-size:11px;font-weight:600;white-space:nowrap;
   background:rgba(20,30,50,.82);color:#fff;padding:2px 7px;border-radius:20px;
   top:50%;transform:translateY(-50%);opacity:0;transition:opacity .18s;}
@@ -2494,15 +2540,17 @@ mark.nw-mk.flash{animation:nwflash 1.2s ease;}
 .ck-origin{font-family:"Kaiti SC","STKaiti","KaiTi",serif;font-size:15.5px;line-height:2;}
 .ck-story{font-size:15px;line-height:2;text-align:justify;}
 
-/* ================= 通用划重点：悬浮球第三个功能 ================= */
+/* ================= 通用划重点：悬浮球工具之一 ================= */
 #fab-mark{background:linear-gradient(135deg,#f0a500,#e0632f);box-shadow:0 4px 14px rgba(224,99,47,.42);}
-/* 三个功能时的扇出：左 / 上 / 左上 */
-.fab.open.dir-l.dir-up #fab-mark{transform:translate(-48px,-48px);}
-.fab.open.dir-r.dir-up #fab-mark{transform:translate(48px,-48px);}
-.fab.open.dir-l.dir-dn #fab-mark{transform:translate(-48px,48px);}
-.fab.open.dir-r.dir-dn #fab-mark{transform:translate(48px,48px);}
+/* 扇出位移见上面的 --fx/--fy（四个工具均分 90° 扇面），这里只管配色和标签 */
 .fab.dir-l #fab-mark i{right:52px;}
 .fab.dir-r #fab-mark i{left:52px;}
+
+/* 选中一段文字就冒出来的朗读气泡（全局，任何带文字的地方都能用） */
+.sel-read{position:fixed;z-index:4200;padding:6px 11px;border:none;border-radius:20px;
+  background:#1f2a3a;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,.28);white-space:nowrap;}
+.sel-read:active{transform:scale(.95);}
 
 /* 结果条：固定在顶部中间 */
 .mk-bar{position:fixed;left:50%;transform:translateX(-50%);top:calc(66px + env(safe-area-inset-top));

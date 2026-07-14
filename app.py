@@ -512,6 +512,20 @@ def init_db():
             UNIQUE(date, kind, content)
         );
         CREATE INDEX IF NOT EXISTS idx_sc_date ON sucai_items(date);
+        -- 成文：把散落的素材真正写成一篇大作文（不然素材背了也不会用）
+        --   mode=daily    按「素材日期」成文，一天一篇，用当天更新的那批素材
+        --   mode=compose  综合应用，AI 自己选题，跨全部素材库挑最合适的
+        --   mode=yingyong 应用文，导航位先占着，生成逻辑待定
+        CREATE TABLE IF NOT EXISTS daily_essays(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mode TEXT NOT NULL, date TEXT NOT NULL,
+            topic TEXT, title TEXT, outline TEXT, content TEXT,
+            words INTEGER DEFAULT 0,
+            used TEXT,            -- JSON：真正用进文章的素材（服务端逐条核对过）
+            note TEXT,            -- AI 的选材说明
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(mode, date)
+        );
         -- 常识积累（7板块×专题，条目由 AI 生成/每日更新/新法跟踪，全局共享）
         CREATE TABLE IF NOT EXISTS changshi_items(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3511,6 +3525,438 @@ def sucai_list():
         where = "WHERE kind=?"; args = [kind]
     rows = db.execute("SELECT * FROM sucai_items %s ORDER BY date DESC, id LIMIT 400" % where, args).fetchall()
     return jsonify({"items": [dict(r) for r in rows], "counts": counts})
+
+
+# ---------------------------------------------------------------- 成文（素材 → 大作文）
+# 素材背了不会用，等于没背。这里把散落在各库的素材真正拼成一篇能交卷的大作文。
+WRITE_MIN, WRITE_MAX = 1000, 1200      # 省考大作文常规字数
+
+# 政治理论和常考提法**不是按天更新的**（都是一次性铺进去的），
+# 所以它们不能按日期取——要按当天素材的话题去检索，这样每篇都用得上。
+_STOP = set(["我们", "他们", "这个", "那个", "一个", "可以", "因为", "所以", "如果", "需要",
+             "进行", "具有", "成为", "不断", "更加", "已经", "以及", "其中", "这样", "通过",
+             "实现", "称号", "荣获", "表示", "指出", "以来", "以后", "同时", "但是", "而且"])
+
+
+def _kw_of(sucai, news, n=8):
+    """抠出检索用的关键词，拿去政治理论/常考提法里捞相关内容。
+
+    首选素材自带的 topic 标签（「创新·实干」「奉献·为民」这种，是人工归好类的，干净）；
+    不够再从正文里补高频词——但正文里抠出来的多半是「通过」「实现」这类虚词，捞不到东西，
+    所以只当补充，且过一遍停用词。"""
+    kws = []
+    for x in sucai:
+        for w in re.split(r"[·、,，/]", x.get("topic") or ""):
+            w = w.strip()
+            if 2 <= len(w) <= 6 and w not in kws:
+                kws.append(w)
+    if len(kws) >= 4:
+        return kws[:n]
+    cnt = {}
+    for t in [x.get("content") or "" for x in sucai] + [x.get("title") or "" for x in news]:
+        for w in re.findall(r"[一-龥]{2,4}", t):
+            if w in _STOP:
+                continue
+            cnt[w] = cnt.get(w, 0) + 1
+    for w, _ in sorted(cnt.items(), key=lambda x: -x[1]):
+        if w not in kws:
+            kws.append(w)
+        if len(kws) >= n:
+            break
+    return kws
+
+
+def _like_any(db, sql, kws, cols, limit):
+    """按关键词 OR LIKE 去某张表捞素材；一个都没命中就退回默认取法。"""
+    if not kws:
+        return []
+    where = " OR ".join("(%s)" % " OR ".join("%s LIKE ?" % c for c in cols) for _ in kws)
+    args = []
+    for k in kws:
+        args += ["%" + k + "%"] * len(cols)
+    return db.execute(sql % where + " LIMIT %d" % limit, args).fetchall()
+
+
+def _write_pool(db, date):
+    """凑齐一天的素材池。date=None 表示综合应用（不限日期，跨全库挑）。"""
+    p = {"date": date, "sucai": [], "lianjie": [], "gaikuo": [], "xiyu": [],
+         "theory": [], "tifa": [], "idiom": [], "news": []}
+    if date:
+        rows = db.execute("SELECT kind,topic,content FROM sucai_items WHERE date=? ORDER BY id",
+                          (date,)).fetchall()
+        for r in rows:
+            (p["lianjie"] if r["kind"] == "衔接表达" else p["sucai"]).append(dict(r))
+        p["gaikuo"] = [dict(r) for r in db.execute(
+            "SELECT topic,sentence FROM gaikuo_items WHERE date=? LIMIT 6", (date,))]
+        p["xiyu"] = [dict(r) for r in db.execute(
+            "SELECT category,quote,note FROM xiyu_items WHERE date=? LIMIT 6", (date,))]
+        p["news"] = [dict(r) for r in db.execute(
+            "SELECT title,ai_summary FROM news_items WHERE date(created_at)=? LIMIT 8", (date,))]
+    else:
+        # 综合应用：素材不限日期，但优先近期（AI 自己选题，选材范围要够宽）
+        p["sucai"] = [dict(r) for r in db.execute(
+            "SELECT kind,topic,content FROM sucai_items WHERE kind!='衔接表达' "
+            "ORDER BY date DESC LIMIT 40")]
+        p["lianjie"] = [dict(r) for r in db.execute(
+            "SELECT kind,topic,content FROM sucai_items WHERE kind='衔接表达' "
+            "ORDER BY RANDOM() LIMIT 14")]
+        p["xiyu"] = [dict(r) for r in db.execute(
+            "SELECT category,quote,note FROM xiyu_items ORDER BY date DESC LIMIT 10")]
+        p["news"] = [dict(r) for r in db.execute(
+            "SELECT title,ai_summary FROM news_items ORDER BY id DESC LIMIT 12")]
+
+    kws = _kw_of(p["sucai"], p["news"])
+    p["kws"] = kws
+    th = _like_any(db, "SELECT board,topic,title,content FROM theory_items WHERE %s", kws,
+                   ["topic", "title", "content"], 6)
+    if not th:
+        th = db.execute("SELECT board,topic,title,content FROM theory_items "
+                        "ORDER BY RANDOM() LIMIT 4").fetchall()
+    p["theory"] = [dict(r) for r in th]
+    tf = _like_any(db, "SELECT title,content FROM changkao_items WHERE board='提法' AND (%s)", kws,
+                   ["title", "content"], 6)
+    if not tf:
+        tf = db.execute("SELECT title,content FROM changkao_items WHERE board='提法' "
+                        "ORDER BY RANDOM() LIMIT 4").fetchall()
+    p["tifa"] = [dict(r) for r in tf]
+    p["idiom"] = [dict(r) for r in db.execute(
+        "SELECT title,content FROM changkao_items WHERE board='成语' "
+        "ORDER BY freq DESC LIMIT 12")]
+    return p
+
+
+def _pool_text(p):
+    """素材池 → 喂给 AI 的清单。每条都编号，写完要报告用了哪几条，好核对。"""
+    L, idx = [], []
+
+    def sec(name, items, fmt):
+        if not items:
+            return
+        L.append("【%s】" % name)
+        for it in items:
+            n = len(idx) + 1
+            idx.append((name, fmt(it)))
+            L.append("%d. %s" % (n, fmt(it)))
+        L.append("")
+
+    sec("人物事例/具体事例/理论论据", p["sucai"],
+        lambda x: "（%s·%s）%s" % (x.get("kind") or "", x.get("topic") or "", x["content"]))
+    sec("衔接表达（写作时必须用上，不要自己造口语过渡）", p["lianjie"], lambda x: x["content"])
+    sec("政治理论（行测·理论基础）", p["theory"],
+        lambda x: "（%s）%s：%s" % (x.get("board") or "", x.get("title") or "", x.get("content") or ""))
+    sec("常考提法", p["tifa"], lambda x: "%s：%s" % (x.get("title") or "", x.get("content") or ""))
+    sec("高频成语（用在恰当处，别堆砌）", p["idiom"],
+        lambda x: "%s：%s" % (x.get("title") or "", (x.get("content") or "")[:40]))
+    sec("规范概括句", p["gaikuo"], lambda x: x.get("sentence") or "")
+    sec("金句（习语/权威表述）", p["xiyu"], lambda x: x.get("quote") or "")
+    sec("当日时政（可作背景，不必强用）", p["news"], lambda x: x.get("title") or "")
+    return "\n".join(L), idx
+
+
+def _used_hit(item, content):
+    """AI 报的「我用了这条素材」到底是不是真的？逐条回正文里核对。
+       它很爱把没用上的也报进来（实测 24 条里有 4 条是虚报的），这个清单是给人回查素材用的，
+       有水分就没意义了 —— 宁可少列，不能列错。"""
+    t = (item or "").strip()
+    if not t:
+        return False
+    if "…" in t:                       # 衔接表达是带省略号的模板：拆成骨架片段，一半以上出现才算用了
+        frag = [x for x in re.split(r"…+", re.sub(r"[（(].*?[)）]", "", t)) if len(x.strip()) >= 2]
+        if not frag:
+            return False
+        hit = sum(1 for f in frag if f.strip(" ，,。.、—-") and f.strip(" ，,。.、—-") in content)
+        return hit * 2 >= len(frag)
+    head = t.split("：")[0].strip("（）() ")   # 成语/提法：词本身出现即可
+    if 2 <= len(head) <= 8 and "：" in t:
+        return head in content
+    body = re.sub(r"^[（(].*?[)）]", "", t)   # 事例/金句：里面任意一个 4 字以上的实词短语出现
+    return any(x in content for x in re.findall(r"[一-龥]{4,12}", body))
+
+
+def _write_lack(p, content):
+    """检查「综合运用」的硬指标到底达没达标 —— 模型对「必须用上 N 条」极不敏感，
+       光在提示词里说一遍它就照抄要求、该不用还是不用（字数也是同一个毛病）。
+       所以生成完要真去数，缺什么就回头让它补什么。
+
+       ⚠️ 缺项里**必须把候选原文摆出来**：只说「要用 2~3 个成语」，它得回头自己去几十条池子里翻，
+       实测就是不翻；把「就用这几个」摆到面前，它才会用。"""
+    need = []
+    n_ex = sum(1 for x in p["sucai"] if _used_hit(
+        "（%s·%s）%s" % (x.get("kind") or "", x.get("topic") or "", x["content"]), content))
+    if n_ex < 3:
+        need.append("事例只用了 %d 条，至少要 3 条，且分散在三个分论点里" % n_ex)
+    n_th = sum(1 for x in p["theory"] + p["tifa"]
+               if (x.get("title") or "") and x["title"] in content)
+    if n_th < 2:
+        cand = [x["title"] for x in (p["tifa"] + p["theory"]) if x.get("title")][:5]
+        need.append("政治理论/常考提法只用了 %d 条，至少要 2 条（支撑分论点的道理，不是贴标签）。"
+                    "从这些里挑：%s" % (n_th, "、".join(cand)))
+    n_jj = sum(1 for x in p["xiyu"] if (x.get("quote") or "")[:12] in content)
+    if not n_jj and p["xiyu"]:
+        cand = [x["quote"] for x in p["xiyu"] if x.get("quote")][:3]
+        need.append("一句金句都没用，开头或结尾至少原样引 1 句。就从这几句里挑：\n  - "
+                    + "\n  - ".join(cand))
+    # 成语只要求「至少用上 1 个」：申论大作文堆成语反而扣分，用对一个就够了。
+    # （初始提示词里仍写「2~3 个」引导，但检查不卡这个数，免得为了凑数多跑一轮重写。）
+    n_id = sum(1 for x in p["idiom"] if x["title"] in content)
+    if n_id < 1:
+        cand = [x["title"] for x in p["idiom"]][:8]
+        need.append("一个成语都没用，恰当处用上 1~3 个（别堆砌）。就从这些里挑：%s" % "、".join(cand))
+    w = len(re.sub(r"\s", "", content))
+    if w < WRITE_MIN:
+        need.append("字数只有 %d，要写到 %d~%d" % (w, WRITE_MIN, WRITE_MAX))
+    elif w > WRITE_MAX + 80:
+        need.append("字数 %d 超了，压到 %d~%d" % (w, WRITE_MIN, WRITE_MAX))
+    return need
+
+
+def _write_gen(db, mode, date):
+    """生成一篇。返回 (essay_dict, None) 或 (None, (json, code))。"""
+    p = _write_pool(db, date if mode == "daily" else None)
+    if mode == "daily" and not p["sucai"] and not p["lianjie"]:
+        return None, (jsonify({"error": "这一天没有素材，写不了"}), 400)
+    pool, idx = _pool_text(p)
+
+    if mode == "daily":
+        head = ("下面是 %s 这一天更新的备考素材。请**只用这些素材**，写一篇申论大作文。\n"
+                "立意从素材里长出来——先看这批素材共同指向什么问题，再定题目，"
+                "不要硬凑一个宏大题目再往里塞素材。\n" % date)
+    else:
+        head = ("下面是素材库里挑出来的一批素材（跨越多日）。请自己**选一个有价值的话题**"
+                "——要是省考真考的方向（基层治理、科技创新、乡村振兴、文化自信、"
+                "民生保障、绿色发展、法治建设这类），不要选空泛口号；"
+                "然后从素材里挑真正用得上的写一篇大作文。用不上的素材就不要用，别硬塞。\n")
+
+    prompt = (head + "\n" + pool + "\n\n"
+              "【要求】\n"
+              "1. 标题：8~16 字，观点鲜明，不要「浅谈」「论」这种套话开头。\n"
+              "2. 结构：开头（引材料+亮总论点）→ 三个分论点（每段：分论点句+素材论证+回扣）→ 结尾升华。\n"
+              "3. 每个分论点段**必须实打实用上面素材里的事例或理论**，写清是谁、做了什么、说明什么；"
+              "不要写「某地某人」这种空壳。\n"
+              "4. 段落之间**必须使用上面给的衔接表达**，不要自己造「首先其次最后」这种口水过渡。\n"
+              "5. **各类素材都要用上**（这是「综合运用」的硬指标，不许只挑事例和衔接表达省事）：\n"
+              "   · 事例（人物/具体）≥3 条，且分散在三个分论点里，不要堆在一段\n"
+              "   · 政治理论 或 常考提法 ≥2 条，用来支撑分论点的道理，不是贴标签\n"
+              "   · 金句（习语/权威表述）≥1 条，放在开头或结尾\n"
+              "   · 高频成语 2~3 个，用在恰当处，别堆砌\n"
+              "6. 字数 %d~%d 字，**必须达标**（这是评分硬指标）。\n"
+              "7. 正文用 \\n 分段，不要 markdown 标记、不要小标题、不要「分论点一」这种标签。\n\n"
+              "只输出 JSON：\n"
+              '{"title":"","topic":"话题标签，4~8字","outline":["总论点","分论点1","分论点2","分论点3"],'
+              '"content":"正文全文","used":[序号,...],"note":"一句话说明为什么这么选材"}\n'
+              "used 里填你**真正用进文章**的素材序号（就是上面每条前面的数字），没用的别写。"
+              % (WRITE_MIN, WRITE_MAX))
+
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论阅卷组的范文作者。文章要能直接当范文用："
+                                       "论点立得住、素材是真的、衔接不生硬、字数达标。严格输出 JSON。"},
+         {"role": "user", "content": prompt}],
+        temperature=0.6, max_tokens=4000, timeout=300, json_mode=True)
+    if err:
+        return None, err
+    try:
+        d = json.loads(rep)
+    except Exception:
+        return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
+
+    content = (d.get("content") or "").strip()
+    if not content:
+        return None, (jsonify({"error": "AI 没写出正文，请重试"}), 502)
+
+    # 数一遍「综合运用」的硬指标。缺了就把缺项（连同候选原文）摆到它面前让它补。
+    # 最多补两轮：一轮通常能把理论/提法补进去，第二轮才轮到金句和成语；再补就是浪费调用了。
+    for _ in range(2):
+        lack = _write_lack(p, content)
+        if not lack:
+            break
+        fix, ferr = _ai_call_or_error(
+            [{"role": "system", "content": "你是申论阅卷组的范文作者。严格输出 JSON。"},
+             {"role": "user", "content":
+              "这是你刚写的文章，还差几处没达标：\n· " + "\n· ".join(lack) +
+              "\n\n【可用素材】（还是这些，序号不变）\n" + pool +
+              "\n\n【你的文章】\n" + content +
+              "\n\n请在**不打乱原有结构和论点**的前提下改好上面每一条：该补的素材织进对应段落里"
+              "（要自然，不是硬贴一句）。\n"
+              "⚠️ 补内容会撑长篇幅——**补一句就删一句冗余的**，全文仍要控制在 %d~%d 字，"
+              "不许为了塞素材把字数写超。\n"
+              '只输出 JSON：{"content":"改好的正文全文","used":[序号,...]}'
+              % (WRITE_MIN, WRITE_MAX)}],
+            temperature=0.5, max_tokens=4000, timeout=300, json_mode=True)
+        if ferr:
+            break
+        try:
+            f = json.loads(fix)
+            c2 = (f.get("content") or "").strip()
+        except Exception:
+            break
+        if not c2 or len(_write_lack(p, c2)) >= len(lack):
+            break                       # 没改好就别越改越乱，保住上一版
+        content, d["used"] = c2, f.get("used") or d.get("used")
+
+    words = len(re.sub(r"\s", "", content))
+
+    # 「用了哪些素材」——**能自己数出来的就别问 AI**。
+    # AI 自报这份清单两头都不靠谱：会把没用的报上来（虚报），也会用了不报（漏报，实测正文里
+    # 明明有提法和成语，它一个都不提）。所以：
+    #   · 成语/提法/理论/金句/概括句/衔接表达 —— 词或句子是确定的，直接回正文里扫，谁在就是谁
+    #   · 事例 —— 只能靠 AI 指认（它是被改写着用进去的，没法精确匹配），但仍要过一遍核对
+    ai_used = set()
+    for i in (d.get("used") or []):
+        try:
+            ai_used.add(int(i) - 1)
+        except Exception:
+            pass
+    used = []
+    for k, (sec, text) in enumerate(idx):
+        fuzzy = sec.startswith("人物事例")          # 事例这一档没法精确匹配
+        if fuzzy and k not in ai_used:
+            continue
+        if _used_hit(text, content):
+            used.append({"sec": sec, "text": text})
+    e = {"mode": mode, "date": date, "topic": (d.get("topic") or "").strip(),
+         "title": (d.get("title") or "").strip(), "outline": json.dumps(d.get("outline") or [],
+                                                                        ensure_ascii=False),
+         "content": content, "words": words,
+         "used": json.dumps(used, ensure_ascii=False), "note": (d.get("note") or "").strip()}
+    db.execute("INSERT OR REPLACE INTO daily_essays"
+               "(id,mode,date,topic,title,outline,content,words,used,note) VALUES("
+               "(SELECT id FROM daily_essays WHERE mode=? AND date=?),?,?,?,?,?,?,?,?,?)",
+               (mode, date, mode, date, e["topic"], e["title"], e["outline"],
+                e["content"], e["words"], e["used"], e["note"]))
+    db.commit()
+    e["id"] = db.execute("SELECT id FROM daily_essays WHERE mode=? AND date=?",
+                         (mode, date)).fetchone()[0]
+    return e, None
+
+
+def _e_row(r):
+    d = dict(r)
+    for k in ("outline", "used"):
+        try:
+            d[k] = json.loads(d.get(k) or "[]")
+        except Exception:
+            d[k] = []
+    return d
+
+
+@app.get("/api/write/days")
+def write_days():
+    """每日成文：列出有素材的日期 + 每天写了没有。"""
+    db = get_db()
+    _sucai_import(db)
+    rows = db.execute(
+        "SELECT s.date, COUNT(*) n, "
+        "SUM(CASE WHEN s.kind='衔接表达' THEN 1 ELSE 0 END) nl, "
+        "e.id eid, e.title, e.topic, e.words "
+        "FROM sucai_items s LEFT JOIN daily_essays e ON e.mode='daily' AND e.date=s.date "
+        "GROUP BY s.date ORDER BY s.date DESC").fetchall()
+    return jsonify({"days": [dict(r) for r in rows]})
+
+
+@app.post("/api/write/daily")
+def write_daily():
+    d = request.get_json(silent=True) or {}
+    date = (d.get("date") or "").strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return jsonify({"error": "日期不对"}), 400
+    db = get_db()
+    if not d.get("force"):
+        r = db.execute("SELECT * FROM daily_essays WHERE mode='daily' AND date=?", (date,)).fetchone()
+        if r:
+            return jsonify(_e_row(r))
+    e, err = _write_gen(db, "daily", date)
+    if err:
+        return err
+    return jsonify(_e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (e["id"],)).fetchone()))
+
+
+@app.post("/api/write/backfill")
+def write_backfill():
+    """把过去攒下的素材一天一篇全部补齐（22 天 × 一次 AI，得在后台慢慢跑）。"""
+    db = get_db()
+    _sucai_import(db)
+    todo = [r[0] for r in db.execute(
+        "SELECT DISTINCT s.date FROM sucai_items s "
+        "WHERE NOT EXISTS(SELECT 1 FROM daily_essays e WHERE e.mode='daily' AND e.date=s.date) "
+        "ORDER BY s.date")]
+    if not todo:
+        return jsonify({"error": "已经全部写完了"}), 400
+    tid = _bg_new(db, "write", "补齐每日成文 %d 天" % len(todo), len(todo))
+
+    def run():
+        con = sqlite3.connect(DB, timeout=60)
+        con.row_factory = sqlite3.Row
+        ok = 0
+        try:
+            for i, dt in enumerate(todo):
+                _bg_set(con, tid, status="running", progress=i,
+                        message="正在写 %s（第 %d/%d 篇）" % (dt, i + 1, len(todo)))
+                try:
+                    with app.app_context():
+                        e, err = _write_gen(con, "daily", dt)
+                    if not err:
+                        ok += 1
+                except Exception:
+                    pass                      # 单天失败不拖垮整批，下次再点一次补
+            bad = len(todo) - ok
+            _bg_set(con, tid, status="done", progress=len(todo),
+                    message="写好 %d 篇%s" % (ok, "（%d 天失败，可再点一次补）" % bad if bad else ""))
+        except Exception as ex:
+            _bg_set(con, tid, status="error", message=str(ex)[:200])
+        finally:
+            con.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"task": tid, "total": len(todo)}), 202
+
+
+@app.get("/api/write/task/<int:tid>")
+def write_task(tid):
+    r = get_db().execute("SELECT * FROM bg_tasks WHERE id=? AND user_id=?", (tid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "任务不存在"}), 404
+    return jsonify(dict(r))
+
+
+@app.post("/api/write/compose")
+def write_compose():
+    """综合应用：AI 自己选题，跨全部素材库挑最合适的，每天一篇。"""
+    d = request.get_json(silent=True) or {}
+    date = time.strftime("%Y-%m-%d")
+    db = get_db()
+    if not d.get("force"):
+        r = db.execute("SELECT * FROM daily_essays WHERE mode='compose' AND date=?", (date,)).fetchone()
+        if r:
+            return jsonify(_e_row(r))
+    e, err = _write_gen(db, "compose", date)
+    if err:
+        return err
+    return jsonify(_e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (e["id"],)).fetchone()))
+
+
+@app.get("/api/write/list")
+def write_list():
+    mode = (request.args.get("mode") or "compose").strip()
+    rows = get_db().execute(
+        "SELECT id,mode,date,topic,title,words,created_at FROM daily_essays "
+        "WHERE mode=? ORDER BY date DESC LIMIT 200", (mode,)).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.get("/api/write/<int:eid>")
+def write_get(eid):
+    r = get_db().execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()
+    if not r:
+        return jsonify({"error": "文章不存在"}), 404
+    return jsonify(_e_row(r))
+
+
+@app.delete("/api/write/<int:eid>")
+def write_del(eid):
+    db = get_db()
+    db.execute("DELETE FROM daily_essays WHERE id=?", (eid,))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------- 题库（四川省考卷面）

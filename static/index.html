@@ -603,6 +603,51 @@
     <div id="gw-list" class="gw-list"></div>
   </section>
 
+  <!-- ===== 成文：把素材真正写成一篇大作文 ===== -->
+  <section id="view-write" class="view hidden">
+    <div class="tk-tabs" id="wr-tabs">
+      <button class="tk-tab active" data-wk="daily">📅 每日成文</button>
+      <button class="tk-tab" data-wk="compose">🧩 综合应用</button>
+      <button class="tk-tab" data-wk="yingyong">📋 应用文</button>
+    </div>
+    <div id="wr-daily" class="wr-pane">
+      <div class="pd-intro">按<b>素材更新的日期</b>成文：当天的人物事例 / 理论论据 / 衔接表达全用上，
+        政治理论和常考提法按当天话题现捞。素材背了不会用等于没背。</div>
+      <div class="wr-bar">
+        <button class="btn primary" id="wr-backfill">⚡ 一键补齐往期</button>
+        <span id="wr-bfmsg" class="wr-bfmsg"></span>
+      </div>
+      <div id="wr-days" class="sl-hist"></div>
+    </div>
+    <div id="wr-compose" class="wr-pane hidden">
+      <div class="pd-intro">不限日期，<b>AI 自己选题</b>——跨全部素材库挑真正用得上的，
+        每天一篇范文。选题要是省考真考的方向，不选空泛口号。</div>
+      <div class="wr-bar"><button class="btn primary" id="wr-gen-cp">✍️ 写今天这篇</button></div>
+      <div id="wr-cplist" class="sl-hist"></div>
+    </div>
+    <div id="wr-yingyong" class="wr-pane hidden">
+      <div class="wr-todo">
+        <div class="wr-todo-ic">📋</div>
+        <div class="wr-todo-t">应用文成文</div>
+        <p>导航位先占着。应用文（通知/报告/倡议书/讲话稿…）的生成逻辑还没定
+          —— 它和大作文不一样：得先有<b>发文场景</b>和<b>身份</b>，才谈得上选素材。</p>
+        <p class="wr-todo-hint">想清楚要怎么生成，告诉我，这一栏就能填上。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-writed" class="view hidden">
+    <div id="wd-head" class="wd-head"></div>
+    <div class="tk-tabs" id="wd-tabs">
+      <button class="tk-tab active" data-wd="text">📄 全文</button>
+      <button class="tk-tab" data-wd="used">📎 用到的素材</button>
+      <button class="tk-tab" data-wd="outline">🧭 提纲</button>
+    </div>
+    <div id="wd-text" class="wd-pane wd-body"></div>
+    <div id="wd-used" class="wd-pane hidden"></div>
+    <div id="wd-outline" class="wd-pane hidden"></div>
+  </section>
+
   <!-- ===== 议论文 · 素材积累 / 衔接表达 ===== -->
   <section id="view-sucai" class="view hidden">
     <div class="pd-intro">每天 08:00 自动更新（与微信推送同源）· 30 天内不重复 · 不涉抗疫题材</div>
@@ -1298,6 +1343,7 @@
 <!-- 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；长按可拖动 -->
 <div id="fab" class="fab">
   <button class="fab-act" id="fab-mark" title="划重点（在当前页面的正文里标出考点）">🖍<i>划重点</i></button>
+  <button class="fab-act" id="fab-read" title="朗读本页（选中一段文字则只读选中的）">🔊<i>朗读</i></button>
   <button class="fab-act" id="fab-pad" title="草稿纸">📝<i>草稿纸</i></button>
   <button class="fab-act" id="fab-ai" title="AI 助手">AI<i>AI 助手</i></button>
   <button class="fab-main" id="fab-btn" title="工具">✦</button>

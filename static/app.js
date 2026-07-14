@@ -75,10 +75,12 @@ const BOARD_FEATURES = {
     { key: 'theory', name: '理论基础', desc: '马原 · 毛概 · 中特 · 习思想 考点速记', icon: 'compass' },
   ],
   '应用文': [
+    { key: 'wapp', name: '应用文成文', desc: '导航位已留 · 生成逻辑待定', icon: 'edit' },
     { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
     { key: 'gongwen', name: '应用文上位词', desc: '公文规范上位表述 · 按场景归类 · AI 归纳', icon: 'layers' },
   ],
   '议论文': [
+    { key: 'write', name: '成文', desc: '素材 → 大作文 · 每日成文 / 综合应用', icon: 'edit' },
     { key: 'sucai', name: '素材积累', desc: '每日更新 · 人物/事例/理论论据', icon: 'clip' },
     { key: 'lianjie', name: '衔接表达', desc: '过渡/转折/万能句式 不口语不重复', icon: 'quote' },
     { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
@@ -95,8 +97,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -439,6 +441,8 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'news') openNews();
   else if (c.dataset.feat === 'gaikuo') openGaikuo();
   else if (c.dataset.feat === 'gongwen') openGongwen();
+  else if (c.dataset.feat === 'write') openWrite('daily');
+  else if (c.dataset.feat === 'wapp') openWrite('yingyong');
   else if (c.dataset.feat === 'sucai') openSucai('全部');
   else if (c.dataset.feat === 'lianjie') openSucai('衔接表达');
   else if (c.dataset.feat === 'changshi') openChangshi();
@@ -3259,6 +3263,168 @@ document.addEventListener('click', e => {
   }
 });
 
+/* ============= 成文：把素材真正写成一篇大作文 ============= */
+let wrTab = 'daily', wrCur = null, wrPoll = 0;
+
+function openWrite(tab) {
+  wrTab = tab || 'daily';
+  push({ view: 'write', title: '成文' });
+  wrSwitch(wrTab);            // render() 只负责显隐视图，内容要自己拉
+}
+function wrSwitch(k) {
+  wrTab = k;
+  document.querySelectorAll('#wr-tabs .tk-tab').forEach(b => b.classList.toggle('active', b.dataset.wk === k));
+  ['daily', 'compose', 'yingyong'].forEach(x => $('#wr-' + x).classList.toggle('hidden', x !== k));
+  if (k === 'daily') loadWrDays();
+  else if (k === 'compose') loadWrCompose();
+}
+$('#wr-tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tk-tab'); if (b) wrSwitch(b.dataset.wk);
+});
+
+async function loadWrite() { wrSwitch(wrTab); }
+
+async function loadWrDays() {
+  const box = $('#wr-days');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/write/days');
+    const undone = d.days.filter(x => !x.eid).length;
+    $('#wr-backfill').classList.toggle('hidden', !undone);
+    $('#wr-backfill').textContent = `⚡ 一键补齐往期（还差 ${undone} 天）`;
+    if (!d.days.length) { box.innerHTML = '<p class="empty">还没有素材，每天 08:00 自动更新～</p>'; return; }
+    box.innerHTML = d.days.map(x => x.eid ? `
+      <div class="wr-day done" data-weid="${x.eid}">
+        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-m"><b>${esc(x.title || '')}</b>
+          <span class="wr-tag">${esc(x.topic || '')}</span>
+          <span class="wr-w">${x.words} 字</span></div>
+      </div>` : `
+      <div class="wr-day">
+        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-m"><span class="wr-n">素材 ${x.n} 条（衔接 ${x.nl}）</span></div>
+        <button class="btn tiny primary" data-wgen="${x.date}">✍️ 写</button>
+      </div>`).join('');
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+
+$('#wr-days').addEventListener('click', async e => {
+  const g = e.target.closest('[data-wgen]');
+  if (g) {
+    g.disabled = true; g.textContent = '写作中…';
+    try {
+      const d = await api('/api/write/daily', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: g.dataset.wgen }),
+      });
+      openWrited(d.id);
+      loadWrDays();
+    } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '✍️ 写'; }
+    return;
+  }
+  const c = e.target.closest('[data-weid]');
+  if (c) openWrited(+c.dataset.weid);
+});
+
+$('#wr-backfill').onclick = async () => {
+  if (!await appConfirm('把往期素材一天一篇全部补齐？每篇要调一次 AI，会在后台慢慢跑，可以先去干别的。')) return;
+  try {
+    const d = await api('/api/write/backfill', { method: 'POST' });
+    wrWatch(d.task);
+  } catch (e) { toast(e.message, true); }
+};
+
+function wrWatch(tid) {
+  clearInterval(wrPoll);
+  $('#wr-backfill').disabled = true;
+  const msg = $('#wr-bfmsg');
+  wrPoll = setInterval(async () => {
+    try {
+      const t = await api('/api/write/task/' + tid);
+      msg.textContent = `${t.message || ''}（${t.progress}/${t.total}）`;
+      if (t.status === 'done' || t.status === 'error') {
+        clearInterval(wrPoll); wrPoll = 0;
+        $('#wr-backfill').disabled = false;
+        msg.textContent = t.message || '';
+        loadWrDays();
+        toast(t.status === 'done' ? '补齐完成' : t.message, t.status !== 'done');
+      }
+    } catch (_) { clearInterval(wrPoll); wrPoll = 0; $('#wr-backfill').disabled = false; }
+  }, 3000);
+}
+
+async function loadWrCompose() {
+  const box = $('#wr-cplist');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/write/list?mode=compose');
+    const today = new Date().toISOString().slice(0, 10);
+    $('#wr-gen-cp').textContent = d.items.some(x => x.date === today)
+      ? '🔄 今天这篇重写一遍' : '✍️ 写今天这篇';
+    box.innerHTML = d.items.length ? d.items.map(x => `
+      <div class="wr-day done" data-weid="${x.id}">
+        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-m"><b>${esc(x.title || '')}</b>
+          <span class="wr-tag">${esc(x.topic || '')}</span>
+          <span class="wr-w">${x.words} 字</span></div>
+      </div>`).join('') : '<p class="empty">还没写过。点上面的按钮，AI 会自己选题写一篇。</p>';
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#wr-cplist').addEventListener('click', e => {
+  const c = e.target.closest('[data-weid]'); if (c) openWrited(+c.dataset.weid);
+});
+$('#wr-gen-cp').onclick = async () => {
+  const b = $('#wr-gen-cp'); b.disabled = true; b.textContent = 'AI 选题写作中…（约 20 秒）';
+  try {
+    const d = await api('/api/write/compose', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: true }),
+    });
+    openWrited(d.id); loadWrCompose();
+  } catch (e) { toast(e.message, true); }
+  b.disabled = false;
+};
+
+/* ---- 成文详情 ---- */
+async function openWrited(id) {
+  wrCur = null;
+  push({ view: 'writed', title: '成文' });
+  $('#wd-head').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    wrCur = await api('/api/write/' + id);
+    renderWrited();
+  } catch (e) { $('#wd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+function renderWrited() {
+  const d = wrCur; if (!d) return;
+  const ok = d.words >= 1000 && d.words <= 1300;
+  $('#wd-head').innerHTML = `
+    <h2 class="wd-title">${esc(d.title || '')}</h2>
+    <div class="wd-meta">
+      <span class="wr-tag">${esc(d.topic || '')}</span>
+      <span class="wd-w ${ok ? '' : 'bad'}">${d.words} 字${ok ? '' : '（字数不达标）'}</span>
+      <span class="wd-src">${d.mode === 'daily' ? '📅 ' + fmtDay(d.date) + ' 的素材' : '🧩 综合应用'}</span>
+      <span class="wd-used-n">📎 用了 ${(d.used || []).length} 条素材</span>
+    </div>
+    ${d.note ? `<p class="wd-note">💡 ${esc(d.note)}</p>` : ''}`;
+  $('#wd-text').innerHTML = (d.content || '').split('\n').filter(x => x.trim())
+    .map(p => `<p>${esc(p.trim())}</p>`).join('');
+  const groups = {};
+  (d.used || []).forEach(u => { (groups[u.sec] = groups[u.sec] || []).push(u.text); });
+  $('#wd-used').innerHTML = Object.keys(groups).length ? Object.entries(groups).map(([k, v]) => `
+    <div class="wd-ug"><div class="wd-ug-t">${esc(k)}</div>
+      ${v.map(t => `<div class="wd-ui">${esc(t)}</div>`).join('')}</div>`).join('')
+    : '<p class="empty">这篇没能核对出用了哪些素材。</p>';
+  $('#wd-outline').innerHTML = (d.outline || []).length
+    ? `<ol class="wd-ol">${d.outline.map(x => `<li>${esc(x)}</li>`).join('')}</ol>`
+    : '<p class="empty">没有提纲。</p>';
+}
+$('#wd-tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tk-tab'); if (!b) return;
+  document.querySelectorAll('#wd-tabs .tk-tab').forEach(x => x.classList.toggle('active', x === b));
+  ['text', 'used', 'outline'].forEach(k => $('#wd-' + k).classList.toggle('hidden', k !== b.dataset.wd));
+});
+
 /* ============= 议论文 · 素材积累 / 衔接表达（与微信 08:00 推送同源） ============= */
 let scKind = '全部';
 const SC_COLOR = { '人物事例': '#b23b2e', '具体事例': '#0f766e', '理论论据': '#7a5cc0', '衔接表达': '#c2671f' };
@@ -5291,6 +5457,84 @@ async function shareCard(card) {
   }
   toast(copied ? '已复制内容，去微信等应用粘贴即可（更新 APK 后可直接弹分享面板）' : '分享失败', !copied);
 }
+/* ---- 全局朗读：带文字的地方都能读，不用每种卡片单独接一遍 ----
+   ① 悬浮球 🔊  = 读当前这一页的正文（正文在哪、跳过哪些，复用划重点那套 mkPageRoot/MK_SKIP）
+   ② 选中文字   = 冒出「🔊 朗读选中」，只读选中的那段
+   ③ 卡片上的 🔊 = 原来就有的，保留 */
+// 划重点那个 mkText 是把文本节点直接拼成一串（它要的是连续串好定位），朗读不能这么取：
+// 标题会和正文黏成一句，而且**藏起来的兄弟面板也会被读出来**。这里按块取，并跳过看不见的。
+function readTextOf(root) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => {
+      const p = n.parentElement;
+      if (!n.nodeValue.trim() || !p || p.closest(MK_SKIP)) return NodeFilter.FILTER_REJECT;
+      if (!p.getClientRects().length) return NodeFilter.FILTER_REJECT;   // display:none 的不读
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const BLK = 'p,li,td,th,h1,h2,h3,h4,h5,blockquote,div,section';
+  let s = '', last = null;
+  while (w.nextNode()) {
+    const n = w.currentNode;
+    const blk = n.parentElement.closest(BLK) || n.parentElement;
+    if (last && blk !== last) s += '\n';
+    s += n.nodeValue.trim();
+    last = blk;
+  }
+  return s;
+}
+
+function readPage() {
+  const root = mkPageRoot();
+  const text = root ? readTextOf(root) : '';
+  if (!text.trim()) { toast('这一页没有可朗读的文字', true); return; }
+  if (Reader.playing && Reader.card === root) { Reader.stop(); return; }
+  Reader.stop();
+  const segs = Reader.split(text);
+  if (!segs.length) { toast('这一页没有可朗读的文字', true); return; }
+  Reader.card = root;      // 记住读的是谁（再点一次 = 停），但不给整页套高亮框，太吵
+  Reader.segs = segs; Reader.idx = 0; Reader.playing = true;
+  Reader.ui(); Reader.next();
+  toast(`朗读本页 · 共 ${segs.length} 句`);
+}
+
+// 选中文字 → 冒出朗读气泡（手写笔/鼠标划选都行）
+let _selBub = null;
+function selBubHide() { if (_selBub) { _selBub.remove(); _selBub = null; } }
+document.addEventListener('selectionchange', () => {
+  clearTimeout(window._selT);
+  window._selT = setTimeout(() => {
+    const sel = window.getSelection();
+    const txt = sel && String(sel).trim();
+    if (!txt || txt.length < 6 || sel.isCollapsed) { selBubHide(); return; }
+    // 输入框里的选中不算（那是在编辑，不是在读）
+    const a = sel.anchorNode;
+    if (a && a.parentElement && a.parentElement.closest('input, textarea, [contenteditable]')) return;
+    let r;
+    try { r = sel.getRangeAt(0).getBoundingClientRect(); } catch (_) { return; }
+    if (!r || (!r.width && !r.height)) return;
+    if (!_selBub) {
+      _selBub = document.createElement('button');
+      _selBub.className = 'sel-read';
+      _selBub.innerHTML = '🔊 朗读选中';
+      _selBub.onmousedown = e => e.preventDefault();     // 别把选区点没了
+      _selBub.onclick = () => {
+        const t = String(window.getSelection()).trim();
+        selBubHide();
+        if (!t) return;
+        Reader.stop();
+        Reader.segs = Reader.split(t); Reader.idx = 0; Reader.playing = true;
+        Reader.card = null; Reader.ui(); Reader.next();
+      };
+      document.body.appendChild(_selBub);
+    }
+    const top = r.top - 42 < 6 ? r.bottom + 8 : r.top - 42;
+    _selBub.style.left = Math.max(8, Math.min(window.innerWidth - 110, r.left + r.width / 2 - 52)) + 'px';
+    _selBub.style.top = top + 'px';
+  }, 220);
+});
+document.addEventListener('scroll', selBubHide, true);
+
 function injectReadBtns() {
   document.querySelectorAll(READ_ITEM_SEL).forEach(card => {
     if (card.classList.contains('ai-typing')) return;  // 「思考中…」气泡不加按钮
@@ -5384,6 +5628,7 @@ const SYNC_REFRESH = {
   planlog: () => loadPlanLog(),
   partydict: () => loadPartyDict(),
   sucai: () => loadSucai(),
+  write: () => loadWrite(),
   review: () => { if ($('#rv-card-wrap').classList.contains('hidden')) loadReview(); },  // 复习进行中不打断会话
   tasks: () => { const a = document.querySelector('#view-tasks .tk-tab.active'); if (a && a.dataset.tkt === 'shared') loadShared(); },
   csboard: () => loadCsBoard(),
@@ -5585,6 +5830,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
 
   $('#fab-ai').onclick = () => { fabClose(); openAI(); };
   $('#fab-mark').onclick = () => { fabClose(); markPage(); };   // 🖍 划重点（任何页面）
+  $('#fab-read').onclick = () => { fabClose(); readPage(); };   // 🔊 朗读（任何页面）
   $('#fab-pad').onclick = () => { fabClose(); padToggle(); };
   document.addEventListener('pointerdown', e => {          // 点别处收起扇出
     if (fab.classList.contains('open') && !e.target.closest('#fab')) fabClose();
