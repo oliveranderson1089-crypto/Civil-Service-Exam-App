@@ -110,6 +110,7 @@ function render() {
   // 离开「题目解析」就别再轮询进度了（dqPoll 是顶层 let，不挂在 window 上）
   if (st.view !== 'docqa' && dqPoll) { clearInterval(dqPoll); dqPoll = null; }
   if (window.__padView) window.__padView(st.view);        // 做题页才出现草稿纸按钮
+  if (window.__bmView) window.__bmView();                 // 阅读页：上次看到哪了
   if (st.view !== 'slgrade' && matInited && !$('#matpad').classList.contains('hidden')) matClose();
 }
 function push(state) { stack.push(state); render(); }
@@ -863,7 +864,7 @@ async function loadMaterials() {
         <span class="mat-icon">${iconFor(m.ext)}</span>
         <div class="mat-info">
           <div class="mat-name">${esc(m.title || m.orig_name)}</div>
-          <div class="mat-meta">${esc((m.ext || '').replace('.', '').toUpperCase())} · ${fmtSize(m.size)}${m.board ? ' · ' + esc(m.board) : ''}</div>
+          <div class="mat-meta">${esc((m.ext || '').replace('.', '').toUpperCase())} · ${fmtSize(m.size)}${m.board ? ' · ' + esc(m.board) : ''}${m.shared ? ` · <span class="mat-shared">👥 ${esc(m.shared_from)} 共享</span>` : ''}</div>
         </div>
         <div class="mat-actions">
           <button class="iconbtn mat-more" data-act="menu" title="更多操作">⋮</button>
@@ -2913,45 +2914,56 @@ function hwInit() {
     .forEach(k => hwEl[k] = $('#hw-' + k));
   hwEl.engWrap = $('#hw-eng-wrap');
   const cv = hwEl.canvas, ctx = cv.getContext('2d');
+  // 「已写完的笔画」画在离屏层上；每帧只把离屏层贴回来 + 画正在写的这一笔。
+  // 原来每次 pointermove 都要重画田字格和全部笔画，写多几笔就明显拖影——草稿本没这个问题就是因为分了层。
+  const base = document.createElement('canvas');
+  const bctx = base.getContext('2d');
+  let hwRaf = 0;
   function fit() {
     const r = cv.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    cv.width = r.width * dpr; cv.height = r.height * dpr;
+    cv.width = base.width = r.width * dpr;
+    cv.height = base.height = r.height * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    hwRedraw();
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    hwRebuild();
   }
   function pos(e) {
     const r = cv.getBoundingClientRect();
     const t = e.touches ? e.touches[0] : e;
     return { x: (t.clientX - r.left), y: (t.clientY - r.top) };
   }
-  function guide() {
+  const hwInk = () => document.body.classList.contains('dark') ? '#e8edf5' : '#1a2230';
+  function drawStroke(c, s) {
+    if (!s || s.x.length < 1) return;
+    c.strokeStyle = hwInk();
+    c.lineWidth = 3.2; c.lineJoin = c.lineCap = 'round'; c.setLineDash([]);
+    c.beginPath(); c.moveTo(s.x[0], s.y[0]);
+    for (let i = 1; i < s.x.length; i++) c.lineTo(s.x[i], s.y[i]);
+    if (s.x.length === 1) c.lineTo(s.x[0] + 0.1, s.y[0] + 0.1);
+    c.stroke();
+  }
+  function hwRebuild() {              // 重建离屏层：田字格 + 已写完的笔画（撤销/清空/切主题才需要）
+    const w = cv.clientWidth, h = cv.clientHeight;
+    bctx.clearRect(0, 0, w, h);
+    bctx.save();
+    bctx.strokeStyle = document.body.classList.contains('dark') ? '#2a3446' : '#e3e8f0';
+    bctx.lineWidth = 1; bctx.setLineDash([6, 6]);
+    bctx.beginPath();
+    bctx.moveTo(w / 2, 6); bctx.lineTo(w / 2, h - 6);
+    bctx.moveTo(6, h / 2); bctx.lineTo(w - 6, h / 2);
+    bctx.stroke();
+    bctx.restore();
+    for (const st of hwStrokes) drawStroke(bctx, st);
+    hwPaint();
+  }
+  function hwPaint() {                // 每帧只干这两件事：贴离屏层 + 画正在写的这一笔
     const w = cv.clientWidth, h = cv.clientHeight;
     ctx.clearRect(0, 0, w, h);
-    ctx.save();
-    ctx.strokeStyle = document.body.classList.contains('dark') ? '#2a3446' : '#e3e8f0';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([6, 6]);
-    ctx.beginPath();
-    ctx.moveTo(w / 2, 6); ctx.lineTo(w / 2, h - 6);
-    ctx.moveTo(6, h / 2); ctx.lineTo(w - 6, h / 2);
-    ctx.stroke();
-    ctx.restore();
+    ctx.drawImage(base, 0, 0, w, h);
+    if (hwCur) drawStroke(ctx, hwCur);
   }
-  hwRedraw = function () {
-    guide();
-    ctx.strokeStyle = document.body.classList.contains('dark') ? '#e8edf5' : '#1a2230';
-    ctx.lineWidth = 3.2; ctx.lineJoin = ctx.lineCap = 'round'; ctx.setLineDash([]);
-    for (const s of hwStrokes) drawStroke(s);
-    if (hwCur) drawStroke(hwCur);
-  };
-  function drawStroke(s) {
-    if (s.x.length < 1) return;
-    ctx.beginPath(); ctx.moveTo(s.x[0], s.y[0]);
-    for (let i = 1; i < s.x.length; i++) ctx.lineTo(s.x[i], s.y[i]);
-    if (s.x.length === 1) { ctx.lineTo(s.x[0] + 0.1, s.y[0] + 0.1); }
-    ctx.stroke();
-  }
+  hwRedraw = hwRebuild;
   function start(e) {
     e.preventDefault(); hwDrawing = true;
     hwCommitted = null;                        // 又开始写了，取消"可替换刚上屏的字"
@@ -2961,14 +2973,20 @@ function hwInit() {
   }
   function move(e) {
     if (!hwDrawing || !hwCur) return;
-    e.preventDefault(); const p = pos(e);
-    hwCur.x.push(p.x); hwCur.y.push(p.y); hwCur.t.push(Date.now() - hwT0);
-    hwRedraw();
+    e.preventDefault();
+    let evs = [];                       // 高频合并采样 → 线更顺（有的 WebKit 返回空表，退回事件本身）
+    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
+    if (!evs.length) evs = [e];
+    for (const ev of evs) {
+      const p = pos(ev);
+      hwCur.x.push(p.x); hwCur.y.push(p.y); hwCur.t.push(Date.now() - hwT0);
+    }
+    if (!hwRaf) hwRaf = requestAnimationFrame(() => { hwRaf = 0; hwPaint(); });
   }
   function end(e) {
     if (!hwDrawing) return;
     e && e.preventDefault(); hwDrawing = false;
-    if (hwCur) { hwStrokes.push(hwCur); hwCur = null; hwRedraw(); }
+    if (hwCur) { hwStrokes.push(hwCur); drawStroke(bctx, hwCur); hwCur = null; hwPaint(); }
     clearTimeout(hwTimer);
     // 停笔就处理：自动=入队并清画布(接着写)，手动=出候选等你点。多笔画的字留足写完时间
     hwTimer = setTimeout(() => (hwAuto ? hwFlush() : hwRecognizeManual()), hwAuto ? 500 : 300);
@@ -4393,6 +4411,7 @@ function renderCkList() {
       <div class="cki-t">${esc(it.title)}${freq}${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
       ${it.content ? `<div class="cki-c">${esc(it.content)}</div>` : ''}
       ${note ? `<div class="cki-n">${ckKind === 'classic' ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
+      ${ckKind === 'hyper' ? '<div class="cki-more">点开看每个下位词的典故 / 出处 / 怎么考 ›</div>' : ''}
     </div>`;
   }).join('');
 }
@@ -4407,8 +4426,36 @@ $('#ckb-list').addEventListener('click', async e => {
     return;
   }
   const it = e.target.closest('[data-cki]');
-  if (it && ckKind === 'classic') openClassicDetail(+it.dataset.cki);
+  if (!it) return;
+  if (ckKind === 'classic') openClassicDetail(+it.dataset.cki);
+  else if (ckKind === 'hyper') openHyper(+it.dataset.cki);     // 上位词也能点开看典故/来源
 });
+
+/* 上位词详解：每个下位词的出处、典故、公考考点（AI 讲一次就缓存，之后秒开） */
+async function openHyper(hid) {
+  push({ view: 'cdetail', title: '上位词详解' });
+  $('#cd-wrap').innerHTML = '<p class="empty">正在讲典故…（第一次要 30 秒左右，之后秒开）</p>';
+  try {
+    const d = await api('/api/hyper/' + hid);
+    $('#cd-wrap').innerHTML = `
+      <div class="cd-head"><div class="cd-title">${esc(d.hyper)}</div>
+        <div class="cd-meta">上位词 · 逻辑填空里的概括词</div></div>
+      <div class="cd-sec"><div class="cd-sec-t">下位词</div>
+        <div class="cd-sec-b">${esc(d.subs || '')}</div></div>
+      ${d.note ? `<div class="cd-sec"><div class="cd-sec-t">💡 提示</div><div class="cd-sec-b">${esc(d.note)}</div></div>` : ''}
+      ${(d.story || []).map(x => `
+        <div class="cd-sec hy-sec">
+          <div class="cd-sec-t">${esc(x.name)}</div>
+          ${x.origin ? `<div class="hy-row"><b>出处</b>${esc(x.origin)}</div>` : ''}
+          ${x.story ? `<div class="hy-row hy-story"><b>典故</b>${esc(x.story)}</div>` : ''}
+          ${x.point ? `<div class="hy-row hy-point"><b>怎么考</b>${esc(x.point)}</div>` : ''}
+        </div>`).join('')}`;
+    window.scrollTo(0, 0);
+    injectReadBtns();
+  } catch (e) {
+    $('#cd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>';
+  }
+}
 $('#ckb-ai').onclick = async () => {
   const w = await appPrompt('AI 补充上位词', '输入一个词（如「戏曲」或「京剧」），AI 会归纳它的上位词与同类下位词');
   if (!w || !w.trim()) return;
@@ -5322,6 +5369,24 @@ function openMatMenu(id, name, ext) {
   $('#mat-menu').classList.remove('hidden');
 }
 $('#mat-menu').addEventListener('click', async e => {
+  const teamBtn = e.target.closest('[data-mm="team"]');
+  if (teamBtn) {                                  // 共享给指定队友（可多选，取消勾选=收回）
+    $('#mat-menu').classList.add('hidden');
+    const mid = matMenuCtx.id;
+    try {
+      const d = await api('/api/materials/' + mid + '/share');
+      if (!d.members.length) { toast('你还没有队友（去「任务清单 → 互监待办」组队）', true); return; }
+      const pick = await matPickMembers(d.members);
+      if (pick === null) return;
+      const r = await api('/api/materials/' + mid + '/share', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: pick }),
+      });
+      toast(r.n ? ('已共享给 ' + r.n + ' 位队友') : '已取消共享');
+      loadMaterials();
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
   if (e.target.closest('[data-sheet-close]') || e.target.id === 'mat-menu') {
     $('#mat-menu').classList.add('hidden'); return;
   }
@@ -6782,3 +6847,79 @@ function shotSend(whole) {
   }, 'image/png');
 }
 shotBind();
+
+/* ================= 书签：看到哪了 =================
+   长文（经典著作 / 要文库 / 范文 / 知识库文档）看到一半退出来，回头根本找不到位置。
+   这里在阅读类页面自动记住滚动位置，回来时顶部给一条「上次看到这里 · 点我跳回」。 */
+const BM_VIEWS = { workd: '经典著作', policydocd: '时政要文', essayd: '范文', doc: '知识库文档', newsd: '时政' };
+let bmCur = null, bmT = null;
+
+function bmRef() {                       // 当前这篇的唯一标识
+  const st = stack[stack.length - 1];
+  if (!st || !BM_VIEWS[st.view]) return null;
+  const id = { workd: (window.wkCur && wkCur.id), policydocd: (window.pdCur && pdCur.id),
+    essayd: (window.esCur && esCur.id), doc: (window.DOC && DOC.id), newsd: (window.nwCur && nwCur.id) }[st.view];
+  if (!id) return null;
+  return { kind: st.view, ref: String(id), title: st.title || BM_VIEWS[st.view] };
+}
+function bmScrollTop() { return (document.scrollingElement || document.documentElement).scrollTop; }
+function bmSave() {                      // 滚动停下来 1.5s 就记一次（不打扰、不刷接口）
+  const r = bmRef();
+  if (!r) return;
+  const el = document.scrollingElement || document.documentElement;
+  const pos = el.scrollHeight > el.clientHeight ? bmScrollTop() / (el.scrollHeight - el.clientHeight) : 0;
+  if (pos < 0.02) return;                // 才刚打开，不算「看到哪了」
+  api('/api/bookmarks', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind: r.kind, ref: r.ref, title: r.title, pos }),
+  }).catch(() => {});
+}
+addEventListener('scroll', () => {
+  if (!bmRef()) return;
+  clearTimeout(bmT);
+  bmT = setTimeout(bmSave, 1500);
+}, { passive: true });
+
+async function bmRestore() {             // 进阅读页时问一句：上次看到哪了
+  const r = bmRef();
+  if (!r) { $('#bm-tip').classList.add('hidden'); return; }
+  try {
+    const d = await api('/api/bookmarks');
+    const b = (d.items || []).find(x => x.kind === r.kind && x.ref === r.ref);
+    if (!b || b.pos < 0.03) { $('#bm-tip').classList.add('hidden'); return; }
+    bmCur = b;
+    $('#bm-tip').innerHTML = `🔖 上次看到 <b>${Math.round(b.pos * 100)}%</b> 处 · <i>${(b.updated_at || '').slice(5, 16)}</i>
+      <button class="btn tiny" id="bm-go">跳回去</button>
+      <button class="bm-x" id="bm-hide">✕</button>`;
+    $('#bm-tip').classList.remove('hidden');
+  } catch (_) {}
+}
+document.addEventListener('click', e => {
+  if (e.target.closest('#bm-go')) {
+    const el = document.scrollingElement || document.documentElement;
+    el.scrollTo({ top: bmCur.pos * (el.scrollHeight - el.clientHeight), behavior: 'smooth' });
+    $('#bm-tip').classList.add('hidden');
+  } else if (e.target.closest('#bm-hide')) $('#bm-tip').classList.add('hidden');
+});
+window.__bmView = () => setTimeout(bmRestore, 700);   // 内容渲染完再问
+
+/* 选队友共享：复用底部弹层，勾选=共享，取消勾选=收回 */
+function matPickMembers(members) {
+  return new Promise(res => {
+    const el = $('#mat-share-sheet');
+    el.innerHTML = `<div class="ns-title">👥 共享给队友</div>
+      <p class="acct-hint" style="padding:0 16px">勾上就共享给他（他能在资料库看到并下载，但不能改不能删）；取消勾选就收回。</p>
+      <div class="ms-list">${members.map(m => `
+        <label class="ms-row"><input type="checkbox" value="${m.id}" ${m.shared ? 'checked' : ''}>
+          <span>${esc(m.username)}</span></label>`).join('')}</div>
+      <div class="ms-acts">
+        <button class="btn" id="ms-cancel">取消</button>
+        <button class="btn primary" id="ms-ok">确定</button>
+      </div>`;
+    el.classList.remove('hidden');
+    const done = (v) => { el.classList.add('hidden'); res(v); };
+    $('#ms-ok').onclick = () => done([...el.querySelectorAll('input:checked')].map(i => +i.value));
+    $('#ms-cancel').onclick = () => done(null);
+    el.onclick = (e) => { if (e.target === el) done(null); };
+  });
+}

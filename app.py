@@ -627,6 +627,9 @@ def init_db():
     for col in ("keyword", "apply"):
         if col not in _cols(con, "xiyu_items"):
             con.execute("ALTER TABLE xiyu_items ADD COLUMN %s TEXT" % col)
+    # 上位词：补「典故/来源」列（AI 讲一次就缓存，像古诗文赏析那样点开即看）
+    if "story" not in _cols(con, "hyper_items"):
+        con.execute("ALTER TABLE hyper_items ADD COLUMN story TEXT")
     # 古诗文考频排序
     if "freq" not in _cols(con, "classics"):
         con.execute("ALTER TABLE classics ADD COLUMN freq INTEGER DEFAULT 0")
@@ -801,6 +804,20 @@ def init_db():
         CREATE TABLE IF NOT EXISTS study_days(
             user_id INTEGER NOT NULL, date TEXT NOT NULL,
             PRIMARY KEY(user_id, date)
+        );
+        -- 资料库共享：把某份资料共享给指定的人（队友），对方在资料库看得到「共享给我的」
+        CREATE TABLE IF NOT EXISTS material_shares(
+            material_id INTEGER NOT NULL, owner_id INTEGER NOT NULL, to_user INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(material_id, to_user)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mshare_to ON material_shares(to_user);
+        -- 书签：看到哪了（阅读类页面自动记位置，也可手动打点）
+        CREATE TABLE IF NOT EXISTS bookmarks(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            kind TEXT NOT NULL, ref TEXT NOT NULL, title TEXT, pos REAL DEFAULT 0, note TEXT,
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, kind, ref)
         );
         -- 40 天冲刺路线图：阶段/每日定额/正确率目标，规划助手每天照它排任务
         CREATE TABLE IF NOT EXISTS plan_roadmap(
@@ -1453,12 +1470,16 @@ def material_boards():
 def material_list():
     board = (request.args.get("board") or "").strip()
     db = get_db()
-    sql = "SELECT * FROM materials WHERE user_id=?"
-    args = [uid()]
-    if board:
-        sql += " AND board=?"
-        args.append(board)
-    sql += " ORDER BY id DESC"
+    # 自己的 + 队友共享给我的（共享来的标 shared_from，不能改不能删）
+    sql = ("SELECT m.*, 0 AS shared, '' AS shared_from FROM materials m WHERE m.user_id=?"
+           + (" AND m.board=?" if board else "")
+           + " UNION ALL "
+           + "SELECT m.*, 1 AS shared, u.username AS shared_from FROM materials m "
+             "JOIN material_shares s ON s.material_id=m.id "
+             "JOIN users u ON u.id=m.user_id WHERE s.to_user=?"
+           + (" AND m.board=?" if board else "")
+           + " ORDER BY id DESC")
+    args = [uid()] + ([board] if board else []) + [uid()] + ([board] if board else [])
     rows = db.execute(sql, args).fetchall()
     out = []
     for r in rows:
@@ -1469,8 +1490,12 @@ def material_list():
 
 
 def _get_material(mid):
+    """自己的资料，或队友共享给我的（共享来的只读：查看/下载可以，改名删除不行）。"""
     return get_db().execute(
-        "SELECT * FROM materials WHERE id=? AND user_id=?", (mid, uid())).fetchone()
+        "SELECT m.* FROM materials m WHERE m.id=? AND ("
+        "  m.user_id=? OR EXISTS(SELECT 1 FROM material_shares s "
+        "                        WHERE s.material_id=m.id AND s.to_user=?))",
+        (mid, uid(), uid())).fetchone()
 
 
 def _office_to_pdf(src):
@@ -1581,7 +1606,7 @@ def material_text(mid):
     m = _get_material(mid)
     if not m:
         return jsonify({"error": "未找到"}), 404
-    t = _extract_text(os.path.join(UPLOADS, str(uid()), m["stored_name"]), m["ext"])
+    t = _extract_text(os.path.join(UPLOADS, str(m["user_id"]), m["stored_name"]), m["ext"])
     if t is None:
         return jsonify({"error": "文件丢失"}), 404
     return jsonify({"text": t})
@@ -1649,7 +1674,7 @@ def material_view(mid):
     m = _get_material(mid)
     if not m:
         return "未找到", 404
-    path = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    path = os.path.join(UPLOADS, str(m["user_id"]), m["stored_name"])
     if not os.path.exists(path):
         return "文件丢失", 404
     ext = m["ext"]
@@ -1685,7 +1710,7 @@ def material_pages(mid):
     m = _get_material(mid)
     if not m:
         return jsonify({"error": "未找到"}), 404
-    path = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    path = os.path.join(UPLOADS, str(m["user_id"]), m["stored_name"])
     pdf = _material_pdf(m, path) if os.path.exists(path) else None
     if not pdf:
         return jsonify({"pages": 0, "slides": False})
@@ -1707,7 +1732,7 @@ def material_page(mid, n):
         return "未找到", 404
     if n < 1 or n > 3000:
         return "页码越界", 400
-    path = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    path = os.path.join(UPLOADS, str(m["user_id"]), m["stored_name"])
     if not os.path.exists(path):
         return "文件丢失", 404
     pdf = _material_pdf(m, path)
@@ -1734,7 +1759,7 @@ def material_download(mid):
     m = _get_material(mid)
     if not m:
         return "未找到", 404
-    path = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    path = os.path.join(UPLOADS, str(m["user_id"]), m["stored_name"])
     if not os.path.exists(path):
         return "文件丢失", 404
     return send_file(path, as_attachment=True, download_name=m["orig_name"])
@@ -1768,7 +1793,7 @@ def material_duplicate(mid):
     m = _get_material(mid)
     if not m:
         return jsonify({"error": "未找到"}), 404
-    src = os.path.join(UPLOADS, str(uid()), m["stored_name"])
+    src = os.path.join(UPLOADS, str(m["user_id"]), m["stored_name"])
     if not os.path.exists(src):
         return jsonify({"error": "源文件丢失"}), 404
     ext = m["ext"] or ""
@@ -1791,6 +1816,8 @@ def material_delete(mid):
     m = _get_material(mid)
     if not m:
         return jsonify({"error": "未找到"}), 404
+    if m["user_id"] != uid():          # 共享给我的只读：能看能下，不能删（否则会把别人的文件删了）
+        return jsonify({"error": "这是队友共享给你的资料，不能删除"}), 403
     _remove_file(uid(), m["stored_name"])
     get_db().execute("DELETE FROM materials WHERE id=?", (mid,))
     get_db().commit()
@@ -5033,7 +5060,7 @@ def _dtest_material(db, today):
     for r in db.execute("SELECT word, explanation FROM entries WHERE user_id=? ORDER BY RANDOM() LIMIT 8", (uid(),)):
         m["言语"].append("【成语/词语】%s：%s" % (r["word"] or "", (r["explanation"] or "")[:90]))
     for r in db.execute("SELECT board, title, content FROM changkao_items "
-                        "WHERE board IN ('高频成语','实词搭配','上位词') ORDER BY RANDOM() LIMIT 10"):
+                        "WHERE board IN ('成语','实词','上位词') ORDER BY RANDOM() LIMIT 10"):
         m["言语"].append("【常考·%s】%s：%s" % (r["board"] or "", r["title"] or "", (r["content"] or "")[:90]))
     # 错题：按板块给，出「同考点变式题」最有价值
     for r in db.execute("SELECT board, qtype, question, points FROM wrong_questions "
@@ -6109,6 +6136,46 @@ def changkao_items():
     return jsonify({"board": board, "kind": "text", "items": [dict(r) for r in rows]})
 
 
+@app.get("/api/hyper/<int:hid>")
+def hyper_detail(hid):
+    """上位词详解：每个下位词的**典故 / 出处 / 背景**。第一次点开时让 AI 讲一遍并缓存，
+       之后直接读库——像古诗文那样点开就能看原文与赏析，理解了才记得住。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM hyper_items WHERE id=?", (hid,)).fetchone()
+    if not r:
+        return jsonify({"error": "词条不存在"}), 404
+    if r["story"]:
+        return jsonify({"id": hid, "hyper": r["hyper"], "subs": r["subs"], "note": r["note"],
+                        "story": json.loads(r["story"])})
+    subs = [x.strip() for x in re.split(r"[、,，/]", r["subs"] or "") if x.strip()][:10]
+    if not subs:
+        return jsonify({"error": "这条没有下位词"}), 400
+    prompt = (
+        "上位词「%s」下面这些下位词，逐个讲清楚它的**来历与背景**，"
+        "让考生理解了再记，而不是死背。\n下位词：%s\n\n"
+        "每条给：\n"
+        "· origin：出处 / 起源（哪个朝代、哪个地方、由什么演变而来，有史实就写史实）\n"
+        "· story：典故或历史背景故事（60~120 字，讲得生动一点，有人物有情节最好；"
+        "确实没有典故的，就讲它的形成过程或代表人物/代表作）\n"
+        "· point：公考里怎么考它（常识题的考点，或逻辑填空里它作为「%s」这个概括词时的用法）\n\n"
+        '只输出 JSON：{"items":[{"name":"","origin":"","story":"","point":""}]}'
+        % (r["hyper"], "、".join(subs), r["hyper"]))
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是公考常识与文化通识老师，讲典故有史实、不编造，语言生动。严格输出 JSON。"},
+         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=3000, timeout=180, json_mode=True)
+    if err:
+        return err
+    try:
+        items = [x for x in (json.loads(rep).get("items") or []) if x.get("name")]
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+    if not items:
+        return jsonify({"error": "没能讲出典故，请重试"}), 502
+    db.execute("UPDATE hyper_items SET story=? WHERE id=?", (json.dumps(items, ensure_ascii=False), hid))
+    db.commit()
+    return jsonify({"id": hid, "hyper": r["hyper"], "subs": r["subs"], "note": r["note"], "story": items})
+
+
 # ---------------------------------------------------------------- 上位词积累
 @app.get("/api/hyper")
 def hyper_list():
@@ -6586,6 +6653,22 @@ def _review_due(db, u, today):
             "title": r["word"], "sub": r["category"] or "词语", "body": (r["explanation"] or "")[:90],
             "front": r["word"], "front_sub": (r["pinyin"] or "") + " · " + (r["category"] or "词语"),
             "back": back or "（无释义）"})
+    # 常考里的高频成语 / 实词搭配：按真题考频排的，比自己零散收录的更该背。
+    # 只取考频最高的一批进复习轮（默认 120 条），背完一轮会随考频往后推。
+    n_ck = int(os.environ.get("GONGKAO_REVIEW_CK", "120"))     # 想多背/少背可用环境变量调
+    if n_ck > 0:
+        for r in db.execute(
+                "SELECT id, board, title, content, note FROM changkao_items "
+                "WHERE board IN ('成语','实词') "
+                "ORDER BY COALESCE(freq,0) DESC, id LIMIT ?", (n_ck,)):
+            body = (r["content"] or "").strip()
+            back = body + (("\n\n📌 " + r["note"]) if r["note"] else "")
+            check("changkao", r["id"], "2000-01-01", {          # 全局内容，不按收录时间等一天
+                "title": r["title"] or "", "sub": r["board"] or "常考",
+                "body": body[:90],
+                "front": r["title"] or "", "front_sub": "常考 · " + (r["board"] or ""),
+                "back": back or "（无释义）"})
+
     for r in db.execute("SELECT * FROM wrong_questions WHERE user_id=?", (u,)):
         back = "\n".join(x for x in [
             ("【知识点】" + r["points"]) if r["points"] else "",
@@ -6628,7 +6711,7 @@ def _review_due(db, u, today):
 
 
 # 复习分组：词语句子 / 每日积累 / 错题，分开背，不混在一副牌里
-RV_GROUP = {"entry": "word", "classic": "word", "sucai": "daily", "wrongq": "wrongq"}
+RV_GROUP = {"entry": "word", "classic": "word", "changkao": "word", "sucai": "daily", "wrongq": "wrongq"}
 
 
 @app.get("/api/review/today")
@@ -6780,6 +6863,78 @@ def app_version():
         "url": "/download/gongkao.apk",
         "available": os.path.exists(apk),
     })
+
+
+# ---------------------------------------------------------------- 资料库：共享给指定成员
+@app.get("/api/materials/<int:mid>/share")
+def mat_share_get(mid):
+    """能共享给谁：我的队友。顺带返回已经共享给了谁。"""
+    db = get_db()
+    if not db.execute("SELECT 1 FROM materials WHERE id=? AND user_id=?", (mid, uid())).fetchone():
+        return jsonify({"error": "只能共享自己的资料"}), 403
+    mates = db.execute(
+        "SELECT u.id, u.username FROM team_members m1 "
+        "JOIN team_members m2 ON m2.team_id=m1.team_id AND m2.user_id!=m1.user_id "
+        "JOIN users u ON u.id=m2.user_id WHERE m1.user_id=?", (uid(),)).fetchall()
+    shared = {r["to_user"] for r in db.execute(
+        "SELECT to_user FROM material_shares WHERE material_id=?", (mid,))}
+    return jsonify({"members": [{"id": r["id"], "username": r["username"],
+                                 "shared": r["id"] in shared} for r in mates]})
+
+
+@app.post("/api/materials/<int:mid>/share")
+def mat_share_set(mid):
+    """整份覆盖：传 to=[用户id...]，没在里面的就取消共享。"""
+    db = get_db()
+    if not db.execute("SELECT 1 FROM materials WHERE id=? AND user_id=?", (mid, uid())).fetchone():
+        return jsonify({"error": "只能共享自己的资料"}), 403
+    to = (request.get_json(silent=True) or {}).get("to") or []
+    mates = {r["id"] for r in db.execute(
+        "SELECT u.id FROM team_members m1 "
+        "JOIN team_members m2 ON m2.team_id=m1.team_id AND m2.user_id!=m1.user_id "
+        "JOIN users u ON u.id=m2.user_id WHERE m1.user_id=?", (uid(),))}
+    to = [int(x) for x in to if int(x) in mates]        # 只能共享给队友，防越权
+    db.execute("DELETE FROM material_shares WHERE material_id=?", (mid,))
+    for t in to:
+        db.execute("INSERT OR IGNORE INTO material_shares(material_id,owner_id,to_user) VALUES(?,?,?)",
+                   (mid, uid(), t))
+    db.commit()
+    return jsonify({"ok": True, "n": len(to)})
+
+
+# ---------------------------------------------------------------- 书签（看到哪了）
+@app.get("/api/bookmarks")
+def bm_list():
+    rows = get_db().execute(
+        "SELECT * FROM bookmarks WHERE user_id=? ORDER BY updated_at DESC LIMIT 100", (uid(),)).fetchall()
+    return jsonify({"items": [dict(r) for r in rows]})
+
+
+@app.post("/api/bookmarks")
+def bm_save():
+    """一个 (kind, ref) 只留一条：自动记「看到哪了」，手动打点则把 note 填上。"""
+    d = request.get_json(silent=True) or {}
+    kind = (d.get("kind") or "").strip()[:20]
+    ref = str(d.get("ref") or "").strip()[:60]
+    if not kind or not ref:
+        return jsonify({"error": "缺少参数"}), 400
+    db = get_db()
+    db.execute(
+        "INSERT INTO bookmarks(user_id,kind,ref,title,pos,note,updated_at) "
+        "VALUES(?,?,?,?,?,?,datetime('now','localtime')) "
+        "ON CONFLICT(user_id,kind,ref) DO UPDATE SET title=excluded.title, pos=excluded.pos, "
+        "note=COALESCE(NULLIF(excluded.note,''), bookmarks.note), updated_at=datetime('now','localtime')",
+        (uid(), kind, ref, (d.get("title") or "")[:120], float(d.get("pos") or 0), (d.get("note") or "")[:120]))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/bookmarks/<int:bid>")
+def bm_del(bid):
+    db = get_db()
+    db.execute("DELETE FROM bookmarks WHERE id=? AND user_id=?", (bid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------- 外观：头像 / 壁纸

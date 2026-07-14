@@ -2432,3 +2432,30 @@ body.dark .matpad{background:#151b27;}
 .shot-wrap{flex:1;min-height:0;display:grid;place-items:center;padding:14px;overflow:auto;}
 #shot-cv{max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5);
   touch-action:none;cursor:crosshair;background:#fff;}
+/* 上位词详解 */
+.cki-more{margin-top:7px;font-size:12.5px;color:var(--blue);}
+.hy-sec .hy-row{font-size:14px;line-height:1.85;margin-bottom:6px;}
+.hy-sec .hy-row b{display:inline-block;min-width:44px;margin-right:6px;color:var(--muted);
+  font-size:12.5px;font-weight:600;}
+.hy-story{color:var(--text);}
+.hy-point{padding:7px 10px;border-radius:8px;background:rgba(26,111,181,.07);}
+body.dark .hy-point{background:rgba(63,146,214,.13);}
+/* 书签提示条 */
+.bm-tip{position:fixed;left:50%;transform:translateX(-50%);top:calc(66px + env(safe-area-inset-top));
+  z-index:59;display:flex;align-items:center;gap:8px;padding:7px 10px 7px 13px;
+  background:var(--card);border:1px solid var(--line);border-radius:22px;
+  box-shadow:0 6px 22px rgba(20,40,80,.14);font-size:13px;}
+.bm-tip.hidden{display:none;}
+.bm-tip b{color:var(--blue);}
+.bm-tip i{font-style:normal;color:var(--muted);font-size:12px;}
+.bm-tip .btn.tiny{padding:3px 10px;font-size:12.5px;}
+.bm-x{border:none;background:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 2px;}
+body.dark .bm-tip{background:#1b2231;}
+/* 资料共享 */
+.mat-shared{color:var(--blue);font-weight:600;}
+.ms-list{padding:6px 16px 12px;max-height:44vh;overflow-y:auto;}
+.ms-row{display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line);
+  font-size:15px;cursor:pointer;}
+.ms-row input{width:18px;height:18px;accent-color:var(--blue);}
+.ms-acts{display:flex;gap:10px;padding:12px 16px calc(16px + env(safe-area-inset-bottom));}
+.ms-acts .btn{flex:1;}
