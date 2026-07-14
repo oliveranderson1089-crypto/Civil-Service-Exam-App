@@ -2378,8 +2378,9 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
 .fab.open .fab-act{opacity:1;pointer-events:auto;}
 /* 扇出：每个工具声明自己的偏移量（--fx/--fy），正负号由球所在的象限翻转，
    所以加工具只要再给一组变量，不用写 4 条象限规则。 */
-#fab-ai   {--fx:64px; --fy:0px;}
-#fab-pad  {--fx:0px;  --fy:64px;}
+#fab-ai   {--fx:66px; --fy:0px;}
+#fab-note {--fx:47px; --fy:47px;}
+#fab-pad  {--fx:0px;  --fy:66px;}
 .fab.open.dir-r .fab-act{--sx:1;}
 .fab.open.dir-l .fab-act{--sx:-1;}
 .fab.open.dir-dn .fab-act{--sy:1;}
@@ -2800,3 +2801,42 @@ body.dark .dr-cfg{background:#141b29;}
 body.dark .dr-lv.on{background:#1c2a45;}
 body.dark .dr-coef{background:#1a2434;}
 body.dark .dr-tag.lv{background:#3a2416;color:#e8905e;}
+
+/* 随手记（悬浮球）：浮在当前页面上，写完就走，不跳转 */
+#fab-note{background:linear-gradient(135deg,#38b48b,#1e8449);box-shadow:0 4px 14px rgba(30,132,73,.42);}
+.fab.dir-l #fab-note i{right:52px;}
+.fab.dir-r #fab-note i{left:52px;}
+.qnote{position:fixed;right:20px;bottom:96px;z-index:4300;width:min(380px,calc(100vw - 32px));
+  border:1px solid var(--line);border-radius:16px;background:var(--card);
+  box-shadow:0 12px 44px rgba(20,40,80,.22);padding:12px 14px;}
+.qn-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.qn-head b{font-size:14px;}
+.qn-head select{flex:1;min-width:0;}
+.qn-x{border:none;background:transparent;font-size:20px;line-height:1;color:var(--muted);cursor:pointer;padding:0 2px;}
+#qn-text{width:100%;min-height:110px;font-size:14.5px;line-height:1.8;}
+.qn-foot{display:flex;align-items:center;gap:8px;margin-top:8px;}
+.qn-foot input{flex:1;min-width:0;}
+.qn-more{display:block;margin-top:8px;font-size:12px;color:#1a6fb5;cursor:pointer;text-align:right;}
+body.dark .qnote{background:#141b29;}
+/* 小记：电脑端不再有左侧板块栏（板块改成编辑器里选 + 顶部下拉筛） */
+.notes-sidebar{display:none;}
+.feed-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
+.feed-board{flex:0 0 auto;max-width:170px;}
+select.cp-board{flex:0 0 auto;max-width:150px;font-size:12.5px;padding:3px 8px;border-radius:8px;}
+
+/* 专项练：题型序号 / 出题引擎 / 解题方法 */
+.dr-no{display:inline-grid;place-items:center;width:19px;height:19px;margin-right:6px;border-radius:6px;
+  background:#eef4fb;color:#1a6fb5;font-size:11px;font-weight:700;vertical-align:1px;}
+.dr-eng{display:inline-block;margin-right:7px;padding:0 6px;border-radius:5px;font-size:10.5px;font-weight:600;}
+.dr-eng.prog{background:#e6f4ec;color:#1e8449;}
+.dr-eng.ai{background:#f1eefb;color:#6b4fc0;}
+.dr-mth{border:1px solid var(--line);border-radius:13px;background:#f7fafd;padding:11px 14px;margin-bottom:12px;}
+.dr-mth-t{font-size:13px;font-weight:700;color:#1a6fb5;margin-bottom:6px;}
+.dr-mth-i{font-size:12.6px;line-height:1.85;color:var(--muted);}
+.dr-miss{margin-bottom:12px;padding:9px 12px;border-radius:10px;background:#fff8e6;color:#8a5a00;
+  font-size:12.4px;line-height:1.7;}
+body.dark .dr-no{background:#1c2a45;color:#7fb0ff;}
+body.dark .dr-eng.prog{background:#16261f;color:#4fb583;}
+body.dark .dr-eng.ai{background:#221c33;color:#a68fe0;}
+body.dark .dr-mth{background:#141b29;}
+body.dark .dr-miss{background:#2a2312;color:#d8b25f;}

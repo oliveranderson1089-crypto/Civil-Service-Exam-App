@@ -91,7 +91,7 @@
             <button class="cp-tool tag-tool" data-cp="tag" title="标签">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>标签
             </button>
-            <span class="cp-board" id="cp-board"></span>
+            <select class="cp-board" id="cp-board" title="这条小记归到哪个板块"></select>
           </div>
           <textarea id="cp-content" placeholder="记你想记…"></textarea>
           <div id="cp-todos" class="cp-todos"></div>
@@ -117,7 +117,10 @@
           <div class="notes-msearch hidden" id="notes-msearch">
             <input id="notes-msearch-input" type="search" placeholder="搜索小记内容 / 标签…">
           </div>
-          <div class="feed-filter" id="feed-tags"></div>
+          <div class="feed-bar">
+            <select id="feed-board" class="feed-board" title="按板块筛选"></select>
+            <div class="feed-filter" id="feed-tags"></div>
+          </div>
           <div class="feed" id="feed"></div>
           <p id="feed-empty" class="empty hidden">还没有小记，点下面的 ＋ 写一条吧～</p>
         </div>
@@ -651,7 +654,9 @@
       <div class="dr-modetip" id="dr-modetip"></div>
       <button class="btn tiny" id="dr-recs">📋 做题记录</button>
     </div>
-    <div class="sl-hist-head"><span>选题型开练（<b>你最弱的排在最前面</b>）</span></div>
+    <div id="dr-methods"></div>
+    <div id="dr-missing"></div>
+    <div class="sl-hist-head"><span>选题型开练（<b>按讲义目录顺序排，练过之后薄弱的会提到前面</b>）</span></div>
     <div id="dr-types" class="dr-types"></div>
   </section>
 
@@ -1441,12 +1446,29 @@
 
 <!-- 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；长按可拖动 -->
 <div id="fab" class="fab">
+  <button class="fab-act" id="fab-note" title="随手记一条（不打断当前页面）">📒<i>小记</i></button>
   <button class="fab-act" id="fab-pad" title="草稿纸">📝<i>草稿纸</i></button>
   <button class="fab-act" id="fab-ai" title="AI 助手">AI<i>AI 助手</i></button>
   <button class="fab-main" id="fab-btn" title="工具">✦</button>
 </div>
 
 <!-- 划重点：结果条 + 重点清单 -->
+<!-- 快速记：悬浮球点开，浮在当前页面上，记完就走，不跳转 -->
+<div id="qnote" class="qnote hidden">
+  <div class="qn-head">
+    <b>📒 随手记</b>
+    <select id="qn-board" title="归到哪个板块"></select>
+    <button class="qn-x" id="qn-close" title="关闭">×</button>
+  </div>
+  <textarea id="qn-text" placeholder="记你想记…（不会打断你正在看的页面）"></textarea>
+  <div id="qn-imgs" class="cp-thumbs"></div>
+  <div class="qn-foot">
+    <label class="btn tiny">🖼 图片<input type="file" id="qn-file" accept="image/*" multiple hidden></label>
+    <input id="qn-tags" type="text" placeholder="标签，逗号分隔（可空）">
+    <button class="btn primary" id="qn-save">记下</button>
+  </div>
+  <a class="qn-more" id="qn-more">打开小记 →</a>
+</div>
 <div id="mk-bar" class="mk-bar hidden"></div>
 <div id="mk-list" class="mk-list hidden"></div>
 

@@ -479,20 +479,20 @@ $('#nav-back').onclick = back;
 let curNoteBoard = '';
 let curTag = '';
 let noteSearchQ = '';
+// 板块的下拉选项（编辑器、feed 筛选、快速记 三处共用）
+function boardOptions(sel, withAll) {
+  return (withAll ? `<option value="">全部板块</option>` : `<option value="">不分板块</option>`)
+    + SECTIONS.map(s => `<optgroup label="${esc(s.name)}">`
+      + s.boards.map(b => `<option value="${esc(b)}"${b === sel ? ' selected' : ''}>${esc(b)}</option>`).join('')
+      + '</optgroup>').join('');
+}
+// 电脑端原来有一整栏板块目录（占掉最左边一大条）。板块只是个归类，不值得占一栏 ——
+// 改成「写的时候在编辑器里选，看的时候在顶部下拉筛」，功能一样，屏幕省下来给正文。
 function buildNotesSidebar() {
-  $('#notes-sidebar').innerHTML =
-    `<div class="ns-item${curNoteBoard === '' ? ' active' : ''}" data-board="">
-        <span class="ns-name">全部</span>
-        <span class="ns-count" data-cnt=""></span>
-      </div>` +
-    SECTIONS.map(s => `
-    <div class="ns-group">${esc(s.name)}</div>
-    ${s.boards.map(b => `
-      <div class="ns-item${b === curNoteBoard ? ' active' : ''}" data-board="${esc(b)}">
-        <span class="ns-name">${esc(b)}</span>
-        <span class="ns-count" data-cnt="${esc(b)}"></span>
-      </div>`).join('')}
-  `).join('');
+  const fb = $('#feed-board');
+  if (fb) fb.innerHTML = boardOptions(curNoteBoard, true);
+  const cb = $('#cp-board');
+  if (cb) cb.innerHTML = boardOptions(draft.board != null ? draft.board : curNoteBoard, false);
 }
 async function refreshNoteCounts() {
   try {
@@ -520,17 +520,19 @@ function openNotes(board) {
   push({ view: 'notes' });
   newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts();
 }
-$('#notes-sidebar').addEventListener('click', e => {
-  const it = e.target.closest('[data-board]'); if (!it) return;
-  curNoteBoard = it.dataset.board; curTag = '';
-  document.querySelectorAll('.ns-item').forEach(x => x.classList.toggle('active', x.dataset.board === curNoteBoard));
-  newDraft(); loadFeed(); loadFeedTags();
+$('#feed-board').addEventListener('change', () => {     // 顶部下拉：按板块筛选
+  curNoteBoard = $('#feed-board').value; curTag = '';
+  loadFeed(); loadFeedTags();
+});
+$('#cp-board').addEventListener('change', () => {       // 编辑器：这条归到哪个板块
+  draft.board = $('#cp-board').value;
 });
 
 /* ---- 编辑器（草稿） ---- */
 let draft = { id: null, content: '', images: [], files: [], todos: [], tags: [] };
 function newDraft() {
-  draft = { id: null, content: '', images: [], files: [], todos: [], tags: [] };
+  draft = { id: null, content: '', images: [], files: [], todos: [], tags: [],
+            board: curNoteBoard };   // 新写的默认归到当前筛选的板块
   $('#cp-content').value = ''; renderComposer();
   closeComposerM();
 }
@@ -547,7 +549,7 @@ function closeComposerM() {
 }
 function loadDraft(n) {
   draft = {
-    id: n.id, content: n.content,
+    id: n.id, content: n.content, board: n.board || '',
     images: n.img_files.map((f, i) => ({ kind: 'old', file: f, url: n.images[i] })),
     files: n.att_files.map((a, i) => ({ kind: 'old', file: a.file, name: a.name, ext: a.ext, url: n.attachments[i].url })),
     todos: n.todos.map(t => ({ text: t.text, done: !!t.done })),
@@ -560,7 +562,8 @@ function loadDraft(n) {
   $('#cp-content').focus();
 }
 function renderComposer() {
-  $('#cp-board').textContent = '# ' + curNoteBoard;
+  const cb = $('#cp-board');
+  if (cb) cb.value = (draft.board != null ? draft.board : curNoteBoard) || '';
   $('#cp-todos').innerHTML = draft.todos.map((t, i) =>
     `<div class="cp-todo"><input type="checkbox" data-tdo="${i}" ${t.done ? 'checked' : ''}>
      <input class="cp-todo-text" data-tdt="${i}" value="${esc(t.text)}" placeholder="待办事项…">
@@ -725,7 +728,7 @@ $('#cp-submit').onclick = async () => {
   const pending = draft.images.filter(i => i.ready).map(i => i.ready);
   if (pending.length) await Promise.all(pending);
   const fd = new FormData();
-  fd.append('board', curNoteBoard);
+  fd.append('board', draft.board != null ? draft.board : curNoteBoard);
   fd.append('content', content);
   fd.append('todos', JSON.stringify(draft.todos));
   fd.append('tags', JSON.stringify(draft.tags));
@@ -896,6 +899,65 @@ $('#feed').addEventListener('dblclick', e => {
   const it = ($('#feed')._items || []).find(x => x.id == card.dataset.id);
   if (it) loadDraft(it);
 });
+
+/* ---- 随手记（悬浮球里的小记）----
+   小记本来只有「进那个模块」一条路。但真正要记的时候，人都在看别的东西
+   （做题、看时政、读范文）—— 跳走一趟回来，思路就断了。
+   所以做成**浮在当前页面上**的一小块：写完点「记下」，页面纹丝不动。
+   原来的小记模块**照样保留**（要整理、要翻历史还是得进去）。 */
+let qnImgs = [];
+function qnOpen() {
+  const box = $('#qnote');
+  if (!box.classList.contains('hidden')) { qnClose(); return; }
+  $('#qn-board').innerHTML = boardOptions(curNoteBoard, false);
+  $('#qn-text').value = ''; $('#qn-tags').value = '';
+  qnImgs = []; $('#qn-imgs').innerHTML = '';
+  box.classList.remove('hidden');
+  setTimeout(() => $('#qn-text').focus(), 30);
+  if (window.fabClose) fabClose();
+}
+function qnClose() { $('#qnote').classList.add('hidden'); }
+$('#qn-close').onclick = qnClose;
+$('#qn-more').onclick = () => { qnClose(); openNotes(); };
+$('#qn-file').addEventListener('change', async e => {
+  const fs = [...e.target.files]; e.target.value = '';
+  for (const f of fs) {
+    const im = { url: URL.createObjectURL(f), fileObj: f, name: f.name || 'img.jpg' };
+    qnImgs.push(im);
+    im.ready = compressImage(f).then(b => { im.fileObj = b; });   // 和小记一样：选图就压
+  }
+  qnRenderImgs();
+});
+function qnRenderImgs() {
+  $('#qn-imgs').innerHTML = qnImgs.map((im, i) =>
+    `<div class="cp-thumb"><img src="${im.url}" data-qnbig="${i}"><button class="cp-x" data-qnr="${i}">×</button></div>`).join('');
+}
+$('#qn-imgs').addEventListener('click', e => {
+  const r = e.target.closest('[data-qnr]');
+  if (r) { qnImgs.splice(+r.dataset.qnr, 1); qnRenderImgs(); return; }
+  const b = e.target.closest('[data-qnbig]');
+  if (b) lightbox(qnImgs[+b.dataset.qnbig].url);
+});
+$('#qn-save').onclick = async () => {
+  const text = $('#qn-text').value.trim();
+  if (!text && !qnImgs.length) { toast('写点什么吧', true); return; }
+  const b = $('#qn-save'); b.disabled = true; b.textContent = '记下…';
+  try {
+    await Promise.all(qnImgs.filter(i => i.ready).map(i => i.ready));
+    const fd = new FormData();
+    fd.append('board', $('#qn-board').value);
+    fd.append('content', text);
+    fd.append('todos', '[]');
+    fd.append('tags', JSON.stringify(
+      $('#qn-tags').value.split(/[,，\s]+/).map(x => x.trim()).filter(Boolean)));
+    qnImgs.forEach(i => fd.append('images', i.fileObj, i.name));
+    await api('/api/notes', { method: 'POST', body: fd });
+    qnClose();
+    toast('已记下');
+    if ((stack[stack.length - 1] || {}).view === 'notes') { loadFeed(); refreshNoteCounts(); }
+  } catch (e) { toast(e.message, true); }
+  b.disabled = false; b.textContent = '记下';
+};
 
 /* ================= 资料库 ================= */
 const EXT_ICON = {
@@ -3639,16 +3701,24 @@ async function loadDrillTypes() {
       `<button class="dr-lv${l.k === drLevel ? ' on' : ''}" data-drl="${l.k}">
          <b>${esc(l.name)}</b><span>${l.coef.toFixed(2)}</span></button>`).join('');
     drCoefTip();
-    box.innerHTML = d.types.map(t => {
+    // 讲义里的「解题方法」章 —— 是方法不是题型，单独摆出来（做题时的秒杀技巧就出自这里）
+    $('#dr-methods').innerHTML = (d.methods || []).length
+      ? `<div class="dr-mth"><div class="dr-mth-t">📐 解题方法（讲义第一章）</div>
+          ${d.methods.map(m => `<div class="dr-mth-i">· ${esc(m)}</div>`).join('')}</div>` : '';
+    $('#dr-missing').innerHTML = d.missing
+      ? `<div class="dr-miss">⚠️ ${esc(d.missing)}</div>` : '';
+    box.innerHTML = d.types.map((t, i) => {
       const done = t.n > 0;
       const weak = done && t.acc < Math.round(drCoef * 100);   // 低于这个难度的预期得分率 = 薄弱
       return `<div class="dr-card${weak ? ' weak' : ''}" data-drt="${esc(t.type)}">
         <div class="dr-card-h">
-          <b>${esc(t.type)}</b>
+          <b><span class="dr-no">${t.ord + 1}</span>${esc(t.type)}</b>
           ${done ? `<span class="dr-acc${weak ? ' bad' : ''}">${t.acc}%</span>` : '<span class="dr-new">没练过</span>'}
         </div>
         ${t.desc ? `<p class="dr-desc">${esc(t.desc)}</p>` : ''}
-        <div class="dr-meta">${done ? `做过 ${t.n} 题 · 平均 ${t.sec} 秒${t.sec > drLimit ? '（超时）' : ''}` : `限时 ${drLimit} 秒/题`}</div>
+        <div class="dr-meta">
+          <span class="dr-eng ${t.eng}">${t.eng === 'prog' ? '程序出题' : 'AI 出题'}</span>
+          ${done ? `做过 ${t.n} 题 · 平均 ${t.sec} 秒${t.sec > drLimit ? '（超时）' : ''}` : `限时 ${drLimit} 秒/题`}</div>
       </div>`;
     }).join('') + `<div class="dr-card dr-all" data-drt=""><div class="dr-card-h"><b>🎲 混合练</b></div>
       <p class="dr-desc">所有题型随机出，模拟真实考场</p><div class="dr-meta">限时 ${drLimit} 秒/题</div></div>`;
@@ -6519,6 +6589,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   main.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
 
   $('#fab-ai').onclick = () => { fabClose(); openAI(); };
+  $('#fab-note').onclick = () => { fabClose(); qnOpen(); };   // 📒 随手记（浮层，不跳走）
   $('#fab-pad').onclick = () => { fabClose(); padToggle(); };
   document.addEventListener('pointerdown', e => {          // 点别处收起扇出
     if (fab.classList.contains('open') && !e.target.closest('#fab')) fabClose();
