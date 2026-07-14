@@ -2293,20 +2293,15 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
   opacity:0;transform:scale(.4);pointer-events:none;transition:transform .22s cubic-bezier(.2,1.4,.4,1),opacity .18s;}
 #fab-pad{background:linear-gradient(135deg,#f0a500,#e07b39);box-shadow:0 4px 14px rgba(224,123,57,.42);}
 .fab.open .fab-act{opacity:1;pointer-events:auto;}
-/* 扇出：四个工具均分一个 90° 扇面（0°/30°/60°/90°，半径 68px）。
-   每个按钮只声明自己的偏移量，正负号由球所在的象限翻转 —— 以后加第五个工具，再给一组 --fx/--fy 就行。 */
-#fab-ai   {--fx:68px; --fy:0px;}
-#fab-mark {--fx:59px; --fy:34px;}
-#fab-read {--fx:34px; --fy:59px;}
-#fab-pad  {--fx:0px;  --fy:68px;}
+/* 扇出：每个工具声明自己的偏移量（--fx/--fy），正负号由球所在的象限翻转，
+   所以加工具只要再给一组变量，不用写 4 条象限规则。 */
+#fab-ai   {--fx:64px; --fy:0px;}
+#fab-pad  {--fx:0px;  --fy:64px;}
 .fab.open.dir-r .fab-act{--sx:1;}
 .fab.open.dir-l .fab-act{--sx:-1;}
 .fab.open.dir-dn .fab-act{--sy:1;}
 .fab.open.dir-up .fab-act{--sy:-1;}
 .fab.open .fab-act{transform:translate(calc(var(--fx,0px) * var(--sx,1)), calc(var(--fy,0px) * var(--sy,1)));}
-#fab-read{background:linear-gradient(135deg,#2fa36c,#1e8449);box-shadow:0 4px 14px rgba(30,132,73,.42);}
-.fab.dir-l #fab-read i{right:52px;}
-.fab.dir-r #fab-read i{left:52px;}
 .fab-act i{position:absolute;font-style:normal;font-size:11px;font-weight:600;white-space:nowrap;
   background:rgba(20,30,50,.82);color:#fff;padding:2px 7px;border-radius:20px;
   top:50%;transform:translateY(-50%);opacity:0;transition:opacity .18s;}
@@ -2540,11 +2535,16 @@ mark.nw-mk.flash{animation:nwflash 1.2s ease;}
 .ck-origin{font-family:"Kaiti SC","STKaiti","KaiTi",serif;font-size:15.5px;line-height:2;}
 .ck-story{font-size:15px;line-height:2;text-align:justify;}
 
-/* ================= 通用划重点：悬浮球工具之一 ================= */
-#fab-mark{background:linear-gradient(135deg,#f0a500,#e0632f);box-shadow:0 4px 14px rgba(224,99,47,.42);}
-/* 扇出位移见上面的 --fx/--fy（四个工具均分 90° 扇面），这里只管配色和标签 */
-.fab.dir-l #fab-mark i{right:52px;}
-.fab.dir-r #fab-mark i{left:52px;}
+/* ================= 划重点（按模块，入口在各模块页里，不在悬浮球） ================= */
+.mk-card{border:1px solid var(--line);border-radius:14px;background:var(--card);
+  padding:14px 16px;margin:0 0 14px;}
+.mk-card-t{font-size:14px;font-weight:700;color:#1a6fb5;padding-left:9px;
+  border-left:3px solid #1a6fb5;line-height:1.2;margin-bottom:9px;}
+.mk-card-p{margin:0 0 11px;font-size:13px;line-height:1.75;color:var(--muted);}
+.mk-ck{display:inline-block;margin:0 4px 3px 0;padding:1px 8px;border-radius:20px;
+  font-size:11.5px;font-weight:600;color:#fff;background:var(--mk);}
+body.dark .mk-card{background:#141b29;}
+body.dark .mk-card-t{color:#7fb0ff;border-left-color:#3a6ad0;}
 
 /* 选中一段文字就冒出来的朗读气泡（全局，任何带文字的地方都能用） */
 .sel-read{position:fixed;z-index:4200;padding:6px 11px;border:none;border-radius:20px;

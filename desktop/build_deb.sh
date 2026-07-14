@@ -6,7 +6,11 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$HERE/.."
 DIST="$ROOT/dist"
-VER="${DEB_VERSION:-3.2}"
+# 版本号只有一个来源：gongkao_native.py 里的 DESKTOP_VER。
+# （原来这里写死 3.2，还会反过来覆盖源码里的版本号 —— 改了源码不传 DEB_VERSION，
+#   打出来的包就还是老版本号，网页那边永远不提示更新。）
+SRC_VER="$(sed -n 's/^DESKTOP_VER = "\(.*\)".*/\1/p' "$HERE/gongkao_native.py")"
+VER="${DEB_VERSION:-$SRC_VER}"
 CODE="$(echo "$VER" | tr -d '.')"                      # 3.2 → 32，供网页比对版本用
 NOTES="${DEB_NOTES:-新增自动检查更新与更新提示；支持下载文件（更新包存到「下载」文件夹）。}"
 PKG="gongkao-assistant"

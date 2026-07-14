@@ -114,6 +114,8 @@ function render() {
   if (st.view !== 'docqa' && dqPoll) { clearInterval(dqPoll); dqPoll = null; }
   if (window.__padView) window.__padView(st.view);        // 做题页才出现草稿纸按钮
   if (window.__bmView) window.__bmView();                 // 阅读页：上次看到哪了
+  // 有划重点的模块，在正文顶部长出那张卡（内容是异步渲染的，等一拍再注入）
+  if (window.mkInject) setTimeout(() => mkInject(), 260);
   if (st.view !== 'slgrade' && matInited && !$('#matpad').classList.contains('hidden')) matClose();
 }
 function push(state) { stack.push(state); render(); }
@@ -5282,11 +5284,12 @@ const deskTTS = () => !!(window.__desktopTTS && window.webkit && window.webkit.m
 function deskMsg(o) {
   try { window.webkit.messageHandlers.gk.postMessage(JSON.stringify(o)); } catch (_) {}
 }
-// 引擎：piper=离线神经语音（默认，不联网、起声快）／edge=微软在线（音质最好，要联网）／espeak=机械音兜底
+// 引擎：piper=离线神经语音（默认，不联网、起声快）／edge=微软在线（音质最好，要联网）
+// ⚠️ 曾经有第三档「系统默认」= speech-dispatcher，已删除：它的 PulseAudio 输出模块会段错误
+//    （内核日志实锤 spd_pulse.so segfault），是 Ubuntu 自带组件的 bug，点一下就把朗读弄挂。
 const TTS_ENGS = [
   { id: 'piper', name: 'Piper 离线', desc: '本机合成，不联网，起声快' },
   { id: 'edge', name: '微软在线', desc: '音质最自然，需要联网' },
-  { id: 'espeak', name: '系统默认', desc: '机械音，兜底用' },
 ];
 const TTS_VOICES = [
   { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓（女）' },
@@ -5298,7 +5301,7 @@ const ttsHas = (id) => (window.__ttsEngines || []).includes(id);
 const ttsEng = () => {
   const v = localStorage.getItem('ttsEngine');
   if (v && ttsHas(v)) return v;
-  return (TTS_ENGS.find(e => ttsHas(e.id)) || {}).id || 'espeak';
+  return (TTS_ENGS.find(e => ttsHas(e.id)) || {}).id || 'piper';
 };
 const ttsVoice = () => localStorage.getItem('ttsVoice') || TTS_VOICES[0].id;
 const deskSay = (text, rate, id) =>
@@ -5457,47 +5460,10 @@ async function shareCard(card) {
   }
   toast(copied ? '已复制内容，去微信等应用粘贴即可（更新 APK 后可直接弹分享面板）' : '分享失败', !copied);
 }
-/* ---- 全局朗读：带文字的地方都能读，不用每种卡片单独接一遍 ----
-   ① 悬浮球 🔊  = 读当前这一页的正文（正文在哪、跳过哪些，复用划重点那套 mkPageRoot/MK_SKIP）
-   ② 选中文字   = 冒出「🔊 朗读选中」，只读选中的那段
-   ③ 卡片上的 🔊 = 原来就有的，保留 */
-// 划重点那个 mkText 是把文本节点直接拼成一串（它要的是连续串好定位），朗读不能这么取：
-// 标题会和正文黏成一句，而且**藏起来的兄弟面板也会被读出来**。这里按块取，并跳过看不见的。
-function readTextOf(root) {
-  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => {
-      const p = n.parentElement;
-      if (!n.nodeValue.trim() || !p || p.closest(MK_SKIP)) return NodeFilter.FILTER_REJECT;
-      if (!p.getClientRects().length) return NodeFilter.FILTER_REJECT;   // display:none 的不读
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  const BLK = 'p,li,td,th,h1,h2,h3,h4,h5,blockquote,div,section';
-  let s = '', last = null;
-  while (w.nextNode()) {
-    const n = w.currentNode;
-    const blk = n.parentElement.closest(BLK) || n.parentElement;
-    if (last && blk !== last) s += '\n';
-    s += n.nodeValue.trim();
-    last = blk;
-  }
-  return s;
-}
-
-function readPage() {
-  const root = mkPageRoot();
-  const text = root ? readTextOf(root) : '';
-  if (!text.trim()) { toast('这一页没有可朗读的文字', true); return; }
-  if (Reader.playing && Reader.card === root) { Reader.stop(); return; }
-  Reader.stop();
-  const segs = Reader.split(text);
-  if (!segs.length) { toast('这一页没有可朗读的文字', true); return; }
-  Reader.card = root;      // 记住读的是谁（再点一次 = 停），但不给整页套高亮框，太吵
-  Reader.segs = segs; Reader.idx = 0; Reader.playing = true;
-  Reader.ui(); Reader.next();
-  toast(`朗读本页 · 共 ${segs.length} 句`);
-}
-
+/* ---- 朗读：两条路，覆盖所有带文字的地方（不放进悬浮球）----
+   ① 卡片/整篇上的 🔊 —— READ_ITEM_SEL 里已经包含 .poly-reader / #viewer-reader / .cd-body
+      这些整篇容器，所以「读整篇」本来就有，不用再做一个「朗读本页」
+   ② 选中一段文字 —— 冒出「🔊 朗读选中」，只读选中的那段 */
 // 选中文字 → 冒出朗读气泡（手写笔/鼠标划选都行）
 let _selBub = null;
 function selBubHide() { if (_selBub) { _selBub.remove(); _selBub = null; } }
@@ -5829,8 +5795,6 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   main.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
 
   $('#fab-ai').onclick = () => { fabClose(); openAI(); };
-  $('#fab-mark').onclick = () => { fabClose(); markPage(); };   // 🖍 划重点（任何页面）
-  $('#fab-read').onclick = () => { fabClose(); readPage(); };   // 🔊 朗读（任何页面）
   $('#fab-pad').onclick = () => { fabClose(); padToggle(); };
   document.addEventListener('pointerdown', e => {          // 点别处收起扇出
     if (fab.classList.contains('open') && !e.target.closest('#fab')) fabClose();
@@ -7471,7 +7435,7 @@ window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」
    所以时政、常识、理论、范文、讲义、错题解析…统统适用，不用每个模块单独写一遍。
    要害：AI 挑的句子必须逐字来自原文（服务端已核对），否则在 DOM 里根本找不到。 */
 const MK_SKIP = 'button, input, textarea, select, nav, .topbar, .tk-tab, .chip, .btn, ' +
-  '.pgbar, .fab, .bm-tip, .mk-bar, mark, script, style, .cd-sec-t, .slt-sec';
+  '.pgbar, .fab, .bm-tip, .mk-bar, .mk-card, mark, script, style, .cd-sec-t, .slt-sec';
 let mkMarks = [], mkRoot = null;
 
 function mkPageRoot() {                 // 当前页面的「正文」在哪
@@ -7553,42 +7517,95 @@ function mkClear() {
   $('#mk-bar').classList.add('hidden');
   $('#mk-list').classList.add('hidden');
   document.body.classList.remove('mk-open');
+  if (window.mkInject) setTimeout(() => mkInject(), 60);   // 清完了，把「帮我划重点」的卡片长回来
 }
+/* 划重点：**按模块**做，不是一个全局按钮套所有页面。
+   每个模块划的东西根本不是一回事 —— 常识划「定义/数字/易混」（选项就改那一个字），
+   错题划「陷阱/正解」，范文划「分论点/论证/表达」。类型清单和「这个模块该看什么」
+   都由服务端 MK_PROFILES 给（GET /api/marks/profile），前端不另写一份。
+   入口是各模块页顶部自动长出来的一张卡片（和时政那张一样），不在悬浮球里。 */
+const MK_COLORS = ['#c4661f', '#1e8449', '#1a6fb5', '#7a5cc0', '#b23b2e'];
+let mkProf = null, mkProfScope = '';
+
+// 哪些页面配划重点：服务端有 profile 的都算（问一次缓存住）
+async function mkGetProf(scope) {
+  if (mkProfScope === scope && mkProf) return mkProf;
+  const d = await api('/api/marks/profile?scope=' + encodeURIComponent(scope));
+  d.color = {};
+  d.kinds.forEach((k, i) => { d.color[k.k] = MK_COLORS[i % MK_COLORS.length]; });
+  mkProf = d; mkProfScope = scope;
+  return d;
+}
+const MK_VIEWS = ['csboard', 'thboard', 'workd', 'partydict', 'policydocd', 'essayd', 'writed',
+  'wqdetail', 'slresult', 'sltype', 'boardkb', 'docqad', 'cdetail', 'ckboard', 'viewer'];
+
+// 进到有划重点的模块，就在正文顶部长出这张卡（时政那张是模块自己写的，不走这里）
+async function mkInject() {
+  const st = stack[stack.length - 1];
+  const old = document.getElementById('mk-card');
+  if (old) old.remove();
+  if (!st || !MK_VIEWS.includes(st.view)) return;
+  const root = mkPageRoot();
+  if (!root || mkText(root).replace(/\s+/g, ' ').trim().length < 120) return;   // 正文太短不值当
+  if (root.querySelector('mark.gk-mk')) return;                                  // 已经划过了
+  let p;
+  try { p = await mkGetProf(st.view); } catch (_) { return; }
+  const card = document.createElement('div');
+  card.id = 'mk-card'; card.className = 'mk-card';
+  // focus 里用 **xx** 标了要强调的词（后端写的），转成粗体，别把星号露出来
+  const bold = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  card.innerHTML = `<div class="mk-card-t">🖍 重点 · 考点</div>
+    <p class="mk-card-p">${p.focus ? bold(p.focus) + '<br>' : ''}
+      点一下，AI 按<b>「${esc(p.name)}」的考法</b>在本页标出：
+      ${p.kinds.map(k => `<span class="mk-ck" style="--mk:${p.color[k.k]}">${esc(k.k)}</span>`).join('')}</p>
+    <button class="btn primary" id="mk-go">🖍 帮我划重点</button>`;
+  root.insertBefore(card, root.firstChild);
+}
+document.addEventListener('click', e => {
+  if (e.target.closest('#mk-go')) markPage();
+});
+
 async function markPage(force) {
   if (document.querySelector('mark.gk-mk') && !force) { mkClear(); toast('已清除重点'); return; }
   if (document.querySelector('.nw-mk:not(.gk-mk)')) { toast('这页已经划过重点了'); return; }
   const root = mkPageRoot();
   const text = root ? mkText(root).replace(/\s+/g, ' ').trim() : '';
   if (!root || text.length < 60) { toast('这页没有可划的正文', true); return; }
-  toast('正在划重点…（第一次约 20 秒，之后秒开）');
+  const scope = stack[stack.length - 1].view;
+  const btn = $('#mk-go');
+  if (btn) { btn.disabled = true; btn.textContent = '划重点中…（约 20 秒）'; }
   try {
+    await mkGetProf(scope);
     const d = await api('/api/marks', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: mkText(root), scope: stack[stack.length - 1].view }),
+      body: JSON.stringify({ text: mkText(root), scope }),
     });
     mkClear();
     mkRoot = root; mkMarks = d.marks || [];
     const n = mkApply(root, mkMarks);
     if (!n) { toast('这页的正文和 AI 挑的句子对不上，换个页面试试', true); return; }
+    const c = document.getElementById('mk-card'); if (c) c.remove();
     mkRenderBar(n, !!d.cached);
     toast('划出 ' + n + ' 处重点' + (d.cached ? '（缓存）' : ''));
-  } catch (e) { toast(e.message, true); }
+  } catch (e) {
+    toast(e.message, true);
+    if (btn) { btn.disabled = false; btn.textContent = '🖍 帮我划重点'; }
+  }
 }
 function mkRenderBar(n, cached) {
+  const p = mkProf || { name: '', kinds: [], color: {} };
+  const col = (k) => p.color[k] || (NW_KIND[k] && NW_KIND[k].c) || MK_COLORS[0];
   $('#mk-bar').innerHTML = `🖍 划出 <b>${n}</b> 处重点${cached ? ' <i>· 缓存</i>' : ''}
     <button class="btn tiny" id="mk-toggle">看清单</button>
     <button class="mk-x" id="mk-clear" title="清除">✕</button>`;
   $('#mk-bar').classList.remove('hidden');
-  $('#mk-list').innerHTML = `<div class="mk-lt">🖍 重点 · 考点（${mkMarks.length} 处）</div>
-    ${mkMarks.map((m, i) => {
-      const k = NW_KIND[m.kind] || NW_KIND['提法'];
-      return `<div class="nw-m" data-mkgo="${i}" style="--mk:${k.c}">
+  $('#mk-list').innerHTML = `<div class="mk-lt">🖍 ${esc(p.name)} · 重点考点（${mkMarks.length} 处）</div>
+    ${mkMarks.map((m, i) => `<div class="nw-m" data-mkgo="${i}" style="--mk:${col(m.kind)}">
         <span class="nw-k">${esc(m.kind)}</span>
         <span class="nw-q">${esc(m.quote)}</span>
-        <span class="nw-w">${esc(m.why || '')}</span></div>`;
-    }).join('')}
-    <div class="nw-legend">${Object.entries(NW_KIND).map(([k, v]) =>
-      `<span style="--mk:${v.c}"><i></i>${k}：${v.d}</span>`).join('')}</div>`;
+        <span class="nw-w">${esc(m.why || '')}</span></div>`).join('')}
+    <div class="nw-legend">${p.kinds.map(k =>
+      `<span style="--mk:${col(k.k)}"><i></i>${esc(k.k)}：${esc(k.d)}</span>`).join('')}</div>`;
 }
 document.addEventListener('click', e => {
   if (e.target.closest('#mk-clear')) { mkClear(); return; }

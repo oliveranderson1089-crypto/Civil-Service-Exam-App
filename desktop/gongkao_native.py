@@ -5,7 +5,6 @@ import base64
 import json
 import os
 import secrets
-import shutil
 import subprocess
 from shlex import quote as shlex_quote
 from urllib.parse import urlparse
@@ -22,7 +21,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "3.9"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "4.0"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -350,10 +349,16 @@ class Gongkao(Gtk.Application):
         except Exception:
             pass
 
-    # ---------------- 朗读：三档引擎 ----------------
-    # WebKit 里没有 speechSynthesis，只能借系统。espeak 是机械音（难听），所以另装了两个神经语音：
+    # ---------------- 朗读：两档引擎 ----------------
+    # WebKit 里没有 speechSynthesis，只能借系统。
     #   piper —— 离线、快（实测比实时快 10 倍）、无网络依赖，默认用它
     #   edge  —— 微软在线语音，最自然，但每句要联网合成
+    #
+    # ⚠️ 曾经还有第三档「系统默认」= speech-dispatcher（spd-say），已彻底移除：
+    #    它的 PulseAudio 输出模块会**段错误**（内核日志实锤：
+    #    `speech-dispatch[8338]: segfault at 0 ... in spd_pulse.so`，
+    #    蓝牙音频设备连接、默认音频设备切换时踩空指针），是 Ubuntu 自带组件的 bug。
+    #    崩了以后它的 socket 还在，spd-say 会一直挂着 —— 谁调谁遭殃。不碰它。
     def _tts_engines(self):
         e = {}
         p = os.path.expanduser("~/.local/piper/piper/piper")
@@ -363,8 +368,6 @@ class Gongkao(Gtk.Application):
         ed = os.path.expanduser("~/.local/tts-venv/bin/edge-tts")
         if os.path.isfile(ed):
             e["edge"] = ed
-        if shutil.which("spd-say"):
-            e["espeak"] = "spd-say"
         return e
 
     def say(self, text, rate=1.0, engine="", voice="", sid=""):
@@ -376,8 +379,11 @@ class Gongkao(Gtk.Application):
         # 只放行白名单里的音色，免得把网页传来的字符串直接拼进 shell
         self.tts_voice = voice if voice in EDGE_VOICES else EDGE_VOICES[0]
         eng = self._tts_engines()
-        pick = engine if engine in eng else ("piper" if "piper" in eng else
-                                             ("edge" if "edge" in eng else "espeak"))
+        if not eng:
+            self._toast("没装朗读引擎，跑一下 desktop/install-tts.sh")
+            self._tts_done(sid)
+            return
+        pick = engine if engine in eng else ("piper" if "piper" in eng else "edge")
         try:
             if pick == "piper":
                 p, m = eng["piper"]
@@ -402,10 +408,6 @@ class Gongkao(Gtk.Application):
                        shlex_quote(mp3), shlex_quote(mp3), shlex_quote(mp3)),
                     shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     start_new_session=True)
-            else:
-                r = int(max(-80, min(80, (rate - 1.0) * 60)))
-                self._tts = subprocess.Popen(["spd-say", "-l", "zh", "-r", str(r), "-w", "--", text],
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
             self._toast("朗读失败：%s" % str(e)[:60])
             self._tts_done(sid)
@@ -430,10 +432,9 @@ class Gongkao(Gtk.Application):
             "window.__ttsEnd&&window.__ttsEnd(%s)" % json.dumps(sid), None, None, None)
 
     def _tts_stop(self):
-        try:
-            subprocess.run(["spd-say", "-C"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
-        except Exception:
-            pass
+        # ⚠️ 这里绝不能有任何阻塞调用：它跑在 GTK 主线程上，卡一下界面就冻一下。
+        # 老代码在这里 subprocess.run(["spd-say","-C"], timeout=2) —— speech-dispatcher 一崩，
+        # 每点一次朗读界面就冻 2 秒，看着就像「桌面卡死了」。杀自己的进程组就够了。
         p = getattr(self, "_tts", None)
         if p and p.poll() is None:
             try:
