@@ -5471,6 +5471,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   main.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
 
   $('#fab-ai').onclick = () => { fabClose(); openAI(); };
+  $('#fab-mark').onclick = () => { fabClose(); markPage(); };   // 🖍 划重点（任何页面）
   $('#fab-pad').onclick = () => { fabClose(); padToggle(); };
   document.addEventListener('pointerdown', e => {          // 点别处收起扇出
     if (fab.classList.contains('open') && !e.target.closest('#fab')) fabClose();
@@ -7091,3 +7092,146 @@ window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」
     }
   }).catch(() => toast('粘贴失败', true));
 };
+
+/* ================= 通用「划重点」（悬浮球 → 🖍） =================
+   任何模块的正文都能划：不重渲染页面，而是直接在**已经渲染好的 DOM 里**找到那些句子、就地包一层 <mark>。
+   所以时政、常识、理论、范文、讲义、错题解析…统统适用，不用每个模块单独写一遍。
+   要害：AI 挑的句子必须逐字来自原文（服务端已核对），否则在 DOM 里根本找不到。 */
+const MK_SKIP = 'button, input, textarea, select, nav, .topbar, .tk-tab, .chip, .btn, ' +
+  '.pgbar, .fab, .bm-tip, .mk-bar, mark, script, style, .cd-sec-t, .slt-sec';
+let mkMarks = [], mkRoot = null;
+
+function mkPageRoot() {                 // 当前页面的「正文」在哪
+  const st = stack[stack.length - 1];
+  if (!st) return null;
+  const view = $('#view-' + st.view);
+  if (!view || view.classList.contains('hidden')) return null;
+  // 优先取常见的正文容器；找不到就整页（跳过按钮/工具栏）
+  const pick = view.querySelector('.poly-reader, .cd-wrap, #cd-wrap, .doc-blocks, .aih-scroll');
+  return pick || view;
+}
+function mkText(root) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (!n.nodeValue.trim() || n.parentElement.closest(MK_SKIP))
+      ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  });
+  let s = '';
+  while (w.nextNode()) s += w.currentNode.nodeValue;
+  return s;
+}
+function mkNodes(root) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (!n.nodeValue.trim() || n.parentElement.closest(MK_SKIP))
+      ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  });
+  const out = []; let pos = 0;
+  while (w.nextNode()) { out.push({ n: w.currentNode, start: pos }); pos += w.currentNode.nodeValue.length; }
+  return out;
+}
+function mkWrapOne(root, hit) {
+  // 每次重新取一遍节点表：上一处标注会改变 DOM，偏移必须重算
+  const nodes = mkNodes(root);
+  const k = NW_KIND[hit.kind] || NW_KIND['提法'];
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const { n, start } = nodes[i];
+    const end = start + n.nodeValue.length;
+    if (end <= hit.start || start >= hit.end) continue;
+    const s = Math.max(0, hit.start - start), e = Math.min(n.nodeValue.length, hit.end - start);
+    if (e <= s) continue;
+    const r = document.createRange();
+    r.setStart(n, s); r.setEnd(n, e);
+    const mk = document.createElement('mark');
+    mk.className = 'nw-mk gk-mk';
+    mk.style.setProperty('--mk', k.c);
+    mk.dataset.gkm = hit.i;
+    mk.title = hit.kind + '：' + (hit.why || '');
+    try { r.surroundContents(mk); } catch (_) { r.detach && r.detach(); continue; }
+    const tag = document.createElement('i');   // 右上角的小类型标签
+    tag.textContent = hit.kind;
+    mk.appendChild(tag);
+    break;                                     // 一个片段包一次就够（跨节点的下一轮再来）
+  }
+}
+function mkApply(root, marks) {
+  const full = mkText(root);
+  const hits = [];
+  marks.map((m, i) => ({ m, i })).sort((a, b) => b.m.quote.length - a.m.quote.length)   // 长句先标
+    .forEach(({ m, i }) => {
+      let from = 0, at;
+      while ((at = full.indexOf(m.quote, from)) !== -1) {
+        const end = at + m.quote.length;
+        if (!hits.some(h => at < h.end && end > h.start)) hits.push({ start: at, end, i, kind: m.kind, why: m.why });
+        from = end;
+      }
+    });
+  hits.sort((a, b) => b.start - a.start);      // 从后往前改，前面的偏移才不会失效
+  hits.forEach(h => mkWrapOne(root, h));
+  return hits.length;
+}
+function mkClear() {
+  document.querySelectorAll('mark.gk-mk').forEach(m => {
+    const i = m.querySelector('i'); if (i) i.remove();
+    const p = m.parentNode;
+    while (m.firstChild) p.insertBefore(m.firstChild, m);
+    p.removeChild(m);
+    p.normalize();
+  });
+  mkMarks = []; mkRoot = null;
+  $('#mk-bar').classList.add('hidden');
+  $('#mk-list').classList.add('hidden');
+  document.body.classList.remove('mk-open');
+}
+async function markPage(force) {
+  if (document.querySelector('mark.gk-mk') && !force) { mkClear(); toast('已清除重点'); return; }
+  if (document.querySelector('.nw-mk:not(.gk-mk)')) { toast('这页已经划过重点了'); return; }
+  const root = mkPageRoot();
+  const text = root ? mkText(root).replace(/\s+/g, ' ').trim() : '';
+  if (!root || text.length < 60) { toast('这页没有可划的正文', true); return; }
+  toast('正在划重点…（第一次约 20 秒，之后秒开）');
+  try {
+    const d = await api('/api/marks', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: mkText(root), scope: stack[stack.length - 1].view }),
+    });
+    mkClear();
+    mkRoot = root; mkMarks = d.marks || [];
+    const n = mkApply(root, mkMarks);
+    if (!n) { toast('这页的正文和 AI 挑的句子对不上，换个页面试试', true); return; }
+    mkRenderBar(n, !!d.cached);
+    toast('划出 ' + n + ' 处重点' + (d.cached ? '（缓存）' : ''));
+  } catch (e) { toast(e.message, true); }
+}
+function mkRenderBar(n, cached) {
+  $('#mk-bar').innerHTML = `🖍 划出 <b>${n}</b> 处重点${cached ? ' <i>· 缓存</i>' : ''}
+    <button class="btn tiny" id="mk-toggle">看清单</button>
+    <button class="mk-x" id="mk-clear" title="清除">✕</button>`;
+  $('#mk-bar').classList.remove('hidden');
+  $('#mk-list').innerHTML = `<div class="mk-lt">🖍 重点 · 考点（${mkMarks.length} 处）</div>
+    ${mkMarks.map((m, i) => {
+      const k = NW_KIND[m.kind] || NW_KIND['提法'];
+      return `<div class="nw-m" data-mkgo="${i}" style="--mk:${k.c}">
+        <span class="nw-k">${esc(m.kind)}</span>
+        <span class="nw-q">${esc(m.quote)}</span>
+        <span class="nw-w">${esc(m.why || '')}</span></div>`;
+    }).join('')}
+    <div class="nw-legend">${Object.entries(NW_KIND).map(([k, v]) =>
+      `<span style="--mk:${v.c}"><i></i>${k}：${v.d}</span>`).join('')}</div>`;
+}
+document.addEventListener('click', e => {
+  if (e.target.closest('#mk-clear')) { mkClear(); return; }
+  if (e.target.closest('#mk-toggle')) {
+    const on = $('#mk-list').classList.toggle('hidden');
+    $('#mk-toggle').textContent = on ? '看清单' : '收起清单';
+    document.body.classList.toggle('mk-open', !on);   // 清单铺开时把悬浮球收起来，别互相挡
+    return;
+  }
+  const go = e.target.closest('[data-mkgo]');
+  if (go) {
+    const el = document.querySelector(`mark.gk-mk[data-gkm="${go.dataset.mkgo}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 1400);
+    }
+  }
+});

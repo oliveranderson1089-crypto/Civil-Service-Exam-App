@@ -818,6 +818,11 @@ def init_db():
             PRIMARY KEY(material_id, to_user)
         );
         CREATE INDEX IF NOT EXISTS idx_mshare_to ON material_shares(to_user);
+        -- 通用「划重点」缓存：按内容哈希存，同一段内容全局只算一次（哪个模块打开都直接命中）
+        CREATE TABLE IF NOT EXISTS marks_cache(
+            ref TEXT PRIMARY KEY, scope TEXT, data_json TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         -- 书签：看到哪了（阅读类页面自动记位置，也可手动打点）
         CREATE TABLE IF NOT EXISTS bookmarks(
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
@@ -7017,6 +7022,71 @@ def mat_share_set(mid):
                    (mid, uid(), t))
     db.commit()
     return jsonify({"ok": True, "n": len(to)})
+
+
+# ---------------------------------------------------------------- 通用「划重点」
+def _mark_text(content, scope=""):
+    """让 AI 在给定文字里**逐字挑出**要害句，标出考点类型。
+       逐字是硬要求——挑出来的句子要能在原文里原样找到，否则前端标不上去；
+       服务端逐条核对，对不上的直接丢弃（宁可少标，不能标错位置）。"""
+    content = (content or "").strip()
+    if len(content) < 60:
+        return [], "这页文字太少，不用划重点"
+    prompt = (
+        "下面是一段公考备考材料（可能是时政、常识考点、理论、范文、讲义…）。"
+        "考生没时间通读，请**划重点**：挑出 4~8 处最该记的地方，"
+        "每处**必须从原文里逐字复制**（一字不差，含标点），否则没法在原文上标出来。\n\n"
+        "每处给：\n"
+        "· quote：从原文逐字复制的句子或短语（10~60 字，别整段抄）\n"
+        "· kind：只能填 提法 / 数据 / 政策 / 金句 之一\n"
+        "  （提法=新表述新概念、关键定义，常识判断爱考；数据=具体数字时间，容易出选项；"
+        "政策=文件名/举措/目标/结论；金句=可直接用进申论的表述）\n"
+        "· why：为什么要记它（一句话，讲清考点在哪，别复述原文）\n\n"
+        '只输出 JSON：{"marks":[{"quote":"","kind":"","why":""}]}\n\n【原文】\n' + content[:5000])
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是公考老师，只从原文里逐字摘句，绝不改写、不编造。严格输出 JSON。"},
+         {"role": "user", "content": prompt}], temperature=0.3, max_tokens=2000, timeout=180, json_mode=True)
+    if err:
+        return None, err
+    try:
+        got = json.loads(rep).get("marks") or []
+    except Exception:
+        return None, "AI 返回格式异常，请重试"
+    marks, seen = [], set()
+    for m in got:
+        q = (m.get("quote") or "").strip()
+        if not q or q in seen or q not in content:      # 对不上原文的直接丢
+            continue
+        seen.add(q)
+        marks.append({"quote": q,
+                      "kind": m.get("kind") if m.get("kind") in NEWS_MARK_KINDS else "提法",
+                      "why": (m.get("why") or "").strip()[:120]})
+    return marks, ("" if marks else "AI 挑出的句子和原文对不上，请重试")
+
+
+@app.post("/api/marks")
+def marks_any():
+    """通用划重点：任何模块的正文都能划。按内容哈希缓存，同一段内容全局只算一次。"""
+    d = request.get_json(silent=True) or {}
+    text = (d.get("text") or "").strip()
+    scope = (d.get("scope") or "")[:30]
+    if not text:
+        return jsonify({"error": "没有可划的正文"}), 400
+    ref = hashlib.md5(text.encode("utf-8")).hexdigest()
+    db = get_db()
+    if not d.get("force"):
+        r = db.execute("SELECT data_json FROM marks_cache WHERE ref=?", (ref,)).fetchone()
+        if r:
+            return jsonify({"marks": json.loads(r["data_json"]), "cached": True})
+    marks, err = _mark_text(text, scope)
+    if marks is None:
+        return err if isinstance(err, tuple) else (jsonify({"error": err}), 502)
+    if not marks:
+        return jsonify({"error": err or "没能划出重点"}), 502
+    db.execute("INSERT OR REPLACE INTO marks_cache(ref,scope,data_json) VALUES(?,?,?)",
+               (ref, scope, json.dumps(marks, ensure_ascii=False)))
+    db.commit()
+    return jsonify({"marks": marks})
 
 
 # ---------------------------------------------------------------- 书签（看到哪了）

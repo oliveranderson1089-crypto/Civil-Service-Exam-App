@@ -1289,10 +1289,15 @@
 
 <!-- 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；长按可拖动 -->
 <div id="fab" class="fab">
+  <button class="fab-act" id="fab-mark" title="划重点（在当前页面的正文里标出考点）">🖍<i>划重点</i></button>
   <button class="fab-act" id="fab-pad" title="草稿纸">📝<i>草稿纸</i></button>
   <button class="fab-act" id="fab-ai" title="AI 助手">AI<i>AI 助手</i></button>
   <button class="fab-main" id="fab-btn" title="工具">✦</button>
 </div>
+
+<!-- 划重点：结果条 + 重点清单 -->
+<div id="mk-bar" class="mk-bar hidden"></div>
+<div id="mk-list" class="mk-list hidden"></div>
 
 <!-- ===== 草稿纸（随时可调用；只写不识别） ===== -->
 <div id="dock-snap" class="dock-snap hidden"></div>

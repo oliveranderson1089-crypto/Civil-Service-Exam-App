@@ -2473,13 +2473,16 @@ body.dark .bm-tip{background:#1b2231;}
   border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);}
 .nw-legend span{display:flex;align-items:center;gap:5px;}
 .nw-legend i{width:10px;height:10px;border-radius:3px;background:var(--mk);}
-/* 原文里的高亮：底色淡、下划线用考点色，右上角一个小标签 */
-.nw-reader mark.nw-mk{background:color-mix(in srgb, var(--mk) 14%, transparent);
+/* 原文里的高亮：底色淡、下划线用考点色，右上角一个小标签。
+   ⚠️ 不要把选择器限定在某个容器里 —— 通用「划重点」会把 <mark> 插进任何模块的 DOM， 
+   一旦限定在 .nw-reader 下，别处的标签就没样式，会变成正文里的一个斜体字。 */
+mark.nw-mk{background:color-mix(in srgb, var(--mk) 14%, transparent);
   color:inherit;border-bottom:2px solid var(--mk);border-radius:3px;padding:1px 2px;
   position:relative;cursor:help;}
-.nw-reader mark.nw-mk i{font-style:normal;font-size:9.5px;font-weight:700;color:#fff;
-  background:var(--mk);border-radius:3px;padding:0 3px;margin-left:3px;vertical-align:2px;}
-.nw-reader mark.nw-mk.flash{animation:nwflash 1.2s ease;}
+mark.nw-mk i{font-style:normal;font-size:9.5px;font-weight:700;color:#fff;
+  background:var(--mk);border-radius:3px;padding:0 3px;margin-left:3px;vertical-align:2px;
+  white-space:nowrap;}
+mark.nw-mk.flash{animation:nwflash 1.2s ease;}
 @keyframes nwflash{0%,100%{background:color-mix(in srgb, var(--mk) 14%, transparent);}
   30%{background:color-mix(in srgb, var(--mk) 55%, transparent);}}
 .poly-readert{display:flex;align-items:center;gap:10px;}
@@ -2488,3 +2491,34 @@ body.dark .bm-tip{background:#1b2231;}
 /* 成语典故 */
 .ck-origin{font-family:"Kaiti SC","STKaiti","KaiTi",serif;font-size:15.5px;line-height:2;}
 .ck-story{font-size:15px;line-height:2;text-align:justify;}
+
+/* ================= 通用划重点：悬浮球第三个功能 ================= */
+#fab-mark{background:linear-gradient(135deg,#f0a500,#e0632f);box-shadow:0 4px 14px rgba(224,99,47,.42);}
+/* 三个功能时的扇出：左 / 上 / 左上 */
+.fab.open.dir-l.dir-up #fab-mark{transform:translate(-48px,-48px);}
+.fab.open.dir-r.dir-up #fab-mark{transform:translate(48px,-48px);}
+.fab.open.dir-l.dir-dn #fab-mark{transform:translate(-48px,48px);}
+.fab.open.dir-r.dir-dn #fab-mark{transform:translate(48px,48px);}
+.fab.dir-l #fab-mark i{right:52px;}
+.fab.dir-r #fab-mark i{left:52px;}
+
+/* 结果条：固定在顶部中间 */
+.mk-bar{position:fixed;left:50%;transform:translateX(-50%);top:calc(66px + env(safe-area-inset-top));
+  z-index:61;display:flex;align-items:center;gap:8px;padding:7px 8px 7px 13px;
+  background:var(--card);border:1px solid var(--line);border-radius:22px;
+  box-shadow:0 6px 22px rgba(20,40,80,.16);font-size:13px;}
+.mk-bar.hidden{display:none;}
+.mk-bar b{color:#e0632f;font-size:15px;}
+.mk-bar i{font-style:normal;color:var(--muted);font-size:12px;}
+.mk-bar .btn.tiny{padding:3px 10px;font-size:12.5px;}
+.mk-x{border:none;background:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 4px;}
+
+/* 重点清单：从顶部结果条下方展开 */
+.mk-list{position:fixed;left:50%;transform:translateX(-50%);top:calc(112px + env(safe-area-inset-top));
+  z-index:60;width:min(680px,calc(100vw - 28px));max-height:62vh;overflow-y:auto;
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  box-shadow:0 12px 40px rgba(20,40,80,.2);padding:12px 14px;}
+.mk-list.hidden{display:none;}
+.mk-lt{font-size:13.5px;font-weight:700;margin-bottom:6px;}
+body.dark .mk-bar,body.dark .mk-list{background:#1b2231;}
+body.mk-open .fab{display:none;}     /* 重点清单铺开时，悬浮球让位 */
