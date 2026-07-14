@@ -21,7 +21,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "3.6"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "3.7"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -107,6 +107,15 @@ class Gongkao(Gtk.Application):
             pass
         self.web.connect("decide-policy", self.on_decide)
         self.web.connect("run-file-chooser", self.on_file_chooser)   # 自己弹文件框，见下
+        self.web.connect("context-menu", self.on_context_menu)       # 右键菜单加「粘贴图片」
+
+        # 拖放：WebKitGTK 的 drop 事件里 dataTransfer.files 是空的（dragover 有效、drop 拿不到文件），
+        # 所以从 GTK 这一层接管：自己收 uri-list，读出文件内容交给网页。
+        self.web.drag_dest_set(Gtk.DestDefaults.MOTION | Gtk.DestDefaults.DROP,
+                               [Gtk.TargetEntry.new("text/uri-list", 0, 0)], Gdk.DragAction.COPY)
+        self.web.connect("drag-motion", self.on_drag_motion)
+        self.web.connect("drag-leave", self.on_drag_leave)
+        self.web.connect("drag-data-received", self.on_drag_data)
         self.web.load_uri(resolve_url())
         self.win.add(self.web)
         self.win.connect("key-press-event", self.on_key)   # F5 刷新等快捷键
@@ -122,6 +131,12 @@ class Gongkao(Gtk.Application):
             else:
                 self.web.reload()                # 刷新（和浏览器 F5 一样）
             return True
+        # Ctrl+V：剪贴板里是图片就自己接手（WebKit 往输入框粘图是粘不进去的，它只认文字）；
+        # 是文字就放行，让 WebKit 正常粘贴。
+        if ctrl and not shift and kv in (Gdk.KEY_v, Gdk.KEY_V):
+            if self.paste_image():
+                return True
+            return False
         if ctrl and kv in (Gdk.KEY_q, Gdk.KEY_Q):
             self.quit()
             return True
@@ -169,6 +184,71 @@ class Gongkao(Gtk.Application):
         dlg.destroy()
         return True
 
+    # ---------------- 拖放：GTK 层接管（WebKit 的 drop 给不到文件） ----------------
+    def on_drag_motion(self, widget, ctx, x, y, time):
+        Gdk.drag_status(ctx, Gdk.DragAction.COPY, time)
+        self._js("window.__onDragOver && window.__onDragOver()")     # 页面自己画高亮
+        return True
+
+    def on_drag_leave(self, widget, ctx, time):
+        self._js("window.__onDragLeave && window.__onDragLeave()")
+
+    def on_drag_data(self, widget, ctx, x, y, data, info, time):
+        files = []
+        for uri in (data.get_uris() or [])[:10]:
+            try:
+                p = GLib.filename_from_uri(uri)[0]
+            except Exception:
+                continue
+            if not p or not os.path.isfile(p) or os.path.getsize(p) > 60 * 1024 * 1024:
+                continue
+            with open(p, "rb") as f:
+                files.append({"name": os.path.basename(p),
+                              "data": base64.b64encode(f.read()).decode()})
+        Gtk.drag_finish(ctx, bool(files), False, time)
+        self._js("window.__onDragLeave && window.__onDragLeave()")
+        if files:
+            self._js("window.__onDropFiles && window.__onDropFiles(%s)"
+                     % json.dumps(files, ensure_ascii=False))
+        else:
+            self._toast("这些东西读不出文件（只支持本地文件）")
+
+    # ---------------- 剪贴板里的图片：Ctrl+V / 右键粘贴 ----------------
+    def _clip_image_b64(self):
+        """剪贴板里有图就返回 PNG 的 base64；没有返回 None。
+           WebKit 往 <textarea> 里粘图是粘不进去的（它只认文字），所以得从 GTK 这层拿。"""
+        clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        if not clip.wait_is_image_available():
+            return None
+        pb = clip.wait_for_image()
+        if not pb:
+            return None
+        ok, buf = pb.save_to_bufferv("png", [], [])
+        return base64.b64encode(buf).decode() if ok else None
+
+    def paste_image(self):
+        b64 = self._clip_image_b64()
+        if not b64:
+            return False
+        self._js("window.__onPasteImage && window.__onPasteImage('data:image/png;base64,%s')" % b64)
+        return True
+
+    def on_context_menu(self, web, menu, event, hit):
+        """剪贴板里有图时，右键菜单加一项「粘贴图片」——WebKit 自带的「粘贴」只粘文字。"""
+        if not self._clip_image_b64():
+            return False
+        act = Gio.SimpleAction.new("gk-paste-image", None)
+        act.connect("activate", lambda *a: self.paste_image())
+        item = WebKit2.ContextMenuItem.new_from_gaction(act, "粘贴图片", None)
+        menu.append(item)
+        return False
+
+    def _js(self, code):
+        try:
+            self.web.run_javascript(code, None, None, None)
+        except Exception:
+            pass
+
     def on_msg(self, ucm, result):
         """网页调 window.webkit.messageHandlers.gk.postMessage(JSON) → 这里执行。
            目前用于朗读：WebKit 里没有 speechSynthesis，借系统的 speech-dispatcher 发声。"""
@@ -212,7 +292,7 @@ class Gongkao(Gtk.Application):
                 if code != 0:                       # 用户取消了
                     return
                 uri = results.get("uri") or ""
-                p = GLib.filename_from_uri(uri, None)[0] if uri else ""
+                p = GLib.filename_from_uri(uri)[0] if uri else ""
                 if not p or not os.path.exists(p):
                     self._toast("截图没拿到文件")
                     return

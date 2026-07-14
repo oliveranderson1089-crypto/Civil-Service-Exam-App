@@ -482,11 +482,17 @@ APK_NOTES="这次改了什么" ./make_apk.sh
 | **朗读** | 实测 **WebKitGTK 根本没有 `speechSynthesis`** —— 浏览器朗读接口不存在，按钮点了必然没反应 | 网页 → 壳消息桥（`window.webkit.messageHandlers.gk`），借系统 **speech-dispatcher（`spd-say`）** 发声，注入 `window.__desktopTTS` 告诉网页「这里能朗读」|
 | **文件选择框** | WebKit 会把网页 `accept` 里混着的 `image/*` 和 `.pdf/.docx` **过滤成只剩图片** —— 上传真题时就只能选图片 | 接管 `run-file-chooser`，自己给全套过滤器（文档+图片 / 文档 / 图片 / 所有文件）|
 | **截图** | 浏览器抓不了 OS 屏幕；GNOME 自己的 `org.gnome.Shell.Screenshot` **被禁**（`AccessDenied`）| 走官方门路 **xdg-desktop-portal** 的 `Screenshot(interactive=true)`，GNOME 弹自己的区域选择（鼠标/手写笔都能拖），图片以 data URL 回调 `window.__onShot()` |
+| **拖放文件** | WebKitGTK 的 `drop` 事件里 **`dataTransfer.files` 是空的**（`dragover` 有效、高亮会亮，但 drop 拿不到文件）| 在 GTK 层接管：`drag_dest_set` 收 `text/uri-list` → 读文件 → base64 交给 `window.__onDropFiles()`，网页按当前页面路由（资料库 / 真题卷 / AI 附件）|
+| **粘贴图片** | WebKit 往 `<textarea>` 里 Ctrl+V 粘图**粘不进去**（它只认文字）| `on_key` 拦 Ctrl+V：剪贴板里**有图才接手**（转 PNG → `window.__onPasteImage()`），是文字就放行；右键菜单也追加一项「粘贴图片」|
 
 > ⚠️ **坑（踩过）**：portal 的 `a{sv}` 选项必须传**普通 dict**（只有值是 `GLib.Variant`）。
 > 先包成 `GLib.Variant("a{sv}", {...})` 再塞进 `(sa{sv})`，PyGObject 会把它当 dict 迭代 → `KeyError(0)`，**D-Bus 调用根本没发出去**。
 > 而异常若被 `except: pass` 吞掉，表现就是**「点了没反应」**，完全没线索。
 > 因此壳里加了 `_toast()`：**出错直接在网页上弹提示，不再静默失败**。
+
+> ⚠️ **第三个坑**：PyGObject 里 **`GLib.filename_from_uri()` 只收 1 个参数**（`GLib.filename_from_uri(uri)[0]`）。
+> 写成 `filename_from_uri(uri, None)` 会抛 `TypeError` —— 若被 `except: continue` 吃掉，
+> 表现就是「拖进来的文件读不出」「截图抓到了却拿不到文件」。**同一个错误同时藏在拖放和截图两处**。
 
 > ⚠️ **另一个坑**：悬浮球记住的位置要在**启动时和窗口变化时按当前窗口夹回可视区**（`fabClamp`），
 > 否则在更小的桌面版窗口里，球会停在窗口**外面** —— 表现是「悬浮球不见了」。

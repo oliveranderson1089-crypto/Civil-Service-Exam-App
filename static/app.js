@@ -7040,3 +7040,54 @@ function matPickMembers(members) {
     el.onclick = (e) => { if (e.target === el) done(null); };
   });
 }
+
+/* ================= 桌面版：拖放 / 粘贴图片（由壳送进来） =================
+   WebKitGTK 的 drop 事件里 dataTransfer.files 是**空的**（dragover 有效、drop 拿不到文件），
+   往输入框里 Ctrl+V 粘图也粘不进去（WebKit 只认文字）。
+   所以这两件事都由原生壳从 GTK 层拿到，再把内容送回网页。 */
+function b64ToFile(b64, name) {
+  const bin = atob(b64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new File([buf], name || ('文件_' + Date.now()));
+}
+function dropTarget() {                 // 当前该把文件丢给谁
+  const st = stack[stack.length - 1];
+  if ($('#ai-panel') && !$('#ai-panel').classList.contains('hidden')) return 'ai';
+  if (!st) return '';
+  if (st.view === 'materials') return 'materials';
+  if (st.view === 'shenlun') return 'shenlun';
+  return '';
+}
+window.__onDragOver = () => {
+  const t = dropTarget();
+  if (t === 'materials') $('#view-materials').classList.add('drag-on');
+  else if (t === 'shenlun') $('#view-shenlun').classList.add('drag-on');
+};
+window.__onDragLeave = () => {
+  $('#view-materials') && $('#view-materials').classList.remove('drag-on');
+  $('#view-shenlun') && $('#view-shenlun').classList.remove('drag-on');
+};
+window.__onDropFiles = (items) => {
+  window.__onDragLeave();
+  const files = (items || []).map(x => b64ToFile(x.data, x.name));
+  if (!files.length) return;
+  const t = dropTarget();
+  if (t === 'ai') files.forEach(f => aiHandleAttach(f));         // AI 开着 → 当附件
+  else if (t === 'shenlun') slUploadPaper(files[0]);             // 真题页 → 上传真题卷
+  else if (t === 'materials') uploadDropped(files);              // 资料库 → 传进当前分类
+  else toast('把文件拖到「资料库」「真题批改」，或先打开 AI 面板', true);
+};
+window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」
+  fetch(dataUrl).then(r => r.blob()).then(b => {
+    const f = new File([b], '粘贴的图片.png', { type: 'image/png' });
+    const st = stack[stack.length - 1];
+    if ($('#ai-panel') && !$('#ai-panel').classList.contains('hidden')) {
+      toast('正在读取图片…'); aiHandleAttach(f);
+    } else if (st && st.view === 'materials') {
+      uploadDropped([f]);
+    } else {
+      openAI(); toast('正在读取图片…'); aiHandleAttach(f);       // 其它地方：直接开 AI 并附上
+    }
+  }).catch(() => toast('粘贴失败', true));
+};

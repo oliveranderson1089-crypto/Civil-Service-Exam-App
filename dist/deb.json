@@ -1,5 +1,5 @@
 {
-  "version_code": 36,
-  "version_name": "3.6",
-  "notes": "修截图点了没反应（portal 调用参数构造错误）"
+  "version_code": 37,
+  "version_name": "3.7",
+  "notes": "新增自动检查更新与更新提示；支持下载文件（更新包存到「下载」文件夹）。"
 }
