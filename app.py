@@ -512,6 +512,15 @@ def init_db():
             UNIQUE(date, kind, content)
         );
         CREATE INDEX IF NOT EXISTS idx_sc_date ON sucai_items(date);
+        -- 专项练：资料分析/判断推理/数量关系这三块靠**练**提分（有固定题型、有秒杀技巧、要计时），
+        -- 不像常识靠背。每做一题记一条，用来算「哪个题型最弱、平均要花多久」，弱的排前面。
+        CREATE TABLE IF NOT EXISTS drill_log(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL, board TEXT, qtype TEXT,
+            correct INTEGER DEFAULT 0, seconds REAL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_dr_u ON drill_log(user_id, board, qtype);
         -- 成文：把散落的素材真正写成一篇大作文（不然素材背了也不会用）
         --   mode=daily    按「素材日期」成文，一天一篇，用当天更新的那批素材
         --   mode=compose  综合应用，AI 自己选题，跨全部素材库挑最合适的
@@ -629,6 +638,9 @@ def init_db():
     # ai_chats 补 starred（置顶）
     if "starred" not in _cols(con, "ai_chats"):
         con.execute("ALTER TABLE ai_chats ADD COLUMN starred INTEGER DEFAULT 0")
+    # 应用文比大作文多一层：得先有「文种 + 发文场景 + 我是谁 + 写给谁」才谈得上选素材
+    if "spec" not in _cols(con, "daily_essays"):
+        con.execute("ALTER TABLE daily_essays ADD COLUMN spec TEXT")
     # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
     if "mat_boards" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
@@ -3831,12 +3843,162 @@ def _write_gen(db, mode, date):
 
 def _e_row(r):
     d = dict(r)
-    for k in ("outline", "used"):
+    for k in ("outline", "used"):        # 应用文的 outline 存的是逐段批注 segs
         try:
             d[k] = json.loads(d.get(k) or "[]")
         except Exception:
             d[k] = []
+    try:
+        d["spec"] = json.loads(d.get("spec") or "{}")
+    except Exception:
+        d["spec"] = {}
     return d
+
+
+# ---------------------------------------------------------------- 应用文成文
+# 应用文和大作文**根本不是一回事**：大作文考「怎么论证」，应用文考「格式 + 要点 + 语言得体」。
+# 所以不能照搬那套「给一堆素材让它写」——必须先定三件事：
+#   ① 文种（通知？倡议书？讲话稿？）—— 决定格式骨架和语气
+#   ② 发文场景（就什么事发文）    —— 决定要点从哪来
+#   ③ 我是谁 / 写给谁            —— 决定称谓、语气、能不能用「请遵照执行」这种话
+# 产出也不一样：正文之外**必须给逐段批注**（这段是哪个部件、为什么这么写），
+# 不然就又是一篇「看完不知道怎么学」的范文。
+GW_DOCTYPES = [
+    ("通知", "上级发给下级，告知事项并要求落实", "标题（发文机关+事由+文种）/ 主送机关 / 正文（缘由→事项→要求）/ 落款", 400, 600),
+    ("倡议书", "面向公众发出号召，靠感染力不靠命令", "标题 / 称谓 / 正文（缘由→倡议内容分条→号召）/ 落款", 400, 600),
+    ("讲话稿", "领导在某场合讲，有听众、有现场感", "标题 / 称谓（同志们）/ 正文（开场→分条讲→结尾鼓劲）/ 无落款", 500, 800),
+    ("倡议宣传稿", "贴在社区/发在公众号，给群众看的", "标题 / 正文（引出→讲清楚→号召）/ 落款", 400, 600),
+    ("工作简报", "把一段工作说清楚，给上级看", "标题 / 正文（概述→做法分条→成效）/ 落款", 400, 600),
+    ("建议书", "向某单位提意见，要有理有据", "标题 / 称谓 / 正文（问题→建议分条→结语）/ 落款", 400, 600),
+    ("调研报告", "调查了什么、发现什么、建议什么", "标题 / 正文（背景→现状→问题→建议）/ 落款", 500, 800),
+    ("短评", "就一件事表态，观点鲜明，篇幅短", "标题 / 正文（亮观点→析原因→提办法）", 300, 500),
+]
+GW_MAP = {d[0]: d for d in GW_DOCTYPES}
+
+
+@app.get("/api/write/gwspec")
+def write_gwspec():
+    """文种清单 + 推荐的发文场景（从最近的概括句话题和时政标题里来，不用自己想）。"""
+    db = get_db()
+    scenes = [r[0] for r in db.execute(
+        "SELECT DISTINCT topic FROM gaikuo_items WHERE topic!='' ORDER BY date DESC LIMIT 10")]
+    for r in db.execute("SELECT title FROM news_items ORDER BY id DESC LIMIT 6"):
+        t = (r[0] or "").split("｜")[-1].strip()
+        if t and len(t) <= 22 and t not in scenes:
+            scenes.append(t)
+    return jsonify({
+        "doctypes": [{"k": d[0], "d": d[1], "fmt": d[2], "min": d[3], "max": d[4]} for d in GW_DOCTYPES],
+        "scenes": scenes[:12],
+    })
+
+
+def _gen_yingyong(db, spec):
+    doctype = spec.get("doctype") or "通知"
+    if doctype not in GW_MAP:
+        return None, (jsonify({"error": "不认识这个文种"}), 400)
+    scene = (spec.get("scene") or "").strip()
+    role = (spec.get("role") or "").strip()
+    audience = (spec.get("audience") or "").strip()
+    if not scene:
+        return None, (jsonify({"error": "得先说清楚就什么事发文"}), 400)
+    _, desc, fmt, wmin, wmax = GW_MAP[doctype]
+
+    # 公文规范表述按「结构部件」归好类了（开头·缘由 / 主体·举措 / 结尾·号召…），正好是骨架
+    gw = [dict(r) for r in db.execute(
+        "SELECT scene, phrases, doctype FROM gongwen_items ORDER BY id")]
+    pool = "\n".join("· 【%s】%s" % (g["scene"], g["phrases"]) for g in gw)
+    # 场景相关的素材（有就用，没有不强求）
+    kw = "%" + scene[:6] + "%"
+    facts = [dict(r) for r in db.execute(
+        "SELECT sentence FROM gaikuo_items WHERE topic LIKE ? OR sentence LIKE ? LIMIT 5", (kw, kw))]
+    quotes = [dict(r) for r in db.execute(
+        "SELECT quote FROM xiyu_items WHERE quote LIKE ? LIMIT 3", (kw,))]
+
+    prompt = (
+        "写一篇申论**应用文**范文。\n\n"
+        "【题目设定】\n"
+        "· 文种：%s（%s）\n"
+        "· 就什么事发文：%s\n"
+        "· 我的身份：%s\n"
+        "· 写给谁看：%s\n"
+        "· 格式骨架：%s\n"
+        "· 字数：%d~%d 字（正文，不含标题落款）\n\n"
+        "【可用的规范表述】（公文的「零件」，按结构部件归好类了，请对号入座地用）\n%s\n\n"
+        "%s%s"
+        "【硬要求】\n"
+        "1. **格式必须对**：该有标题就有标题、该有称谓就有称谓、该有落款就有落款。"
+        "落款单位用「××」代替（不要编真单位名）。\n"
+        "2. **语气必须对身份**：上级发下级可以「请遵照执行」；面向群众的倡议书**不能用命令口气**，"
+        "要靠感染力；讲话稿要有现场感（同志们、大家）。\n"
+        "3. 正文要点**分条写**（一是…二是…／1. 2. 3.），每条先亮做法再讲怎么落地，不要空喊。\n"
+        "4. 上面的规范表述要**用进去**，别自己造大白话。\n\n"
+        "【最重要的一条】除了正文，还要给**逐段批注**：把全文拆成若干段，每段说清楚\n"
+        "· part：这一段是哪个部件（标题 / 称谓 / 开头·缘由 / 主体·举措 / 主体·成效 / 结尾·号召 / 结尾·要求 / 落款 …）\n"
+        "· text：这一段的原文（**从正文里逐字复制**，一字不差）\n"
+        "· why：为什么这么写、阅卷看的是什么（一句话，讲考点，别复述原文）\n"
+        "—— 没有批注的范文，看完还是不知道怎么学。\n\n"
+        "只输出 JSON：\n"
+        '{"title":"","content":"全文（含标题、称谓、落款，用 \\\\n 分行）",'
+        '"segs":[{"part":"","text":"","why":""}],"note":"一句话说明这个文种最容易丢分的地方"}'
+        % (doctype, desc, scene, role or "某机关工作人员", audience or "相关单位/群众", fmt,
+           wmin, wmax, pool,
+           ("【这个话题的规范表述】\n" + "\n".join("· " + f["sentence"] for f in facts) + "\n\n") if facts else "",
+           ("【可用金句】\n" + "\n".join("· " + q["quote"] for q in quotes) + "\n\n") if quotes else ""))
+
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论阅卷组的应用文范文作者。格式是第一位的，"
+                                       "语气要合身份。严格输出 JSON。"},
+         {"role": "user", "content": prompt}],
+        temperature=0.5, max_tokens=3500, timeout=300, json_mode=True)
+    if err:
+        return None, err
+    try:
+        d = json.loads(rep)
+    except Exception:
+        return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
+    content = (d.get("content") or "").strip()
+    if not content:
+        return None, (jsonify({"error": "AI 没写出正文，请重试"}), 502)
+
+    # 批注的 text 必须真的来自正文，否则点了跳不过去、也说明它在瞎编
+    flat = re.sub(r"\s", "", content)
+    segs = []
+    for s in (d.get("segs") or []):
+        t = (s.get("text") or "").strip()
+        if not t or re.sub(r"\s", "", t) not in flat:
+            continue
+        segs.append({"part": (s.get("part") or "").strip()[:12],
+                     "text": t, "why": (s.get("why") or "").strip()[:140]})
+    # 用了哪些规范表述：直接回正文里扫（别问 AI，它虚报也漏报）
+    used = []
+    for g in gw:
+        hit = [p for p in re.split(r"[、,，]", g["phrases"])
+               if len(p.replace("…", "").strip()) >= 2
+               and all(x in content for x in p.split("…") if len(x.strip()) >= 2)]
+        if hit:
+            used.append({"sec": g["scene"], "text": "、".join(hit[:4])})
+
+    words = len(re.sub(r"\s", "", content))
+    date = time.strftime("%Y-%m-%d %H:%M:%S")
+    db.execute("INSERT INTO daily_essays(mode,date,topic,title,outline,content,words,used,note,spec) "
+               "VALUES('yingyong',?,?,?,?,?,?,?,?,?)",
+               (date, doctype, (d.get("title") or "").strip(),
+                json.dumps(segs, ensure_ascii=False), content, words,
+                json.dumps(used, ensure_ascii=False), (d.get("note") or "").strip(),
+                json.dumps({"doctype": doctype, "scene": scene, "role": role,
+                            "audience": audience}, ensure_ascii=False)))
+    db.commit()
+    eid = db.execute("SELECT id FROM daily_essays WHERE mode='yingyong' AND date=?", (date,)).fetchone()[0]
+    return eid, None
+
+
+@app.post("/api/write/yingyong")
+def write_yingyong():
+    db = get_db()
+    eid, err = _gen_yingyong(db, request.get_json(silent=True) or {})
+    if err:
+        return err
+    return jsonify(_e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()))
 
 
 @app.get("/api/write/days")
@@ -5579,7 +5741,7 @@ DTEST_QUOTA = {
 }
 
 # 图形推理 / 资料分析的程序化出题已抽到 figgen.py（题库·模拟卷也要用，见 gen_quiz.py）
-from figgen import _gen_figure_q, _gen_ziliao  # noqa: E402
+from figgen import _gen_figure_q, _gen_math_q, _gen_ziliao, _MATH_GEN  # noqa: E402
 
 def _dtest_material(db, today):
     """凑出可考素材，按板块分开给：常识/时政（常识判断）、成语实词上位词（言语理解）、我的错题（出变式题）。"""
@@ -5804,6 +5966,126 @@ def dtest_wrong():
     n = _dtest_to_wrongq(db, [it], [{"your": your, "answer": ans, "correct": False}])
     db.commit()
     return jsonify({"ok": True, "added": n})
+
+
+# ---------------------------------------------------------------- 专项练（资料/判断/数量）
+# 这三块和常识不一样：**题型固定、有套路、拼速度**。所以按题型分开刷、每题计时、
+# 做完给这一类的秒杀技巧，并统计「哪个题型最弱、平均要多久」——弱的排前面。
+# 题都是**程序化生成**的（figgen.py），答案由构造保证；AI 出这类题会算错，不用它。
+DRILL_LIMIT = {"资料分析": 60, "判断推理": 45, "数量关系": 70}     # 每题限时（秒），按真题节奏
+
+DRILL_TYPES = {
+    "资料分析": [
+        ("比重", "求某部分占整体的百分比"),
+        ("增长率", "同比/环比增长了百分之多少"),
+        ("增长量", "比去年多了多少（绝对量）"),
+        ("年均增长量", "几年间平均每年增加多少"),
+        ("倍数", "A 是 B 的几倍"),
+        ("比重变化", "占比比去年上升还是下降了几个百分点"),
+    ],
+    "判断推理": [
+        ("旋转", "图形按固定角度转"),
+        ("元素数", "点/线/块的个数成规律"),
+        ("边数", "边数递增或递减"),
+        ("线条数", "笔画/线段数成规律"),
+        ("封闭区域", "封闭区域数成规律"),
+    ],
+    "数量关系": [(k, "") for k in ("工程", "行程", "利润", "浓度", "容斥", "排列组合", "周期", "年龄")],
+}
+# 资料分析/图形推理的技巧（数量关系的技巧每道题自己带）
+DRILL_TIP = {
+    "比重": "部分 ÷ 整体。**先看单位和年份别看错**——这类题错的多半不是算错，是看错行。",
+    "增长率": "(今年 − 去年) ÷ 去年。**除的是去年**，不是今年——这是最经典的坑。",
+    "增长量": "今年 − 去年，直接减。别去套增长率公式绕远路。",
+    "年均增长量": "(末年 − 首年) ÷ **年份差**。注意年份差 = 末年 − 首年，2021→2024 是 **3** 不是 4。",
+    "倍数": "A ÷ B。问「是几倍」用除，问「多几倍」要再减 1 —— 一字之差。",
+    "比重变化": "两个比重相减，单位是**百分点**不是百分比。",
+    "旋转": "先看是不是**镜像**：镜像图形靠旋转永远得不到，这是最常见的干扰项。",
+    "元素数": "数点、数块、数交点——**数之前先想清楚数的是什么**。",
+    "边数": "边数递增/递减，或成等差。先把每个图的边数写出来再找规律。",
+    "线条数": "数线段（不是数边）。曲线和直线要分开数。",
+    "封闭区域": "被完全围起来的区域才算。**图形外面那片不算**。",
+}
+
+
+def _drill_gen(board, qtype, n):
+    """出 n 道某个题型的题。全部程序化生成，答案由构造保证。"""
+    out = []
+    for _ in range(n):
+        if board == "数量关系":
+            q = _gen_math_q(qtype if qtype in _MATH_GEN else None)
+        elif board == "判断推理":
+            q = _gen_figure_q()                       # 图形推理：随机 5 类规律
+            for _ in range(12):                       # 想要指定规律就多摇几次（生成器不收参数）
+                if not qtype or q["source"].endswith(qtype):
+                    break
+                q = _gen_figure_q()
+        else:
+            q = _gen_ziliao(1)[0]
+            for _ in range(12):
+                if not qtype or q["source"].endswith(qtype):
+                    break
+                q = _gen_ziliao(1)[0]
+        q["qtype"] = q.get("source", "").split("-")[-1]
+        q.setdefault("tip", DRILL_TIP.get(q["qtype"], ""))
+        out.append(q)
+    return out
+
+
+@app.get("/api/drill/types")
+def drill_types():
+    """题型清单 + 我在每个题型上的正确率和平均用时。弱的排前面 —— 该练哪个不用自己想。"""
+    board = (request.args.get("board") or "").strip()
+    if board not in DRILL_TYPES:
+        return jsonify({"error": "这个板块没有专项练"}), 400
+    stat = {r["qtype"]: dict(r) for r in get_db().execute(
+        "SELECT qtype, COUNT(*) n, SUM(correct) ok, AVG(seconds) sec FROM drill_log "
+        "WHERE user_id=? AND board=? GROUP BY qtype", (uid(), board))}
+    items = []
+    for k, desc in DRILL_TYPES[board]:
+        s = stat.get(k) or {}
+        n = s.get("n") or 0
+        acc = round(100.0 * (s.get("ok") or 0) / n) if n else None
+        items.append({"type": k, "desc": desc, "n": n, "acc": acc,
+                      "sec": round(s.get("sec") or 0) if n else None,
+                      "tip": DRILL_TIP.get(k, "")})
+    # 排序：练过且正确率低的排最前 → 没练过的 → 练过且正确率高的
+    items.sort(key=lambda x: (x["acc"] is None) * 1000 + (x["acc"] if x["acc"] is not None else 0))
+    return jsonify({"board": board, "limit": DRILL_LIMIT.get(board, 60), "types": items})
+
+
+@app.post("/api/drill/quiz")
+def drill_quiz():
+    d = request.get_json(silent=True) or {}
+    board = (d.get("board") or "").strip()
+    if board not in DRILL_TYPES:
+        return jsonify({"error": "这个板块没有专项练"}), 400
+    qtype = (d.get("type") or "").strip()
+    n = max(1, min(20, int(d.get("n") or 5)))
+    return jsonify({"board": board, "type": qtype, "limit": DRILL_LIMIT.get(board, 60),
+                    "items": _drill_gen(board, qtype, n)})
+
+
+@app.post("/api/drill/done")
+def drill_done():
+    """交卷：记成绩（用来算薄弱题型），错题自动进错题本。"""
+    d = request.get_json(silent=True) or {}
+    board = (d.get("board") or "").strip()
+    items = d.get("items") or []
+    if board not in DRILL_TYPES or not items:
+        return jsonify({"error": "参数不对"}), 400
+    db = get_db()
+    results = []
+    for it in items:
+        ok = (it.get("your") or "") == (it.get("answer") or "")
+        db.execute("INSERT INTO drill_log(user_id,board,qtype,correct,seconds) VALUES(?,?,?,?,?)",
+                   (uid(), board, it.get("qtype") or "", 1 if ok else 0,
+                    float(it.get("seconds") or 0)))
+        results.append({"correct": ok, "your": it.get("your") or "", "answer": it.get("answer") or ""})
+    added = _dtest_to_wrongq(db, items, results)      # 做错的收进错题本，和巩固测试同一套
+    db.commit()
+    ok_n = sum(1 for r in results if r["correct"])
+    return jsonify({"ok": ok_n, "total": len(items), "wrong_added": added, "results": results})
 
 
 def _dtest_to_wrongq(db, items, results):

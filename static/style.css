@@ -1340,6 +1340,68 @@ body.dark .rv-back{border-color:#2a3345;}
 body.dark .read-item-btn{background:rgba(90,140,240,.15);}
 body.dark .empty,body.dark .cd-tip,body.dark .pd-intro{color:#7e8898;}
 body.dark .mat-meta,body.dark .aih-im,body.dark .item-py,body.dark .news-date{color:#7e8898;}
+/* ---- 专项练（资料分析 / 判断推理 / 数量关系）---- */
+.dr-types{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;}
+.dr-card{border:1px solid var(--line);border-radius:13px;background:var(--card);padding:12px 14px;cursor:pointer;
+  transition:border-color .15s,transform .1s;}
+.dr-card:hover{border-color:var(--blue);transform:translateY(-1px);}
+.dr-card.weak{border-color:#e0632f;background:#fff7f3;}       /* 正确率不到 70% 的，一眼看见 */
+.dr-card.dr-all{border-style:dashed;}
+.dr-card-h{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.dr-card-h b{font-size:15px;}
+.dr-acc{font-size:13px;font-weight:700;color:#1e8449;}
+.dr-acc.bad{color:#c2410c;}
+.dr-new{font-size:11.5px;color:var(--muted);}
+.dr-desc{margin:6px 0 0;font-size:12.5px;color:var(--muted);line-height:1.6;}
+.dr-meta{margin-top:7px;font-size:11.5px;color:var(--muted);}
+.dr-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.dr-prog{font-size:14px;}
+.dr-prog b{font-size:17px;color:var(--blue);}
+.dr-tag{margin-left:8px;padding:1px 8px;border-radius:20px;background:#eef4fb;color:#1a6fb5;font-size:11.5px;}
+.dr-clock{font-variant-numeric:tabular-nums;font-size:15px;font-weight:700;color:var(--muted);}
+.dr-clock.over{color:#c2410c;}
+.dr-verdict{margin:12px 0 8px;font-size:14px;font-weight:600;}
+.dr-verdict.ok{color:#1e8449;}
+.dr-verdict.no{color:#c2410c;}
+.dr-verdict .over,.dr-sub .over{color:#c2410c;}
+.dr-tip{margin:9px 0 12px;padding:10px 12px;border-radius:10px;background:#fff8e6;color:#8a5a00;
+  font-size:13px;line-height:1.75;}
+.dr-done{text-align:center;padding:26px 0;}
+.dr-score{font-size:40px;font-weight:800;color:var(--blue);}
+.dr-sub{margin-top:6px;font-size:13.5px;color:var(--muted);}
+.dr-wq{margin-top:8px;font-size:12.5px;color:#c2410c;}
+.dr-acts{margin-top:18px;display:flex;gap:10px;justify-content:center;}
+body.dark .dr-card{background:#141b29;}
+body.dark .dr-card.weak{background:#2a1a12;}
+body.dark .dr-tag{background:#1c2a45;color:#7fb0ff;}
+body.dark .dr-tip{background:#2a2312;color:#d8b25f;}
+
+/* ---- 应用文成文（文种 · 场景 · 身份 → 带格式批注的范文）---- */
+.gw-form{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:14px 16px;margin-bottom:16px;}
+.gw-row{margin-bottom:10px;}
+.gw-row label{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:5px;}
+.gw-row input{width:100%;}
+.gw-row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.gw-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.gw-sug{margin:-4px 0 10px;align-items:center;}
+.gw-sug-t{font-size:12px;color:var(--muted);margin-right:2px;}
+.gw-fmt{margin:-2px 0 12px;padding:9px 12px;border-radius:10px;background:#f3f7fb;
+  font-size:12.5px;line-height:1.75;color:var(--muted);}
+.gw-fmt b{color:var(--text);}
+.gw-fmt-k{display:inline-block;margin-right:6px;padding:0 6px;border-radius:5px;
+  background:#dbe8f5;color:#1a6fb5;font-size:11px;font-weight:600;}
+.gw-seg{border-left:3px solid #1a6fb5;padding:2px 0 2px 12px;margin-bottom:14px;}
+.gw-seg-p{display:inline-block;padding:1px 8px;border-radius:6px;background:#eef4fb;color:#1a6fb5;
+  font-size:11.5px;font-weight:700;margin-bottom:5px;}
+.gw-seg-t{font-size:13.8px;line-height:1.85;white-space:pre-wrap;}
+.gw-seg-w{margin-top:5px;font-size:12.5px;color:#8a5a00;background:#fff8e6;border-radius:8px;
+  padding:6px 10px;line-height:1.7;}
+body.dark .gw-form{background:#141b29;}
+body.dark .gw-fmt{background:#1a2434;}
+body.dark .gw-fmt-k{background:#1c2a45;color:#7fb0ff;}
+body.dark .gw-seg-p{background:#1c2a45;color:#7fb0ff;}
+body.dark .gw-seg-w{background:#2a2312;color:#d8b25f;}
+
 /* ---- 成文（素材 → 大作文）---- */
 .wr-bar{display:flex;align-items:center;gap:10px;margin:10px 0;flex-wrap:wrap;}
 .wr-bfmsg{font-size:12.5px;color:var(--muted);}

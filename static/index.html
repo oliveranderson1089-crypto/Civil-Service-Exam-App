@@ -603,6 +603,18 @@
     <div id="gw-list" class="gw-list"></div>
   </section>
 
+  <!-- ===== 专项练（资料分析 / 判断推理 / 数量关系）===== -->
+  <section id="view-drill" class="view hidden">
+    <div class="pd-intro">这三块靠<b>练</b>提分，不靠背：题型固定、有套路、拼速度。
+      按题型分开刷，<b>每题计时</b>，做完给这一类的秒杀技巧。<b>你最弱的题型排在最前面。</b></div>
+    <div id="dr-types" class="dr-types"></div>
+  </section>
+
+  <section id="view-drillrun" class="view hidden">
+    <div id="dr-head" class="dr-head"></div>
+    <div id="dr-body"></div>
+  </section>
+
   <!-- ===== 成文：把素材真正写成一篇大作文 ===== -->
   <section id="view-write" class="view hidden">
     <div class="tk-tabs" id="wr-tabs">
@@ -626,13 +638,26 @@
       <div id="wr-cplist" class="sl-hist"></div>
     </div>
     <div id="wr-yingyong" class="wr-pane hidden">
-      <div class="wr-todo">
-        <div class="wr-todo-ic">📋</div>
-        <div class="wr-todo-t">应用文成文</div>
-        <p>导航位先占着。应用文（通知/报告/倡议书/讲话稿…）的生成逻辑还没定
-          —— 它和大作文不一样：得先有<b>发文场景</b>和<b>身份</b>，才谈得上选素材。</p>
-        <p class="wr-todo-hint">想清楚要怎么生成，告诉我，这一栏就能填上。</p>
+      <div class="pd-intro">应用文和大作文不是一回事：大作文考<b>怎么论证</b>，应用文考<b>格式 + 要点 + 语言得体</b>。
+        所以先定「<b>什么文种 · 就什么事 · 我是谁 · 写给谁</b>」，再出范文
+        —— 而且<b>逐段带批注</b>：每段是哪个部件、为什么这么写。</div>
+      <div class="gw-form">
+        <div class="gw-row"><label>文种</label><div id="yy-types" class="gw-chips"></div></div>
+        <div class="gw-fmt" id="yy-fmt"></div>
+        <div class="gw-row"><label>就什么事发文</label>
+          <input id="yy-scene" type="text" placeholder="如：垃圾分类、老旧小区改造、防溺水宣传">
+        </div>
+        <div id="yy-scenes" class="gw-chips gw-sug"></div>
+        <div class="gw-row2">
+          <div class="gw-row"><label>我的身份</label>
+            <input id="yy-role" type="text" placeholder="如：社区居委会工作人员"></div>
+          <div class="gw-row"><label>写给谁看</label>
+            <input id="yy-aud" type="text" placeholder="如：全体社区居民"></div>
+        </div>
+        <button class="btn primary" id="yy-go">✍️ 写这一篇</button>
       </div>
+      <div class="sl-hist-head"><span>写过的</span></div>
+      <div id="yy-list" class="sl-hist"></div>
     </div>
   </section>
 

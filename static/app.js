@@ -61,6 +61,16 @@ const IC = {
 };
 // 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
 const BOARD_FEATURES = {
+  // 这三块靠练不靠背：题型固定、有套路、拼速度 → 专项练（按题型刷 + 计时 + 秒杀技巧）
+  '资料分析': [
+    { key: 'drill', name: '专项练', desc: '6 类题型 · 计时 · 速算技巧 · 薄弱优先', icon: 'target' },
+  ],
+  '判断推理': [
+    { key: 'drill', name: '专项练', desc: '图形推理 5 类规律 · 计时 · 薄弱优先', icon: 'target' },
+  ],
+  '数量关系': [
+    { key: 'drill', name: '专项练', desc: '8 类题型 · 计时 · 秒杀技巧 · 薄弱优先', icon: 'target' },
+  ],
   '常识判断': [
     { key: 'changshi', name: '常识积累', desc: '人文/科技/法律… 七大板块 每日更新', icon: 'bulb' },
   ],
@@ -97,8 +107,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -443,6 +453,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'news') openNews();
   else if (c.dataset.feat === 'gaikuo') openGaikuo();
   else if (c.dataset.feat === 'gongwen') openGongwen();
+  else if (c.dataset.feat === 'drill') openDrill(curBoardFeat);
   else if (c.dataset.feat === 'write') openWrite('daily');
   else if (c.dataset.feat === 'wapp') openWrite('yingyong');
   else if (c.dataset.feat === 'sucai') openSucai('全部');
@@ -3265,6 +3276,139 @@ document.addEventListener('click', e => {
   }
 });
 
+/* ============= 专项练（资料分析 / 判断推理 / 数量关系）=============
+   这三块和常识不一样：题型固定、有套路、拼速度 —— 靠练不靠背。
+   所以：按题型分开刷 + 每题计时 + 做完给这一类的秒杀技巧 + 薄弱题型排最前。
+   题全是程序化生成的（figgen.py），答案由构造保证。 */
+let drBoard = '', drType = '', drItems = [], drIdx = 0, drAns = [], drSec = [], drT0 = 0, drTimer = 0, drLimit = 60;
+
+function openDrill(board) {
+  drBoard = board;
+  push({ view: 'drill', title: board + ' · 专项练' });
+  loadDrillTypes();
+}
+async function loadDrillTypes() {
+  const box = $('#dr-types');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/drill/types?board=' + encodeURIComponent(drBoard));
+    drLimit = d.limit;
+    box.innerHTML = d.types.map(t => {
+      const done = t.n > 0;
+      const weak = done && t.acc < 70;
+      return `<div class="dr-card${weak ? ' weak' : ''}" data-drt="${esc(t.type)}">
+        <div class="dr-card-h">
+          <b>${esc(t.type)}</b>
+          ${done ? `<span class="dr-acc${weak ? ' bad' : ''}">${t.acc}%</span>` : '<span class="dr-new">没练过</span>'}
+        </div>
+        ${t.desc ? `<p class="dr-desc">${esc(t.desc)}</p>` : ''}
+        <div class="dr-meta">${done ? `做过 ${t.n} 题 · 平均 ${t.sec} 秒${t.sec > drLimit ? '（超时）' : ''}` : `限时 ${drLimit} 秒/题`}</div>
+      </div>`;
+    }).join('') + `<div class="dr-card dr-all" data-drt=""><div class="dr-card-h"><b>🎲 混合练</b></div>
+      <p class="dr-desc">所有题型随机出，模拟真实考场</p><div class="dr-meta">限时 ${drLimit} 秒/题</div></div>`;
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#dr-types').addEventListener('click', e => {
+  const c = e.target.closest('[data-drt]'); if (!c) return;
+  drStart(c.dataset.drt);
+});
+
+async function drStart(type) {
+  drType = type;
+  try {
+    const d = await api('/api/drill/quiz', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ board: drBoard, type, n: 5 }),
+    });
+    drItems = d.items; drLimit = d.limit; drIdx = 0; drAns = []; drSec = [];
+    push({ view: 'drillrun', title: (type || '混合') + ' · 专项练' });
+    drRender();
+  } catch (e) { toast(e.message, true); }
+}
+
+function drRender() {
+  clearInterval(drTimer);
+  if (drIdx >= drItems.length) { drResult(); return; }
+  const it = drItems[drIdx];
+  const isFig = !!(it.figs && it.figs.seq);
+  $('#dr-head').innerHTML = `
+    <div class="dr-prog">第 <b>${drIdx + 1}</b> / ${drItems.length} 题
+      <span class="dr-tag">${esc(it.qtype || '')}</span></div>
+    <div class="dr-clock" id="dr-clock">0 秒</div>`;
+  const opts = isFig
+    ? it.figs.opts.map((svg, j) => `<button class="dt-opt dt-figo" data-dro="${DT_L[j]}">
+        <span class="dt-figl">${DT_L[j]}</span>${svg}</button>`).join('')
+    : (it.options || []).map((o, j) => `<button class="dt-opt" data-dro="${DT_L[j]}">${esc(o)}</button>`).join('');
+  const seq = isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : '';
+  _dtLastMat = '';                                    // 每题独立渲染材料，别被上一题的缓存吃掉
+  $('#dr-body').innerHTML = `<div class="dt-q">${dtMaterial(it.material, drIdx)}
+    <div class="dt-qt">${esc(it.q)}</div>${seq}
+    <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>
+    <div id="dr-exp"></div></div>`;
+  drT0 = Date.now();
+  drTimer = setInterval(() => {
+    const s = Math.round((Date.now() - drT0) / 1000);
+    const el = $('#dr-clock'); if (!el) { clearInterval(drTimer); return; }
+    el.textContent = s + ' 秒';
+    el.classList.toggle('over', s > drLimit);        // 超时只是提醒，不打断（考场上超时也得做完）
+  }, 500);
+}
+
+$('#dr-body').addEventListener('click', e => {
+  const b = e.target.closest('[data-dro]');
+  if (b) { drPick(b.dataset.dro); return; }
+  if (e.target.closest('#dr-next')) { drIdx++; drRender(); }
+});
+
+function drPick(letter) {
+  if (drAns[drIdx] !== undefined) return;             // 已经答过了
+  clearInterval(drTimer);
+  const it = drItems[drIdx];
+  const sec = (Date.now() - drT0) / 1000;
+  drAns[drIdx] = letter; drSec[drIdx] = sec;
+  const ok = letter === it.answer;
+  document.querySelectorAll('#dr-body [data-dro]').forEach(b => {
+    b.disabled = true;
+    if (b.dataset.dro === it.answer) b.classList.add('correct');
+    else if (b.dataset.dro === letter) b.classList.add('wrong');
+  });
+  const over = sec > drLimit;
+  $('#dr-exp').innerHTML = `
+    <div class="dr-verdict ${ok ? 'ok' : 'no'}">${ok ? '✅ 对了' : '❌ 错了'}
+      · 用时 <b class="${over ? 'over' : ''}">${sec.toFixed(0)} 秒</b>${over ? `（限时 ${drLimit} 秒，慢了）` : ''}
+      · 正确答案 <b>${esc(it.answer)}</b></div>
+    <div class="dt-exp">${esc(it.explain || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</div>
+    ${it.tip ? `<div class="dr-tip">⚡ <b>秒杀技巧</b>：${esc(it.tip).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}</div>` : ''}
+    <button class="btn primary" id="dr-next">${drIdx + 1 >= drItems.length ? '看结果' : '下一题 →'}</button>`;
+}
+
+async function drResult() {
+  const items = drItems.map((it, i) => ({ ...it, your: drAns[i] || '', seconds: drSec[i] || 0 }));
+  $('#dr-head').innerHTML = '';
+  $('#dr-body').innerHTML = '<p class="empty">记录中…</p>';
+  try {
+    const r = await api('/api/drill/done', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ board: drBoard, items }),
+    });
+    const avg = drSec.reduce((a, b) => a + b, 0) / (drSec.length || 1);
+    const slow = drSec.filter(s => s > drLimit).length;
+    $('#dr-body').innerHTML = `
+      <div class="dr-done">
+        <div class="dr-score">${r.ok} / ${r.total}</div>
+        <div class="dr-sub">平均用时 <b class="${avg > drLimit ? 'over' : ''}">${avg.toFixed(0)} 秒</b>
+          ${slow ? `· 有 ${slow} 题超时（限时 ${drLimit} 秒）` : `· 都在 ${drLimit} 秒内 👍`}</div>
+        ${r.wrong_added ? `<p class="dr-wq">错的 ${r.wrong_added} 题已自动进错题本</p>` : ''}
+        <div class="dr-acts">
+          <button class="btn primary" id="dr-again">🔄 再来 5 题</button>
+          <button class="btn" id="dr-back">换个题型</button>
+        </div>
+      </div>`;
+    $('#dr-again').onclick = () => drStart(drType);
+    $('#dr-back').onclick = () => { back(); loadDrillTypes(); };
+  } catch (e) { $('#dr-body').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+
 /* ============= 成文：把素材真正写成一篇大作文 ============= */
 let wrTab = 'daily', wrCur = null, wrPoll = 0;
 
@@ -3279,7 +3423,62 @@ function wrSwitch(k) {
   ['daily', 'compose', 'yingyong'].forEach(x => $('#wr-' + x).classList.toggle('hidden', x !== k));
   if (k === 'daily') loadWrDays();
   else if (k === 'compose') loadWrCompose();
+  else if (k === 'yingyong') loadWrGw();
 }
+
+/* ---- 应用文：先定「文种 · 就什么事 · 我是谁 · 写给谁」，再出带批注的范文 ---- */
+let gwSpec = null, gwType = '通知';
+async function loadWrGw() {
+  if (!gwSpec) {
+    try { gwSpec = await api('/api/write/gwspec'); } catch (e) { toast(e.message, true); return; }
+  }
+  $('#yy-types').innerHTML = gwSpec.doctypes.map(d =>
+    `<button class="chip${d.k === gwType ? ' active' : ''}" data-gwt="${esc(d.k)}">${esc(d.k)}</button>`).join('');
+  $('#yy-scenes').innerHTML = '<span class="gw-sug-t">常用：</span>' + gwSpec.scenes.map(s =>
+    `<button class="chip tiny" data-gws="${esc(s)}">${esc(s)}</button>`).join('');
+  gwFmt();
+  loadGwList();
+}
+function gwFmt() {
+  const d = gwSpec.doctypes.find(x => x.k === gwType); if (!d) return;
+  $('#yy-fmt').innerHTML = `<b>${esc(d.k)}</b>：${esc(d.d)}<br>
+    <span class="gw-fmt-k">格式骨架</span>${esc(d.fmt)} · ${d.min}~${d.max} 字`;
+}
+async function loadGwList() {
+  const box = $('#yy-list');
+  try {
+    const d = await api('/api/write/list?mode=yingyong');
+    box.innerHTML = d.items.length ? d.items.map(x => `
+      <div class="wr-day done" data-weid="${x.id}">
+        <div class="wr-day-d">${esc(x.topic || '')}</div>
+        <div class="wr-day-m"><b>${esc(x.title || '')}</b><span class="wr-w">${x.words} 字</span></div>
+      </div>`).join('') : '<p class="empty">还没写过。上面填好，点「写这一篇」。</p>';
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#wr-yingyong').addEventListener('click', e => {
+  const t = e.target.closest('[data-gwt]');
+  if (t) { gwType = t.dataset.gwt; loadWrGw(); return; }
+  const s = e.target.closest('[data-gws]');
+  if (s) { $('#yy-scene').value = s.dataset.gws; return; }
+  const c = e.target.closest('[data-weid]');
+  if (c) openWrited(+c.dataset.weid);
+});
+$('#yy-go').onclick = async () => {
+  const scene = $('#yy-scene').value.trim();
+  if (!scene) { toast('先说清楚就什么事发文', true); return; }
+  const b = $('#yy-go'); b.disabled = true; b.textContent = '写作中…（约 15 秒）';
+  try {
+    const d = await api('/api/write/yingyong', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        doctype: gwType, scene,
+        role: $('#yy-role').value.trim(), audience: $('#yy-aud').value.trim(),
+      }),
+    });
+    openWrited(d.id); loadGwList();
+  } catch (e) { toast(e.message, true); }
+  b.disabled = false; b.textContent = '✍️ 写这一篇';
+};
 $('#wr-tabs').addEventListener('click', e => {
   const b = e.target.closest('.tk-tab'); if (b) wrSwitch(b.dataset.wk);
 });
@@ -3399,14 +3598,20 @@ async function openWrited(id) {
 }
 function renderWrited() {
   const d = wrCur; if (!d) return;
-  const ok = d.words >= 1000 && d.words <= 1300;
+  const gw = d.mode === 'yingyong';           // 应用文：字数按文种走，提纲页签换成「格式批注」
+  const ok = gw ? d.words >= 250 : (d.words >= 1000 && d.words <= 1300);
+  const sp = d.spec || {};
+  document.querySelector('#wd-tabs [data-wd=outline]').textContent = gw ? '📐 格式批注' : '🧭 提纲';
+  document.querySelector('#wd-tabs [data-wd=used]').textContent = gw ? '📎 用到的规范表述' : '📎 用到的素材';
   $('#wd-head').innerHTML = `
     <h2 class="wd-title">${esc(d.title || '')}</h2>
     <div class="wd-meta">
       <span class="wr-tag">${esc(d.topic || '')}</span>
       <span class="wd-w ${ok ? '' : 'bad'}">${d.words} 字${ok ? '' : '（字数不达标）'}</span>
-      <span class="wd-src">${d.mode === 'daily' ? '📅 ' + fmtDay(d.date) + ' 的素材' : '🧩 综合应用'}</span>
-      <span class="wd-used-n">📎 用了 ${(d.used || []).length} 条素材</span>
+      <span class="wd-src">${gw
+        ? '📋 ' + esc(sp.scene || '') + (sp.role ? ' · ' + esc(sp.role) : '')
+        : (d.mode === 'daily' ? '📅 ' + fmtDay(d.date) + ' 的素材' : '🧩 综合应用')}</span>
+      <span class="wd-used-n">📎 ${(d.used || []).length} 条${gw ? '规范表述' : '素材'}</span>
     </div>
     ${d.note ? `<p class="wd-note">💡 ${esc(d.note)}</p>` : ''}`;
   $('#wd-text').innerHTML = (d.content || '').split('\n').filter(x => x.trim())
@@ -3416,10 +3621,21 @@ function renderWrited() {
   $('#wd-used').innerHTML = Object.keys(groups).length ? Object.entries(groups).map(([k, v]) => `
     <div class="wd-ug"><div class="wd-ug-t">${esc(k)}</div>
       ${v.map(t => `<div class="wd-ui">${esc(t)}</div>`).join('')}</div>`).join('')
-    : '<p class="empty">这篇没能核对出用了哪些素材。</p>';
-  $('#wd-outline').innerHTML = (d.outline || []).length
-    ? `<ol class="wd-ol">${d.outline.map(x => `<li>${esc(x)}</li>`).join('')}</ol>`
-    : '<p class="empty">没有提纲。</p>';
+    : `<p class="empty">这篇没能核对出用了哪些${gw ? '规范表述' : '素材'}。</p>`;
+  if (gw) {
+    // 应用文的重点全在这儿：每段是哪个部件、为什么这么写。看完才知道怎么学。
+    $('#wd-outline').innerHTML = (d.outline || []).length
+      ? d.outline.map(s => `<div class="gw-seg">
+          <div class="gw-seg-p">${esc(s.part || '')}</div>
+          <div class="gw-seg-t">${esc(s.text || '')}</div>
+          <div class="gw-seg-w">💡 ${esc(s.why || '')}</div>
+        </div>`).join('')
+      : '<p class="empty">没有批注。</p>';
+  } else {
+    $('#wd-outline').innerHTML = (d.outline || []).length
+      ? `<ol class="wd-ol">${d.outline.map(x => `<li>${esc(x)}</li>`).join('')}</ol>`
+      : '<p class="empty">没有提纲。</p>';
+  }
 }
 $('#wd-tabs').addEventListener('click', e => {
   const b = e.target.closest('.tk-tab'); if (!b) return;
