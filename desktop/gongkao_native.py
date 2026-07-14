@@ -7,6 +7,7 @@ import os
 import secrets
 import shutil
 import subprocess
+from shlex import quote as shlex_quote
 from urllib.parse import urlparse
 
 # 中文输入法：GTK3 要靠 im module 才能弹候选框。从桌面菜单启动时环境可能是空的，
@@ -21,11 +22,14 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "3.8"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "3.9"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
          "/usr/share/icons/hicolor/256x256/apps/gongkao-assistant.png"]
+# edge-tts 可选音色（白名单：网页传来的值要拼进 shell，不能放任）
+EDGE_VOICES = ["zh-CN-XiaoxiaoNeural", "zh-CN-YunxiNeural",
+               "zh-CN-XiaoyiNeural", "zh-CN-YunjianNeural"]
 
 
 def resolve_url():
@@ -83,11 +87,13 @@ class Gongkao(Gtk.Application):
 
         # 注入「我是桌面版 + 版本号 + 有没有系统朗读」，网页端据此走对应实现
         ucm = WebKit2.UserContentManager()
-        self.tts_ok = bool(shutil.which("spd-say"))     # WebKit 没有 speechSynthesis，只能借系统 TTS
+        self.tts_ok = bool(self._tts_engines())        # WebKit 没有 speechSynthesis，只能借系统
         try:
             ucm.add_script(WebKit2.UserScript.new(
-                "window.__desktop=true;window.__desktopVer='%s';window.__desktopTTS=%s;window.__desktopShot=true;"
-                % (DESKTOP_VER, "true" if self.tts_ok else "false"),
+                "window.__desktop=true;window.__desktopVer='%s';window.__desktopTTS=%s;"
+                "window.__desktopShot=true;window.__ttsEngines=%s;"
+                % (DESKTOP_VER, "true" if self.tts_ok else "false",
+                   json.dumps(list(self._tts_engines().keys()))),
                 WebKit2.UserContentInjectedFrames.TOP_FRAME,
                 WebKit2.UserScriptInjectionTime.START, None, None))
             ucm.register_script_message_handler("gk")   # 网页 → 壳 的桥
@@ -274,16 +280,8 @@ class Gongkao(Gtk.Application):
             return
         act = d.get("a")
         if act == "tts":
-            self._tts_stop()
-            text = (d.get("text") or "")[:4000]
-            if not text:
-                return
-            rate = int(max(-80, min(80, (float(d.get("rate") or 1.0) - 1.0) * 60)))   # 1.0 → 0
-            try:
-                self._tts = subprocess.Popen(["spd-say", "-l", "zh", "-r", str(rate), "-w", "--", text],
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
+            self.say(d.get("text") or "", float(d.get("rate") or 1.0),
+                     d.get("engine") or "", d.get("voice") or "", str(d.get("id") or ""))
         elif act == "tts_stop":
             self._tts_stop()
         elif act == "shot":
@@ -352,6 +350,85 @@ class Gongkao(Gtk.Application):
         except Exception:
             pass
 
+    # ---------------- 朗读：三档引擎 ----------------
+    # WebKit 里没有 speechSynthesis，只能借系统。espeak 是机械音（难听），所以另装了两个神经语音：
+    #   piper —— 离线、快（实测比实时快 10 倍）、无网络依赖，默认用它
+    #   edge  —— 微软在线语音，最自然，但每句要联网合成
+    def _tts_engines(self):
+        e = {}
+        p = os.path.expanduser("~/.local/piper/piper/piper")
+        m = os.path.expanduser("~/.local/piper/models/zh_CN-huayan-medium.onnx")
+        if os.path.isfile(p) and os.path.isfile(m):
+            e["piper"] = (p, m)
+        ed = os.path.expanduser("~/.local/tts-venv/bin/edge-tts")
+        if os.path.isfile(ed):
+            e["edge"] = ed
+        if shutil.which("spd-say"):
+            e["espeak"] = "spd-say"
+        return e
+
+    def say(self, text, rate=1.0, engine="", voice="", sid=""):
+        self._tts_stop()
+        text = (text or "").strip()[:2000]
+        if not text:
+            self._tts_done(sid)
+            return
+        # 只放行白名单里的音色，免得把网页传来的字符串直接拼进 shell
+        self.tts_voice = voice if voice in EDGE_VOICES else EDGE_VOICES[0]
+        eng = self._tts_engines()
+        pick = engine if engine in eng else ("piper" if "piper" in eng else
+                                             ("edge" if "edge" in eng else "espeak"))
+        try:
+            if pick == "piper":
+                p, m = eng["piper"]
+                # piper 出 raw PCM（22050Hz 单声道 16bit）→ 直接喂 aplay，边合成边播，不用等整段
+                self._tts = subprocess.Popen(
+                    "%s --model %s --output_raw --length_scale %.2f 2>/dev/null | "
+                    "aplay -q -r 22050 -f S16_LE -t raw -" % (shlex_quote(p), shlex_quote(m), 1.0 / max(.5, rate)),
+                    shell=True, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, start_new_session=True)
+                self._tts.stdin.write((text + "\n").encode("utf-8"))
+                self._tts.stdin.close()
+            elif pick == "edge":
+                # edge-tts 只吐 mp3，系统里没有 mpg123/mpv/ffplay，用 GStreamer 放（gst-launch 是 GTK 自带的）
+                pct = int((rate - 1.0) * 100)
+                mp3 = os.path.join(GLib.get_user_cache_dir(), "gongkao-assistant",
+                                   "tts-%s.mp3" % secrets.token_hex(4))
+                self._tts_tmp = mp3
+                self._tts = subprocess.Popen(
+                    "%s --voice %s --rate=%+d%% --text %s --write-media %s >/dev/null 2>&1 && "
+                    "gst-launch-1.0 -q playbin uri=file://%s >/dev/null 2>&1; rm -f %s"
+                    % (shlex_quote(eng["edge"]), self.tts_voice, pct, shlex_quote(text),
+                       shlex_quote(mp3), shlex_quote(mp3), shlex_quote(mp3)),
+                    shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True)
+            else:
+                r = int(max(-80, min(80, (rate - 1.0) * 60)))
+                self._tts = subprocess.Popen(["spd-say", "-l", "zh", "-r", str(r), "-w", "--", text],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            self._toast("朗读失败：%s" % str(e)[:60])
+            self._tts_done(sid)
+            return
+        # 网页不知道系统读完没有（原来靠按字数估时长，估短了打断、估长了卡壳）。
+        # 这里盯着进程，一退出就回调网页接着读下一句 —— 段间衔接才跟得上。
+        self._tts_sid = sid
+        proc = self._tts
+        GLib.timeout_add(200, lambda: self._tts_poll(proc, sid))
+
+    def _tts_poll(self, proc, sid):
+        if proc.poll() is None:
+            return True                      # 还在读，继续盯
+        if getattr(self, "_tts", None) is proc:
+            self._tts_done(sid)              # 只有没被新的一段顶掉时才算「自然读完」
+        return False
+
+    def _tts_done(self, sid):
+        if not sid:
+            return
+        self.web.run_javascript(
+            "window.__ttsEnd&&window.__ttsEnd(%s)" % json.dumps(sid), None, None, None)
+
     def _tts_stop(self):
         try:
             subprocess.run(["spd-say", "-C"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
@@ -360,9 +437,20 @@ class Gongkao(Gtk.Application):
         p = getattr(self, "_tts", None)
         if p and p.poll() is None:
             try:
-                p.terminate()
+                # piper/edge 走的是 shell 管道，要连整个进程组一起杀，否则 aplay 还在响
+                os.killpg(os.getpgid(p.pid), 15)
+            except Exception:
+                try:
+                    p.terminate()
+                except Exception:
+                    pass
+        t = getattr(self, "_tts_tmp", "")
+        if t:                     # 进程被杀，shell 里那句 rm 就跑不到了，这里补一刀
+            try:
+                os.remove(t)
             except Exception:
                 pass
+            self._tts_tmp = ""
 
     def on_download(self, ctx, download):
         download.connect("decide-destination", self._dl_dest)

@@ -493,11 +493,27 @@ APK_NOTES="这次改了什么" ./make_apk.sh
 | 能力 | 为什么网页做不到 | 壳怎么做 |
 |---|---|---|
 | **中文输入法** | GTK3 要靠 im module 才弹候选框；从应用菜单启动时环境可能是空的 | 在 `import gi` **之前**设 `GTK_IM_MODULE=fcitx` / `XMODIFIERS` / `QT_IM_MODULE`（必须早于 Gtk 初始化）|
-| **朗读** | 实测 **WebKitGTK 根本没有 `speechSynthesis`** —— 浏览器朗读接口不存在，按钮点了必然没反应 | 网页 → 壳消息桥（`window.webkit.messageHandlers.gk`），借系统 **speech-dispatcher（`spd-say`）** 发声，注入 `window.__desktopTTS` 告诉网页「这里能朗读」|
+| **朗读** | 实测 **WebKitGTK 根本没有 `speechSynthesis`** —— 浏览器朗读接口不存在，按钮点了必然没反应 | 网页 → 壳消息桥（`window.webkit.messageHandlers.gk`）调**系统 TTS**，三档引擎可切（见下）。壳把探测到的引擎注入 `window.__ttsEngines`，网页据此决定给不给切换 |
 | **文件选择框** | WebKit 会把网页 `accept` 里混着的 `image/*` 和 `.pdf/.docx` **过滤成只剩图片** —— 上传真题时就只能选图片 | 接管 `run-file-chooser`，自己给全套过滤器（文档+图片 / 文档 / 图片 / 所有文件）|
 | **截图** | 浏览器抓不了 OS 屏幕；GNOME 自己的 `org.gnome.Shell.Screenshot` **被禁**（`AccessDenied`）| 走官方门路 **xdg-desktop-portal** 的 `Screenshot(interactive=true)`，GNOME 弹自己的区域选择（鼠标/手写笔都能拖），图片以 data URL 回调 `window.__onShot()` |
 | **拖放文件** | WebKitGTK 的 `drop` 事件里 **`dataTransfer.files` 是空的**（`dragover` 有效、高亮会亮，但 drop 拿不到文件）| 在 GTK 层接管：`drag_dest_set` 收 `text/uri-list` → 读文件 → base64 交给 `window.__onDropFiles()`，网页按当前页面路由（资料库 / 真题卷 / AI 附件）|
 | **粘贴图片** | WebKit 往 `<textarea>` 里 Ctrl+V 粘图**粘不进去**（它只认文字）| `on_key` 拦 Ctrl+V：剪贴板里**有图才接手**（转 PNG → `window.__onPasteImage()`），是文字就放行；右键菜单也追加一项「粘贴图片」|
+
+#### 桌面版朗读引擎（三档可切）
+
+系统自带的 `spd-say`（espeak）是**机械音**，读长文很难受。所以做成三档，在「账户 → 🔊 朗读音色」里切：
+
+| 引擎 | 音质 | 联网 | 怎么放的 |
+|---|---|---|---|
+| **Piper**（默认）| 神经语音，自然 | ❌ 不用 | 出 raw PCM 直接管道喂 `aplay`，**边合成边播**不用等整段。实测 RTF **0.098**（合成 6.4 秒语音只花 0.63 秒）|
+| **微软在线** | 最自然，4 个音色可选 | ✅ 要 | `edge-tts` 出 mp3 → **GStreamer** 播（系统里没有 mpg123/mpv/ffplay，而 `gst-launch-1.0` 是 GTK 自带的）|
+| **系统默认** | 机械音 | ❌ | `spd-say`，前两个都没装时的兜底 |
+
+装引擎：`./desktop/install-tts.sh`（装到 `~/.local`，不碰系统 Python，也**不进 .deb** —— 这俩加起来 90MB）。没装也能跑，自动退回 espeak。
+
+**读长文不「一顿一顿」的关键**：段与段之间原来是**按字数估时长**推进的（估短了打断、估长了卡壳）。现在壳**盯着播放进程，真读完那一刻**才回调 `window.__ttsEnd(id)` 让网页接着读下一句，超时只作兜底。
+
+> 网页传来的音色字符串会被拼进 shell，所以走**白名单**（`EDGE_VOICES`），不在表里的一律退回默认。
 
 > ⚠️ **坑（踩过）**：portal 的 `a{sv}` 选项必须传**普通 dict**（只有值是 `GLib.Variant`）。
 > 先包成 `GLib.Variant("a{sv}", {...})` 再塞进 `(sa{sv})`，PyGObject 会把它当 dict 迭代 → `KeyError(0)`，**D-Bus 调用根本没发出去**。
@@ -580,7 +596,7 @@ systemctl --user restart gongkao-tunnel.service   # 重启隧道（网址不变�
 
 ### 3. 平台能力要先探测，别假设
 
-- **WebKitGTK 没有 `speechSynthesis`** → 朗读只能借系统 `spd-say`。
+- **WebKitGTK 没有 `speechSynthesis`** → 朗读只能借系统 TTS（见「桌面版朗读引擎」）。
 - **WebKit 的文件选择器**会把 `accept` 里混着的 `image/*` 和 `.pdf` **过滤成只剩图片**。
 - **`getCoalescedEvents()` 在部分 WebKit 上返回空表** → 不做兜底的话，一笔只剩落笔那一个点，画出来是个小点。
 - **GNOME 的 `org.gnome.Shell.Screenshot` 被禁**（`AccessDenied`），只能走 xdg-desktop-portal。

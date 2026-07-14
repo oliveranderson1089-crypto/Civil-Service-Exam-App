@@ -5116,8 +5116,56 @@ const deskTTS = () => !!(window.__desktopTTS && window.webkit && window.webkit.m
 function deskMsg(o) {
   try { window.webkit.messageHandlers.gk.postMessage(JSON.stringify(o)); } catch (_) {}
 }
-const deskSay = (text, rate) => deskMsg({ a: 'tts', text, rate });
+// 引擎：piper=离线神经语音（默认，不联网、起声快）／edge=微软在线（音质最好，要联网）／espeak=机械音兜底
+const TTS_ENGS = [
+  { id: 'piper', name: 'Piper 离线', desc: '本机合成，不联网，起声快' },
+  { id: 'edge', name: '微软在线', desc: '音质最自然，需要联网' },
+  { id: 'espeak', name: '系统默认', desc: '机械音，兜底用' },
+];
+const TTS_VOICES = [
+  { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓（女）' },
+  { id: 'zh-CN-YunxiNeural', name: '云希（男）' },
+  { id: 'zh-CN-XiaoyiNeural', name: '晓伊（女·活泼）' },
+  { id: 'zh-CN-YunjianNeural', name: '云健（男·浑厚）' },
+];
+const ttsHas = (id) => (window.__ttsEngines || []).includes(id);
+const ttsEng = () => {
+  const v = localStorage.getItem('ttsEngine');
+  if (v && ttsHas(v)) return v;
+  return (TTS_ENGS.find(e => ttsHas(e.id)) || {}).id || 'espeak';
+};
+const ttsVoice = () => localStorage.getItem('ttsVoice') || TTS_VOICES[0].id;
+const deskSay = (text, rate, id) =>
+  deskMsg({ a: 'tts', text, rate, id, engine: ttsEng(), voice: ttsVoice() });
 const deskStop = () => { if (deskTTS()) deskMsg({ a: 'tts_stop' }); };
+// 壳读完一段会回调这里（比按字数估时长准，段间衔接才不断不叠）
+window.__ttsEnd = (id) => { const f = window.Reader && Reader._deskCb; if (f && id === Reader._deskId) f(); };
+
+/* 账户页「朗读音色」：只有桌面版有得选（手机走安卓 TTS，网页走浏览器自带） */
+function ttsSetup() {
+  const sec = $('#acct-tts'); if (!sec) return;
+  const engs = TTS_ENGS.filter(e => ttsHas(e.id));
+  sec.classList.toggle('hidden', !deskTTS() || engs.length < 2);
+  if (!deskTTS()) return;
+  const cur = ttsEng();
+  $('#tts-eng-row').innerHTML = engs.map(e =>
+    `<button class="theme-opt tts-opt${e.id === cur ? ' on' : ''}" data-tts="${e.id}" title="${e.desc}">${e.name}</button>`).join('');
+  const vs = $('#tts-voice');
+  vs.classList.toggle('hidden', cur !== 'edge');       // 音色只有微软在线那档能挑
+  vs.innerHTML = TTS_VOICES.map(v =>
+    `<option value="${v.id}"${v.id === ttsVoice() ? ' selected' : ''}>${v.name}</option>`).join('');
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.tts-opt');
+  if (b) { localStorage.setItem('ttsEngine', b.dataset.tts); ttsSetup(); return; }
+  if (e.target.closest('#tts-try')) {
+    Reader.stop();
+    deskSay('金无足赤，人无完人。这是朗读试听。', 1.0, '');
+  }
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'tts-voice') { localStorage.setItem('ttsVoice', e.target.value); }
+});
 
 /* ================= 逐条朗读（安卓 TTS 桥 / 浏览器 speechSynthesis） ================= */
 // 会自动注入 🔊 按钮的内容条目选择器（新渲染的列表/卡片自动获得朗读按钮）
@@ -5167,11 +5215,16 @@ window.Reader = {
       try { window.GongkaoNative.ttsSpeak(this._waitId, seg, this.rate()); }
       catch (_) { this.stop(); }
     } else if (deskTTS()) {
-      // 电脑桌面版：WebKit 根本没有 speechSynthesis，借壳去调系统 speech-dispatcher。
-      // 它不回调「读完了」，所以按字数估个时长，到点接着读下一段。
-      deskSay(seg, this.rate());
-      const ms = Math.max(1200, seg.length * 260 / this.rate());
-      this._deskT = setTimeout(() => { if (this.playing && myGen === this.gen) { this.idx++; this.next(); } }, ms);
+      // 电脑桌面版：WebKit 根本没有 speechSynthesis，借壳去调系统 TTS（Piper/微软/espeak）。
+      // 壳读完这段会回调 __ttsEnd，接着读下一段；超时只是兜底（万一壳挂了不至于卡死）。
+      const adv = () => {
+        if (!this.playing || myGen !== this.gen) return;
+        clearTimeout(this._deskT); this._deskCb = null;
+        this.idx++; this.next();
+      };
+      this._deskId = 'r' + myGen; this._deskCb = adv;
+      deskSay(seg, this.rate(), this._deskId);
+      this._deskT = setTimeout(adv, Math.max(4000, seg.length * 600 / this.rate()));
     } else if (window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(seg);
       u.lang = 'zh-CN'; u.rate = this.rate();
@@ -5186,7 +5239,7 @@ window.Reader = {
     this.gen++;
     try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
-    deskStop(); clearTimeout(this._deskT);
+    deskStop(); clearTimeout(this._deskT); this._deskCb = null;
     setTimeout(() => this.next(), 60);
   },
   stop() {
@@ -5194,7 +5247,7 @@ window.Reader = {
     if (this.card) { this.card.classList.remove('reading-src'); this.card = null; }
     try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
     try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
-    deskStop(); clearTimeout(this._deskT);
+    deskStop(); clearTimeout(this._deskT); this._deskCb = null;
     this.ui();
   },
   ui() {
@@ -5279,6 +5332,7 @@ async function openAccount() {
     $('#acct-app-hint').classList.toggle('hidden', !IS_DESKTOP);
     $('#acct-dver').textContent = 'v' + (DESKTOP_VER || '?');
     renderSkinPrev();
+    ttsSetup();
     refreshNotifyBtn();
   } catch (e) { toast(e.message, true); }
 }
@@ -5627,7 +5681,7 @@ function applyTheme() {
 // 原生壳在系统深色模式切换时调用
 window.__onSysTheme = function (dark) { window.__sysDark = !!dark; applyTheme(); };
 document.addEventListener('click', e => {
-  const b = e.target.closest('.theme-opt'); if (!b) return;
+  const b = e.target.closest('.theme-opt'); if (!b || !b.dataset.theme) return;
   localStorage.setItem('theme', b.dataset.theme);
   applyTheme();
   toast(b.textContent.trim() + ' 已应用');

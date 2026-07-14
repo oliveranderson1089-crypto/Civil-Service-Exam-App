@@ -1,5 +1,5 @@
 {
-  "version_code": 38,
-  "version_name": "3.8",
-  "notes": "拖放上传：先解绑 WebKit 自己的拖放目标（它把 drop 吃掉了）"
+  "version_code": 32,
+  "version_name": "3.2",
+  "notes": "新增自动检查更新与更新提示；支持下载文件（更新包存到「下载」文件夹）。"
 }

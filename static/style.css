@@ -1341,6 +1341,8 @@ body.dark .read-item-btn{background:rgba(90,140,240,.15);}
 body.dark .empty,body.dark .cd-tip,body.dark .pd-intro{color:#7e8898;}
 body.dark .mat-meta,body.dark .aih-im,body.dark .item-py,body.dark .news-date{color:#7e8898;}
 .theme-row{display:flex;gap:8px;}
+#acct-tts select{width:100%;margin-top:8px;}
+#acct-tts #tts-try{margin-top:8px;}
 .theme-opt{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:11px;
   padding:11px 6px;font-size:13.5px;cursor:pointer;font-family:inherit;color:#5a6270;
   -webkit-tap-highlight-color:transparent;}
