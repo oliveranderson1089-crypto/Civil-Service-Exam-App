@@ -637,17 +637,107 @@ async function _materialize(f, fallbackType) {
 }
 /* 轻量看图浮层：就地放大，不跳走、不丢正在写的草稿（openViewerUrl 会 push 一个新视图，
    写到一半跑去看图再回来，体验很别扭）。Esc / 点背景 / 点图都能关。 */
-function lightbox(url) {
+/* 看图浮层：就地放大，不跳走（openViewerUrl 会 push 一个新视图，写到一半跑去看图再回来很别扭）。
+   ★ 草稿里的图和已发布的图**走同一条路**——原来已发布的图走 openViewerUrl（全屏阅读器），
+     草稿里的走这个浮层，所以「上传前小、上传后巨大」。统一到这里。
+   ★ 手机端支持**双指捏合缩放**；电脑端滚轮缩放、拖动平移。
+   ★ 「复制图片」是真把**图片本身**写进剪贴板（不是图片地址）—— 原来复制出来是一串 URL。 */
+function lightbox(url, name) {
   if (!url) return;
   const old = document.getElementById('lbx'); if (old) old.remove();
   const box = document.createElement('div');
   box.id = 'lbx'; box.className = 'lbx';
-  box.innerHTML = `<img src="${url}"><button class="lbx-x" title="关闭">×</button>`;
-  const close = () => { box.remove(); document.removeEventListener('keydown', esc); };
-  const esc = (e) => { if (e.key === 'Escape') close(); };
-  box.onclick = close;
-  document.addEventListener('keydown', esc);
+  box.innerHTML = `
+    <div class="lbx-bar">
+      <button class="lbx-b" data-lbx="copy" title="复制图片本身（不是地址）">⧉ 复制图片</button>
+      <a class="lbx-b" href="${url}" download="${esc(name || 'image.png')}" title="下载">⤓ 下载</a>
+      <button class="lbx-b" data-lbx="reset" title="还原大小">⤢ 还原</button>
+      <button class="lbx-b lbx-x" data-lbx="close" title="关闭（Esc）">×</button>
+    </div>
+    <div class="lbx-stage"><img id="lbx-img" src="${url}" alt=""></div>
+    <div class="lbx-hint">双指捏合 / 滚轮缩放 · 拖动平移 · 点背景关闭</div>`;
   document.body.appendChild(box);
+
+  const img = box.querySelector('#lbx-img');
+  const stage = box.querySelector('.lbx-stage');
+  let scale = 1, tx = 0, ty = 0;
+  const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`; };
+  const reset = () => { scale = 1; tx = ty = 0; apply(); };
+
+  // ⚠️ 这个键盘处理函数原来叫 esc，把全局的 esc()（HTML 转义）**遮蔽**了 ——
+  //    上面 innerHTML 里用到 esc(name) 就直接 ReferenceError。改名 onEsc。
+  const close = () => { box.remove(); document.removeEventListener('keydown', onEsc); };
+  const onEsc = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onEsc);
+
+  box.addEventListener('click', e => {
+    if (e.target === box || e.target === stage) { close(); return; }   // 点背景才关，点图不关
+    const b = e.target.closest('[data-lbx]'); if (!b) return;
+    const a = b.dataset.lbx;
+    if (a === 'close') close();
+    else if (a === 'reset') reset();
+    else if (a === 'copy') copyImage(url, b);
+  });
+
+  // 滚轮缩放（电脑端）
+  stage.addEventListener('wheel', e => {
+    e.preventDefault();
+    scale = Math.min(6, Math.max(0.4, scale * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    apply();
+  }, { passive: false });
+
+  // 双指捏合（手机端）+ 单指/鼠标拖动平移
+  const pts = new Map();
+  let d0 = 0, s0 = 1, px = 0, py = 0;
+  stage.addEventListener('pointerdown', e => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    stage.setPointerCapture(e.pointerId);
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      d0 = Math.hypot(a.x - b.x, a.y - b.y); s0 = scale;
+    } else { px = e.clientX - tx; py = e.clientY - ty; }
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d0 > 0) { scale = Math.min(6, Math.max(0.4, s0 * d / d0)); apply(); }
+    } else if (scale !== 1) {              // 没放大时不平移，免得挡住「点背景关闭」
+      tx = e.clientX - px; ty = e.clientY - py; apply();
+    }
+  });
+  const up = e => { pts.delete(e.pointerId); if (pts.size < 2) d0 = 0; };
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
+  // 双击/双击图片 = 放大/还原
+  img.addEventListener('dblclick', () => { scale = scale > 1 ? 1 : 2.2; tx = ty = 0; apply(); });
+}
+
+/* 复制图片：把**图片本身**写进剪贴板（原来复制出来只是一串 URL，粘贴到别处就是个地址）。
+   剪贴板只认 image/png，所以 jpg/webp 要先用 canvas 转一道。 */
+async function copyImage(url, btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '复制中…'; }
+  try {
+    if (!navigator.clipboard || !window.ClipboardItem) throw new Error('这个浏览器不支持复制图片');
+    const blob = await (await fetch(url)).blob();
+    let png = blob;
+    if (blob.type !== 'image/png') {          // 剪贴板只吃 png
+      const bmp = await createImageBitmap(blob);
+      const cv = document.createElement('canvas');
+      cv.width = bmp.width; cv.height = bmp.height;
+      cv.getContext('2d').drawImage(bmp, 0, 0);
+      bmp.close();
+      png = await new Promise(r => cv.toBlob(r, 'image/png'));
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    toast('图片已复制，可以直接粘贴了');
+  } catch (e) {
+    toast('复制图片失败：' + e.message, true);
+  }
+  if (btn) { btn.disabled = false; btn.textContent = label; }
 }
 
 /* 图片压缩：手机拍的图动辄 4~8MB，原样上传 → 点「发布」那一下就卡住了。
@@ -693,6 +783,8 @@ async function addDraftImages(files) {
   renderComposer();
 }
 $('#cp-imgfile').addEventListener('change', async e => { const fs = [...e.target.files]; e.target.value = ''; await addDraftImages(fs); });
+bindImgDrop(document.querySelector('.composer'), addDraftImages);      // 拖图片进编辑器
+bindImgPaste($('#cp-content'), addDraftImages);                        // Ctrl+V 粘图片
 $('#cp-camfile').addEventListener('change', async e => { const fs = [...e.target.files]; e.target.value = ''; await addDraftImages(fs); });
 $('#cp-attfile').addEventListener('change', async e => {
   const list = [...e.target.files]; e.target.value = '';
@@ -890,7 +982,7 @@ $('#feed').addEventListener('click', async e => {
     openViewerUrl(base, fl.dataset.fname, fl.dataset.ext, base + '?dl=1', ftu); return;
   }
   const im = e.target.closest('[data-img]');
-  if (im) { openViewerUrl(im.dataset.img, '图片', '.png'); return; }
+  if (im) { lightbox(im.dataset.img, '图片.png'); return; }   // 和草稿里的图走同一条路，大小一致
 });
 /* 双击小记卡片即可编辑（除点到按钮/图片/附件/勾选） */
 $('#feed').addEventListener('dblclick', e => {
@@ -900,15 +992,122 @@ $('#feed').addEventListener('dblclick', e => {
   if (it) loadDraft(it);
 });
 
+/* ---- 图片：拖进来 / 粘贴进来（小记编辑器 和 随手记浮层 都支持）----
+   原来只能点按钮选文件。资料库早就支持拖拽了，AI 早就支持 Ctrl+V 了 —— 小记没道理不支持。 */
+function bindImgDrop(el, add) {
+  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drop-on'); });
+  el.addEventListener('dragleave', e => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove('drop-on');
+  });
+  el.addEventListener('drop', e => {
+    e.preventDefault(); el.classList.remove('drop-on');
+    const fs = [...(e.dataTransfer.files || [])].filter(f => /^image\//.test(f.type));
+    if (fs.length) add(fs);
+    else if (e.dataTransfer.files && e.dataTransfer.files.length) toast('只能拖图片进来', true);
+  });
+}
+function bindImgPaste(el, add) {
+  el.addEventListener('paste', e => {
+    const items = [...((e.clipboardData || {}).items || [])];
+    const fs = items.filter(i => i.type && i.type.startsWith('image/'))
+      .map(i => i.getAsFile()).filter(Boolean);
+    if (!fs.length) return;                 // 粘的是文字 → 放行，让它正常粘进去
+    e.preventDefault();
+    add(fs);
+  });
+}
+// 桌面壳（WebKit）里 dataTransfer.files 是空的，图片由壳转成 dataURL 回调过来
+window.__onNotePasteImage = null;
+
+/* ---- 通用浮窗：标题栏拖动移位、右下角拖动改大小、位置和尺寸都记住 ----
+   （createDock 那套是给「半屏停靠面板」用的；随手记是个小窗，要的是自由摆放，两回事。） */
+function makeFloat(el, key, handle) {
+  const K = 'flt-' + key;
+  const clamp = () => {                       // 换了屏幕/缩了窗口，别把浮窗甩到看不见的地方
+    const r = el.getBoundingClientRect();
+    const x = Math.min(Math.max(8, r.left), Math.max(8, innerWidth - r.width - 8));
+    const y = Math.min(Math.max(8, r.top), Math.max(8, innerHeight - r.height - 8));
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+    el.style.right = 'auto'; el.style.bottom = 'auto';
+  };
+  const save = () => {
+    const r = el.getBoundingClientRect();
+    try { localStorage.setItem(K, JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height })); }
+    catch (_) {}
+  };
+  el.restore = () => {                        // 打开时调：恢复上次的位置和大小
+    let v = null;
+    try { v = JSON.parse(localStorage.getItem(K) || 'null'); } catch (_) {}
+    if (!v) return;                           // 没拖过 → 用 CSS 里的默认位置和大小
+    el.style.width = Math.max(280, v.w) + 'px';
+    el.style.height = Math.max(220, v.h) + 'px';
+    el.style.left = v.x + 'px'; el.style.top = v.y + 'px';
+    el.style.right = 'auto'; el.style.bottom = 'auto';
+    clamp();
+  };
+
+  // 拖标题栏 = 移动
+  let dx = 0, dy = 0, moving = false;
+  (handle || el).addEventListener('pointerdown', e => {
+    if (e.target.closest('button, select, input, textarea, a')) return;   // 别抢控件的事件
+    const r = el.getBoundingClientRect();
+    dx = e.clientX - r.left; dy = e.clientY - r.top;
+    moving = true;
+    el.style.right = 'auto'; el.style.bottom = 'auto';
+    (handle || el).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  (handle || el).addEventListener('pointermove', e => {
+    if (!moving) return;
+    el.style.left = (e.clientX - dx) + 'px';
+    el.style.top = (e.clientY - dy) + 'px';
+  });
+  (handle || el).addEventListener('pointerup', e => {
+    if (!moving) return;
+    moving = false;
+    try { (handle || el).releasePointerCapture(e.pointerId); } catch (_) {}
+    clamp(); save();
+  });
+
+  // 右下角小三角 = 改大小
+  const grip = document.createElement('div');
+  grip.className = 'flt-grip';
+  el.appendChild(grip);
+  let rw = 0, rh = 0, rx = 0, ry = 0, sizing = false;
+  grip.addEventListener('pointerdown', e => {
+    const r = el.getBoundingClientRect();
+    rw = r.width; rh = r.height; rx = e.clientX; ry = e.clientY;
+    sizing = true;
+    grip.setPointerCapture(e.pointerId);
+    e.preventDefault(); e.stopPropagation();
+  });
+  grip.addEventListener('pointermove', e => {
+    if (!sizing) return;
+    el.style.width = Math.max(300, Math.min(innerWidth - 24, rw + e.clientX - rx)) + 'px';
+    el.style.height = Math.max(240, Math.min(innerHeight - 24, rh + e.clientY - ry)) + 'px';
+  });
+  grip.addEventListener('pointerup', e => {
+    if (!sizing) return;
+    sizing = false;
+    try { grip.releasePointerCapture(e.pointerId); } catch (_) {}
+    clamp(); save();
+  });
+  addEventListener('resize', clamp);
+  return el;
+}
+
 /* ---- 随手记（悬浮球里的小记）----
    小记本来只有「进那个模块」一条路。但真正要记的时候，人都在看别的东西
    （做题、看时政、读范文）—— 跳走一趟回来，思路就断了。
    所以做成**浮在当前页面上**的一小块：写完点「记下」，页面纹丝不动。
    原来的小记模块**照样保留**（要整理、要翻历史还是得进去）。 */
 let qnImgs = [];
+let qnFloat = null;
 function qnOpen() {
   const box = $('#qnote');
   if (!box.classList.contains('hidden')) { qnClose(); return; }
+  if (!qnFloat) qnFloat = makeFloat(box, 'qnote', $('#qnote .qn-head'));   // 可拖、可缩放
+  box.restore();
   $('#qn-board').innerHTML = boardOptions(curNoteBoard, false);
   $('#qn-text').value = ''; $('#qn-tags').value = '';
   qnImgs = []; $('#qn-imgs').innerHTML = '';
@@ -919,15 +1118,21 @@ function qnOpen() {
 function qnClose() { $('#qnote').classList.add('hidden'); }
 $('#qn-close').onclick = qnClose;
 $('#qn-more').onclick = () => { qnClose(); openNotes(); };
-$('#qn-file').addEventListener('change', async e => {
-  const fs = [...e.target.files]; e.target.value = '';
-  for (const f of fs) {
+async function qnAddImgs(files) {
+  for (const f of [...files]) {
+    if (!/^image\//.test(f.type)) continue;
     const im = { url: URL.createObjectURL(f), fileObj: f, name: f.name || 'img.jpg' };
     qnImgs.push(im);
     im.ready = compressImage(f).then(b => { im.fileObj = b; });   // 和小记一样：选图就压
   }
   qnRenderImgs();
+}
+$('#qn-file').addEventListener('change', async e => {
+  const fs = [...e.target.files]; e.target.value = '';
+  await qnAddImgs(fs);
 });
+bindImgDrop($('#qnote'), qnAddImgs);          // 拖图片进随手记
+bindImgPaste($('#qn-text'), qnAddImgs);       // Ctrl+V 粘图片
 function qnRenderImgs() {
   $('#qn-imgs').innerHTML = qnImgs.map((im, i) =>
     `<div class="cp-thumb"><img src="${im.url}" data-qnbig="${i}"><button class="cp-x" data-qnr="${i}">×</button></div>`).join('');

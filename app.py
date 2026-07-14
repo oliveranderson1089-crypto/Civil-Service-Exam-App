@@ -697,6 +697,12 @@ def init_db():
     # 专项练加了难度档，统计要按难度分开（不然入门刷出来的高正确率会盖住真实水平）
     if "level" not in _cols(con, "drill_log"):
         con.execute("ALTER TABLE drill_log ADD COLUMN level TEXT DEFAULT 'mid'")
+    # AI 出的题要过**第二个模型的独立核验**才能发给人做（实测抽检：单模型出题一致率只有 89%，
+    # 也就是每 9 道就有 1 道值得怀疑；而且真抓到过事实错误 —— 「山水林田湖草沙」那道就是错的）。
+    for col, dflt in (("checked", "0"), ("agree", "0"), ("audit_ans", "''"),
+                      ("audit_note", "''"), ("flaw", "''")):
+        if col not in _cols(con, "drill_bank"):
+            con.execute("ALTER TABLE drill_bank ADD COLUMN %s TEXT DEFAULT %s" % (col, dflt))
     # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
     if "mat_boards" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
@@ -6373,6 +6379,49 @@ _LV_PROMPT = {
 }
 
 
+# ---- 双模型核验：AI 出的题，必须由**另一家模型**独立做一遍，答案一致才发给人做 ----
+# 为什么非做不可：135 道抽检下来，单模型出题的答案一致率只有 **89%** —— 每 9 道就有 1 道存疑。
+# 而且真抓到过硬伤（「生态文明八个坚持」里说「山水林田湖草沙」多了个「沙」，那是错的）。
+# 出题：DeepSeek；核验：智谱 glm-4-plus。**绝不把原答案给核验模型看**，否则它会被锚定。
+AUDIT_MODEL = "glm-4-plus"      # 智谱旗舰非推理版（glm-4.6 是推理模型，一道要 15~30 秒，太慢）
+
+
+def _audit_q(q, options, board, qtype):
+    """让核验模型独立作答 + 独立判断题目有没有毛病。返回 (答案, flaw, 说明) 或 None。"""
+    c = _vision_conf()
+    if not c.get("key") or not c.get("base"):
+        return None
+    prompt = (
+        "【板块】%s · %s\n【题目】%s\n【选项】\n%s\n\n"
+        "这道题**不告诉你答案**，请你自己独立做一遍，并判断题目本身有没有毛病。\n"
+        "1. answer：A/B/C/D\n"
+        "2. flaw：ok（没问题）/ fact（有事实错误）/ multi（不止一个选项说得通）/ "
+        "none（一个正确答案都没有）/ vague（有歧义）\n"
+        "3. note：一句话说明理由（或问题在哪）\n\n"
+        '只输出 JSON：{"answer":"A","flaw":"ok","note":""}'
+        % (board, qtype, q, "\n".join(options)))
+    payload = {"model": AUDIT_MODEL, "temperature": 0.1, "max_tokens": 600,
+               "messages": [{"role": "user", "content": prompt}],
+               "response_format": {"type": "json_object"}}
+    url = c["base"] + ("" if c["base"].endswith("/chat/completions") else "/chat/completions")
+    try:
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + c["key"]})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        txt = (d["choices"][0]["message"].get("content") or "").strip()
+        m = re.search(r"\{.*\}", txt, re.S)
+        if not m:
+            return None
+        j = json.loads(m.group())
+        a = (j.get("answer") or "").strip().upper()[:1]
+        return (a if a in "ABCD" else "", (j.get("flaw") or "ok").strip(),
+                (j.get("note") or "").strip()[:160])
+    except Exception:
+        return None
+
+
 def _bank_material(db, board, qtype, n=14):
     """从已有素材里取出题的原料 —— 题必须**考我们库里有的东西**，不然练了也对不上。
        片段阅读/逻辑判断这类不依赖词库，AI 自己命制。"""
@@ -6489,15 +6538,28 @@ def _bank_fill(db, board, qtype, level, want=8):
         body = [re.sub(r"^[A-D][.、．)]\s*", "", str(o)).strip() for o in opts]
         if len(set(body)) != 4 or not all(body):
             continue
+        opts_std = ["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)]
+        # ★ 双模型核验：另一家模型独立做一遍。答案不一致 → **入库但标为存疑，不发给人做**。
+        #   （不直接丢弃：存疑的题本身是有价值的数据，可以回查；但绝不能让人拿去背。）
+        au = _audit_q(q, opts_std, board, qtype)
+        if au is None:
+            agree, aans, flaw, note = 0, "", "unchecked", "核验模型没响应"
+            checked = 0
+        else:
+            aans, flaw, note = au
+            checked = 1
+            agree = 1 if (aans == ans and flaw == "ok") else 0
         sig = hashlib.md5((board + qtype + re.sub(r"\s", "", q)).encode()).hexdigest()
         try:
-            db.execute("INSERT INTO drill_bank(board,qtype,level,q,options,answer,explain,tip,source,sig) "
-                       "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                       (board, qtype, level, q,
-                        json.dumps(["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)], ensure_ascii=False),
-                        ans, (it.get("explain") or "").strip(), tip,
-                        (it.get("source") or ("%s-%s" % (board, qtype))).strip(), sig))
-            n += 1
+            db.execute(
+                "INSERT INTO drill_bank(board,qtype,level,q,options,answer,explain,tip,source,sig,"
+                "checked,agree,audit_ans,audit_note,flaw) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (board, qtype, level, q, json.dumps(opts_std, ensure_ascii=False),
+                 ans, (it.get("explain") or "").strip(), tip,
+                 (it.get("source") or ("%s-%s" % (board, qtype))).strip(), sig,
+                 str(checked), str(agree), aans, note, flaw))
+            if agree:
+                n += 1          # 只把「过了核验的」算作有效产出
         except sqlite3.IntegrityError:
             pass               # 撞指纹 = 出过一样的题，跳过
     db.commit()
@@ -6505,14 +6567,17 @@ def _bank_fill(db, board, qtype, level, want=8):
 
 
 def _bank_take(db, board, qtype, level, n):
-    """从题库取 n 道；不够就现补（第一次会慢一点，之后秒开）。"""
+    """从题库取 n 道 —— **只取过了双模型核验的**（agree=1）。不够就现补。
+       存疑的题留在库里可以回查，但绝不发给人做（拿去背错的答案，比不做还糟）。"""
     def grab():
         return [dict(r) for r in db.execute(
-            "SELECT * FROM drill_bank WHERE board=? AND qtype=? AND level=? "
+            "SELECT * FROM drill_bank WHERE board=? AND qtype=? AND level=? AND agree='1' "
             "ORDER BY RANDOM() LIMIT ?", (board, qtype, level, n))]
     got = grab()
-    if len(got) < n:
-        _bank_fill(db, board, qtype, level, want=max(8, n - len(got) + 4))
+    tries = 0
+    while len(got) < n and tries < 2:      # 核验会刷掉一部分，所以多出一些
+        tries += 1
+        _bank_fill(db, board, qtype, level, want=max(10, (n - len(got)) * 2))
         got = grab()
     out = []
     for r in got:
