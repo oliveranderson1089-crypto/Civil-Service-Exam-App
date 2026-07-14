@@ -563,7 +563,10 @@ function renderComposer() {
      <input class="cp-todo-text" data-tdt="${i}" value="${esc(t.text)}" placeholder="待办事项…">
      <button class="cp-x" data-tdr="${i}">×</button></div>`).join('');
   $('#cp-imgs').innerHTML = draft.images.map((im, i) =>
-    `<div class="cp-thumb"><img src="${im.url}"><button class="cp-x" data-imr="${i}">×</button></div>`).join('');
+    `<div class="cp-thumb${im.busy ? ' busy' : ''}" data-imb="${i}">
+       <img src="${im.url}" data-imbig="${i}" title="点开看大图，确认没传错">
+       <button class="cp-x" data-imr="${i}">×</button>
+     </div>`).join('');
   $('#cp-files').innerHTML = draft.files.map((f, i) =>
     `<div class="cp-file">📎 <span>${esc(f.name)}</span><button class="cp-x" data-flr="${i}">×</button></div>`).join('');
   $('#cp-tags').innerHTML = draft.tags.map((t, i) =>
@@ -626,11 +629,60 @@ async function _materialize(f, fallbackType) {
     return new Blob([buf], { type: f.type || fallbackType || 'application/octet-stream' });
   } catch (_) { return f; }   // 兜底用原 File
 }
+/* 轻量看图浮层：就地放大，不跳走、不丢正在写的草稿（openViewerUrl 会 push 一个新视图，
+   写到一半跑去看图再回来，体验很别扭）。Esc / 点背景 / 点图都能关。 */
+function lightbox(url) {
+  if (!url) return;
+  const old = document.getElementById('lbx'); if (old) old.remove();
+  const box = document.createElement('div');
+  box.id = 'lbx'; box.className = 'lbx';
+  box.innerHTML = `<img src="${url}"><button class="lbx-x" title="关闭">×</button>`;
+  const close = () => { box.remove(); document.removeEventListener('keydown', esc); };
+  const esc = (e) => { if (e.key === 'Escape') close(); };
+  box.onclick = close;
+  document.addEventListener('keydown', esc);
+  document.body.appendChild(box);
+}
+
+/* 图片压缩：手机拍的图动辄 4~8MB，原样上传 → 点「发布」那一下就卡住了。
+   在**选图时**就压到 1600px / JPEG 0.82，发布时传的是几百 KB，一下就完。
+   但压缩不能挡住添加：先把缩略图（原图 objectURL）立刻放上去，压缩丢到后台，
+   压完再换掉 fileObj。发布时若还没压完，submit 会等一下（一般早压完了）。 */
+async function compressImage(file, maxSide = 1600, quality = 0.82) {
+  if (!/^image\//.test(file.type) || /gif|svg/i.test(file.type)) return file;   // 动图/矢量图不动
+  let bmp;
+  try { bmp = await createImageBitmap(file); } catch (_) { return file; }
+  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+  if (scale === 1 && file.size < 700 * 1024) { bmp.close(); return file; }       // 本来就小，别白折腾
+  const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+  let blob = null;
+  try {
+    let cv;
+    if (typeof OffscreenCanvas !== 'undefined') cv = new OffscreenCanvas(w, h);
+    else { cv = document.createElement('canvas'); cv.width = w; cv.height = h; }
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(bmp, 0, 0, w, h);
+    blob = cv.convertToBlob
+      ? await cv.convertToBlob({ type: 'image/jpeg', quality })
+      : await new Promise(r => cv.toBlob(r, 'image/jpeg', quality));
+  } catch (_) { blob = null; }
+  bmp.close();
+  return (blob && blob.size < file.size) ? blob : file;   // 压完反而更大就用原图
+}
+
 async function addDraftImages(files) {
   const list = [...files];
   for (const f of list) {
-    const blob = await _materialize(f, 'image/jpeg');
-    draft.images.push({ kind: 'new', fileObj: blob, name: f.name || ('img_' + Date.now() + '.jpg'), url: URL.createObjectURL(blob) });
+    const im = {
+      kind: 'new', fileObj: f, name: f.name || ('img_' + Date.now() + '.jpg'),
+      url: URL.createObjectURL(f), busy: true,
+    };
+    draft.images.push(im);
+    im.ready = compressImage(f).then(b => {          // 后台压，不挡添加
+      im.fileObj = b; im.busy = false;
+      const el = document.querySelector(`[data-imb="${draft.images.indexOf(im)}"]`);
+      if (el) el.classList.remove('busy');
+    }).catch(() => { im.busy = false; });
   }
   renderComposer();
 }
@@ -647,7 +699,12 @@ $('#cp-attfile').addEventListener('change', async e => {
 $('#cp-todos').addEventListener('click', e => { const r = e.target.closest('[data-tdr]'); if (r) { draft.todos.splice(+r.dataset.tdr, 1); renderComposer(); } });
 $('#cp-todos').addEventListener('change', e => { const c = e.target.closest('[data-tdo]'); if (c) draft.todos[+c.dataset.tdo].done = c.checked; });
 $('#cp-todos').addEventListener('input', e => { const t = e.target.closest('[data-tdt]'); if (t) draft.todos[+t.dataset.tdt].text = t.value; });
-$('#cp-imgs').addEventListener('click', e => { const r = e.target.closest('[data-imr]'); if (r) { draft.images.splice(+r.dataset.imr, 1); renderComposer(); } });
+$('#cp-imgs').addEventListener('click', e => {
+  const r = e.target.closest('[data-imr]');
+  if (r) { draft.images.splice(+r.dataset.imr, 1); renderComposer(); return; }
+  const b = e.target.closest('[data-imbig]');            // 发布前就能点开看大图，确认没传错
+  if (b) lightbox(draft.images[+b.dataset.imbig].url);
+});
 $('#cp-files').addEventListener('click', e => { const r = e.target.closest('[data-flr]'); if (r) { draft.files.splice(+r.dataset.flr, 1); renderComposer(); } });
 $('#cp-tags').addEventListener('click', e => { const r = e.target.closest('[data-tgr]'); if (r) { draft.tags.splice(+r.dataset.tgr, 1); renderComposer(); } });
 $('#cp-cancel').onclick = () => newDraft();
@@ -660,6 +717,10 @@ $('#cp-submit').onclick = async () => {
   const content = $('#cp-content').value.trim();
   draft.todos = draft.todos.filter(t => (t.text || '').trim() !== '');
   if (!content && !draft.images.length && !draft.files.length && !draft.todos.length) { toast('写点什么吧', true); return; }
+  $('#cp-submit').disabled = true;
+  // 压缩一般在选图时就跑完了；万一刚选完就点发布，这里等一下（避免传上去的是原图）
+  const pending = draft.images.filter(i => i.ready).map(i => i.ready);
+  if (pending.length) await Promise.all(pending);
   const fd = new FormData();
   fd.append('board', curNoteBoard);
   fd.append('content', content);
@@ -667,7 +728,6 @@ $('#cp-submit').onclick = async () => {
   fd.append('tags', JSON.stringify(draft.tags));
   draft.images.filter(i => i.kind === 'new').forEach(i => fd.append('images', i.fileObj, i.name || 'image.jpg'));
   draft.files.filter(i => i.kind === 'new').forEach(i => fd.append('attachments', i.fileObj, i.name || 'file'));
-  $('#cp-submit').disabled = true;
   try {
     if (draft.id) {
       fd.append('keep_imgs', JSON.stringify(draft.images.filter(i => i.kind === 'old').map(i => i.file)));
@@ -5334,11 +5394,55 @@ let rvQueue = [], rvTotal = 0, rvDoneN = 0;
 /* 词语句子 / 每日积累 / 错题 各背各的，不混成一副牌 */
 let rvAll = [], rvGroup = 'word';
 const RV_GROUP_NAME = { word: '词语句子', daily: '每日积累', wrongq: '错题' };
+/* 每日复习量：一天能背多少因人而异。堆太多就不想背了 —— 超出上限的**不会丢**，
+   只是今天不出现（到期时间不变，明天照样在）。0 = 不限。 */
+const RV_LNAME = { word: '词语句子', daily: '每日积累', wrongq: '错题' };
+let rvLim = null, rvPool = null;
+function rvLimRender() {
+  if (!rvLim) return;
+  $('#rv-lim-rows').innerHTML = Object.keys(RV_LNAME).map(k => `
+    <div class="rv-lim-row">
+      <label>${RV_LNAME[k]}</label>
+      <input type="number" min="0" max="500" data-rvl="${k}" value="${rvLim[k]}">
+      <span class="rv-lim-pool">到期 ${(rvPool || {})[k] || 0} 条${rvLim[k] ? '' : ' · 不限'}</span>
+    </div>`).join('');
+  $('#rv-limsum').textContent = Object.keys(RV_LNAME)
+    .map(k => `${RV_LNAME[k]} ${rvLim[k] || '不限'}`).join(' · ');
+}
+$('#rv-limtog').onclick = async () => {
+  const box = $('#rv-lim');
+  const show = box.classList.contains('hidden');
+  box.classList.toggle('hidden', !show);
+  if (show && !rvLim) {
+    try {
+      const d = await api('/api/review/limits');
+      rvLim = d.limits; rvPool = d.due; rvLimRender();
+    } catch (e) { toast(e.message, true); }
+  }
+};
+$('#rv-limsave').onclick = async () => {
+  const body = {};
+  document.querySelectorAll('[data-rvl]').forEach(i => { body[i.dataset.rvl] = Math.max(0, +i.value || 0); });
+  const b = $('#rv-limsave'); b.disabled = true;
+  try {
+    const d = await api('/api/review/limits', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    rvLim = d.limits; rvLimRender();
+    $('#rv-lim').classList.add('hidden');
+    toast('已保存，今天按新的量出');
+    loadReview();
+  } catch (e) { toast(e.message, true); }
+  b.disabled = false;
+};
+
 async function loadReview() {
   ['rv-empty', 'rv-card-wrap', 'rv-done'].forEach(id => $('#' + id).classList.add('hidden'));
   try {
     const d = await api('/api/review/today');
     rvAll = d.items || [];
+    rvLim = d.limits || rvLim; rvPool = d.pool || rvPool;
+    if (rvLim) rvLimRender();
     const g = d.groups || {};
     document.querySelectorAll('[data-rvg]').forEach(b => {
       const n = g[b.dataset.rvg] || 0;
@@ -7399,19 +7503,20 @@ let SKIN = { avatar: '', wall_app: '', wall_login: '' };
 const skinDim = () => Math.min(90, Math.max(0, parseInt(localStorage.getItem('skinDim') || '55', 10)));
 
 function applySkin() {
-  // 左上角头像
-  const logo = $('#brand-logo');
-  if (logo) {
+  // 头像出现在两处：左上角的 logo 和账户页顶部的大圆。
+  // （原来只更新了 logo，账户页那个是 HTML 里写死的「公」，换了头像也不变。）
+  [$('#brand-logo'), $('#acct-avatar')].forEach(el => {
+    if (!el) return;
     if (SKIN.avatar) {
-      logo.style.backgroundImage = 'url("' + SKIN.avatar + '")';
-      logo.classList.add('has-img');
-      logo.textContent = '';
+      el.style.backgroundImage = 'url("' + SKIN.avatar + '")';
+      el.classList.add('has-img');
+      el.textContent = '';
     } else {
-      logo.style.backgroundImage = '';
-      logo.classList.remove('has-img');
-      logo.textContent = '公';
+      el.style.backgroundImage = '';
+      el.classList.remove('has-img');
+      el.textContent = '公';
     }
-  }
+  });
   // 应用内壁纸
   const b = document.body;
   b.classList.toggle('has-wall', !!SKIN.wall_app);

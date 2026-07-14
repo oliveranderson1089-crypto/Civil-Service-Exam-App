@@ -2744,3 +2744,32 @@ body.dark .fr-sec.bad,body.dark .fr-g.miss{background:#2e1a15;}
 body.dark .fr-sec.dup{background:#221c33;}
 body.dark .fr-sec.ok,body.dark .fr-picked,body.dark .fr-g.ok{background:#16261f;}
 body.dark .fr-adv{background:#1c2a45;color:#7fb0ff;}
+
+/* 看图浮层（就地放大，不跳走） */
+.lbx{position:fixed;inset:0;z-index:5000;background:rgba(10,14,22,.86);display:grid;place-items:center;
+  padding:24px;cursor:zoom-out;animation:lbx-in .14s ease;}
+.lbx img{max-width:100%;max-height:100%;border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,.5);}
+.lbx-x{position:absolute;top:14px;right:18px;width:38px;height:38px;border:none;border-radius:50%;
+  background:rgba(255,255,255,.16);color:#fff;font-size:22px;line-height:1;cursor:pointer;}
+.lbx-x:hover{background:rgba(255,255,255,.28);}
+@keyframes lbx-in{from{opacity:0}to{opacity:1}}
+/* 草稿里正在压缩的图 */
+.cp-thumb{position:relative;}
+.cp-thumb img{cursor:zoom-in;}
+.cp-thumb.busy::after{content:'';position:absolute;inset:0;border-radius:inherit;
+  background:rgba(255,255,255,.5) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22'%3E%3Ccircle cx='11' cy='11' r='9' fill='none' stroke='%231a6fb5' stroke-width='2.5' stroke-linecap='round' stroke-dasharray='14 40'%3E%3CanimateTransform attributeName='transform' type='rotate' from='0 11 11' to='360 11 11' dur='.8s' repeatCount='indefinite'/%3E%3C/circle%3E%3C/svg%3E") center/22px no-repeat;}
+/* 每日复习量 */
+.rv-limbar{display:flex;align-items:center;gap:10px;margin:10px 0 4px;flex-wrap:wrap;}
+.rv-limsum{font-size:12.3px;color:var(--muted);}
+.rv-lim{border:1px solid var(--line);border-radius:13px;background:var(--card);padding:13px 15px;margin-bottom:12px;}
+.rv-lim-t{margin:0 0 11px;font-size:12.8px;line-height:1.8;color:var(--muted);}
+.rv-lim-rows{display:grid;gap:9px;margin-bottom:11px;}
+.rv-lim-row{display:flex;align-items:center;gap:10px;}
+.rv-lim-row label{flex:0 0 78px;font-size:13.2px;font-weight:600;}
+.rv-lim-row input{width:90px;}
+.rv-lim-pool{font-size:12px;color:var(--muted);}
+body.dark .rv-lim{background:#141b29;}
+body.dark .cp-thumb.busy::after{background-color:rgba(20,27,41,.6);}
+
+/* 账户页顶部的大头像：换了自定义头像后要显示图（原来是写死的「公」字） */
+.acct-avatar.has-img{background-size:cover;background-position:center;color:transparent;}

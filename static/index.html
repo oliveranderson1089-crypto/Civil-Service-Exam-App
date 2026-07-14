@@ -435,7 +435,7 @@
   <!-- ===== 账户 / 个人信息 ===== -->
   <section id="view-account" class="view hidden">
     <div class="acct-hero">
-      <div class="acct-avatar">公</div>
+      <div class="acct-avatar" id="acct-avatar">公</div>
       <div class="acct-id">
         <div class="acct-name" id="acct-name">—</div>
         <div class="acct-email" id="acct-email"></div>
@@ -968,6 +968,16 @@
       <button class="tk-tab active" data-rvg="word">📖 词语句子<span class="rv-n"></span></button>
       <button class="tk-tab" data-rvg="daily">📝 每日积累<span class="rv-n"></span></button>
       <button class="tk-tab" data-rvg="wrongq">❌ 错题<span class="rv-n"></span></button>
+    </div>
+    <div class="rv-limbar">
+      <button class="btn tiny" id="rv-limtog">⚙️ 每日复习量</button>
+      <span id="rv-limsum" class="rv-limsum"></span>
+    </div>
+    <div id="rv-lim" class="rv-lim hidden">
+      <p class="rv-lim-t">一天能背多少因人而异。<b>堆太多就不想背了</b>——设个每天的量，
+        超出的<b>不会丢，只是排到后面</b>（到期时间不变，明天照样在）。填 <b>0</b> = 不限。</p>
+      <div class="rv-lim-rows" id="rv-lim-rows"></div>
+      <button class="btn primary" id="rv-limsave">保存</button>
     </div>
     <div id="rv-empty" class="hidden"><p class="empty">🎉 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p></div>
     <div id="rv-card-wrap" class="hidden">

@@ -671,6 +671,9 @@ def init_db():
     # 应用文比大作文多一层：得先有「文种 + 发文场景 + 我是谁 + 写给谁」才谈得上选素材
     if "spec" not in _cols(con, "daily_essays"):
         con.execute("ALTER TABLE daily_essays ADD COLUMN spec TEXT")
+    # 每日复习量：一天能背多少是因人而异的，原来写死 120 条（只能改环境变量），堆起来就不想背了
+    if "rv_limits" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN rv_limits TEXT")
     # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
     if "mat_boards" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
@@ -8138,8 +8141,11 @@ def _review_due(db, u, today):
             "front": r["word"], "front_sub": (r["pinyin"] or "") + " · " + (r["category"] or "词语"),
             "back": back or "（无释义）"})
     # 常考里的高频成语 / 实词搭配：按真题考频排的，比自己零散收录的更该背。
-    # 只取考频最高的一批进复习轮（默认 120 条），背完一轮会随考频往后推。
-    n_ck = int(os.environ.get("GONGKAO_REVIEW_CK", "120"))     # 想多背/少背可用环境变量调
+    # 只取考频最高的一批进复习轮，背完一轮会随考频往后推。
+    # 池子开到「用户设的每日量」的 3 倍（自己收录的词也占这一组，得留位置）；
+    # 真正每天出多少由 review_today 按上限截。设 0（不限）就把这批全放进来。
+    _lw = _rv_limits(db, u)["word"]
+    n_ck = 894 if _lw == 0 else max(120, _lw * 3)
     if n_ck > 0:
         for r in db.execute(
                 "SELECT id, board, title, content, note FROM changkao_items "
@@ -8196,19 +8202,74 @@ def _review_due(db, u, today):
 
 # 复习分组：词语句子 / 每日积累 / 错题，分开背，不混在一副牌里
 RV_GROUP = {"entry": "word", "classic": "word", "changkao": "word", "sucai": "daily", "wrongq": "wrongq"}
+RV_NAMES = {"word": "词语句子", "daily": "每日积累", "wrongq": "错题"}
+RV_LIMIT_DEF = {"word": 40, "daily": 20, "wrongq": 10}     # 每日复习量默认值（0 = 不限）
+
+
+def _rv_limits(db, u):
+    r = db.execute("SELECT rv_limits FROM users WHERE id=?", (u,)).fetchone()
+    try:
+        got = json.loads((r["rv_limits"] if r else "") or "{}")
+    except Exception:
+        got = {}
+    out = {}
+    for k, v in RV_LIMIT_DEF.items():
+        n = got.get(k)
+        out[k] = v if n is None else max(0, min(500, int(n)))
+    return out
+
+
+@app.get("/api/review/limits")
+def review_limits_get():
+    db = get_db()
+    lim = _rv_limits(db, uid())
+    due = _review_due(db, uid(), datetime.now().strftime("%Y-%m-%d"))
+    pool = {"word": 0, "daily": 0, "wrongq": 0}
+    for it in due:
+        pool[RV_GROUP.get(it["kind"], "wrongq")] += 1
+    return jsonify({"limits": lim, "default": RV_LIMIT_DEF, "names": RV_NAMES, "due": pool})
+
+
+@app.post("/api/review/limits")
+def review_limits_set():
+    d = request.get_json(silent=True) or {}
+    cur = _rv_limits(get_db(), uid())
+    for k in RV_LIMIT_DEF:
+        if k in d:
+            try:
+                cur[k] = max(0, min(500, int(d[k])))
+            except Exception:
+                pass
+    db = get_db()
+    db.execute("UPDATE users SET rv_limits=? WHERE id=?",
+               (json.dumps(cur, ensure_ascii=False), uid()))
+    db.commit()
+    return jsonify({"limits": cur})
 
 
 @app.get("/api/review/today")
 def review_today():
     today = datetime.now().strftime("%Y-%m-%d")
-    due = _review_due(get_db(), uid(), today)
+    db = get_db()
+    due = _review_due(db, uid(), today)
     order = {"entry": 0, "classic": 1, "sucai": 2, "wrongq": 3}
-    due.sort(key=lambda x: (order.get(x["kind"], 9), x["id"]))
-    groups = {"word": 0, "daily": 0, "wrongq": 0}
+    # 组内排序：**已经在复习轮里的排前面**（stage>0 说明背过一遍了，别让它一直往后堆），
+    # 然后才是新词。被上限截掉的不动 next_due —— 只是今天不出现，明天照样在。
+    due.sort(key=lambda x: (order.get(x["kind"], 9), -int(x.get("stage") or 0), x["id"]))
+    lim = _rv_limits(db, uid())
+    pool = {"word": 0, "daily": 0, "wrongq": 0}
     for it in due:
         it["group"] = RV_GROUP.get(it["kind"], "wrongq")
-        groups[it["group"]] += 1
-    return jsonify({"today": today, "count": len(due), "items": due, "groups": groups})
+        pool[it["group"]] += 1
+    kept, used = [], {"word": 0, "daily": 0, "wrongq": 0}
+    for it in due:
+        g = it["group"]
+        if lim[g] and used[g] >= lim[g]:      # 上限 0 = 不限
+            continue
+        used[g] += 1
+        kept.append(it)
+    return jsonify({"today": today, "count": len(kept), "items": kept,
+                    "groups": used, "pool": pool, "limits": lim})
 
 
 @app.post("/api/review/done")
