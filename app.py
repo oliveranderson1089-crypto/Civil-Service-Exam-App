@@ -521,6 +521,15 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_dr_u ON drill_log(user_id, board, qtype);
+        -- 常考收藏：六个小模块的数据来自三张不同的表（changkao_items / hyper_items / classics），
+        -- 所以这里按 (board, item_id) 存，并把标题正文快照下来 —— 收藏列表要能直接显示，
+        -- 不用回头去三张表里各查一遍。
+        CREATE TABLE IF NOT EXISTS ck_stars(
+            user_id INTEGER NOT NULL, board TEXT NOT NULL, item_id INTEGER NOT NULL,
+            title TEXT, content TEXT, note TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, board, item_id)
+        );
         -- 成文：把散落的素材真正写成一篇大作文（不然素材背了也不会用）
         --   mode=daily    按「素材日期」成文，一天一篇，用当天更新的那批素材
         --   mode=compose  综合应用，AI 自己选题，跨全部素材库挑最合适的
@@ -7110,6 +7119,84 @@ def changkao_items():
     return jsonify({"board": board, "kind": "text", "items": [dict(r) for r in rows]})
 
 
+# ⚠️ 别叫 CK_BOARDS —— 那个名字已经被上面的板块元数据（字典列表）占了，
+#    重名会把它整个盖掉，changkao_boards 里的 b["key"] 就会拿字符串去取下标。
+CK_STAR_BOARDS = ["成语", "实词", "上位词", "古诗文", "常识", "提法"]
+# 成语/实词收藏时，同步收进「言语理解 → 成语词语积累」，并落到对应分类里
+CK_TO_ENTRY = {"成语": "成语", "实词": "词语"}
+
+
+def _ck_one(db, board, iid):
+    """按 (板块, id) 取回那一条 —— 六个模块散在三张表里，这里统一取。"""
+    if board == "古诗文":
+        r = db.execute("SELECT id, title, author, dynasty, content FROM classics WHERE id=?", (iid,)).fetchone()
+        if not r:
+            return None
+        return {"title": r["title"], "content": (r["content"] or "").split("\n")[0][:60],
+                "note": ((r["dynasty"] or "") + " · " + (r["author"] or "")).strip(" ·")}
+    if board == "上位词":
+        r = db.execute("SELECT hyper, subs, note FROM hyper_items WHERE id=?", (iid,)).fetchone()
+        return {"title": r["hyper"], "content": r["subs"], "note": r["note"]} if r else None
+    r = db.execute("SELECT title, content, note FROM changkao_items WHERE id=? AND board=?",
+                   (iid, board)).fetchone()
+    return {"title": r["title"], "content": r["content"], "note": r["note"]} if r else None
+
+
+@app.post("/api/changkao/star")
+def changkao_star():
+    """收藏 / 取消收藏。成语和实词**同时**收进「成语词语积累」的对应分类里
+       —— 收藏的目的就是拿去背，散在两处等于没收。"""
+    d = request.get_json(silent=True) or {}
+    board = (d.get("board") or "").strip()
+    iid = int(d.get("id") or 0)
+    if board not in CK_STAR_BOARDS or not iid:
+        return jsonify({"error": "参数错误"}), 400
+    db = get_db()
+    have = db.execute("SELECT 1 FROM ck_stars WHERE user_id=? AND board=? AND item_id=?",
+                      (uid(), board, iid)).fetchone()
+    if have:
+        db.execute("DELETE FROM ck_stars WHERE user_id=? AND board=? AND item_id=?", (uid(), board, iid))
+        db.commit()
+        return jsonify({"starred": False})
+    it = _ck_one(db, board, iid)
+    if not it:
+        return jsonify({"error": "这一条不存在"}), 404
+    db.execute("INSERT OR REPLACE INTO ck_stars(user_id,board,item_id,title,content,note) "
+               "VALUES(?,?,?,?,?,?)",
+               (uid(), board, iid, it["title"], it["content"], it["note"]))
+    to_entry = False
+    cat = CK_TO_ENTRY.get(board)
+    if cat:
+        dup = db.execute("SELECT 1 FROM entries WHERE user_id=? AND word=?", (uid(), it["title"])).fetchone()
+        if not dup:
+            info = lookup(it["title"]) or {}
+            db.execute(
+                "INSERT INTO entries(user_id,word,pinyin,category,explanation,derivation,example,note,source) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (uid(), it["title"], info.get("pinyin") or "", cat,
+                 info.get("explanation") or it["content"] or "",
+                 info.get("derivation") or "", info.get("example") or "",
+                 it["note"] or "", "常考收藏"))
+            to_entry = True
+    db.commit()
+    return jsonify({"starred": True, "to_entry": to_entry, "category": cat or ""})
+
+
+@app.get("/api/changkao/stars")
+def changkao_stars():
+    """我收藏的（按板块分组）。只要 ids 时用 ?ids=1，页面上标星用。"""
+    db = get_db()
+    rows = db.execute("SELECT * FROM ck_stars WHERE user_id=? ORDER BY board, created_at DESC",
+                      (uid(),)).fetchall()
+    if request.args.get("ids"):
+        return jsonify({"ids": ["%s:%d" % (r["board"], r["item_id"]) for r in rows]})
+    by = {}
+    for r in rows:
+        by.setdefault(r["board"], []).append(dict(r))
+    return jsonify({"total": len(rows),
+                    "boards": [{"board": b, "items": by[b]} for b in CK_STAR_BOARDS if b in by]})
+
+
 @app.get("/api/changkao/<int:cid>/story")
 def changkao_story(cid):
     """成语/实词的典故：出处原文、故事、本义→引申义怎么来的、易错点。
@@ -7747,7 +7834,9 @@ def review_done():
     data = request.get_json(silent=True) or {}
     kind, rid = (data.get("kind") or "").strip(), int(data.get("id") or 0)
     result = (data.get("result") or "know").strip()  # know认识 / fuzzy模糊 / forget忘记
-    if kind not in ("entry", "wrongq", "classic", "sucai") or not rid:
+    # 白名单直接取自 RV_GROUP，别手抄第二份 —— 上次加「常考」这一路复习来源时，
+    # 取词那边（_review_due）加了、提交这边忘了加，结果卡片点「认识」直接「参数错误」。
+    if kind not in RV_GROUP or not rid:
         return jsonify({"error": "参数错误"}), 400
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")

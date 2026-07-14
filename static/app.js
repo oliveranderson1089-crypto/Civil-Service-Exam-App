@@ -4815,12 +4815,19 @@ async function loadCkBoards() {
   $('#ck-boards').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/changkao/boards');
+    let nStar = 0;
+    try { nStar = (await api('/api/changkao/stars')).total; } catch (_) {}
     $('#ck-boards').innerHTML = '<div class="home-cards cs-cards" data-dragsort="ckb">' + d.boards.map(b => `
       <div class="home-card ck-card" data-ckb="${esc(b.key)}">
         <div class="hc-logo hc-ck">${IC[b.icon] || IC.bulb}</div>
         <div class="hc-name">${esc(b.name)}</div>
         <div class="hc-desc">${b.count} 条 · ${esc(b.desc)}</div>
-      </div>`).join('') + '</div>';
+      </div>`).join('') + `
+      <div class="home-card ck-card ck-star-card" data-ckb="收藏">
+        <div class="hc-logo hc-star">★</div>
+        <div class="hc-name">我的收藏</div>
+        <div class="hc-desc">${nStar} 条 · 六个模块收藏的都在这</div>
+      </div>` + '</div>';
   } catch (e) { $('#ck-boards').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
 $('#ck-boards').addEventListener('click', e => {
@@ -4844,13 +4851,23 @@ $('#ck-daily').addEventListener('click', () => openCkBoard('上位词'));
 let ckBoard = '', ckItems = [], ckKind = 'text';
 async function openCkBoard(key) {
   ckBoard = key;
-  if (key === '成语' || key === '实词') loadCkStarred();   // 标出已收录的（实心★）
-  push({ view: 'ckboard', title: key === '上位词' ? '上位词积累' : '常考 · ' + key });
+  await loadCkStarred();                        // 六个模块都要标★
+  push({ view: 'ckboard', title: key === '上位词' ? '上位词积累' : (key === '收藏' ? '我的收藏' : '常考 · ' + key) });
   $('#ckb-search').value = '';
   $('#ckb-ai').classList.toggle('hidden', key !== '上位词');
   $('#ckb-head').innerHTML = '';
   $('#ckb-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
+    if (key === '收藏') {
+      const d = await api('/api/changkao/stars');
+      ckItems = d.boards.flatMap(b => b.items.map(x =>
+        ({ id: x.item_id, title: x.title, content: x.content, note: x.note, _b: b.board })));
+      ckKind = 'star';
+      $('#ckb-head').innerHTML = `<span class="ckb-n">${d.total} 条</span>` +
+        '<span class="ckb-tip">再点一次 ★ 取消收藏</span>';
+      renderCkList();
+      return;
+    }
     const d = await api('/api/changkao/items?board=' + encodeURIComponent(key));
     ckItems = d.items; ckKind = d.kind;
     $('#ckb-head').innerHTML = `<span class="ckb-n">${d.items.length} 条</span>` +
@@ -4858,53 +4875,72 @@ async function openCkBoard(key) {
     renderCkList();
   } catch (e) { $('#ckb-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
-let ckStarred = new Set();      // 已经收进「成语词语积累」的词，卡片上标成实心★
+// 收藏是**六个模块通用**的（key = "板块:id"）。成语/实词额外同步进「成语词语积累」——
+// 收藏就是为了拿去背，散在两处等于没收。
+let ckStarred = new Set();
 async function loadCkStarred() {
   try {
-    const d = await api('/api/entries?size=1000');
-    ckStarred = new Set((d.items || []).map(x => x.word));
+    const d = await api('/api/changkao/stars?ids=1');
+    ckStarred = new Set(d.ids || []);
   } catch (_) {}
 }
 function renderCkList() {
   const q = $('#ckb-search').value.trim();
   const list = q ? ckItems.filter(it =>
     (it.title || '').includes(q) || (it.content || '').includes(q) || (it.note || '').includes(q)) : ckItems;
-  if (!list.length) { $('#ckb-list').innerHTML = '<p class="empty">没有匹配的内容</p>'; return; }
+  if (!list.length) {
+    $('#ckb-list').innerHTML = ckBoard === '收藏'
+      ? '<p class="empty">还没收藏。进任一模块，点卡片上的 ☆ 就收进来了。</p>'
+      : '<p class="empty">没有匹配的内容</p>';
+    return;
+  }
   $('#ckb-list').innerHTML = list.map(it => {
-    const freq = it.freq && ckBoard === '成语' ? `<span class="cki-freq">考频 ${it.freq}</span>` : '';
+    const b = it._b || ckBoard;                       // 收藏页里每条来自不同板块
+    const key = b + ':' + it.id;
+    const on = ckStarred.has(key);
+    const freq = it.freq && b === '成语' ? `<span class="cki-freq">考频 ${it.freq}</span>` : '';
     const note = (it.note || '').replace(/^考频 \d+ 次(\s·\s)?/, '');   // 考频已单独成徽章
-    const canStar = ckBoard === '成语' || ckBoard === '实词';
-    return `<div class="gk-card ck-item" data-cki="${it.id}">
+    const tip = CK_TO_ENTRY[b] ? '收藏 → 同时收进「成语词语积累」' : '收藏';
+    return `<div class="gk-card ck-item" data-cki="${it.id}" data-ckbd="${esc(b)}">
       <div class="cki-t">${esc(it.title)}${freq}
-        ${canStar ? `<button class="cki-star${ckStarred.has(it.title) ? ' on' : ''}" data-ckstar="${esc(it.title)}"
-          title="收藏 → 收进「成语词语积累」">${ckStarred.has(it.title) ? '★' : '☆'}</button>` : ''}
+        ${ckBoard === '收藏' ? `<span class="cki-from">${esc(b)}</span>` : ''}
+        <button class="cki-star${on ? ' on' : ''}" data-ckstar="${esc(b)}:${it.id}"
+          title="${tip}">${on ? '★' : '☆'}</button>
         ${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
       ${it.content ? `<div class="cki-c">${esc(it.content)}</div>` : ''}
-      ${note ? `<div class="cki-n">${ckKind === 'classic' ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
-      ${ckKind === 'hyper' ? '<div class="cki-more">点开看每个下位词的典故 / 出处 / 怎么考 ›</div>'
-        : (ckBoard === '成语' || ckBoard === '实词') ? '<div class="cki-more">点开看典故 / 出处 / 怎么考 ›</div>' : ''}
+      ${note ? `<div class="cki-n">${(ckKind === 'classic' || b === '古诗文') ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
+      ${(b === '上位词') ? '<div class="cki-more">点开看每个下位词的典故 / 出处 / 怎么考 ›</div>'
+        : (b === '成语' || b === '实词') ? '<div class="cki-more">点开看典故 / 出处 / 怎么考 ›</div>' : ''}
     </div>`;
   }).join('');
 }
+// 这两类收藏时会同步进「言语理解 → 成语词语积累」的对应分类（服务端 CK_TO_ENTRY 也有一份）
+const CK_TO_ENTRY = { '成语': '成语', '实词': '词语' };
 $('#ckb-search').addEventListener('input', renderCkList);
 $('#ckb-list').addEventListener('click', async e => {
   const star = e.target.closest('[data-ckstar]');
-  if (star) {                                   // 收藏 → 直接收进「言语理解 · 成语词语积累」
+  if (star) {                                   // 收藏 / 取消收藏（六个模块通用）
     e.stopPropagation();
-    const w = star.dataset.ckstar;
-    if (star.classList.contains('on')) { toast('已经收录过了'); return; }
+    const [b, id] = star.dataset.ckstar.split(':');
     star.disabled = true;
     try {
-      await api('/api/entries', {
+      const r = await api('/api/changkao/star', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ word: w }),
+        body: JSON.stringify({ board: b, id: +id }),
       });
-      star.textContent = '★'; star.classList.add('on');
-      toast('已收进「成语词语积累」，明天开始进复习');
-    } catch (err) {
-      toast(err.message, true);
-      star.disabled = false;
-    }
+      if (r.starred) {
+        ckStarred.add(b + ':' + id);
+        star.textContent = '★'; star.classList.add('on');
+        toast(r.to_entry ? `已收藏，并收进「成语词语积累 · ${r.category}」，明天开始进复习`
+          : (CK_TO_ENTRY[b] ? '已收藏（「成语词语积累」里本来就有）' : '已收藏'));
+      } else {
+        ckStarred.delete(b + ':' + id);
+        star.textContent = '☆'; star.classList.remove('on');
+        toast('已取消收藏');
+        if (ckBoard === '收藏') { openCkBoard('收藏'); return; }   // 收藏页里取消了就移走
+      }
+    } catch (err) { toast(err.message, true); }
+    star.disabled = false;
     return;
   }
   const del = e.target.closest('[data-ckdel]');
@@ -4917,9 +4953,10 @@ $('#ckb-list').addEventListener('click', async e => {
   }
   const it = e.target.closest('[data-cki]');
   if (!it) return;
-  if (ckKind === 'classic') openClassicDetail(+it.dataset.cki);
-  else if (ckKind === 'hyper') openHyper(+it.dataset.cki);     // 上位词：点开看典故/来源
-  else if (ckBoard === '成语' || ckBoard === '实词') openCkStory(+it.dataset.cki);   // 成语/实词：点开看典故
+  const b = it.dataset.ckbd || ckBoard;
+  if (b === '古诗文') openClassicDetail(+it.dataset.cki);
+  else if (b === '上位词') openHyper(+it.dataset.cki);              // 上位词：点开看典故/来源
+  else if (b === '成语' || b === '实词') openCkStory(+it.dataset.cki);   // 成语/实词：点开看典故
 });
 
 /* 成语/实词的典故：出处原文 + 故事 + 本义怎么引申成今义 + 公考怎么考。

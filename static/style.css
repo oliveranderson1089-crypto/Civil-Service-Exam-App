@@ -2661,3 +2661,11 @@ body.mk-open .fab{display:none;}     /* 重点清单铺开时，悬浮球让位 
 .cki-star:hover{color:var(--gold);transform:scale(1.15);}
 .cki-star.on{color:var(--gold);}
 .cki-star:disabled{opacity:.5;}
+
+/* 常考：六个模块通用收藏 + 「我的收藏」入口 */
+.hc-star{display:grid;place-items:center;font-size:26px;color:#fff;
+  background:linear-gradient(135deg,#f0a500,#e0632f);}
+.ck-star-card .hc-logo{border-radius:14px;}
+.cki-from{margin-left:7px;padding:1px 7px;border-radius:20px;background:#eef4fb;color:#1a6fb5;
+  font-size:11px;font-weight:600;vertical-align:2px;}
+body.dark .cki-from{background:#1c2a45;color:#7fb0ff;}
