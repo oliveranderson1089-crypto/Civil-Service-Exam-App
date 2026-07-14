@@ -800,6 +800,7 @@ APK_NOTES="这次改了什么" ./make_apk.sh
 | **文件选择框** | WebKit 会把网页 `accept` 里混着的 `image/*` 和 `.pdf/.docx` **过滤成只剩图片** —— 上传真题时就只能选图片 | 接管 `run-file-chooser`，自己给全套过滤器（文档+图片 / 文档 / 图片 / 所有文件）|
 | **截图** | 浏览器抓不了 OS 屏幕；GNOME 自己的 `org.gnome.Shell.Screenshot` **被禁**（`AccessDenied`）| 走官方门路 **xdg-desktop-portal** 的 `Screenshot(interactive=true)`，GNOME 弹自己的区域选择（鼠标/手写笔都能拖），图片以 data URL 回调 `window.__onShot()` |
 | **拖放文件** | WebKitGTK 的 `drop` 事件里 **`dataTransfer.files` 是空的**（`dragover` 有效、高亮会亮，但 drop 拿不到文件）| 在 GTK 层接管：`drag_dest_set` 收 `text/uri-list` → 读文件 → base64 交给 `window.__onDropFiles()`，网页按当前页面路由（资料库 / 真题卷 / AI 附件）|
+| **`target="_blank"` 外链** | WebKit 里 `_blank` 走的是 **NEW_WINDOW_ACTION**，不是普通导航。壳原来只处理 NAVIGATION_ACTION，所以**所有 `_blank` 外链点了完全没反应**（新闻视频、原文来源…）—— WebKit 默认把新窗口请求直接丢掉，连报错都没有 | `on_decide` 同时处理 NEW_WINDOW_ACTION：外站交系统浏览器，站内的就在当前窗口打开 |
 | **粘贴图片** | WebKit 往 `<textarea>` 里 Ctrl+V 粘图**粘不进去**（它只认文字）| `on_key` 拦 Ctrl+V：剪贴板里**有图才接手**（转 PNG → `window.__onPasteImage()`），是文字就放行；右键菜单也追加一项「粘贴图片」|
 
 #### 桌面版朗读引擎（两档可切）

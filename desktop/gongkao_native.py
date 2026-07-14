@@ -21,7 +21,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "4.0"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "4.1"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -479,14 +479,25 @@ class Gongkao(Gtk.Application):
             pass
 
     def on_decide(self, web, decision, dtype):
-        # 跳到「别的网站」的链接 → 交系统浏览器；App 只停在自己的站
-        if dtype == WebKit2.PolicyDecisionType.NAVIGATION_ACTION:
+        # 跳到「别的网站」的链接 → 交系统浏览器；App 只停在自己的站。
+        # ⚠️ 必须同时处理 NEW_WINDOW_ACTION：`target="_blank"` 的链接走的是**这一路**，
+        #    原来只管 NAVIGATION_ACTION，所以桌面版里所有 _blank 外链（新闻视频、原文来源…）
+        #    点了**完全没反应**，连个提示都没有 —— WebKit 默认就把新窗口请求丢掉了。
+        if dtype in (WebKit2.PolicyDecisionType.NAVIGATION_ACTION,
+                     WebKit2.PolicyDecisionType.NEW_WINDOW_ACTION):
             try:
                 uri = decision.get_navigation_action().get_request().get_uri()
                 host = (urlparse(uri).hostname or "").lower()
                 if uri.startswith(("http://", "https://")) and host and host not in APP_HOSTS:
-                    Gio.AppInfo.launch_default_for_uri(uri, None)
+                    ok = Gio.AppInfo.launch_default_for_uri(uri, None)
                     decision.ignore()
+                    if not ok:
+                        self._toast("打不开系统浏览器，链接已复制：" + uri[:60])
+                    return True
+                if dtype == WebKit2.PolicyDecisionType.NEW_WINDOW_ACTION:
+                    # 自己站内的 _blank（比如导出的 PDF 预览）：就在当前窗口打开，别丢掉
+                    decision.ignore()
+                    self.web.load_uri(uri)
                     return True
             except Exception:
                 pass
