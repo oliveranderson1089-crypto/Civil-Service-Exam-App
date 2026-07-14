@@ -3900,7 +3900,9 @@ async function loadDrillTypes() {
     const d = await api(`/api/drill/types?board=${encodeURIComponent(drBoard)}&level=${drLevel}`);
     drLimit = d.limit; drLevels = d.levels; drCoef = d.coef;
     $('#dr-intro').innerHTML = d.ai
-      ? `这一块考的是<b>知识</b>，题由 AI 按考试标准出（某个题型第一次出题约 10 秒，之后从题库秒取）。每题限时 ${d.limit} 秒。`
+      ? `这一块考的是<b>知识</b>，题由 AI 按考试标准出，<b>并且必须过第二个模型的独立核验</b>
+         —— 两个模型答案不一致的题<b>不会发给你做</b>（实测能筛掉约 14%，其中有真的事实错误）。
+         每题限时 ${d.limit} 秒。`
       : `这一块靠<b>练</b>不靠背：题型固定、有套路、拼速度。题由<b>程序生成</b>，答案由构造保证。每题限时 ${d.limit} 秒，做完给这一类的秒杀技巧。`;
     $('#dr-levels').innerHTML = d.levels.map(l =>
       `<button class="dr-lv${l.k === drLevel ? ' on' : ''}" data-drl="${l.k}">
@@ -3923,6 +3925,9 @@ async function loadDrillTypes() {
         ${t.desc ? `<p class="dr-desc">${esc(t.desc)}</p>` : ''}
         <div class="dr-meta">
           <span class="dr-eng ${t.eng}">${t.eng === 'prog' ? '程序出题' : 'AI 出题'}</span>
+          ${t.eng === 'ai' && t.bank_all
+            ? `<span class="dr-bank" title="AI 出的题要过第二个模型的独立核验才发给你做；答案不一致的不出">
+                 ✓ ${t.bank_ok} 道已核验${t.bank_all > t.bank_ok ? `（筛掉 ${t.bank_all - t.bank_ok}）` : ''}</span>` : ''}
           ${done ? `做过 ${t.n} 题 · 平均 ${t.sec} 秒${t.sec > drLimit ? '（超时）' : ''}` : `限时 ${drLimit} 秒/题`}</div>
       </div>`;
     }).join('') + `<div class="dr-card dr-all" data-drt=""><div class="dr-card-h"><b>🎲 混合练</b></div>
@@ -5719,13 +5724,89 @@ async function openCkStory(cid) {
       ${s.origin ? `<div class="cd-sec"><div class="cd-sec-t">📜 出处</div><div class="cd-sec-b ck-origin">${esc(s.origin)}</div></div>` : ''}
       ${s.story ? `<div class="cd-sec"><div class="cd-sec-t">📖 典故</div><div class="cd-sec-b ck-story">${esc(s.story)}</div></div>` : ''}
       ${s.evolve ? `<div class="cd-sec"><div class="cd-sec-t">🔗 本义 → 今义</div><div class="cd-sec-b">${esc(s.evolve)}</div></div>` : ''}
-      ${s.usage ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🎯 公考怎么考</div><div class="cd-sec-b">${esc(s.usage)}</div></div>` : ''}`;
+      ${s.usage ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🎯 公考怎么考</div><div class="cd-sec-b">${esc(s.usage)}</div></div>` : ''}
+      <div class="cd-sec" id="ck-ex"><div class="cd-sec-t">✍️ 例句</div>
+        <div class="cd-sec-b"><button class="btn tiny" id="ck-ex-go" data-cid="${cid}">找一句真实例句</button>
+        <span class="ck-ex-hint">先在人民日报等真语料里找；找不到才 AI 仿写（会标明）</span></div></div>
+      <div class="cd-sec" id="ck-cf"><div class="cd-sec-t">⚖️ 易混辨析</div>
+        <div class="cd-sec-b"><button class="btn tiny" id="ck-cf-go" data-cid="${cid}">辨析相似词</button>
+        <span class="ck-ex-hint">逻辑填空考的就是「这几个近义词该用哪个」</span></div></div>`;
     window.scrollTo(0, 0);
     injectReadBtns();
+    ckLoadExample(cid);          // 已经有例句就直接显示，不用点
+    ckLoadConfuse(cid, true);
   } catch (e) {
     $('#cd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>';
   }
 }
+
+/* ---- 例句：真语料优先（人民日报等），找不到才 AI 仿写并标明 ---- */
+async function ckLoadExample(cid, force) {
+  const box = $('#ck-ex'); if (!box) return;
+  const btn = $('#ck-ex-go');
+  if (!force && btn) { btn.disabled = true; btn.textContent = '查找中…'; }
+  try {
+    const d = await api(`/api/changkao/${cid}/example${force ? '?force=1' : ''}`);
+    const ai = (d.src || '').startsWith('AI');
+    box.querySelector('.cd-sec-b').innerHTML = `
+      <div class="ck-ex">${esc(d.example)}</div>
+      <div class="ck-ex-src ${ai ? 'ai' : 'real'}">${ai ? '✎' : '📰'} ${esc(d.src || '')}</div>`;
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '找一句真实例句'; }
+  }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('#ck-ex-go');
+  if (b) { b.disabled = true; b.textContent = '查找中…'; ckLoadExample(+b.dataset.cid, true); }
+});
+
+/* ---- 易混辨析：给出 2~3 个最容易混的词，逐条说清「用哪个」 ---- */
+async function ckLoadConfuse(cid, quiet) {
+  const box = $('#ck-cf'); if (!box) return;
+  try {
+    const d = await api(`/api/changkao/${cid}/confuse${quiet ? '' : '?force=1'}`);
+    if (quiet && !d.cached) return;         // 静默模式只显示已经生成过的，不主动烧 AI
+    ckRenderConfuse(box, d);
+  } catch (_) {}
+}
+function ckRenderConfuse(box, d) {
+  const q = d.quiz;
+  box.querySelector('.cd-sec-b').innerHTML = `
+    ${d.key ? `<div class="ck-cf-key">🔑 ${esc(d.key)}</div>` : ''}
+    ${(d.items || []).map(x => `
+      <div class="ck-cf-i">
+        <div class="ck-cf-w">${esc(d.word)} <i>vs</i>
+          ${x.in_lib ? `<b class="ck-cf-go" data-ckcf="${x.id}">${esc(x.word)}</b>`
+                     : `<b>${esc(x.word)}</b><span class="ck-cf-out">库外</span>`}</div>
+        <div class="ck-cf-r"><span>词义侧重</span>${esc(x.focus || '')}</div>
+        <div class="ck-cf-r"><span>感情色彩</span>${esc(x.color || '')}</div>
+        <div class="ck-cf-r"><span>搭配对象</span>${esc(x.collocation || '')}</div>
+        ${x.wrong ? `<div class="ck-cf-bad">✗ ${esc(x.wrong)}</div>` : ''}
+      </div>`).join('')}
+    ${q ? `<div class="ck-cf-quiz" data-ans="${esc(q.answer)}">
+        <div class="ck-cf-q">📝 ${esc(q.stem)}</div>
+        <div class="ck-cf-opts">${q.options.map((o, i) =>
+          `<button class="dt-opt" data-ckq="${DT_L[i]}">${esc(o)}</button>`).join('')}</div>
+        <div class="ck-cf-why hidden">${esc(q.why || '')}</div>
+      </div>` : ''}`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('#ck-cf-go');
+  if (b) { b.disabled = true; b.textContent = '辨析中…（约 20 秒）'; ckLoadConfuse(+b.dataset.cid); return; }
+  const g = e.target.closest('[data-ckcf]');
+  if (g) { openCkStory(+g.dataset.ckcf); return; }        // 点对比词 → 直接看它的详情
+  const o = e.target.closest('[data-ckq]');
+  if (o) {                                                 // 填空自测：选完立刻判
+    const box = o.closest('.ck-cf-quiz');
+    const ans = box.dataset.ans;
+    box.querySelectorAll('[data-ckq]').forEach(x => {
+      x.disabled = true;
+      if (x.dataset.ckq === ans) x.classList.add('correct');
+      else if (x === o) x.classList.add('wrong');
+    });
+    box.querySelector('.ck-cf-why').classList.remove('hidden');
+  }
+});
 
 /* 上位词详解：每个下位词的出处、典故、公考考点（AI 讲一次就缓存，之后秒开） */
 async function openHyper(hid) {
@@ -5916,7 +5997,32 @@ $('#rv-flash').addEventListener('click', e => {
   back.classList.toggle('hidden', !opening);
   $('#rvf-hint').classList.toggle('hidden', opening);
   $('#rv-btns').classList.toggle('hidden', !opening);
+  if (opening) rvEnsureExample();                   // 翻到背面：没例句就现去要一个
 });
+
+/* 例句懒加载：194 个词在真语料里找到了真句子（人民日报等），剩下的翻到时才让 AI 仿写 ——
+   一次性给 990 个词都生成太浪费，你真背到哪个才给哪个。 */
+async function rvEnsureExample() {
+  const it = rvQueue[0];
+  if (!it || it.kind !== 'changkao') return;                 // 只有常考的成语/实词有例句
+  if ((it.back || '').includes('✍️ 例句')) return;           // 已经有了
+  if (it._exLoading) return;
+  it._exLoading = true;
+  const box = $('#rvb-body');
+  const tip = document.createElement('div');
+  tip.className = 'rv-ex-load';
+  tip.textContent = '正在找例句…';
+  box.appendChild(tip);
+  try {
+    const d = await api('/api/changkao/' + it.id + '/example');
+    const ai = (d.src || '').startsWith('AI');
+    it.back = (it.back || '') + '\n\n✍️ 例句：' + d.example + (d.src ? '\n　　—— ' + d.src : '');
+    tip.className = 'rv-ex';
+    tip.innerHTML = `<div class="rv-ex-t">✍️ ${esc(d.example)}</div>
+      <div class="ck-ex-src ${ai ? 'ai' : 'real'}">${ai ? '✎' : '📰'} ${esc(d.src || '')}</div>`;
+  } catch (_) { tip.remove(); }
+  it._exLoading = false;
+}
 async function rvAnswer(result) {
   const it = rvQueue.shift(); if (!it) return;
   try {

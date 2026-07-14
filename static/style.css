@@ -2867,3 +2867,41 @@ body.dark .dr-eng.prog{background:#16261f;color:#4fb583;}
 body.dark .dr-eng.ai{background:#221c33;color:#a68fe0;}
 body.dark .dr-mth{background:#141b29;}
 body.dark .dr-miss{background:#2a2312;color:#d8b25f;}
+
+.dr-bank{display:inline-block;margin-right:7px;padding:0 6px;border-radius:5px;font-size:10.5px;
+  font-weight:600;background:#e6f4ec;color:#1e8449;}
+body.dark .dr-bank{background:#16261f;color:#4fb583;}
+
+/* 成语详情：例句 + 易混辨析 */
+.ck-ex{font-size:14.5px;line-height:1.9;padding:10px 12px;border-radius:10px;background:#f6fafe;
+  border-left:3px solid #1a6fb5;}
+.ck-ex-src{margin-top:6px;font-size:12px;}
+.ck-ex-src.real{color:#1e8449;}
+.ck-ex-src.ai{color:#8a5a00;}
+.ck-ex-hint{margin-left:8px;font-size:11.5px;color:var(--muted);}
+.ck-cf-key{padding:9px 12px;border-radius:10px;background:#fff8e6;color:#8a5a00;
+  font-size:13.2px;line-height:1.75;margin-bottom:11px;}
+.ck-cf-i{border:1px solid var(--line);border-radius:12px;padding:10px 13px;margin-bottom:9px;}
+.ck-cf-w{font-size:14.5px;font-weight:700;margin-bottom:7px;}
+.ck-cf-w i{font-style:normal;color:var(--muted);font-weight:400;margin:0 4px;font-size:12px;}
+.ck-cf-go{color:#1a6fb5;cursor:pointer;border-bottom:1px dashed #1a6fb5;}
+.ck-cf-out{margin-left:6px;font-size:10.5px;color:var(--muted);font-weight:400;}
+.ck-cf-r{display:flex;gap:8px;font-size:12.8px;line-height:1.8;margin-bottom:3px;}
+.ck-cf-r>span{flex:0 0 56px;color:var(--muted);font-weight:600;}
+.ck-cf-bad{margin-top:6px;padding:7px 10px;border-radius:8px;background:#fdece7;color:#a33a1a;
+  font-size:12.5px;line-height:1.75;white-space:pre-wrap;}
+.ck-cf-quiz{margin-top:12px;padding:11px 13px;border-radius:12px;background:#f3f7fb;}
+.ck-cf-q{font-size:14px;line-height:1.8;margin-bottom:9px;}
+.ck-cf-opts{display:flex;flex-direction:column;gap:6px;}
+.ck-cf-why{margin-top:9px;font-size:12.8px;line-height:1.8;color:var(--muted);}
+body.dark .ck-ex{background:#141b29;border-left-color:#3a6ad0;}
+body.dark .ck-cf-key{background:#2a2312;color:#d8b25f;}
+body.dark .ck-cf-bad{background:#2e1a15;color:#e08a6a;}
+body.dark .ck-cf-quiz{background:#141b29;}
+
+/* 复习卡：例句（真语料优先） */
+.rv-ex-load{margin-top:12px;font-size:12.5px;color:var(--muted);}
+.rv-ex{margin-top:14px;padding:11px 13px;border-radius:11px;background:#f6fafe;
+  border-left:3px solid #1a6fb5;text-align:left;}
+.rv-ex-t{font-size:14.5px;line-height:1.9;}
+body.dark .rv-ex{background:#141b29;border-left-color:#3a6ad0;}

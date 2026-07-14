@@ -703,6 +703,11 @@ def init_db():
                       ("audit_note", "''"), ("flaw", "''")):
         if col not in _cols(con, "drill_bank"):
             con.execute("ALTER TABLE drill_bank ADD COLUMN %s TEXT DEFAULT %s" % (col, dflt))
+    # 成语/实词的例句：光有释义记不住怎么用。**先从真实官方语料里找**（人民日报时政、时政要文、
+    # 习语金句都是真文本），找到就是真出处；找不到才让 AI 仿写，并**明说是仿写**。
+    for col in ("example", "example_src", "confuse"):
+        if col not in _cols(con, "changkao_items"):
+            con.execute("ALTER TABLE changkao_items ADD COLUMN %s TEXT" % col)
     # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
     if "mat_boards" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
@@ -6632,14 +6637,21 @@ def drill_types():
     stat = {r["qtype"]: dict(r) for r in db.execute(
         "SELECT qtype, COUNT(*) n, SUM(correct) ok, AVG(seconds) sec FROM drill_log "
         "WHERE user_id=? AND board=? AND level=? GROUP BY qtype", (uid(), board, level))}
+    # 题库里每个题型有多少道过了双模型核验（AI 题型才有）
+    bank = {r["qtype"]: dict(r) for r in db.execute(
+        "SELECT qtype, SUM(agree='1') ok, COUNT(*) c FROM drill_bank "
+        "WHERE board=? AND level=? GROUP BY qtype", (board, level))}
     items = []
     for i, (k, desc, eng) in enumerate(DRILL_TYPES[board]):
         st = stat.get(k) or {}
+        bk = bank.get(k) or {}
         n = st.get("n") or 0
         acc = round(100.0 * (st.get("ok") or 0) / n) if n else None
         items.append({"type": k, "desc": desc, "eng": eng, "ord": i, "n": n, "acc": acc,
                       "sec": round(st.get("sec") or 0) if n else None,
-                      "tip": DRILL_TIP.get(k, "")})
+                      "tip": DRILL_TIP.get(k, ""),
+                      "bank_ok": bk.get("ok") or 0,          # 过了双模型核验的
+                      "bank_all": bk.get("c") or 0})
     # 默认按**讲义目录顺序**（循序渐进）；练过之后，薄弱的（低于该难度预期得分率）才提到前面
     exp = round(drill_coef(board, level) * 100)
     items.sort(key=lambda x: (0 if (x["acc"] is not None and x["acc"] < exp) else 1,
@@ -8036,8 +8048,16 @@ def changkao_star():
                       (uid(), board, iid)).fetchone()
     if have:
         db.execute("DELETE FROM ck_stars WHERE user_id=? AND board=? AND item_id=?", (uid(), board, iid))
+        # 成语/实词：**同步从「成语词语积累」里删掉**（两边是同一份收藏，只删一边等于没删）
+        removed = 0
+        if board in CK_TO_ENTRY:
+            it0 = _ck_one(db, board, iid)
+            if it0:
+                cur = db.execute("DELETE FROM entries WHERE user_id=? AND word=?",
+                                 (uid(), it0["title"]))
+                removed = cur.rowcount or 0
         db.commit()
-        return jsonify({"starred": False})
+        return jsonify({"starred": False, "removed_entry": removed})
     it = _ck_one(db, board, iid)
     if not it:
         return jsonify({"error": "这一条不存在"}), 404
@@ -8075,6 +8095,161 @@ def changkao_stars():
         by.setdefault(r["board"], []).append(dict(r))
     return jsonify({"total": len(rows),
                     "boards": [{"board": b, "items": by[b]} for b in CK_STAR_BOARDS if b in by]})
+
+
+def _real_example(db, word):
+    """在**真实语料**里找含这个词的句子：人民日报等时政原文、时政要文、习语金句。
+       找到了就是真出处 —— 比 AI 编一句强得多（AI 编的句子读着像那么回事，但不是真的）。"""
+    like = "%" + word + "%"
+    srcs = [
+        ("SELECT content AS t, title AS s, source AS src FROM news_items WHERE content LIKE ? LIMIT 3",
+         "news"),
+        ("SELECT content AS t, title AS s, '' AS src FROM policy_docs WHERE content LIKE ? LIMIT 2",
+         "policy"),
+        ("SELECT quote AS t, category AS s, source_url AS src FROM xiyu_items WHERE quote LIKE ? LIMIT 2",
+         "xiyu"),
+    ]
+    for sql, kind in srcs:
+        try:
+            rows = db.execute(sql, (like,)).fetchall()
+        except Exception:
+            continue
+        for r in rows:
+            text = (r["t"] or "").replace("\n", "")
+            # 把含这个词的**那一句**切出来（前后到句号为止），太长的截断
+            for sent in re.split(r"(?<=[。！？；])", text):
+                if word in sent and 12 <= len(sent) <= 120:
+                    if kind == "news":
+                        src = (r["src"] or "时政报道") + "《" + (r["s"] or "")[:22] + "》"
+                    elif kind == "policy":
+                        src = "时政要文《" + (r["s"] or "")[:22] + "》"
+                    else:
+                        src = "习语金句"
+                    return sent.strip(), src
+    return None, None
+
+
+@app.get("/api/changkao/<int:cid>/example")
+def changkao_example(cid):
+    """例句：真语料优先，AI 仿写兜底（会标明来源，不糊弄）。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM changkao_items WHERE id=?", (cid,)).fetchone()
+    if not r:
+        return jsonify({"error": "词条不存在"}), 404
+    if r["example"] and not request.args.get("force"):
+        return jsonify({"example": r["example"], "src": r["example_src"] or "", "cached": True})
+
+    word = r["title"]
+    ex, src = _real_example(db, word)
+    if not ex:
+        rep, err = _ai_call_or_error(
+            [{"role": "system", "content": "你是公考语文老师。例句要像《人民日报》《政府工作报告》"
+                                           "那样的规范书面语（时政/公文语境），一句话，20~45 字。"
+                                           "严格输出 JSON。"},
+             {"role": "user", "content":
+              "给「%s」（%s）写一个例句。\n"
+              "要求：\n"
+              "1. **时政/公文语境**（乡村振兴、基层治理、科技创新这类），像人民日报社论的句子。\n"
+              "2. 用法必须准确（褒贬、搭配对象、能不能用于否定句，都要对）。\n"
+              "3. 20~45 字，一句话。\n\n"
+              '只输出 JSON：{"example":""}' % (word, (r["content"] or "")[:60])}],
+            temperature=0.5, max_tokens=300, timeout=120, json_mode=True)
+        if err:
+            return err
+        try:
+            ex = (json.loads(rep).get("example") or "").strip()
+        except Exception:
+            return jsonify({"error": "AI 返回格式异常"}), 502
+        if not ex or word not in ex:
+            return jsonify({"error": "没造出合格的例句，请重试"}), 502
+        # ⚠️ 老实标注：这是 AI 仿写的，不是真的从人民日报摘的
+        src = "AI 仿写（人民日报文风）"
+
+    db.execute("UPDATE changkao_items SET example=?, example_src=? WHERE id=?", (ex, src, cid))
+    db.commit()
+    return jsonify({"example": ex, "src": src})
+
+
+@app.get("/api/changkao/<int:cid>/confuse")
+def changkao_confuse(cid):
+    """相似辨析：逻辑填空考的就是「这几个近义词该用哪个」。
+       给出 2~3 个易混词，逐个对比：**词义侧重 / 感情色彩 / 搭配对象 / 语体**，
+       并给一道「填空自测」（把这几个词摆一起，看你选不选得对）。
+       易混词**优先从我们自己的成语库里挑**（这样辨析完这几个词都在你的复习范围内）。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM changkao_items WHERE id=?", (cid,)).fetchone()
+    if not r:
+        return jsonify({"error": "词条不存在"}), 404
+    if r["confuse"] and not request.args.get("force"):
+        try:
+            return jsonify(dict(json.loads(r["confuse"]), cached=True))
+        except Exception:
+            pass
+
+    word = r["title"]
+    # 库里的候选（同板块、考频高的）—— 让 AI 优先从这里面挑，辨析完的词都在复习范围内
+    pool = [x[0] for x in db.execute(
+        "SELECT title FROM changkao_items WHERE board=? AND title!=? "
+        "ORDER BY COALESCE(freq,0) DESC LIMIT 300", (r["board"], word))]
+
+    prompt = (
+        "考生在背「%s」（%s）。请做一份**易混词辨析**。\n\n"
+        "【选谁来对比】挑 2~3 个**最容易和它混**的词。**优先从下面这个词库里挑**"
+        "（这样辨析完的词都在他的复习范围内）；库里实在没有合适的，才可以用库外的词。\n"
+        "词库：%s\n\n"
+        "【每个对比词要说清四件事】\n"
+        "· focus：**词义侧重**在哪不一样（这是最关键的）\n"
+        "· color：感情色彩（褒义/贬义/中性），有没有区别\n"
+        "· collocation：**搭配对象**不一样在哪（能修饰什么、不能修饰什么）\n"
+        "· wrong：一个**用错的例子**——把它误用在该用「%s」的地方，说清为什么不行\n\n"
+        "【还要给】\n"
+        "· key：一句话的**辨析口诀**（考场上 3 秒能想起来的那种）\n"
+        "· quiz：一道填空自测 —— stem（一句话，中间一个空 ______）、"
+        "options（把这几个词都列上，形如 \"A. …\"）、answer（正确选项字母）、"
+        "why（为什么是它，其他为什么不行）\n\n"
+        "只输出 JSON：\n"
+        '{"key":"","items":[{"word":"","focus":"","color":"","collocation":"","wrong":""}],'
+        '"quiz":{"stem":"","options":["A. …","B. …","C. …"],"answer":"A","why":""}}'
+        % (word, (r["content"] or "")[:60], "、".join(pool[:150]), word))
+
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是公考言语理解老师。辨析要说到**用哪个**的层面，"
+                                       "别只复述释义。严格输出 JSON。"},
+         {"role": "user", "content": prompt}],
+        temperature=0.4, max_tokens=2000, timeout=180, json_mode=True)
+    if err:
+        return err
+    try:
+        d = json.loads(rep)
+    except Exception:
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+
+    items = [x for x in (d.get("items") or []) if (x.get("word") or "").strip()][:3]
+    if not items:
+        return jsonify({"error": "没找到易混词"}), 502
+    quiz = d.get("quiz") or {}
+    # 自测题也要过一遍格式关：选项和答案对得上，否则不给（宁可不给，也不给一道错题）
+    opts = quiz.get("options") or []
+    ans = (quiz.get("answer") or "").strip().upper()[:1]
+    if not (quiz.get("stem") and 2 <= len(opts) <= 5 and ans and ans in "ABCDE"[:len(opts)]):
+        quiz = None
+
+    # 库里有的对比词，带上 id —— 前端可以直接点过去看它的释义/典故
+    ids = {}
+    for x in items:
+        row = db.execute("SELECT id FROM changkao_items WHERE board=? AND title=?",
+                         (r["board"], x["word"])).fetchone()
+        if row:
+            ids[x["word"]] = row["id"]
+        x["in_lib"] = bool(row)
+        x["id"] = row["id"] if row else 0
+
+    out = {"word": word, "board": r["board"], "key": (d.get("key") or "").strip(),
+           "items": items, "quiz": quiz}
+    db.execute("UPDATE changkao_items SET confuse=? WHERE id=?",
+               (json.dumps(out, ensure_ascii=False), cid))
+    db.commit()
+    return jsonify(out)
 
 
 @app.get("/api/changkao/<int:cid>/story")
@@ -8643,11 +8818,14 @@ def _review_due(db, u, today):
     n_ck = 894 if _lw == 0 else max(120, _lw * 3)
     if n_ck > 0:
         for r in db.execute(
-                "SELECT id, board, title, content, note FROM changkao_items "
+                "SELECT id, board, title, content, note, example, example_src FROM changkao_items "
                 "WHERE board IN ('成语','实词') "
                 "ORDER BY COALESCE(freq,0) DESC, id LIMIT ?", (n_ck,)):
             body = (r["content"] or "").strip()
             back = body + (("\n\n📌 " + r["note"]) if r["note"] else "")
+            if r["example"]:                       # 光有释义记不住怎么用，背面给个例句
+                back += "\n\n✍️ 例句：" + r["example"] + (
+                    ("\n　　—— " + r["example_src"]) if r["example_src"] else "")
             check("changkao", r["id"], "2000-01-01", {          # 全局内容，不按收录时间等一天
                 "title": r["title"] or "", "sub": r["board"] or "常考",
                 "body": body[:90],
@@ -9550,10 +9728,57 @@ def api_update(eid):
 
 @app.delete("/api/entries/<int:eid>")
 def api_delete(eid):
+    """从「成语词语积累」删词 → **同步取消常考那边的 ★**。
+       两边是同一份收藏，只删一边等于没删（下次打开常考还是实心星，再点一下又加回来）。"""
     db = get_db()
+    r = db.execute("SELECT word FROM entries WHERE id=? AND user_id=?", (eid, uid())).fetchone()
     db.execute("DELETE FROM entries WHERE id=? AND user_id=?", (eid, uid()))
+    unstarred = 0
+    if r:
+        cur = db.execute(
+            "DELETE FROM ck_stars WHERE user_id=? AND board IN ('成语','实词') AND title=?",
+            (uid(), r["word"]))
+        unstarred = cur.rowcount or 0
     db.commit()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "unstarred": unstarred})
+
+
+@app.post("/api/entries/sync")
+def entries_sync():
+    """对账：把两边补齐（谁有谁没有都补上），并报告补了多少。
+       历史数据是两边各存各的，直接开双向同步会「有的对得上、有的对不上」，所以给个对账入口。"""
+    db = get_db()
+    ents = {r["word"] for r in db.execute(
+        "SELECT word FROM entries WHERE user_id=? AND category IN ('成语','词语')", (uid(),))}
+    stars = {r["title"]: r for r in db.execute(
+        "SELECT * FROM ck_stars WHERE user_id=? AND board IN ('成语','实词')", (uid(),))}
+    add_star, add_entry = 0, 0
+    # entries 里有、常考没标星 → 去常考里找到这个词，补上星
+    for w in ents - set(stars):
+        row = db.execute("SELECT id, board, title, content, note FROM changkao_items "
+                         "WHERE board IN ('成语','实词') AND title=?", (w,)).fetchone()
+        if row:
+            db.execute("INSERT OR REPLACE INTO ck_stars(user_id,board,item_id,title,content,note) "
+                       "VALUES(?,?,?,?,?,?)",
+                       (uid(), row["board"], row["id"], row["title"], row["content"], row["note"]))
+            add_star += 1
+    # 常考标了星、entries 里没有 → 补进成语词语积累
+    for w, r in stars.items():
+        if w in ents:
+            continue
+        cat = CK_TO_ENTRY.get(r["board"])
+        if not cat:
+            continue
+        info = lookup(w) or {}
+        db.execute(
+            "INSERT INTO entries(user_id,word,pinyin,category,explanation,derivation,example,note,source) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (uid(), w, info.get("pinyin") or "", cat,
+             info.get("explanation") or r["content"] or "", info.get("derivation") or "",
+             info.get("example") or "", r["note"] or "", "常考收藏"))
+        add_entry += 1
+    db.commit()
+    return jsonify({"add_star": add_star, "add_entry": add_entry})
 
 
 # ---------------------------------------------------------------- PDF 导出
