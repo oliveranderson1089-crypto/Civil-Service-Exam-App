@@ -2727,6 +2727,8 @@ function aiRunActions(actions) {
       $('#ai-panel').classList.add('hidden'); if (window.applyPush) applyPush(); if (window.avoidFab) avoidFab();
       try { window[a.fn](); } catch (_) {}
       toast('已为你打开「' + (a.label || '') + '」');
+    } else if (a.type === 'refresh' && a.what === 'notes') {
+      if (v === 'notes' && typeof loadFeed === 'function') loadFeed();   // 正看着小记就刷新
     }
   }
 }
@@ -3355,6 +3357,14 @@ async function playVideo(id) {
 
   if (d.mode === 'external') {                   // 放不了就老实跳出去，别假装能放
     toast(d.note || '这条只能在浏览器里看');
+    openOut(d.url);
+    return;
+  }
+  // B 站是 iframe 官方播放器 —— 浏览器里能放，但桌面壳(WebKitGTK)缺 B 站要的编解码器，会黑屏
+  // 且它自己会弹外部播放器。所以桌面壳里 B 站直接一键跳系统浏览器，不整那个黑屏。
+  // （B 站的流是 DASH、约 2 小时过期、有风控，没法像央视那样取直连流内部播，只能这样。）
+  if (d.mode === 'iframe' && window.__desktop) {
+    toast('B 站视频在浏览器里打开（桌面版放不了 B 站内嵌播放器）');
     openOut(d.url);
     return;
   }

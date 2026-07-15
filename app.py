@@ -254,6 +254,13 @@ AI_TOOLS = [
             "feature": {"type": "string", "enum": list(AI_FEATURES.keys()),
                         "description": "功能名"}},
             "required": ["feature"]}}},
+    {"type": "function", "function": {
+        "name": "create_note",
+        "description": "帮用户在「小记」里记一条笔记。当用户说「帮我记下/记一条/存到小记」时调用。",
+        "parameters": {"type": "object", "properties": {
+            "content": {"type": "string", "description": "要记的内容"},
+            "tags": {"type": "array", "items": {"type": "string"}, "description": "可选标签"}},
+            "required": ["content"]}}},
 ]
 
 
@@ -282,6 +289,17 @@ def _ai_exec_tool(name, args, db):
         if not fn:
             return "没有这个功能：" + f, None
         return "已为用户打开「%s」。" % f, {"type": "navigate", "fn": fn, "label": f}
+    if name == "create_note":
+        content = (args.get("content") or "").strip()
+        if not content:
+            return "没有要记的内容。", None
+        tags = [str(t)[:20] for t in (args.get("tags") or [])][:6]
+        db.execute(
+            "INSERT INTO notes(user_id,board,content,images,attachments,todos,tags) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (uid(), "", content, "[]", "[]", "[]", json.dumps(tags, ensure_ascii=False)))
+        db.commit()
+        return "已记进小记。", {"type": "refresh", "what": "notes"}
     return "未知工具：" + str(name), None
 
 
