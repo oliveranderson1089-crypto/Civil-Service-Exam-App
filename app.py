@@ -7886,9 +7886,59 @@ def find_types():
          "tip": v[4], "n": n.get(k, 0)} for k, v in FIND_TYPES.items()]})
 
 
+def _find_gen_material(name, full, wmin, wmax, tip, topic):
+    """出材料 + 题干，按省考/国考真题规格（5~6 则、总 2000~3000 字）。
+    模型对「多少字」很不敏感，一次说了也压不住 → 出稿后实测字数，太短就带上这一稿要求扩写返工
+    （和范文推荐 gen_essays.fit_words 同一套办法）。返回 (material, stem, err)。"""
+    prompt = (
+        "命制一道申论**%s**（%d 分，%d~%d 字）。话题：%s。\n\n"
+        "【给定资料要求】按**省考/国考真题规格**出，别嫌长——真题一道小题对应的材料本就有两三千字：\n"
+        "1. **5~6 则材料，每则 350~550 字，总共 2000~3000 字**（这是硬性要求，不许偷懒写短）。\n"
+        "2. 要像真题：有具体的人、地、事、**数据**，有干部/群众/专家的**原话引用**，"
+        "不同材料从不同角度切入（做法、成效、问题、案例、政策）。\n"
+        "3. **必须掺入干扰信息**——背景铺垫、无关细节、和要点重复的同义表述、反面例子。"
+        "找点训练的价值全在这儿：材料里如果句句是要点，那就没什么可练的。\n"
+        "4. 采分点要**散落在多则材料里**（不能都堆在一则），逼考生通读全篇。\n"
+        "5. 每则材料用「材料一」「材料二」…开头，各占一段。\n\n"
+        "【题干要求】一句话，明确作答对象和范围。%s\n\n"
+        '只输出 JSON：{"stem":"题干","material":"给定资料全文（材料N 各占一行）"}'
+        % (name, full, wmin, wmax, topic, tip))
+    sys = ("你是申论命题人。材料按省考/国考真题规格（两三千字、5~6 则、多角度），"
+           "有细节、有原话、有数据、**有干扰信息**。严格输出 JSON。")
+    msgs = [{"role": "system", "content": sys}, {"role": "user", "content": prompt}]
+    MIN_WORDS = 1800                                  # 低于此判「太短」，带稿返工
+    best_mat, best_stem = "", ""
+    for _ in range(3):                                # 最多 3 次（1 出稿 + 2 扩写），控制在隧道超时内
+        rep, err = _ai_call_or_error(msgs, temperature=0.7, max_tokens=6000, timeout=300, json_mode=True)
+        if err:
+            break
+        try:
+            j = json.loads(rep)
+        except Exception:
+            break
+        mat = (j.get("material") or "").strip()
+        stem = (j.get("stem") or "").strip()
+        n = _sl_words(mat)
+        if mat and stem and n >= MIN_WORDS:
+            return mat, stem, None
+        if n > _sl_words(best_mat):
+            best_mat, best_stem = mat, (stem or best_stem)
+        # 太短 → 带上这一稿，明确告诉它「才 N 字」并要求扩写（模型看到实测字数才会真扩）
+        msgs = msgs[:1] + [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": rep},
+            {"role": "user", "content":
+                "这份给定资料才 %d 字，太短、不符合真题规格。请在**保留已有材料**的基础上，"
+                "把每则扩充到 350~550 字、补足到 5~6 则，总字数做到 2000~3000 字（多加细节、数据、"
+                "人物对话、干扰信息，别只是换句话）。仍然只输出同样结构的 JSON。" % n}]
+    if best_mat and best_stem:                        # 没达标但有稿，用最长的那稿兜底
+        return best_mat, best_stem, None
+    return None, None, (jsonify({"error": "AI 没出好材料，请重试"}), 502)
+
+
 @app.post("/api/find/gen")
 def find_gen():
-    """AI 按考试标准出一道：先造材料（含干扰信息），再标采分点。"""
+    """AI 按考试标准出一道：先造材料（含干扰信息、够真题字数），再标采分点。"""
     d = request.get_json(silent=True) or {}
     qtype = (d.get("qtype") or "guina").strip()
     if qtype not in FIND_TYPES:
@@ -7902,34 +7952,9 @@ def find_gen():
                        "ORDER BY RANDOM() LIMIT 1").fetchone()
         topic = r[0] if r else "基层治理"
 
-    prompt = (
-        "命制一道申论**%s**（%d 分，%d~%d 字）。话题：%s。\n\n"
-        "【给定资料要求】按**省考/国考真题规格**出，别嫌长——真题一道小题对应的材料本就有两三千字：\n"
-        "1. **5~6 则材料，每则 350~550 字，总共 2000~3000 字**。\n"
-        "2. 要像真题：有具体的人、地、事、**数据**，有干部/群众/专家的**原话引用**，"
-        "不同材料从不同角度切入（做法、成效、问题、案例、政策）。\n"
-        "3. **必须掺入干扰信息**——背景铺垫、无关细节、和要点重复的同义表述、反面例子。"
-        "找点训练的价值全在这儿：材料里如果句句是要点，那就没什么可练的。\n"
-        "4. 采分点要**散落在多则材料里**（不能都堆在一则），逼考生通读全篇。\n"
-        "5. 每则材料用「材料一」「材料二」…开头，各占一段。\n\n"
-        "【题干要求】一句话，明确作答对象和范围。%s\n\n"
-        '只输出 JSON：{"stem":"题干","material":"给定资料全文（材料N 各占一行）"}'
-        % (name, full, wmin, wmax, topic, tip))
-    rep, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是申论命题人。材料按省考/国考真题规格（两三千字、多则、多角度），"
-                                       "有细节、有原话、有数据、**有干扰信息**。严格输出 JSON。"},
-         {"role": "user", "content": prompt}],
-        temperature=0.7, max_tokens=6000, timeout=300, json_mode=True)
+    material, stem, err = _find_gen_material(name, full, wmin, wmax, tip, topic)
     if err:
         return err
-    try:
-        j = json.loads(rep)
-    except Exception:
-        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
-    material = (j.get("material") or "").strip()
-    stem = (j.get("stem") or "").strip()
-    if len(material) < 400 or not stem:
-        return jsonify({"error": "AI 没出好材料，请重试"}), 502
 
     pid, err = _find_build(db, uid(), qtype, stem, material, full, wmin, wmax, "AI 命题 · " + topic)
     if err:

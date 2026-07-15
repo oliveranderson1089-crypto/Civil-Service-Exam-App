@@ -757,7 +757,8 @@
     <div class="tk-tabs" id="wr-tabs">
       <button class="tk-tab active" data-wk="daily">📅 每日成文</button>
       <button class="tk-tab" data-wk="compose">🧩 综合应用</button>
-      <button class="tk-tab" data-wk="yingyong">📋 应用文</button>
+      <button class="tk-tab" data-wk="yycat">📋 文种大全</button>
+      <button class="tk-tab" data-wk="yywrite">✍️ 自选成文</button>
     </div>
     <div id="wr-daily" class="wr-pane">
       <div class="pd-intro">按<b>素材更新的日期</b>成文：当天的人物事例 / 理论论据 / 衔接表达全用上，
@@ -774,7 +775,8 @@
       <div class="wr-bar"><button class="btn primary" id="wr-gen-cp">✍️ 写今天这篇</button></div>
       <div id="wr-cplist" class="sl-hist"></div>
     </div>
-    <div id="wr-yingyong" class="wr-pane hidden">
+    <!-- 应用文 · 文种大全：一键铺开 + 按分类浏览各文种的提纲/范文 -->
+    <div id="wr-yycat" class="wr-pane hidden">
       <div class="pd-intro">应用文和大作文不是一回事：大作文考<b>怎么论证</b>，应用文考<b>格式 + 要点 + 语言得体</b>。
         每个文种都给两样：<b>🧭 提纲</b>（框架式要点式，看清由哪几块组成）和 <b>📄 范文</b>（成篇，逐段带批注）。
         <b>提纲本身不是文种</b>，是一种呈现方式，任何文种都能套。</div>
@@ -783,8 +785,11 @@
         <span id="yy-bfmsg" class="wr-bfmsg"></span>
       </div>
       <div id="yy-cats"></div>
+    </div>
 
-      <div class="sl-hist-head"><span>针对某个文种，换个话题再写一篇</span></div>
+    <!-- 应用文 · 自选成文：选文种 + 给话题/身份/对象，写一篇 -->
+    <div id="wr-yywrite" class="wr-pane hidden">
+      <div class="pd-intro">选一个文种、说清「就什么事、以谁的身份、写给谁看」，AI 帮你写一篇（可要范文或提纲）。</div>
       <div class="gw-form">
         <div class="gw-row"><label>文种</label><div id="yy-types" class="gw-chips"></div></div>
         <div class="gw-fmt" id="yy-fmt"></div>

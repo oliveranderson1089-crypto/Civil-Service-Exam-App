@@ -4211,8 +4211,8 @@ $('#fd-list').addEventListener('click', e => {
   const c = e.target.closest('[data-fdp]'); if (c) openFindRun(+c.dataset.fdp);
 });
 $('#fd-gen').onclick = async () => {
-  const b = $('#fd-gen'); b.disabled = true; b.textContent = '出题中…（约 20 秒）';
-  $('#fd-msg').textContent = 'AI 正在造材料（会故意掺入干扰信息）并标采分点…';
+  const b = $('#fd-gen'); b.disabled = true; b.textContent = '出题中…（约 30~60 秒）';
+  $('#fd-msg').textContent = 'AI 正在按真题规格造材料（5~6 则、两三千字、掺干扰信息），字数不够会自动扩写，再标采分点…';
   try {
     const d = await api('/api/find/gen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4713,21 +4713,21 @@ let wrTab = 'daily', wrCur = null, wrPoll = 0;
 
 function openWrite(tab) {
   const app = tab === 'yingyong';           // 从「应用文 → 应用文成文」进来
-  wrTab = tab || 'daily';
   push({ view: 'write', title: app ? '应用文成文' : '议论文成文' });
-  // #5：议论文成文只放「每日成文 / 综合应用」；应用文成文只放「应用文」。相应地隐掉不属于本处的 tab
-  const show = app ? ['yingyong'] : ['daily', 'compose'];
+  // 议论文成文放「每日成文 / 综合应用」；应用文成文放「文种大全 / 自选成文」——各两个导航栏
+  const show = app ? ['yycat', 'yywrite'] : ['daily', 'compose'];
   document.querySelectorAll('#wr-tabs .tk-tab').forEach(b => b.classList.toggle('hidden', !show.includes(b.dataset.wk)));
-  if (!show.includes(wrTab)) wrTab = show[0];
+  wrTab = show.includes(tab) ? tab : show[0];
   wrSwitch(wrTab);            // render() 只负责显隐视图，内容要自己拉
 }
 function wrSwitch(k) {
   wrTab = k;
   document.querySelectorAll('#wr-tabs .tk-tab').forEach(b => b.classList.toggle('active', b.dataset.wk === k));
-  ['daily', 'compose', 'yingyong'].forEach(x => $('#wr-' + x).classList.toggle('hidden', x !== k));
+  ['daily', 'compose', 'yycat', 'yywrite'].forEach(x => $('#wr-' + x).classList.toggle('hidden', x !== k));
   if (k === 'daily') loadWrDays();
   else if (k === 'compose') loadWrCompose();
-  else if (k === 'yingyong') loadWrGw();
+  else if (k === 'yycat') loadYyCats();
+  else if (k === 'yywrite') loadWrGw();
 }
 // tab 点击切换（这个 handler 连同下面几个 load 函数在做应用文那次被误删了 → 每日成文/综合应用点了没反应、空白）
 $('#wr-tabs').addEventListener('click', e => {
@@ -4850,7 +4850,7 @@ async function loadWrGw() {
   $('#yy-scenes').innerHTML = '<span class="gw-sug-t">常用：</span>' + gwSpec.scenes.map(s =>
     `<button class="chip tiny" data-gws="${esc(s)}">${esc(s)}</button>`).join('');
   gwFmt();
-  loadYyCats();
+  // 文种大全（yy-cats）现在是独立的一个导航栏，各自加载，这里不再连带拉它
 }
 function gwFmt() {
   const d = gwSpec.doctypes.find(x => x.k === gwType); if (!d) return;
@@ -4915,7 +4915,7 @@ function yyWatch(tid) {
   }, 3000);
 }
 
-$('#wr-yingyong').addEventListener('click', e => {
+function yyPaneClick(e) {
   const t = e.target.closest('[data-gwt]');
   if (t) { gwType = t.dataset.gwt; loadWrGw(); return; }
   const f = e.target.closest('[data-yyf]');
@@ -4928,7 +4928,9 @@ $('#wr-yingyong').addEventListener('click', e => {
   if (s) { $('#yy-scene').value = s.dataset.gws; return; }
   const c = e.target.closest('[data-weid]');
   if (c) openWrited(+c.dataset.weid);
-});
+}
+$('#wr-yycat').addEventListener('click', yyPaneClick);       // 文种大全：点提纲/范文打开
+$('#wr-yywrite').addEventListener('click', yyPaneClick);     // 自选成文：文种/表单/生成
 $('#yy-go').onclick = async () => {
   const scene = $('#yy-scene').value.trim();
   if (!scene) { toast('先说清楚就什么事发文', true); return; }
@@ -9100,10 +9102,12 @@ function inkHere() {
     Ink.open('mat:' + fk.slice(-80), sc, vf);
     return;
   }
-  // 一般视图：盖住**整屏**（顶栏以下），不再只盖被停靠面板挤到半边的内容区 —— 想全屏勾画。
-  // 传 null target = 全视口；滚动跟随主窗口（长文页滚动时笔迹也跟着走）。
-  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''),
-    document.scrollingElement || document.documentElement, null);
+  // 一般视图：盖住**整屏**（顶栏以下），传 null target = 全视口，想全屏勾画。
+  // scroller 传 null = 笔迹按**视口坐标**存：画在哪个屏幕位置，关了再开还在那个屏幕位置，
+  // 不受页面滚动影响。（曾用 document.scrollingElement 做「跟随整页滚动」，但一旦关闭后页面滚回
+  // 顶部，内容坐标很大的笔迹就被画到可视画布下方、像是丢了 —— 一般视图内容通常一两屏，视口坐标最稳。
+  // 需要跟随滚动的是 PDF，那条路单独用 iframe 内部滚动，不受此影响。）
+  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''), null, null);
 }
 
 /* ================= 通用停靠（草稿纸 / AI 面板共用） =================
