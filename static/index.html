@@ -589,6 +589,43 @@
     <div id="fw-wrap" class="poly-wrap"></div>
   </section>
 
+  <!-- ===== 云盘 ===== -->
+  <section id="view-drive" class="view hidden">
+    <div class="dv-bar">
+      <div class="dv-crumb" id="dv-crumb"></div>
+      <span class="dv-used" id="dv-used"></span>
+      <button class="btn tiny" id="dv-newfolder">＋ 文件夹</button>
+      <label class="btn tiny primary">⬆ 上传<input type="file" id="dv-upfile" multiple hidden></label>
+    </div>
+    <div id="dv-list" class="dv-list"></div>
+  </section>
+
+  <!-- ===== 聊天：会话/好友列表 ===== -->
+  <section id="view-chat" class="view hidden">
+    <div class="ch-tabs" id="ch-tabs">
+      <button class="ch-tab active" data-cht="convos">💬 消息</button>
+      <button class="ch-tab" data-cht="friends">👥 好友</button>
+      <button class="ch-tab" data-cht="add">＋ 加好友<span class="ch-reqbadge hidden" id="ch-reqbadge"></span></button>
+    </div>
+    <div id="ch-convos" class="ch-pane"></div>
+    <div id="ch-friends" class="ch-pane hidden"></div>
+    <div id="ch-add" class="ch-pane hidden">
+      <div class="ch-search"><input id="ch-search" placeholder="搜用户名或 ID 加好友…"><button class="btn" id="ch-searchbtn">搜索</button></div>
+      <div id="ch-reqs"></div>
+      <div id="ch-results"></div>
+    </div>
+  </section>
+
+  <!-- ===== 聊天窗口 ===== -->
+  <section id="view-chatroom" class="view hidden">
+    <div id="cr-msgs" class="cr-msgs"></div>
+    <div class="cr-input">
+      <label class="cr-attbtn" title="发文件/图片">📎<input type="file" id="cr-file" multiple hidden></label>
+      <textarea id="cr-text" rows="1" placeholder="发消息…（可拖文件进来）"></textarea>
+      <button class="btn primary" id="cr-send">发送</button>
+    </div>
+  </section>
+
   <!-- ===== 每日新闻视频（抓官媒 → AI 按公考价值筛）===== -->
   <section id="view-videos" class="view hidden">
     <div class="pd-intro">每天从<b>官方媒体</b>抓新闻视频，AI 按<b>公考价值</b>筛一遍 ——

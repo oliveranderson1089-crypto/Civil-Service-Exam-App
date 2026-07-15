@@ -705,6 +705,44 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime')),
             PRIMARY KEY(user_id, model_id)
         );
+        -- ============ 好友 / 聊天 / 云盘（QQ·微信式）============
+        -- 好友：请求 + 关系（关系存双向两条，查「我的好友」直接一句）
+        CREATE TABLE IF NOT EXISTS friend_reqs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_uid INTEGER, to_uid INTEGER, msg TEXT,
+            status TEXT DEFAULT 'pending',        -- pending/accepted/rejected
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS friends(
+            user_id INTEGER, friend_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, friend_id)
+        );
+        -- 云盘文件（任意格式）。聊天「发文件」也存这张表（一份存储两处用）：
+        --   owner_id 是属主；is_dir=1 是文件夹（stored_name 空）；folder 是所在文件夹路径。
+        CREATE TABLE IF NOT EXISTS drive_files(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER NOT NULL,
+            folder TEXT DEFAULT '',               -- '' / '安装包' / '文档/公考'
+            name TEXT, stored_name TEXT,
+            ext TEXT, mime TEXT, size INTEGER DEFAULT 0,
+            is_dir INTEGER DEFAULT 0,
+            source TEXT DEFAULT 'drive',          -- drive=用户上传 / chat=聊天收到的文件
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_drive ON drive_files(owner_id, folder);
+        -- 一对一聊天消息。文件类消息引用 drive_files.id（收到的文件也会进对方云盘的「聊天文件」夹）
+        CREATE TABLE IF NOT EXISTS chat_msgs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_uid INTEGER, to_uid INTEGER,
+            kind TEXT DEFAULT 'text',             -- text / file / image
+            body TEXT,                            -- 文本内容
+            file_id INTEGER, file_name TEXT, file_size INTEGER, file_mime TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            read_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat ON chat_msgs(from_uid, to_uid, id);
+        CREATE INDEX IF NOT EXISTS idx_chat2 ON chat_msgs(to_uid, from_uid, id);
         -- 专项练题库：常识/政治理论/言语这三块出不了程序化题（考的是知识，不是构造），
         -- 只能让 AI 出。但每次现出要等 20 秒 —— 所以**攒进题库**，用的时候直接取，
         -- 不够了再后台补。按 (板块, 题型, 难度) 分桶。
@@ -9592,6 +9630,362 @@ def fanwen_refresh():
     after = get_db().execute("SELECT COUNT(*) FROM essay_models").fetchone()[0]
     tail = (r.stdout or r.stderr or "").strip().splitlines()
     return jsonify({"added": after - before, "msg": tail[-1] if tail else "完成"})
+
+
+# ================================================================ 好友 / 聊天 / 云盘
+def _drive_dir(user_id):
+    d = os.path.join(UPLOADS, "drive", str(user_id))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _uname(db, u):
+    r = db.execute("SELECT username FROM users WHERE id=?", (u,)).fetchone()
+    return r["username"] if r else ("用户" + str(u))
+
+
+def _are_friends(db, a, b):
+    return bool(db.execute("SELECT 1 FROM friends WHERE user_id=? AND friend_id=?", (a, b)).fetchone())
+
+
+# ---- 好友 ----
+@app.get("/api/friends")
+def friends_list():
+    db = get_db()
+    rows = db.execute(
+        "SELECT u.id, u.username FROM friends f JOIN users u ON u.id=f.friend_id "
+        "WHERE f.user_id=? ORDER BY u.username", (uid(),)).fetchall()
+    nreq = db.execute("SELECT COUNT(*) FROM friend_reqs WHERE to_uid=? AND status='pending'",
+                      (uid(),)).fetchone()[0]
+    return jsonify({"friends": [dict(r) for r in rows], "n_req": nreq})
+
+
+@app.get("/api/friends/search")
+def friends_search():
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"users": []})
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, username FROM users WHERE (username LIKE ? OR CAST(id AS TEXT)=?) AND id<>? LIMIT 20",
+        ("%" + q + "%", q, uid())).fetchall()
+    out = []
+    for r in rows:
+        st = "add"                      # 可添加（自己已被 SQL 的 id<>? 排除）
+        if _are_friends(db, uid(), r["id"]):
+            st = "friend"
+        elif db.execute("SELECT 1 FROM friend_reqs WHERE from_uid=? AND to_uid=? AND status='pending'",
+                        (uid(), r["id"])).fetchone():
+            st = "sent"
+        out.append({"id": r["id"], "username": r["username"], "state": st})
+    return jsonify({"users": out})
+
+
+@app.post("/api/friends/request")
+def friends_request():
+    data = request.get_json(silent=True) or {}
+    to = int(data.get("to") or 0)
+    db = get_db()
+    if not to or to == uid() or not db.execute("SELECT 1 FROM users WHERE id=?", (to,)).fetchone():
+        return jsonify({"error": "用户不存在"}), 400
+    if _are_friends(db, uid(), to):
+        return jsonify({"error": "已经是好友了"}), 400
+    # 对方已经给我发过 → 直接互相成为好友
+    rev = db.execute("SELECT id FROM friend_reqs WHERE from_uid=? AND to_uid=? AND status='pending'",
+                     (to, uid())).fetchone()
+    if rev:
+        _add_friend(db, uid(), to)
+        db.execute("UPDATE friend_reqs SET status='accepted' WHERE id=?", (rev["id"],))
+        db.commit()
+        return jsonify({"ok": True, "friend": True})
+    db.execute("INSERT INTO friend_reqs(from_uid,to_uid,msg) VALUES(?,?,?)",
+               (uid(), to, (data.get("msg") or "").strip()[:60]))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+def _add_friend(db, a, b):
+    db.execute("INSERT OR IGNORE INTO friends(user_id,friend_id) VALUES(?,?)", (a, b))
+    db.execute("INSERT OR IGNORE INTO friends(user_id,friend_id) VALUES(?,?)", (b, a))
+
+
+@app.get("/api/friends/requests")
+def friends_requests():
+    db = get_db()
+    rows = db.execute(
+        "SELECT r.id, r.from_uid, u.username, r.msg, r.created_at FROM friend_reqs r "
+        "JOIN users u ON u.id=r.from_uid WHERE r.to_uid=? AND r.status='pending' ORDER BY r.id DESC",
+        (uid(),)).fetchall()
+    return jsonify({"requests": [dict(r) for r in rows]})
+
+
+@app.post("/api/friends/requests/<int:rid>")
+def friends_req_act(rid):
+    action = (request.get_json(silent=True) or {}).get("action")
+    db = get_db()
+    r = db.execute("SELECT * FROM friend_reqs WHERE id=? AND to_uid=? AND status='pending'",
+                   (rid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "请求不存在"}), 404
+    if action == "accept":
+        _add_friend(db, uid(), r["from_uid"])
+        db.execute("UPDATE friend_reqs SET status='accepted' WHERE id=?", (rid,))
+    else:
+        db.execute("UPDATE friend_reqs SET status='rejected' WHERE id=?", (rid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/friends/<int:fid>")
+def friends_del(fid):
+    db = get_db()
+    db.execute("DELETE FROM friends WHERE (user_id=? AND friend_id=?) OR (user_id=? AND friend_id=?)",
+               (uid(), fid, fid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ---- 云盘 ----
+DRIVE_MAX = 200 * 1024 * 1024        # 单文件上限 200MB
+
+
+def _drive_row(r):
+    d = dict(r)
+    d["is_dir"] = bool(d.get("is_dir"))
+    return d
+
+
+@app.get("/api/drive")
+def drive_list():
+    folder = (request.args.get("folder") or "").strip().strip("/")
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, folder, name, ext, mime, size, is_dir, source, created_at FROM drive_files "
+        "WHERE owner_id=? AND folder=? ORDER BY is_dir DESC, id DESC", (uid(), folder)).fetchall()
+    used = db.execute("SELECT COALESCE(SUM(size),0) FROM drive_files WHERE owner_id=?",
+                      (uid(),)).fetchone()[0]
+    return jsonify({"folder": folder, "items": [_drive_row(r) for r in rows], "used": used})
+
+
+@app.post("/api/drive")
+def drive_upload():
+    folder = (request.form.get("folder") or "").strip().strip("/")
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "请选择文件"}), 400
+    f.seek(0, os.SEEK_END)
+    size = f.tell()
+    f.seek(0)
+    if size > DRIVE_MAX:
+        return jsonify({"error": "文件超过 200MB"}), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    stored = uuid.uuid4().hex + ext
+    f.save(os.path.join(_drive_dir(uid()), stored))
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
+        "VALUES(?,?,?,?,?,?,?,0,'drive')",
+        (uid(), folder, f.filename, stored, ext, f.mimetype or "", size))
+    db.commit()
+    return jsonify(_drive_row(db.execute("SELECT * FROM drive_files WHERE id=?", (cur.lastrowid,)).fetchone())), 201
+
+
+@app.post("/api/drive/folder")
+def drive_mkdir():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip().strip("/")[:40]
+    parent = (data.get("parent") or "").strip().strip("/")
+    if not name or "/" in name:
+        return jsonify({"error": "文件夹名不合法"}), 400
+    path = (parent + "/" + name) if parent else name
+    db = get_db()
+    if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND is_dir=1",
+                  (uid(), parent, name)).fetchone():
+        return jsonify({"error": "已有同名文件夹"}), 400
+    db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) VALUES(?,?,?,1,'drive')",
+               (uid(), parent, name))
+    db.commit()
+    return jsonify({"ok": True, "path": path})
+
+
+@app.get("/api/drive/<int:fid>/download")
+def drive_download(fid):
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0",
+                   (fid, uid())).fetchone()
+    if not r:
+        return "文件不存在", 404
+    return send_file(os.path.join(_drive_dir(uid()), r["stored_name"]),
+                     as_attachment=True, download_name=r["name"],
+                     mimetype=r["mime"] or "application/octet-stream")
+
+
+@app.delete("/api/drive/<int:fid>")
+def drive_del(fid):
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=?", (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "不存在"}), 404
+    if r["is_dir"]:
+        # 删文件夹：连里面的一起删（folder 前缀匹配）
+        sub = r["name"] if not r["folder"] else (r["folder"] + "/" + r["name"])
+        kids = db.execute("SELECT stored_name FROM drive_files WHERE owner_id=? AND "
+                          "(folder=? OR folder LIKE ?)", (uid(), sub, sub + "/%")).fetchall()
+        for k in kids:
+            if k["stored_name"]:
+                try:
+                    os.remove(os.path.join(_drive_dir(uid()), k["stored_name"]))
+                except Exception:
+                    pass
+        db.execute("DELETE FROM drive_files WHERE owner_id=? AND (folder=? OR folder LIKE ?)",
+                   (uid(), sub, sub + "/%"))
+    elif r["stored_name"]:
+        try:
+            os.remove(os.path.join(_drive_dir(uid()), r["stored_name"]))
+        except Exception:
+            pass
+    db.execute("DELETE FROM drive_files WHERE id=?", (fid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/drive/<int:fid>/send")
+def drive_send(fid):
+    """把云盘里的一个文件发给某个好友（走聊天）。"""
+    to = int((request.get_json(silent=True) or {}).get("to") or 0)
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0",
+                   (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "文件不存在"}), 404
+    if not _are_friends(db, uid(), to):
+        return jsonify({"error": "对方不是你的好友"}), 400
+    _chat_send_file(db, uid(), to, r["name"], r["stored_name"], r["size"], r["mime"], _drive_dir(uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ---- 聊天 ----
+def _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size):
+    """收到的文件也放进收件人云盘的「聊天文件」文件夹里，方便他保存/转存。"""
+    dst = uuid.uuid4().hex + (ext or "")
+    try:
+        import shutil
+        shutil.copyfile(os.path.join(src_dir, stored_name), os.path.join(_drive_dir(to), dst))
+    except Exception:
+        return None
+    cur = db.execute(
+        "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
+        "VALUES(?,?,?,?,?,?,?,0,'chat')", (to, "聊天文件", name, dst, ext, mime or "", size))
+    return cur.lastrowid
+
+
+def _chat_send_file(db, frm, to, name, stored_name, size, mime, src_dir):
+    ext = os.path.splitext(name)[1].lower()
+    fid_to = _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size)
+    kind = "image" if (mime or "").startswith("image/") or ext in (".jpg", ".jpeg", ".png", ".gif", ".webp") else "file"
+    db.execute(
+        "INSERT INTO chat_msgs(from_uid,to_uid,kind,file_id,file_name,file_size,file_mime) "
+        "VALUES(?,?,?,?,?,?,?)", (frm, to, kind, fid_to, name, size, mime or ""))
+
+
+@app.get("/api/chat/conversations")
+def chat_convos():
+    db = get_db()
+    me = uid()
+    convos = []
+    total_unread = 0
+    for r in db.execute("SELECT friend_id FROM friends WHERE user_id=?", (me,)).fetchall():
+        fid = r["friend_id"]
+        last = db.execute(
+            "SELECT * FROM chat_msgs WHERE (from_uid=? AND to_uid=?) OR (from_uid=? AND to_uid=?) "
+            "ORDER BY id DESC LIMIT 1", (me, fid, fid, me)).fetchone()
+        unread = db.execute("SELECT COUNT(*) FROM chat_msgs WHERE from_uid=? AND to_uid=? AND read_at IS NULL",
+                            (fid, me)).fetchone()[0]
+        total_unread += unread
+        prev = ""
+        if last:
+            prev = last["body"] if last["kind"] == "text" else ("[图片]" if last["kind"] == "image" else "[文件] " + (last["file_name"] or ""))
+        convos.append({"id": fid, "username": _uname(db, fid), "preview": prev[:30],
+                       "time": (last["created_at"] if last else ""), "unread": unread,
+                       "last_id": last["id"] if last else 0})
+    convos.sort(key=lambda c: -(c["last_id"]))
+    return jsonify({"conversations": convos, "unread": total_unread})
+
+
+@app.get("/api/chat/<int:fid>")
+def chat_history(fid):
+    db = get_db()
+    me = uid()
+    if not _are_friends(db, me, fid):
+        return jsonify({"error": "不是好友"}), 403
+    after = int(request.args.get("after") or 0)
+    rows = db.execute(
+        "SELECT * FROM chat_msgs WHERE ((from_uid=? AND to_uid=?) OR (from_uid=? AND to_uid=?)) AND id>? "
+        "ORDER BY id LIMIT 200", (me, fid, fid, me, after)).fetchall()
+    out = []
+    for r in rows:
+        out.append({"id": r["id"], "mine": r["from_uid"] == me, "kind": r["kind"],
+                    "body": r["body"] or "", "file_id": r["file_id"], "file_name": r["file_name"],
+                    "file_size": r["file_size"], "time": r["created_at"]})
+    # 把对方发来的标记已读
+    db.execute("UPDATE chat_msgs SET read_at=datetime('now','localtime') "
+               "WHERE from_uid=? AND to_uid=? AND read_at IS NULL", (fid, me))
+    db.commit()
+    return jsonify({"messages": out, "me": me, "friend": _uname(db, fid)})
+
+
+@app.post("/api/chat/<int:fid>")
+def chat_send(fid):
+    db = get_db()
+    me = uid()
+    if not _are_friends(db, me, fid):
+        return jsonify({"error": "不是好友"}), 403
+    # 文件消息（multipart）
+    if request.files.get("file"):
+        f = request.files["file"]
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(0)
+        if size > DRIVE_MAX:
+            return jsonify({"error": "文件超过 200MB"}), 400
+        ext = os.path.splitext(f.filename)[1].lower()
+        stored = uuid.uuid4().hex + ext
+        # 发送方也留一份在自己云盘「聊天文件」，并作为源
+        f.save(os.path.join(_drive_dir(me), stored))
+        db.execute("INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
+                   "VALUES(?,?,?,?,?,?,?,0,'chat')", (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size))
+        _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me))
+        db.commit()
+        return jsonify({"ok": True})
+    # 文本消息
+    body = (request.get_json(silent=True) or {}).get("body", "").strip()
+    if not body:
+        return jsonify({"error": "空消息"}), 400
+    db.execute("INSERT INTO chat_msgs(from_uid,to_uid,kind,body) VALUES(?,?,'text',?)",
+               (me, fid, body[:4000]))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.get("/api/chat/file/<int:fid>")
+def chat_file(fid):
+    """下载/查看聊天里的文件（就是收件人云盘里那一份）。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=?", (fid, uid())).fetchone()
+    if not r:
+        return "文件不存在", 404
+    inline = request.args.get("inline") == "1"
+    return send_file(os.path.join(_drive_dir(uid()), r["stored_name"]),
+                     as_attachment=not inline, download_name=r["name"],
+                     mimetype=r["mime"] or "application/octet-stream")
+
+
+@app.get("/api/chat/unread")
+def chat_unread():
+    n = get_db().execute("SELECT COUNT(*) FROM chat_msgs WHERE to_uid=? AND read_at IS NULL",
+                         (uid(),)).fetchone()[0]
+    return jsonify({"unread": n})
 
 
 # ---------------------------------------------------------------- 安卓包下载 / 应用内更新

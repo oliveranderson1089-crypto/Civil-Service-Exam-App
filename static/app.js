@@ -116,7 +116,7 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'videos', 'fanwen', 'fanwend'];
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'videos', 'fanwen', 'fanwend', 'drive', 'chat', 'chatroom'];
 const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', videos: '每日新闻视频' };
 function render() {
   const st = stack[stack.length - 1];
@@ -193,7 +193,10 @@ async function init() {
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
     <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
     <div class="home-card" data-go="quiz"><div class="hc-logo">${IC.edit}</div><div class="hc-name">题库</div><div class="hc-desc">四川省考卷面 · 每周自动更新</div></div>
-    <div class="home-card" data-go="tasks"><div class="hc-logo">${IC.check || IC.clock}</div><div class="hc-name">任务清单</div><div class="hc-desc">每日任务 · 互监待办</div></div>\n    <div class="home-card" data-go="review"><div class="hc-logo hc-rev">${IC.clock || IC.bulb}<span class="rev-badge hidden" id="rev-badge"></span></div><div class="hc-name">今日复习</div><div class="hc-desc" id="rev-desc">遗忘曲线 · 该复习的都在这</div></div>`;
+    <div class="home-card" data-go="tasks"><div class="hc-logo">${IC.check || IC.clock}</div><div class="hc-name">任务清单</div><div class="hc-desc">每日任务 · 互监待办</div></div>
+    <div class="home-card" data-go="drive"><div class="hc-logo hc-drive">☁️</div><div class="hc-name">云盘</div><div class="hc-desc">存取任意文件 · 发给好友</div></div>
+    <div class="home-card" data-go="chat"><div class="hc-logo hc-chat">💬<span class="chat-badge hidden" id="chat-badge"></span></div><div class="hc-name">聊天</div><div class="hc-desc">加好友 · 聊天 · 传文件</div></div>
+    <div class="home-card" data-go="review"><div class="hc-logo hc-rev">${IC.clock || IC.bulb}<span class="rev-badge hidden" id="rev-badge"></span></div><div class="hc-name">今日复习</div><div class="hc-desc" id="rev-desc">遗忘曲线 · 该复习的都在这</div></div>`;
   UI_ORDERS = ME.ui_orders || {};
   $('#home-cards').dataset.dragsort = 'home';
   $('#sl-types').dataset.dragsort = 'slt';
@@ -201,6 +204,7 @@ async function init() {
   applyCardOrder($('#home-cards'));
   goHome();
   refreshReviewBadge();
+  refreshChatBadge();
   hideSplash();
 }
 function hideSplash() {
@@ -274,6 +278,8 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'tasks') openTasks();
   else if (g === 'quiz') openQuiz();
   else if (g === 'changkao') openChangkao();
+  else if (g === 'drive') openDrive();
+  else if (g === 'chat') openChat();
 });
 
 /* ---------------- 卡片拖拽排序（通用）：电脑按住拖动，手机长按 0.4 秒再拖 ----------------
@@ -7010,6 +7016,241 @@ $('#fw-wrap').addEventListener('click', async e => {
   } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 范文拆解'; }
 });
 
+/* ================= 云盘 ================= */
+let dvFolder = '';
+const FILE_ICON = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', ppt: '📙', pptx: '📙',
+  png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', apk: '📦', exe: '📦', dmg: '📦',
+  zip: '🗜️', rar: '🗜️', '7z': '🗜️', mp4: '🎬', mp3: '🎵', txt: '📄', md: '📄', html: '🌐' };
+const dvIcon = e => FILE_ICON[(e || '').replace('.', '').toLowerCase()] || '📎';
+function fSize(n) { n = n || 0; return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+function openDrive() { dvFolder = ''; push({ view: 'drive', title: '云盘' }); loadDrive(); }
+async function loadDrive() {
+  $('#dv-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/drive?folder=' + encodeURIComponent(dvFolder));
+    $('#dv-used').textContent = '已用 ' + fSize(d.used);
+    // 面包屑
+    const parts = dvFolder ? dvFolder.split('/') : [];
+    let acc = '';
+    $('#dv-crumb').innerHTML = `<a data-dvcd="">☁️ 云盘</a>` + parts.map(p => {
+      acc = acc ? acc + '/' + p : p; return ` / <a data-dvcd="${esc(acc)}">${esc(p)}</a>`;
+    }).join('');
+    if (!d.items.length) { $('#dv-list').innerHTML = '<p class="empty">这个文件夹是空的。上传文件，或新建文件夹。</p>'; return; }
+    $('#dv-list').innerHTML = d.items.map(it => it.is_dir
+      ? `<div class="dv-item dv-dir" data-dvopen="${esc((dvFolder ? dvFolder + '/' : '') + it.name)}">
+           <span class="dv-ic">📁</span><span class="dv-name">${esc(it.name)}</span>
+           <button class="dv-del" data-dvdel="${it.id}" title="删除">🗑</button></div>`
+      : `<div class="dv-item">
+           <span class="dv-ic">${dvIcon(it.ext)}</span>
+           <span class="dv-name">${esc(it.name)}</span>
+           <span class="dv-meta">${fSize(it.size)}${it.source === 'chat' ? ' · 聊天' : ''}</span>
+           <button class="dv-act" data-dvsend="${it.id}" title="发给好友">📤</button>
+           <a class="dv-act" href="/api/drive/${it.id}/download" title="下载">⬇</a>
+           <button class="dv-del" data-dvdel="${it.id}" title="删除">🗑</button></div>`).join('');
+  } catch (e) { $('#dv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#dv-crumb').addEventListener('click', e => { const a = e.target.closest('[data-dvcd]'); if (a) { dvFolder = a.dataset.dvcd; loadDrive(); } });
+$('#dv-list').addEventListener('click', async e => {
+  const dir = e.target.closest('[data-dvopen]');
+  if (dir && !e.target.closest('[data-dvdel]')) { dvFolder = dir.dataset.dvopen; loadDrive(); return; }
+  const del = e.target.closest('[data-dvdel]');
+  if (del) {
+    if (!(await appConfirm('删除这个？（文件夹会连里面一起删）'))) return;
+    try { await api('/api/drive/' + del.dataset.dvdel, { method: 'DELETE' }); loadDrive(); } catch (err) { toast(err.message, true); }
+    return;
+  }
+  const send = e.target.closest('[data-dvsend]');
+  if (send) driveSend(+send.dataset.dvsend);
+});
+$('#dv-upfile').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  await dvUpload(files);
+});
+async function dvUpload(files) {
+  if (!files.length) return;
+  toast('上传中…（' + files.length + '）');
+  let ok = 0;
+  for (const f of files) {
+    const fd = new FormData(); fd.append('file', f, f.name); fd.append('folder', dvFolder);
+    try { await api('/api/drive', { method: 'POST', body: fd }); ok++; } catch (err) { toast(f.name + '：' + err.message, true); }
+  }
+  if (ok) { toast('已上传 ' + ok + ' 个'); loadDrive(); }
+}
+$('#dv-newfolder').onclick = async () => {
+  const name = await appPrompt('新建文件夹', '', '');
+  if (!name || !name.trim()) return;
+  try { await api('/api/drive/folder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), parent: dvFolder }) }); loadDrive(); }
+  catch (err) { toast(err.message, true); }
+};
+async function driveSend(fid) {
+  try {
+    const d = await api('/api/friends');
+    if (!d.friends.length) { toast('你还没有好友，先去「聊天 → 加好友」', true); return; }
+    const pick = await pickFriend(d.friends, '发给谁');
+    if (!pick) return;
+    await api('/api/drive/' + fid + '/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: pick }) });
+    toast('已发送');
+  } catch (e) { toast(e.message, true); }
+}
+// 选好友（复用小记那种底部面板）
+function pickFriend(friends, title) {
+  return new Promise(res => {
+    const el = $('#mat-share-sheet');
+    el.innerHTML = `<div class="ns-mask" data-sheet-close></div><div class="ns-panel">
+      <div class="ns-handle"></div><div class="ns-title">${esc(title || '选择好友')}</div>
+      <div class="ms-list">${friends.map(f => `<button class="ms-frow" data-fp="${f.id}">👤 ${esc(f.username)}</button>`).join('')}</div>
+      <div class="ms-acts"><button class="btn" id="fp-cancel">取消</button></div></div>`;
+    el.classList.remove('hidden');
+    const done = v => { el.classList.add('hidden'); res(v); };
+    el.querySelector('.ns-mask').onclick = () => done(null);
+    $('#fp-cancel').onclick = () => done(null);
+    el.querySelectorAll('[data-fp]').forEach(b => b.onclick = () => done(+b.dataset.fp));
+  });
+}
+
+/* ================= 聊天 ================= */
+let chTab = 'convos', crFid = 0, crName = '', crLastId = 0, crPoll = 0;
+function openChat() { push({ view: 'chat', title: '聊天' }); chSwitch('convos'); }
+function chSwitch(t) {
+  chTab = t;
+  document.querySelectorAll('#ch-tabs .ch-tab').forEach(b => b.classList.toggle('active', b.dataset.cht === t));
+  ['convos', 'friends', 'add'].forEach(x => $('#ch-' + x).classList.toggle('hidden', x !== t));
+  if (t === 'convos') loadConvos();
+  else if (t === 'friends') loadFriends();
+  else loadAddFriend();
+}
+$('#ch-tabs').addEventListener('click', e => { const b = e.target.closest('[data-cht]'); if (b) chSwitch(b.dataset.cht); });
+async function loadConvos() {
+  $('#ch-convos').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/chat/conversations');
+    updateChatBadge(d.unread);
+    if (!d.conversations.length) { $('#ch-convos').innerHTML = '<p class="empty">还没有会话。去「好友」找人聊，或「＋ 加好友」。</p>'; return; }
+    $('#ch-convos').innerHTML = d.conversations.map(c => `
+      <div class="ch-convo" data-crf="${c.id}" data-crn="${esc(c.username)}">
+        <div class="ch-av">${esc(c.username.slice(0, 1).toUpperCase())}</div>
+        <div class="ch-cmid"><div class="ch-cn">${esc(c.username)}</div><div class="ch-cp">${esc(c.preview || '')}</div></div>
+        <div class="ch-cright"><div class="ch-ct">${esc((c.time || '').slice(5, 16))}</div>${c.unread ? `<span class="ch-un">${c.unread}</span>` : ''}</div>
+      </div>`).join('');
+  } catch (e) { $('#ch-convos').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#ch-convos').addEventListener('click', e => { const c = e.target.closest('[data-crf]'); if (c) openChatroom(+c.dataset.crf, c.dataset.crn); });
+async function loadFriends() {
+  $('#ch-friends').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/friends');
+    if (d.n_req) { $('#ch-reqbadge').textContent = d.n_req; $('#ch-reqbadge').classList.remove('hidden'); }
+    else $('#ch-reqbadge').classList.add('hidden');
+    if (!d.friends.length) { $('#ch-friends').innerHTML = '<p class="empty">还没有好友。点「＋ 加好友」搜用户名或 ID 添加。</p>'; return; }
+    $('#ch-friends').innerHTML = d.friends.map(f => `
+      <div class="ch-frow" data-crf="${f.id}" data-crn="${esc(f.username)}">
+        <div class="ch-av">${esc(f.username.slice(0, 1).toUpperCase())}</div>
+        <div class="ch-cn">${esc(f.username)}</div>
+        <button class="ch-chat" data-crf="${f.id}" data-crn="${esc(f.username)}">聊天</button>
+        <button class="ch-fdel" data-fdel="${f.id}" title="删除好友">✕</button></div>`).join('');
+  } catch (e) { $('#ch-friends').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#ch-friends').addEventListener('click', async e => {
+  const del = e.target.closest('[data-fdel]');
+  if (del) { if (await appConfirm('删除这个好友？')) { try { await api('/api/friends/' + del.dataset.fdel, { method: 'DELETE' }); loadFriends(); } catch (err) { toast(err.message, true); } } return; }
+  const c = e.target.closest('[data-crf]'); if (c) openChatroom(+c.dataset.crf, c.dataset.crn);
+});
+async function loadAddFriend() {
+  try {
+    const d = await api('/api/friends/requests');
+    $('#ch-reqs').innerHTML = d.requests.length
+      ? '<div class="ch-reqt">好友请求</div>' + d.requests.map(r => `
+        <div class="ch-req"><div class="ch-av">${esc(r.username.slice(0, 1).toUpperCase())}</div>
+          <div class="ch-cmid"><div class="ch-cn">${esc(r.username)}</div><div class="ch-cp">${esc(r.msg || '请求加你为好友')}</div></div>
+          <button class="btn tiny primary" data-req="${r.id}" data-ra="accept">接受</button>
+          <button class="btn tiny" data-req="${r.id}" data-ra="reject">拒绝</button></div>`).join('')
+      : '';
+  } catch (_) {}
+  $('#ch-results').innerHTML = '';
+}
+$('#ch-searchbtn').onclick = chDoSearch;
+$('#ch-search').addEventListener('keydown', e => { if (e.key === 'Enter') chDoSearch(); });
+async function chDoSearch() {
+  const q = $('#ch-search').value.trim(); if (!q) return;
+  $('#ch-results').innerHTML = '<p class="empty">搜索中…</p>';
+  try {
+    const d = await api('/api/friends/search?q=' + encodeURIComponent(q));
+    $('#ch-results').innerHTML = d.users.length ? d.users.map(u => `
+      <div class="ch-frow"><div class="ch-av">${esc(u.username.slice(0, 1).toUpperCase())}</div>
+        <div class="ch-cmid"><div class="ch-cn">${esc(u.username)}</div><div class="ch-cp">ID: ${u.id}</div></div>
+        ${u.state === 'friend' ? '<span class="ch-tag">已是好友</span>'
+        : u.state === 'sent' ? '<span class="ch-tag">已发送</span>'
+          : `<button class="btn tiny primary" data-add="${u.id}">加好友</button>`}</div>`).join('')
+      : '<p class="empty">没找到这个用户。</p>';
+  } catch (e) { $('#ch-results').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#ch-add').addEventListener('click', async e => {
+  const add = e.target.closest('[data-add]');
+  if (add) { try { const r = await api('/api/friends/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: +add.dataset.add }) }); toast(r.friend ? '已成为好友' : '好友请求已发送'); chDoSearch(); } catch (err) { toast(err.message, true); } return; }
+  const req = e.target.closest('[data-req]');
+  if (req) { try { await api('/api/friends/requests/' + req.dataset.req, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: req.dataset.ra }) }); loadAddFriend(); } catch (err) { toast(err.message, true); } }
+});
+// —— 聊天窗口 ——
+function openChatroom(fid, name) {
+  crFid = fid; crName = name; crLastId = 0;
+  push({ view: 'chatroom', title: name });
+  $('#cr-msgs').innerHTML = '<p class="empty">加载中…</p>';
+  crLoad(true);
+  clearInterval(crPoll);
+  crPoll = setInterval(() => { if ((stack[stack.length - 1] || {}).view === 'chatroom') crLoad(false); else clearInterval(crPoll); }, 3000);
+}
+async function crLoad(first) {
+  try {
+    const d = await api('/api/chat/' + crFid + '?after=' + crLastId);
+    if (first) $('#cr-msgs').innerHTML = '';
+    if (!d.messages.length && first) { $('#cr-msgs').innerHTML = '<p class="empty">还没有消息，发一条打个招呼吧 👋</p>'; }
+    if (d.messages.length && $('#cr-msgs').querySelector('.empty')) $('#cr-msgs').innerHTML = '';
+    const box = $('#cr-msgs');
+    for (const m of d.messages) {
+      crLastId = Math.max(crLastId, m.id);
+      box.insertAdjacentHTML('beforeend', crMsgHtml(m));
+    }
+    if (d.messages.length) { box.scrollTop = box.scrollHeight; requestAnimationFrame(() => box.scrollTop = box.scrollHeight); }
+  } catch (e) { if (first) $('#cr-msgs').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function crMsgHtml(m) {
+  let inner;
+  if (m.kind === 'image') inner = `<img class="cr-img" src="/api/chat/file/${m.file_id}?inline=1" data-lbimg="/api/chat/file/${m.file_id}?inline=1">`;
+  else if (m.kind === 'file') inner = `<a class="cr-file" href="/api/chat/file/${m.file_id}" download>${dvIcon((m.file_name || '').split('.').pop())} <span>${esc(m.file_name || '文件')}</span><em>${fSize(m.file_size)}</em></a>`;
+  else inner = esc(m.body).replace(/\n/g, '<br>');
+  return `<div class="cr-row ${m.mine ? 'mine' : 'theirs'}"><div class="cr-bubble ${m.kind}">${inner}</div></div>`;
+}
+$('#cr-msgs').addEventListener('click', e => { const im = e.target.closest('[data-lbimg]'); if (im) lightbox(im.dataset.lbimg); });
+$('#cr-send').onclick = crSendText;
+$('#cr-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); crSendText(); } });
+async function crSendText() {
+  const t = $('#cr-text').value.trim(); if (!t) return;
+  $('#cr-text').value = '';
+  try { await api('/api/chat/' + crFid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: t }) }); crLoad(false); }
+  catch (e) { toast(e.message, true); }
+}
+$('#cr-file').addEventListener('change', async e => { const files = [...e.target.files]; e.target.value = ''; await crSendFiles(files); });
+async function crSendFiles(files) {
+  for (const f of files) {
+    const fd = new FormData(); fd.append('file', f, f.name);
+    try { await api('/api/chat/' + crFid, { method: 'POST', body: fd }); } catch (err) { toast(f.name + '：' + err.message, true); }
+  }
+  crLoad(false);
+}
+// 拖文件进聊天窗口直接发（浏览器；桌面壳走 __onDropFiles）
+(function () {
+  const el = $('#view-chatroom'); if (!el) return;
+  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('cr-drop'); });
+  el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.classList.remove('cr-drop'); });
+  el.addEventListener('drop', e => { e.preventDefault(); el.classList.remove('cr-drop'); const fs = [...(e.dataTransfer.files || [])]; if (fs.length) crSendFiles(fs); });
+})();
+function updateChatBadge(n) {
+  const b = $('#chat-badge'); if (!b) return;
+  if (n > 0) { b.textContent = n > 99 ? '99+' : n; b.classList.remove('hidden'); } else b.classList.add('hidden');
+}
+// 首页/切换时刷未读角标（轮询，和现有 sync 同频）
+async function refreshChatBadge() { try { const d = await api('/api/chat/unread'); updateChatBadge(d.unread); } catch (_) {} }
+
 /* ================= 党的创新理论学习词典（12371.cn） ================= */
 let pdCat = '全部', pdTimer = null;
 async function openPartyDict() {
@@ -7369,6 +7610,9 @@ const SYNC_REFRESH = {
   news: () => loadNews(),
   videos: () => loadVideos(),
   fanwen: () => loadFanwen(),
+  drive: () => loadDrive(),
+  chat: () => chSwitch(chTab),
+  chatroom: () => crLoad(false),
   gaikuo: () => loadGaikuo(),
   gongwen: () => loadGongwen($('#gw-q').value.trim()),
   planlog: () => loadPlanLog(),
@@ -7405,6 +7649,8 @@ async function checkSync() {
 setInterval(checkSync, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkSync(); });
 window.addEventListener('focus', checkSync);
+// 聊天未读角标：每 15 秒问一次（比同步频些，聊天要及时点）
+setInterval(() => { if (ME && !document.hidden) refreshChatBadge(); }, 15000);
 
 // 外部链接一律新开/交给系统浏览器，避免在应用内跳走后无法返回
 document.addEventListener('click', e => {
@@ -9470,6 +9716,8 @@ function dropTarget() {                 // 当前该把文件丢给谁
   if (st.view === 'notes') return 'notes';          // 小记页 → 进编辑器的图片区
   if (st.view === 'materials') return 'materials';
   if (st.view === 'shenlun') return 'shenlun';
+  if (st.view === 'chatroom') return 'chatroom';    // 聊天窗口 → 拖文件直接发
+  if (st.view === 'drive') return 'drive';          // 云盘 → 拖文件上传到当前文件夹
   return '';
 }
 window.__onDragOver = () => {
@@ -9478,12 +9726,14 @@ window.__onDragOver = () => {
   else if (t === 'shenlun') $('#view-shenlun').classList.add('drag-on');
   else if (t === 'qnote') $('#qnote').classList.add('drop-on');
   else if (t === 'notes') { const c = document.querySelector('.composer'); if (c) c.classList.add('drop-on'); }
+  else if (t === 'chatroom') $('#view-chatroom').classList.add('cr-drop');
 };
 window.__onDragLeave = () => {
   $('#view-materials').classList.remove('drag-on');
   $('#view-shenlun').classList.remove('drag-on');
   const q = $('#qnote'); if (q) q.classList.remove('drop-on');
   const c = document.querySelector('.composer'); if (c) c.classList.remove('drop-on');
+  $('#view-chatroom').classList.remove('cr-drop');
 };
 const isImg = (f) => /^image\//.test(f.type || '') || /\.(jpe?g|png|gif|webp|bmp|heic)$/i.test(f.name || '');
 window.__onDropFiles = (items) => {
@@ -9505,7 +9755,9 @@ window.__onDropFiles = (items) => {
   if (t === 'ai') files.forEach(f => aiHandleAttach(f));         // AI 开着 → 当附件
   else if (t === 'shenlun') slUploadPaper(files[0]);             // 真题页 → 上传真题卷
   else if (t === 'materials') uploadDropped(files);              // 资料库 → 传进当前分类
-  else toast('把文件拖到「资料库」「真题批改」「小记」，或先打开 AI / 随手记', true);
+  else if (t === 'chatroom') crSendFiles(files);                 // 聊天窗口 → 直接发给对方
+  else if (t === 'drive') dvUpload(files);                       // 云盘 → 上传到当前文件夹
+  else toast('把文件拖到「资料库」「真题批改」「小记」「聊天」「云盘」，或先打开 AI / 随手记', true);
 };
 window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」（壳里的粘贴也走这条路）
   fetch(dataUrl).then(r => r.blob()).then(b => {
