@@ -2736,6 +2736,12 @@ function aiRunActions(actions) {
       toast('已为你打开「' + (a.label || '') + '」');
     } else if (a.type === 'refresh' && a.what === 'notes') {
       if (v === 'notes' && typeof loadFeed === 'function') loadFeed();   // 正看着小记就刷新
+    } else if (a.type === 'refresh' && a.what === 'entries') {
+      if (v === 'idiom' && typeof loadEntries === 'function') loadEntries();
+      toast('已收录到「成语词语积累」');
+    } else if (a.type === 'refresh' && a.what === 'wrongq') {
+      if (v === 'wrongq' && typeof loadWrongq === 'function') loadWrongq();
+      toast('已加入错题本 📓');
     }
   }
 }
@@ -7227,7 +7233,7 @@ function pickFriend(friends, title) {
 
 /* ================= 聊天 ================= */
 let chTab = 'convos', crFid = 0, crName = '', crLastId = 0, crPoll = 0;
-function openChat() { push({ view: 'chat', title: '聊天' }); chSwitch('convos'); }
+function openChat() { push({ view: 'chat', title: '聊天' }); chSwitch('convos'); ensureNotifyPerm(); }
 function chSwitch(t) {
   chTab = t;
   document.querySelectorAll('#ch-tabs .ch-tab').forEach(b => b.classList.toggle('active', b.dataset.cht === t));
@@ -7325,6 +7331,11 @@ async function crLoad(first) {
   crLoading = true;
   try {
     const d = await api('/api/chat/' + crFid + '?after=' + crLastId);
+    if (!crName && d.friend) {   // 从通知点进来时没带名字，拿到后补上标题
+      crName = d.friend;
+      const top = stack[stack.length - 1];
+      if (top && top.view === 'chatroom') { top.title = crName; $('#top-title').textContent = crName; }
+    }
     if (first) $('#cr-msgs').innerHTML = '';
     if (!d.messages.length && first) { $('#cr-msgs').innerHTML = '<p class="empty">还没有消息，发一条打个招呼吧 👋</p>'; }
     if (d.messages.length && $('#cr-msgs').querySelector('.empty')) $('#cr-msgs').innerHTML = '';
@@ -7400,17 +7411,49 @@ function chatConnect() {
     chatES = new EventSource('/api/chat/stream');
     chatES.onmessage = (e) => {
       let d; try { d = JSON.parse(e.data); } catch (_) { return; }
-      if (d.type === 'msg') onChatPush(d.from);
+      if (d.type === 'msg') onChatPush(d);
       else if (d.type === 'friend') onFriendPush();
     };
     // onerror 不用管：EventSource 会按服务器给的 retry(3s) 自动重连
   } catch (_) {}
 }
-function onChatPush(fromId) {
+function onChatPush(d) {
+  const fromId = (d && typeof d === 'object') ? d.from : d;   // 兼容旧格式（只有 id）
   const v = (stack[stack.length - 1] || {}).view;
-  if (v === 'chatroom' && crFid === fromId) { crLoad(false); return; }   // 正跟他聊 → 立刻拉
-  refreshChatBadge();                                                     // 否则更新未读角标
-  if (v === 'chat' && chTab === 'convos') loadConvos();                   // 在会话列表 → 刷新
+  const viewing = (v === 'chatroom' && crFid === fromId && !document.hidden);
+  if (viewing) { crLoad(false); return; }                                // 正跟他聊且在前台 → 立刻拉，不打扰
+  refreshChatBadge();                                                    // 否则更新未读角标
+  if (v === 'chat' && chTab === 'convos') loadConvos();                  // 在会话列表 → 刷新
+  if (d && typeof d === 'object') notifyChat(fromId, d.name, d.preview); // 通知栏推送
+}
+// 通知栏推送：APK 走原生通知，浏览器/桌面走 Web Notification。点开直达该好友聊天。
+function notifyChat(fromId, name, preview) {
+  const title = (name || '好友') + ' 发来消息';
+  const body = preview || '你有一条新消息';
+  // APK：交给原生（会进系统通知栏、可后台弹出）
+  try {
+    if (window.GongkaoNative && typeof GongkaoNative.notify === 'function') {
+      GongkaoNative.notify(title, body, 'chat:' + fromId);
+      return;
+    }
+  } catch (_) {}
+  // 浏览器/桌面：仅在页面不在前台、且已授权时弹（在前台就靠角标，别打扰）
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (!document.hidden) return;
+    const n = new Notification(title, { body, tag: 'chat:' + fromId, icon: '/static/icon-192.png' });
+    n.onclick = () => { try { window.focus(); } catch (_) {} openChatroom(fromId, name || ''); n.close(); };
+  } catch (_) {}
+}
+// 首次进入聊天时，礼貌地请求一次通知权限（拒绝也不再烦）
+function ensureNotifyPerm() {
+  try {
+    if (window.GongkaoNative && typeof GongkaoNative.notify === 'function') {
+      if (typeof GongkaoNative.requestNotifyPerm === 'function') GongkaoNative.requestNotifyPerm();
+      return;
+    }
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+  } catch (_) {}
 }
 function onFriendPush() {
   refreshChatBadge();
@@ -7958,7 +8001,19 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     fab.classList.toggle('dir-dn', r.top <= innerHeight * .22);
   }
   window.fabClose = () => fab.classList.remove('open');
-  function toggle() { dirs(); fab.classList.toggle('open'); }
+  // 按「实际可见的按钮数」把它们均匀铺在四分之一圆弧上（截图在手机端隐藏，个数会变；
+  // 固定 CSS 弧位就会留空/重叠）。半径随个数增大，保证不叠。
+  function layoutFab() {
+    const acts = [...fab.querySelectorAll('.fab-act')].filter(b => !b.hidden);
+    const n = acts.length;
+    const R = 70 + Math.max(0, n - 3) * 16;       // 3个→70，每多一个半径+16，避免挤在一起
+    acts.forEach((b, i) => {
+      const a = n === 1 ? Math.PI / 4 : (Math.PI / 2) * (i / (n - 1));   // 0..90° 均分
+      b.style.setProperty('--fx', Math.round(Math.cos(a) * R) + 'px');
+      b.style.setProperty('--fy', Math.round(Math.sin(a) * R) + 'px');
+    });
+  }
+  function toggle() { dirs(); layoutFab(); fab.classList.toggle('open'); }
 
   let sx = 0, sy = 0, ox = 0, oy = 0, moved = false, dragging = false;
   main.addEventListener('pointerdown', e => {
@@ -8278,6 +8333,7 @@ function ntfGo(link) {
     policydoc: () => openPolicyDocs(),
     dtest: () => { openTasks(); setTimeout(() => tkSwitch('daily'), 60); },   // 巩固测试在「每日任务」里
     plan: () => { openTasks(); setTimeout(() => tkSwitch('plan'), 60); },
+    chatroom: () => { if (arg) openChatroom(+arg, ''); else openChat(); },     // 聊天通知点进来直达会话
   }[k];
   if (go) go(); else toast('这条消息没有可跳转的位置');
 }
@@ -8920,6 +8976,7 @@ const Ink = {
     if (this.cur) this.drawStroke(this.ctx, this.cur, W);
   },
   down(e) {
+    if (this.tool === 'scroll') return;                     // ✋ 浏览模式：不画，交给下面滚动
     if (e.pointerType === 'pen') this.sawPen = true;
     if (e.pointerType === 'touch' && this.sawPen) return;   // 用过笔就忽略手指 = 防手掌误触
     if (e.button > 0) return;
@@ -8970,6 +9027,8 @@ const Ink = {
     const sl = $('#ink-size');
     if (this.tool === 'eraser') { sl.min = 6; sl.max = 60; } else { sl.min = 1; sl.max = 14; }
     sl.value = this.curSize();
+    // ✋ 浏览模式：画布让开，事件透传到下面 → 能滚动 PDF/页面（工具栏还在，随时切回笔）
+    if (this.cv) this.cv.style.pointerEvents = this.tool === 'scroll' ? 'none' : 'auto';
   },
   // scroller: 要跟随滚动的元素（PDF 是 iframe 内部的 #viewerContainer；其它视图是主滚动容器/null）
   // target:   画布要盖住的元素（PDF 是 iframe；不传就盖住顶栏以下的整个内容区）→ 笔尖对齐靠这个
@@ -8990,19 +9049,23 @@ const Ink = {
     this.fit();
     this.syncUI();
     if (!this._bound) { this.bind(); this._bound = true; }
-    // 跟随滚动重绘
+    // 跟随滚动重绘。整页滚动（html/body）的 scroll 事件在 window 上触发，不在元素上 → 监听 window
     this._onScroll = () => this.paint();
-    if (this.scroller) {
-      try { this.scroller.addEventListener('scroll', this._onScroll, { passive: true }); } catch (_) {}
+    this._scrollHost = (this.scroller === document.scrollingElement
+      || this.scroller === document.documentElement || this.scroller === document.body)
+      ? window : this.scroller;
+    if (this._scrollHost) {
+      try { this._scrollHost.addEventListener('scroll', this._onScroll, { passive: true }); } catch (_) {}
     }
     window.addEventListener('resize', this._onResize = () => this.fit());
   },
   close() {
     this.on = false;
     $('#ink').classList.add('hidden');
-    if (this.scroller && this._onScroll) { try { this.scroller.removeEventListener('scroll', this._onScroll); } catch (_) {} }
+    if (this.cv) this.cv.style.pointerEvents = 'auto';   // 别把「浏览模式」的透传状态留给下次
+    if (this._scrollHost && this._onScroll) { try { this._scrollHost.removeEventListener('scroll', this._onScroll); } catch (_) {} }
     if (this._onResize) window.removeEventListener('resize', this._onResize);
-    this.scroller = null; this.cur = null; this.drawing = false;
+    this.scroller = null; this._scrollHost = null; this.cur = null; this.drawing = false;
   },
   bind() {
     const cv = this.cv;
@@ -9037,9 +9100,10 @@ function inkHere() {
     Ink.open('mat:' + fk.slice(-80), sc, vf);
     return;
   }
-  // 一般视图：盖住整块内容区（v1 不跟随滚动，就在当前屏上批注 —— PDF 那种才需要跟滚动）。
-  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''), null,
-    document.querySelector('#view-' + (st.view || 'home')) || null);
+  // 一般视图：盖住**整屏**（顶栏以下），不再只盖被停靠面板挤到半边的内容区 —— 想全屏勾画。
+  // 传 null target = 全视口；滚动跟随主窗口（长文页滚动时笔迹也跟着走）。
+  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''),
+    document.scrollingElement || document.documentElement, null);
 }
 
 /* ================= 通用停靠（草稿纸 / AI 面板共用） =================
@@ -9122,6 +9186,9 @@ function createDock(el, key, defDock, onChange) {
   grip.addEventListener('pointerdown', (e) => {
     if (st.dock === 'full') return;
     e.preventDefault();
+    // ★ 关键：把指针锁在 grip 上。不然拖动时指针一旦划过 PDF 的 iframe，pointerup 会被 iframe 吞掉，
+    //   父窗口收不到「松手」→ 表现就是「松开鼠标还在调大小，一动就变」。
+    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
     document.body.classList.add(dockVert(st.dock) ? 'dk-rz-x' : 'dk-rz-y');
     grip.classList.add('on');
     const mv = (ev) => {
@@ -9132,13 +9199,18 @@ function createDock(el, key, defDock, onChange) {
       apply(false);
     };
     const up = () => {
-      removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+      grip.removeEventListener('pointermove', mv);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      try { grip.releasePointerCapture(e.pointerId); } catch (_) {}
       document.body.classList.remove('dk-rz-x', 'dk-rz-y');
       grip.classList.remove('on');
       st.sizes[st.dock] = size(st.dock);
       apply(true);
     };
-    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+    grip.addEventListener('pointermove', mv);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
   });
   grip.addEventListener('dblclick', () => {
     if (st.dock === 'full') return;

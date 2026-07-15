@@ -261,17 +261,73 @@ AI_TOOLS = [
             "content": {"type": "string", "description": "要记的内容"},
             "tags": {"type": "array", "items": {"type": "string"}, "description": "可选标签"}},
             "required": ["content"]}}},
+    {"type": "function", "function": {
+        "name": "add_wrong_question",
+        "description": ("把一道**完整的**题目加入用户的「错题本」。当用户发来的（或截图 OCR 出来的）内容"
+                        "确实是一道完整题目——有题干、通常还有选项——时调用。只有能确定是完整题目才调用；"
+                        "若拿不准这是不是题目、或题目残缺不全，**不要调用**，而是用文字反问用户确认。"),
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string", "description": "完整题干（含选项 A/B/C/D，若有）。尽量保留原文。"},
+            "answer": {"type": "string", "description": "正确答案（如 C；不确定就留空）"},
+            "board": {"type": "string", "description": "所属板块，如「行测·资料分析」「行测·言语理解」「常识判断」，判断不了就留空"},
+            "qtype": {"type": "string", "description": "题型，如「资料分析-增长率」「逻辑填空」，判断不了就留空"},
+            "analysis": {"type": "string", "description": "解题方法/思路/易错点（可选，简要写）"}},
+            "required": ["question"]}}},
 ]
+
+
+def _gen_ai_explanation(db, word, cat=""):
+    """词典查不到时，用 AI 生成释义并写进全局 ci_ai 缓存（此后 lookup 直接命中）。
+    返回 dict(explanation/derivation/example/category/pinyin)；失败时释义为空串。"""
+    cat = (cat or "").strip()
+    if cat not in ("成语", "词语", "词组"):
+        cat = "词组" if (len(word) >= 4 and CJK_RE.match(word)) else "词语"
+    py = to_pinyin(word)
+    out = {"explanation": "", "derivation": "", "example": "", "category": cat, "pinyin": py}
+    prompt = (
+        "请解释%s「%s」，面向公务员考试考生，用简体中文，只输出 JSON（不要多余文字），字段：\n"
+        '{"explanation":"准确通顺的释义，一到三句，可含近义辨析",'
+        '"derivation":"出处/典故；没有则留空字符串",'
+        '"example":"一个规范例句；没有则留空字符串"}') % (cat, word)
+    reply, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是权威的汉语词典与公考词汇助手，释义准确、简洁，严格输出 JSON，用简体中文。"},
+         {"role": "user", "content": prompt}], temperature=0.3, max_tokens=700, json_mode=True)
+    if err:
+        return out
+    try:
+        obj = json.loads(reply)
+    except Exception:
+        obj = {"explanation": reply, "derivation": "", "example": ""}
+    out["explanation"] = (obj.get("explanation") or "").strip()
+    out["derivation"] = (obj.get("derivation") or "").strip()
+    out["example"] = (obj.get("example") or "").strip()
+    if out["explanation"]:
+        db.execute("INSERT OR REPLACE INTO ci_ai(word,pinyin,category,explanation,derivation,example) "
+                   "VALUES(?,?,?,?,?,?)",
+                   (word, py, cat, out["explanation"], out["derivation"], out["example"]))
+        db.commit()
+    return out
 
 
 def _ai_add_entry(db, word, note):
     info = lookup(word)
+    # AI 收录时若词典查不到释义，先让 AI 生成释义再入库（用户要求：没释义的不能裸收录）
+    if not (info.get("explanation") or "").strip():
+        gen = _gen_ai_explanation(db, word, info.get("category") or "")
+        if gen["explanation"]:
+            info["explanation"] = gen["explanation"]
+            info["derivation"] = gen["derivation"]
+            info["example"] = gen["example"]
+            info["category"] = gen["category"]
+            info["pinyin"] = info["pinyin"] or gen["pinyin"]
+            info["source"] = "ai"
     db.execute(
         "INSERT INTO entries(user_id,word,pinyin,category,explanation,derivation,example,note,source) "
         "VALUES(?,?,?,?,?,?,?,?,?)",
         (uid(), word, info["pinyin"], info["category"], info["explanation"],
          info["derivation"], info["example"], note, info["source"]))
     db.commit()
+    return bool((info.get("explanation") or "").strip())
 
 
 def _ai_exec_tool(name, args, db):
@@ -280,9 +336,11 @@ def _ai_exec_tool(name, args, db):
         word = (args.get("word") or "").strip()
         if not word:
             return "没有指定要收录的词。", None
-        _ai_add_entry(db, word, (args.get("note") or "").strip())
+        has_exp = _ai_add_entry(db, word, (args.get("note") or "").strip())
         n = db.execute("SELECT COUNT(*) FROM entries WHERE user_id=?", (uid(),)).fetchone()[0]
-        return "已把「%s」加入成语词语积累（在 行测→言语理解与表达→成语词语积累 里能看到），当前共 %d 条。" % (word, n), None
+        tail = "（已附上释义）" if has_exp else "（暂未查到释义，先收录）"
+        return ("已把「%s」加入成语词语积累%s，在 行测→言语理解与表达→成语词语积累 里能看到，当前共 %d 条。"
+                % (word, tail, n)), {"type": "refresh", "what": "entries"}
     if name == "open_feature":
         f = (args.get("feature") or "").strip()
         fn = AI_FEATURES.get(f)
@@ -300,6 +358,19 @@ def _ai_exec_tool(name, args, db):
             (uid(), "", content, "[]", "[]", "[]", json.dumps(tags, ensure_ascii=False)))
         db.commit()
         return "已记进小记。", {"type": "refresh", "what": "notes"}
+    if name == "add_wrong_question":
+        q = (args.get("question") or "").strip()
+        if not q:
+            return "没拿到题目内容。", None
+        db.execute(
+            "INSERT INTO wrong_questions(user_id,board,question,image,answer,qtype,points,method,skill,steps) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (uid(), (args.get("board") or "").strip(), q, "", (args.get("answer") or "").strip(),
+             (args.get("qtype") or "").strip(), "", (args.get("analysis") or "").strip(), "", ""))
+        db.commit()
+        n = db.execute("SELECT COUNT(*) FROM wrong_questions WHERE user_id=?", (uid(),)).fetchone()[0]
+        return ("已把这道题加入错题本（当前共 %d 道），在「错题本」里能看到并继续补充答案/解析。" % n,
+                {"type": "refresh", "what": "wrongq"})
     return "未知工具：" + str(name), None
 
 
@@ -4939,7 +5010,12 @@ def aichat_send(cid):
         return jsonify({"error": "会话不存在"}), 404
     sys_prompt = ("你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。\n"
                   "你能**真的操作这个应用**（通过给你的工具）：用户让你收录成语/词语就用 add_word 真的加进去、"
-                  "让你打开某个功能就用 open_feature 打开。别只是嘴上说做了 —— 要调用工具真做。做完再简短告诉用户结果。")
+                  "让你打开某个功能就用 open_feature 打开、让你记笔记就用 create_note。别只是嘴上说做了 —— 要调用工具真做。做完再简短告诉用户结果。\n"
+                  "【错题识别】当用户发来一段内容（常常是截图 OCR 出来的文字）时，判断它是不是一道完整的题目：\n"
+                  "· 如果**确实是一道完整题目**（有题干，通常还有 A/B/C/D 选项），就用 add_wrong_question 把它加入错题本，"
+                  "并顺手判断板块/题型、能定的话给出答案与简要解析；加完简短告诉用户已收录。\n"
+                  "· 如果**拿不准这是不是题目**、或内容残缺（只有半道题、只是知识点/材料），**不要**调用工具，"
+                  "而是用一句话反问用户：「这看起来像是……，需要我把它加入错题本吗？」等用户确认再决定。")
     if c["project_id"]:
         p = db.execute("SELECT * FROM ai_projects WHERE id=?", (c["project_id"],)).fetchone()
         if p and (p["instructions"] or "").strip():
@@ -7474,15 +7550,16 @@ def notifications_list():
         pass                       # 生成失败不能影响读消息
     rows = db.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY read, id DESC LIMIT 60",
                       (uid(),)).fetchall()
-    unread = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read=0",
+    # 聊天消息另有专属角标（聊天入口红点），别再让消息铃铛重复计数
+    unread = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read=0 AND kind IS NOT 'chat'",
                         (uid(),)).fetchone()[0]
     return jsonify({"items": [dict(r) for r in rows], "unread": unread})
 
 
 @app.get("/api/notifications/unread")
 def notifications_unread():
-    """轻量角标：只数未读，不触发生成。"""
-    n = get_db().execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read=0",
+    """轻量角标：只数未读，不触发生成。聊天消息不计入（它有自己的红点）。"""
+    n = get_db().execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read=0 AND kind IS NOT 'chat'",
                          (uid(),)).fetchone()[0]
     return jsonify({"unread": n})
 
@@ -9865,9 +9942,13 @@ def drive_send(fid):
         return jsonify({"error": "文件不存在"}), 404
     if not _are_friends(db, uid(), to):
         return jsonify({"error": "对方不是你的好友"}), 400
-    _chat_send_file(db, uid(), to, r["name"], r["stored_name"], r["size"], r["mime"], _drive_dir(uid()))
+    me = uid()
+    mid = _chat_send_file(db, me, to, r["name"], r["stored_name"], r["size"], r["mime"], _drive_dir(me))
+    myname = _uname(db, me)
+    _chat_center_notify(db, to, me, myname, "[文件] " + (r["name"] or ""), mid or 0)
     db.commit()
-    _notify_chat(to, {"type": "msg", "from": uid()})     # 提交后再秒推
+    _notify_chat(to, {"type": "msg", "from": me, "name": myname,
+                      "preview": "[文件] " + (r["name"] or "")})     # 提交后再秒推
     return jsonify({"ok": True})
 
 
@@ -9890,10 +9971,11 @@ def _chat_send_file(db, frm, to, name, stored_name, size, mime, src_dir):
     ext = os.path.splitext(name)[1].lower()
     fid_to = _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size)
     kind = "image" if (mime or "").startswith("image/") or ext in (".jpg", ".jpeg", ".png", ".gif", ".webp") else "file"
-    db.execute(
+    cur = db.execute(
         "INSERT INTO chat_msgs(from_uid,to_uid,kind,file_id,file_name,file_size,file_mime) "
         "VALUES(?,?,?,?,?,?,?)", (frm, to, kind, fid_to, name, size, mime or ""))
     # 通知放到调用方 commit 之后（见 chat_send/drive_send），否则对方可能在提交前就来拉、扑空
+    return cur.lastrowid
 
 
 @app.get("/api/chat/conversations")
@@ -9938,6 +10020,9 @@ def chat_history(fid):
     # 把对方发来的标记已读
     db.execute("UPDATE chat_msgs SET read_at=datetime('now','localtime') "
                "WHERE from_uid=? AND to_uid=? AND read_at IS NULL", (fid, me))
+    # 读了这个会话 → 清掉它在消息中心/通知栏里堆积的那几条 chat 通知
+    db.execute("DELETE FROM notifications WHERE user_id=? AND kind='chat' AND link=?",
+               (me, "chatroom:%d" % fid))
     db.commit()
     return jsonify({"messages": out, "me": me, "friend": _uname(db, fid)})
 
@@ -9962,18 +10047,24 @@ def chat_send(fid):
         f.save(os.path.join(_drive_dir(me), stored))
         db.execute("INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
                    "VALUES(?,?,?,?,?,?,?,0,'chat')", (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size))
-        _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me))
+        mid = _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me))
+        myname = _uname(db, me)
+        _chat_center_notify(db, fid, me, myname, "[文件] " + (f.filename or ""), mid or 0)
         db.commit()
-        _notify_chat(fid, {"type": "msg", "from": me})   # 提交后再秒推
+        _notify_chat(fid, {"type": "msg", "from": me, "name": myname,
+                           "preview": "[文件] " + (f.filename or "")})   # 提交后再秒推
         return jsonify({"ok": True})
     # 文本消息
     body = (request.get_json(silent=True) or {}).get("body", "").strip()
     if not body:
         return jsonify({"error": "空消息"}), 400
-    db.execute("INSERT INTO chat_msgs(from_uid,to_uid,kind,body) VALUES(?,?,'text',?)",
-               (me, fid, body[:4000]))
+    cur = db.execute("INSERT INTO chat_msgs(from_uid,to_uid,kind,body) VALUES(?,?,'text',?)",
+                     (me, fid, body[:4000]))
+    myname = _uname(db, me)
+    _chat_center_notify(db, fid, me, myname, body[:80], cur.lastrowid)
     db.commit()
-    _notify_chat(fid, {"type": "msg", "from": me})       # 秒推给对方
+    _notify_chat(fid, {"type": "msg", "from": me, "name": myname,
+                       "preview": body[:60]})           # 秒推给对方
     return jsonify({"ok": True})
 
 
@@ -10001,6 +10092,20 @@ def chat_unread():
 # waitress 是单进程多线程，所以进程内一个 {用户→若干队列} 的注册表就能跨连接通信：
 # 有人给用户 X 发消息 → 往 X 的每个队列塞个信号 → X 那条 SSE 连接立刻把信号推给浏览器 →
 # 浏览器马上去拉新消息。发消息本身还是普通 POST，SSE 只负责「叮」一下。
+def _uname(db, user_id):
+    r = db.execute("SELECT username FROM users WHERE id=?", (user_id,)).fetchone()
+    return (r["username"] if r else "") or "好友"
+
+
+def _chat_center_notify(db, to_uid, from_uid, from_name, preview, mid):
+    """给收件人写一条「消息中心」通知：手机 APK 的后台轮询器会据此在系统通知栏弹出。
+    每条消息一条（dkey 带 mid，保证唯一、能被轮询器逐条推送）；对方读了会话时统一清掉（见 chat_history）。"""
+    db.execute(
+        "INSERT OR IGNORE INTO notifications(user_id,kind,dkey,title,body,link) VALUES(?,?,?,?,?,?)",
+        (to_uid, "chat", "chat:%d:%d" % (from_uid, mid),
+         "%s 发来消息" % from_name, (preview or "你有一条新消息")[:80], "chatroom:%d" % from_uid))
+
+
 _chat_listeners = {}
 _listeners_lock = threading.Lock()
 
@@ -10593,35 +10698,15 @@ def api_lookup_ai():
                         "derivation": (cached["derivation"] if "derivation" in ck else "") or "",
                         "example": (cached["example"] if "example" in ck else "") or "",
                         "found": True, "cached": True})
-    cat = (data.get("category") or "").strip()
-    if cat not in ("成语", "词语", "词组"):
-        cat = "词组" if (len(word) >= 4 and CJK_RE.match(word)) else "词语"
-    prompt = (
-        "请解释%s「%s」，面向公务员考试考生，用简体中文，只输出 JSON（不要多余文字），字段：\n"
-        '{"explanation":"准确通顺的释义，一到三句，可含近义辨析",'
-        '"derivation":"出处/典故；没有则留空字符串",'
-        '"example":"一个规范例句；没有则留空字符串"}') % (cat, word)
-    reply, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是权威的汉语词典与公考词汇助手，释义准确、简洁，严格输出 JSON，用简体中文。"},
-         {"role": "user", "content": prompt}], temperature=0.3, max_tokens=700, json_mode=True)
-    if err:
-        return err
-    try:
-        obj = json.loads(reply)
-    except Exception:
-        obj = {"explanation": reply, "derivation": "", "example": ""}
-    exp = (obj.get("explanation") or "").strip()
-    der = (obj.get("derivation") or "").strip()
-    exa = (obj.get("example") or "").strip()
-    py = to_pinyin(word)
-    db.execute("INSERT OR REPLACE INTO ci_ai(word,pinyin,category,explanation,derivation,example) VALUES(?,?,?,?,?,?)",
-               (word, py, cat, exp, der, exa))
+    gen = _gen_ai_explanation(db, word, data.get("category") or "")
+    cat, py = gen["category"], gen["pinyin"]
+    exp, der, exa = gen["explanation"], gen["derivation"], gen["example"]
     # 重新生成(force)时，同步刷新该用户已收录的同名词条（保留其笔记），
     # 让「重新生成」对已收录条目真正生效，覆盖历史未规范化的旧解释。
     if data.get("force"):
         db.execute("UPDATE entries SET pinyin=?, category=?, explanation=?, derivation=?, example=? "
                    "WHERE user_id=? AND word=?", (py, cat, exp, der, exa, uid(), word))
-    db.commit()
+        db.commit()
     return jsonify({"word": word, "pinyin": py, "category": cat, "explanation": exp,
                     "derivation": der, "example": exa, "found": True, "cached": False})
 

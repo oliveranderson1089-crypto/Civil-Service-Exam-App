@@ -2439,6 +2439,7 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
   opacity:0;transform:scale(.4);pointer-events:none;transition:transform .22s cubic-bezier(.2,1.4,.4,1),opacity .18s;}
 #fab-pad{background:linear-gradient(135deg,#f0a500,#e07b39);box-shadow:0 4px 14px rgba(224,123,57,.42);}
 .fab.open .fab-act{opacity:1;pointer-events:auto;}
+.fab-act[hidden]{display:none!important;}   /* hidden 属性要能真隐藏（display:grid 会盖掉它）→ 手机端不显示截图 */
 /* 扇出：每个工具声明自己的偏移量（--fx/--fy），正负号由球所在的象限翻转，
    所以加工具只要再给一组变量，不用写 4 条象限规则。 */
 /* 5 个工具排成四分之一圆弧（原来只给了 3 个位置，新加的批注/截图没位置就叠在中间看不见）*/

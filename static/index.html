@@ -1537,6 +1537,7 @@
 <div id="ink" class="ink hidden">
   <canvas id="ink-cv"></canvas>
   <div id="ink-bar" class="ink-bar">
+    <button class="ink-t" data-inkt="scroll" title="浏览/滑动（不勾画，可滚动页面）">✋</button>
     <button class="ink-t on" data-inkt="pen" title="笔">✏️</button>
     <button class="ink-t" data-inkt="hl" title="荧光笔">🖍️</button>
     <button class="ink-t" data-inkt="eraser" title="橡皮（划过即擦）">🧽</button>
@@ -1565,6 +1566,7 @@
   <div class="qn-foot">
     <label class="btn tiny">🖼 图片<input type="file" id="qn-file" accept="image/*" multiple hidden></label>
     <label class="btn tiny">📎 附件<input type="file" id="qn-attfile" multiple hidden></label>
+    <button type="button" class="btn tiny hw-open-btn" data-hw="qn-text" title="手写输入（写完自动转文字）">✍️ 手写</button>
     <input id="qn-tags" type="text" placeholder="标签，逗号分隔（可空）">
     <button class="btn primary" id="qn-save">记下</button>
   </div>
