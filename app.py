@@ -544,6 +544,25 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime')),
             PRIMARY KEY(user_id, video_id)
         );
+        -- 人民时评·申论范文：每天从人民日报评论版（paper.people.com.cn）抓「人民时评」那篇。
+        -- 它是标准的申论大作文范本 —— 提出问题、分析问题、给对策，还有可直接借鉴的过渡句和金句。
+        -- pullquote=报纸上那段highlight的提要；analysis=AI 拆的结构/亮点/可仿写表达（生成一次全局缓存）。
+        CREATE TABLE IF NOT EXISTS essay_models(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pub_date TEXT,                   -- 见报日期 YYYY-MM-DD
+            column_name TEXT,                -- 栏目（人民时评）
+            title TEXT, author TEXT,
+            source_url TEXT UNIQUE,          -- 同一篇不重复收
+            pullquote TEXT,                  -- 报纸上那段提要
+            content TEXT,                    -- 正文全文
+            analysis TEXT,                   -- AI 拆解（结构/亮点/可仿写表达），按需生成后缓存
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS essay_model_stars(
+            user_id INTEGER NOT NULL, model_id INTEGER NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, model_id)
+        );
         -- 专项练题库：常识/政治理论/言语这三块出不了程序化题（考的是知识，不是构造），
         -- 只能让 AI 出。但每次现出要等 20 秒 —— 所以**攒进题库**，用的时候直接取，
         -- 不够了再后台补。按 (板块, 题型, 难度) 分桶。
@@ -9256,6 +9275,89 @@ def policydocs_ai(did):
         return err
     db = get_db()
     db.execute("UPDATE policy_docs SET interpretation=? WHERE id=?", (reply, did))
+    db.commit()
+    return jsonify({"content": reply, "cached": False})
+
+
+# ---------------------------------------------------------------- 人民时评·申论范文
+@app.get("/api/fanwen")
+def fanwen_list():
+    """人民时评范文列表。带日期条（像每日时政），点某天看那天那篇。
+       只回列表元信息 + 收藏态，正文走详情接口（列表页不用一次拉一堆全文）。"""
+    db = get_db()
+    star = request.args.get("star") in ("1", "true")
+    sql = ("SELECT m.id, m.pub_date, m.column_name, m.title, m.author, m.pullquote, "
+           "length(m.content) chars, "
+           "(m.analysis IS NOT NULL AND m.analysis<>'') has_ai, "
+           "(s.user_id IS NOT NULL) starred "
+           "FROM essay_models m LEFT JOIN essay_model_stars s "
+           "ON s.model_id=m.id AND s.user_id=? ")
+    if star:
+        sql += "WHERE s.user_id IS NOT NULL "
+    sql += "ORDER BY m.pub_date DESC, m.id DESC LIMIT 120"
+    rows = [dict(r) for r in db.execute(sql, (uid(),)).fetchall()]
+    for r in rows:
+        r["starred"] = bool(r["starred"])
+    n_star = db.execute("SELECT COUNT(*) FROM essay_model_stars WHERE user_id=?",
+                        (uid(),)).fetchone()[0]
+    return jsonify({"items": rows, "n_star": n_star})
+
+
+@app.get("/api/fanwen/<int:mid>")
+def fanwen_detail(mid):
+    r = get_db().execute("SELECT * FROM essay_models WHERE id=?", (mid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    return jsonify({"id": r["id"], "pub_date": r["pub_date"], "column_name": r["column_name"],
+                    "title": r["title"], "author": r["author"], "source_url": r["source_url"],
+                    "pullquote": r["pullquote"] or "", "content": r["content"] or "",
+                    "analysis": r["analysis"] or ""})
+
+
+@app.post("/api/fanwen/<int:mid>/star")
+def fanwen_star(mid):
+    db = get_db()
+    have = db.execute("SELECT 1 FROM essay_model_stars WHERE user_id=? AND model_id=?",
+                      (uid(), mid)).fetchone()
+    if have:
+        db.execute("DELETE FROM essay_model_stars WHERE user_id=? AND model_id=?", (uid(), mid))
+        db.commit()
+        return jsonify({"starred": False})
+    db.execute("INSERT OR IGNORE INTO essay_model_stars(user_id, model_id) VALUES(?,?)",
+               (uid(), mid))
+    db.commit()
+    return jsonify({"starred": True})
+
+
+@app.post("/api/fanwen/<int:mid>/ai")
+def fanwen_ai(mid):
+    """AI 把这篇范文拆开讲：怎么起题、怎么分论、亮点在哪、哪些句子能直接仿写。
+       生成一次就缓存进 analysis（全局共享，不重复花钱）。"""
+    r = get_db().execute("SELECT * FROM essay_models WHERE id=?", (mid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    force = (request.get_json(silent=True) or {}).get("force")
+    if r["analysis"] and not force:
+        return jsonify({"content": r["analysis"], "cached": True})
+    body = (r["content"] or "")[:8000]
+    prompt = (
+        "下面是《人民日报》「人民时评」栏目的一篇评论《%s》。它是标准的申论大作文范本。\n"
+        "请面向四川省考申论考生，用简体中文、Markdown 输出「范文拆解」，分这几节：\n"
+        "## 一、中心论点\n（一句话点明作者要论证什么）\n"
+        "## 二、结构脉络（怎么提出问题→分析问题→解决问题）\n"
+        "（逐段梳理：每一部分在做什么，分论点是什么，用了什么论证方法）\n"
+        "## 三、亮点与可借鉴之处\n（选材、论证、说理的高明处，考生能学什么）\n"
+        "## 四、可直接仿写的过渡句与金句\n（摘录原文里的过渡句/结论句/金句，并说明什么场景能套用）\n"
+        "## 五、这篇能用在哪些申论主题\n（点出适配的话题方向）\n"
+        "要求：紧扣原文，具体到句，别空泛。写完整不要截断。\n\n正文：\n%s"
+    ) % (r["title"], body)
+    reply, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是资深申论辅导老师，拆解范文准确、具体、实用，用简体中文 Markdown，务必完整不截断。"},
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=5000)
+    if err:
+        return err
+    db = get_db()
+    db.execute("UPDATE essay_models SET analysis=? WHERE id=?", (reply, mid))
     db.commit()
     return jsonify({"content": reply, "cached": False})
 

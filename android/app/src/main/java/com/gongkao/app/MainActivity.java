@@ -52,6 +52,11 @@ public class MainActivity extends Activity {
     private volatile boolean ttsReady = false;
     private ValueCallback<Uri[]> filePathCallback;   // 网页文件选择回调
     private Uri cameraUri;                            // 拍照输出 URI
+    // 视频全屏：WebView 里点全屏（HTML5 全屏 API 或 <video> 原生全屏）都会走 onShowCustomView，
+    // 壳不接这个回调的话，全屏就点了没反应 —— 这些字段用来托管那个全屏视图。
+    private android.view.View fsView;
+    private WebChromeClient.CustomViewCallback fsCallback;
+    private int fsSavedOrientation;
     private static final int FILE_REQ = 1001;
     private static final int CAMERA_REQ = 1002;
     private static final String KEY = "server_url";
@@ -172,6 +177,37 @@ public class MainActivity extends Activity {
                     }
                 }
                 return true;
+            }
+
+            // 视频全屏：网页请求全屏时，WebView 把那个「铺满的视图」交到这里。
+            // 我们把它盖到根视图上、把 WebView 藏起来，就成了真全屏。不接这个回调 = 点全屏没反应。
+            @Override
+            public void onShowCustomView(android.view.View view, CustomViewCallback cb) {
+                if (fsView != null) {                 // 已经有一个全屏视图了，别叠
+                    cb.onCustomViewHidden();
+                    return;
+                }
+                fsView = view;
+                fsCallback = cb;
+                fsSavedOrientation = getRequestedOrientation();
+                android.widget.FrameLayout decor = (android.widget.FrameLayout) getWindow().getDecorView();
+                decor.addView(fsView, new android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+                web.setVisibility(android.view.View.GONE);
+                setFullscreenUi(true);               // 顺手把状态栏/导航栏也藏掉，沉浸式
+            }
+
+            @Override
+            public void onHideCustomView() {
+                if (fsView == null) return;
+                android.widget.FrameLayout decor = (android.widget.FrameLayout) getWindow().getDecorView();
+                decor.removeView(fsView);
+                fsView = null;
+                web.setVisibility(android.view.View.VISIBLE);
+                if (fsCallback != null) { fsCallback.onCustomViewHidden(); fsCallback = null; }
+                setFullscreenUi(false);
+                setRequestedOrientation(fsSavedOrientation);
             }
         });
         web.setWebViewClient(new WebViewClient() {
@@ -733,6 +769,13 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        // 视频全屏时，返回键先退出全屏（否则会直接退到上一页/后台，很突兀）
+        if (fsView != null) {
+            web.evaluateJavascript(
+                "document.exitFullscreen ? document.exitFullscreen() : "
+                + "(document.webkitExitFullscreen && document.webkitExitFullscreen())", null);
+            return;
+        }
         // 边缘侧滑 / 返回键：先交给网页 SPA 退上一级；网页已在首页才退到后台
         if (web == null) { super.onBackPressed(); return; }
         if (web.canGoBack()) {

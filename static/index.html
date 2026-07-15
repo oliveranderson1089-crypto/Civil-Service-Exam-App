@@ -568,6 +568,22 @@
     <div id="poly-wrap" class="poly-wrap"></div>
   </section>
 
+  <!-- ===== 人民时评·申论范文（列表） ===== -->
+  <section id="view-fanwen" class="view hidden">
+    <div class="pd-intro">每天抓<b>《人民日报》「人民时评」</b>—— 标准的申论大作文范本：
+      提出问题→分析问题→给对策，还有可直接借鉴的过渡句和金句。点开看全文 + AI 拆解。</div>
+    <div class="date-strip" id="fw-tabs">
+      <button class="chip active" data-fwb="">全部</button>
+      <button class="chip" data-fwb="star">⭐ 收藏</button>
+    </div>
+    <div id="fw-list" class="fw-list"></div>
+  </section>
+
+  <!-- ===== 人民时评·申论范文（详情：全文 + AI 拆解） ===== -->
+  <section id="view-fanwend" class="view hidden">
+    <div id="fw-wrap" class="poly-wrap"></div>
+  </section>
+
   <!-- ===== 每日新闻视频（抓官媒 → AI 按公考价值筛）===== -->
   <section id="view-videos" class="view hidden">
     <div class="pd-intro">每天从<b>官方媒体</b>抓新闻视频，AI 按<b>公考价值</b>筛一遍 ——
@@ -1483,8 +1499,10 @@
   </div>
   <textarea id="qn-text" placeholder="记你想记…（不会打断你正在看的页面）"></textarea>
   <div id="qn-imgs" class="cp-thumbs"></div>
+  <div id="qn-files" class="cp-files"></div>
   <div class="qn-foot">
     <label class="btn tiny">🖼 图片<input type="file" id="qn-file" accept="image/*" multiple hidden></label>
+    <label class="btn tiny">📎 附件<input type="file" id="qn-attfile" multiple hidden></label>
     <input id="qn-tags" type="text" placeholder="标签，逗号分隔（可空）">
     <button class="btn primary" id="qn-save">记下</button>
   </div>

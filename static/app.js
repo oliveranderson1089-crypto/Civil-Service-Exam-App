@@ -96,6 +96,7 @@ const BOARD_FEATURES = {
   ],
   '议论文': [
     { key: 'write', name: '成文', desc: '素材 → 大作文 · 每日成文 / 综合应用', icon: 'edit' },
+    { key: 'fanwen', name: '人民时评·申论范文', desc: '每日抓人民日报评论版 · AI 拆结构与亮点', icon: 'feather' },
     { key: 'sucai', name: '素材积累', desc: '每日更新 · 人物/事例/理论论据', icon: 'clip' },
     { key: 'lianjie', name: '衔接表达', desc: '过渡/转折/万能句式 不口语不重复', icon: 'quote' },
     { key: 'classics', name: '古诗文·名句速查', desc: '唐诗宋词 · 四书五经 · 查询收藏', icon: 'book' },
@@ -115,7 +116,7 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'videos'];
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'videos', 'fanwen', 'fanwend'];
 const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', videos: '每日新闻视频' };
 function render() {
   const st = stack[stack.length - 1];
@@ -469,6 +470,7 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'drill') openDrill(curBoardFeat);
   else if (c.dataset.feat === 'write') openWrite('daily');
   else if (c.dataset.feat === 'wapp') openWrite('yingyong');
+  else if (c.dataset.feat === 'fanwen') openFanwen();
   else if (c.dataset.feat === 'sucai') openSucai('全部');
   else if (c.dataset.feat === 'lianjie') openSucai('衔接表达');
   else if (c.dataset.feat === 'changshi') openChangshi();
@@ -789,13 +791,16 @@ $('#cp-imgfile').addEventListener('change', async e => { const fs = [...e.target
 bindImgDrop(document.querySelector('.composer'), addDraftImages);      // 拖图片进编辑器
 bindImgPaste($('#cp-content'), addDraftImages);                        // Ctrl+V 粘图片
 $('#cp-camfile').addEventListener('change', async e => { const fs = [...e.target.files]; e.target.value = ''; await addDraftImages(fs); });
-$('#cp-attfile').addEventListener('change', async e => {
-  const list = [...e.target.files]; e.target.value = '';
-  for (const f of list) {
+async function addDraftFiles(files) {          // 图片以外的附件进小记编辑器
+  for (const f of [...files]) {
     const blob = await _materialize(f);
     draft.files.push({ kind: 'new', fileObj: blob, name: f.name || 'file' });
   }
   renderComposer();
+}
+$('#cp-attfile').addEventListener('change', async e => {
+  const list = [...e.target.files]; e.target.value = '';
+  await addDraftFiles(list);
 });
 $('#cp-todos').addEventListener('click', e => { const r = e.target.closest('[data-tdr]'); if (r) { draft.todos.splice(+r.dataset.tdr, 1); renderComposer(); } });
 $('#cp-todos').addEventListener('change', e => { const c = e.target.closest('[data-tdo]'); if (c) draft.todos[+c.dataset.tdo].done = c.checked; });
@@ -1105,6 +1110,7 @@ function makeFloat(el, key, handle) {
    所以做成**浮在当前页面上**的一小块：写完点「记下」，页面纹丝不动。
    原来的小记模块**照样保留**（要整理、要翻历史还是得进去）。 */
 let qnImgs = [];
+let qnFiles = [];        // 随手记的附件（图片以外的文件：PDF/Word/表格…）
 let qnFloat = null;
 function qnOpen() {
   const box = $('#qnote');
@@ -1114,6 +1120,7 @@ function qnOpen() {
   $('#qn-board').innerHTML = boardOptions(curNoteBoard, false);
   $('#qn-text').value = ''; $('#qn-tags').value = '';
   qnImgs = []; $('#qn-imgs').innerHTML = '';
+  qnFiles = []; $('#qn-files').innerHTML = '';
   box.classList.remove('hidden');
   setTimeout(() => $('#qn-text').focus(), 30);
   if (window.fabClose) fabClose();
@@ -1134,11 +1141,42 @@ $('#qn-file').addEventListener('change', async e => {
   const fs = [...e.target.files]; e.target.value = '';
   await qnAddImgs(fs);
 });
-bindImgDrop($('#qnote'), qnAddImgs);          // 拖图片进随手记
+// 附件：图片以外的任何格式（PDF / Word / 表格 / 压缩包…）。图片仍走上面的图片区。
+async function qnAddFiles(files) {
+  for (const f of [...files]) {
+    const blob = await _materialize(f);
+    qnFiles.push({ fileObj: blob, name: f.name || 'file', size: f.size || 0 });
+  }
+  qnRenderFiles();
+}
+$('#qn-attfile').addEventListener('change', async e => {
+  const fs = [...e.target.files]; e.target.value = '';
+  await qnAddFiles(fs);
+});
+// 拖进随手记：图片当图片、别的当附件（不再把非图片一律挡掉）。
+// 浏览器走这里；桌面壳的拖放走 GTK 层的 __onDropFiles（也已按同样规则路由）。
+(function bindQnDrop() {
+  const el = $('#qnote');
+  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drop-on'); });
+  el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.classList.remove('drop-on'); });
+  el.addEventListener('drop', e => {
+    e.preventDefault(); el.classList.remove('drop-on');
+    const all = [...(e.dataTransfer.files || [])];
+    const imgs = all.filter(f => /^image\//.test(f.type));
+    const atts = all.filter(f => !/^image\//.test(f.type));
+    if (imgs.length) qnAddImgs(imgs);
+    if (atts.length) qnAddFiles(atts);
+  });
+})();
 bindImgPaste($('#qn-text'), qnAddImgs);       // Ctrl+V 粘图片
 function qnRenderImgs() {
   $('#qn-imgs').innerHTML = qnImgs.map((im, i) =>
     `<div class="cp-thumb"><img src="${im.url}" data-qnbig="${i}"><button class="cp-x" data-qnr="${i}">×</button></div>`).join('');
+}
+function qnRenderFiles() {
+  $('#qn-files').innerHTML = qnFiles.map((f, i) =>
+    `<div class="cp-file">${iconFor((f.name.split('.').pop() || ''))} <span>${esc(f.name)}</span>` +
+    `<button class="cp-x" data-qnfr="${i}">×</button></div>`).join('');
 }
 $('#qn-imgs').addEventListener('click', e => {
   const r = e.target.closest('[data-qnr]');
@@ -1146,9 +1184,13 @@ $('#qn-imgs').addEventListener('click', e => {
   const b = e.target.closest('[data-qnbig]');
   if (b) lightbox(qnImgs[+b.dataset.qnbig].url);
 });
+$('#qn-files').addEventListener('click', e => {
+  const r = e.target.closest('[data-qnfr]');
+  if (r) { qnFiles.splice(+r.dataset.qnfr, 1); qnRenderFiles(); }
+});
 $('#qn-save').onclick = async () => {
   const text = $('#qn-text').value.trim();
-  if (!text && !qnImgs.length) { toast('写点什么吧', true); return; }
+  if (!text && !qnImgs.length && !qnFiles.length) { toast('写点什么吧', true); return; }
   const b = $('#qn-save'); b.disabled = true; b.textContent = '记下…';
   try {
     await Promise.all(qnImgs.filter(i => i.ready).map(i => i.ready));
@@ -1159,6 +1201,7 @@ $('#qn-save').onclick = async () => {
     fd.append('tags', JSON.stringify(
       $('#qn-tags').value.split(/[,，\s]+/).map(x => x.trim()).filter(Boolean)));
     qnImgs.forEach(i => fd.append('images', i.fileObj, i.name));
+    qnFiles.forEach(f => fd.append('attachments', f.fileObj, f.name));   // 字段名和小记编辑器一致
     await api('/api/notes', { method: 'POST', body: fd });
     qnClose();
     toast('已记下');
@@ -3393,11 +3436,7 @@ function vpMedia(wrap, d) {
   };
   seek.onchange = () => { S.seeking = false; seekTo(seek.value / 1000 * S.total); };
   wrap.querySelector('.vp-rate').onchange = e => { v.playbackRate = +e.target.value; };
-  wrap.querySelector('.vp-fs').onclick = () => {
-    const st = wrap.querySelector('.vp-stage');
-    if (document.fullscreenElement) document.exitFullscreen();
-    else if (st.requestFullscreen) st.requestFullscreen().catch(() => { });
-  };
+  wrap.querySelector('.vp-fs').onclick = () => vpToggleFs(wrap.querySelector('.vp-stage'), v);
   // 空格播放/暂停、左右各跳 10 秒（跟常见播放器一致）
   S.keys = e => {
     if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || ''))) return;
@@ -3410,6 +3449,50 @@ function vpMedia(wrap, d) {
   load(0, 0, true);
 }
 
+/** 全屏切换。手机上这条路特别容易点了没反应，得按平台分开走：
+ *   · 桌面 / 安卓 Chrome / APK：给 .vp-stage 整个 div 请求全屏 —— 我们自制的进度条/倍速一起进去。
+ *     APK 的 WebView 要壳里接了 onShowCustomView 才生效（已在 4.4 加上）。
+ *   · iOS Safari：div 根本不支持全屏，只有 <video> 元素的原生全屏能用（webkitEnterFullscreen）。
+ * 顺带：横屏视频（央视/B站 16:9）进全屏时把手机转成横屏；竖屏视频（川观 720x1280）保持不动。 */
+function vpToggleFs(stage, v) {
+  const doc = document;
+  if (doc.fullscreenElement || doc.webkitFullscreenElement) {
+    (doc.exitFullscreen || doc.webkitExitFullscreen || function () { }).call(doc);
+    return;
+  }
+  if (v.webkitDisplayingFullscreen) { try { v.webkitExitFullscreen(); } catch (_) { } return; }
+
+  const req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+  if (req) {
+    let p;
+    try { p = req.call(stage); } catch (_) { }
+    // 请求失败（比如 iOS 的 div 全屏）就退回 <video> 原生全屏
+    if (p && p.catch) p.catch(() => vpVideoFs(v));
+  } else {
+    vpVideoFs(v);
+  }
+}
+function vpVideoFs(v) {
+  if (v.webkitEnterFullscreen) { try { v.webkitEnterFullscreen(); } catch (_) { } }
+  else if (v.requestFullscreen) { v.requestFullscreen().catch(() => { }); }
+}
+// 进/出全屏时：横屏视频转屏 + 同步全屏按钮图标。锁屏方向要在全屏态里才允许，所以放这。
+document.addEventListener('fullscreenchange', () => {
+  const on = !!document.fullscreenElement;
+  if (vpS && vpS.wrap) {
+    const b = vpS.wrap.querySelector('.vp-fs');
+    if (b) { b.classList.toggle('on', on); b.title = on ? '退出全屏' : '全屏'; }
+  }
+  try {
+    if (on && vpS && vpS.v && vpS.v.videoWidth > vpS.v.videoHeight
+        && screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(() => { });
+    } else if (!on && screen.orientation && screen.orientation.unlock) {
+      screen.orientation.unlock();
+    }
+  } catch (_) { }
+});
+
 function vpClose() {
   if (!vpS) return;
   const v = vpS.v;
@@ -3417,7 +3500,7 @@ function vpClose() {
   if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) { } }
   document.removeEventListener('keydown', vpS.esc);
   if (vpS.keys) document.removeEventListener('keydown', vpS.keys);
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => { });
+  if (document.fullscreenElement) { (document.exitFullscreen || function () { }).call(document); }
   vpS.wrap.remove();
   vpS = null;
 }
@@ -6674,6 +6757,99 @@ $('#poly-wrap').addEventListener('click', async e => {
   } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 政策解读'; }
 });
 
+/* ================= 人民时评·申论范文（每日抓人民日报评论版） ================= */
+let fwBoard = '', fwData = null;
+async function openFanwen() {
+  push({ view: 'fanwen', title: '人民时评·申论范文' });
+  loadFanwen();
+}
+async function loadFanwen() {
+  $('#fw-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/fanwen' + (fwBoard === 'star' ? '?star=1' : ''));
+    document.querySelectorAll('#fw-tabs .chip').forEach(c => {
+      c.classList.toggle('active', c.dataset.fwb === fwBoard);
+      if (c.dataset.fwb === 'star') c.textContent = '⭐ 收藏' + (d.n_star ? ' ' + d.n_star : '');
+    });
+    if (!d.items.length) {
+      $('#fw-list').innerHTML = fwBoard === 'star'
+        ? '<p class="empty">还没收藏。读到好范文点 ☆ 收起来，反复临摹。</p>'
+        : '<p class="empty">还没有范文。每天早上会自动抓当天的人民时评。</p>';
+      return;
+    }
+    $('#fw-list').innerHTML = d.items.map(it => `
+      <div class="fw-card" data-fw="${it.id}">
+        <div class="fw-c-top">
+          <span class="fw-col">人民时评</span>
+          <span class="fw-date">${esc(fmtDay(it.pub_date))}</span>
+          <button class="fw-star${it.starred ? ' on' : ''}" data-fwstar="${it.id}"
+            title="收藏">${it.starred ? '★' : '☆'}</button>
+        </div>
+        <div class="fw-t">${esc(it.title)}</div>
+        ${it.pullquote ? `<div class="fw-pull">${esc(it.pullquote)}</div>` : ''}
+        <div class="fw-meta">${it.author ? esc(it.author) + ' · ' : ''}约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">✓ 已有 AI 拆解</span>' : ''}</div>
+      </div>`).join('');
+  } catch (e) { $('#fw-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+$('#fw-tabs').addEventListener('click', e => {
+  const c = e.target.closest('[data-fwb]'); if (!c) return;
+  fwBoard = c.dataset.fwb; loadFanwen();
+});
+$('#fw-list').addEventListener('click', async e => {
+  const s = e.target.closest('[data-fwstar]');
+  if (s) {
+    e.stopPropagation(); s.disabled = true;
+    try {
+      const r = await api('/api/fanwen/' + s.dataset.fwstar + '/star', { method: 'POST' });
+      s.textContent = r.starred ? '★' : '☆'; s.classList.toggle('on', r.starred);
+      toast(r.starred ? '已收藏' : '已取消收藏');
+      if (fwBoard === 'star') loadFanwen();
+    } catch (err) { toast(err.message, true); }
+    s.disabled = false; return;
+  }
+  const c = e.target.closest('[data-fw]'); if (c) openFanwenItem(+c.dataset.fw);
+});
+async function openFanwenItem(id) {
+  push({ view: 'fanwend', title: '范文精读' });
+  $('#fw-wrap').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    fwData = await api('/api/fanwen/' + id);
+    stack[stack.length - 1].title = fwData.title;
+    $('#top-title').textContent = fwData.title;
+    renderFanwen();
+  } catch (e) { $('#fw-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+function renderFanwen() {
+  const d = fwData;
+  const ai = d.analysis
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 范文拆解</div><div class="cd-sec-b">${mdToHtml(d.analysis)}</div>
+        <button class="btn cd-ai-regen" id="fw-regen">重新生成</button></div>`
+    : `<div class="poly-genbox"><p class="cd-tip" style="margin:0 0 10px">让 AI 拆开讲：中心论点、结构脉络、亮点、可仿写的过渡句金句，以及能用在哪些主题。</p>
+        <button class="btn primary" id="fw-gen" style="width:100%;padding:12px;">🤖 生成 AI 范文拆解</button></div>`;
+  const body = (d.content || '').split('\n').filter(x => x.trim())
+    .map(p => `<p>${emKey(p.trim())}</p>`).join('');
+  $('#fw-wrap').innerHTML = `
+    <div class="poly-head"><h2>${esc(d.title)}</h2>
+      <div class="fw-byline">人民时评${d.author ? ' · ' + esc(d.author) : ''}${d.pub_date ? ' · ' + esc(fmtDay(d.pub_date)) : ''}
+        <a class="poly-src" href="${esc(d.source_url)}" target="_blank" rel="noopener">原文 ↗</a></div></div>
+    ${d.pullquote ? `<div class="fw-pull-big">${emKey(d.pullquote)}</div>` : ''}
+    ${ai}
+    <div class="poly-readert">范文全文</div>
+    <div class="poly-reader">${body}</div>`;
+}
+$('#fw-wrap').addEventListener('click', async e => {
+  const g = e.target.closest('#fw-gen') || e.target.closest('#fw-regen');
+  if (!g) return;
+  g.disabled = true; g.textContent = 'AI 拆解生成中…（约二三十秒）';
+  try {
+    const d = await api('/api/fanwen/' + fwData.id + '/ai', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: g.id === 'fw-regen' })
+    });
+    fwData.analysis = d.content; renderFanwen(); toast('已生成');
+  } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 范文拆解'; }
+});
+
 /* ================= 党的创新理论学习词典（12371.cn） ================= */
 let pdCat = '全部', pdTimer = null;
 async function openPartyDict() {
@@ -7031,6 +7207,8 @@ const SYNC_REFRESH = {
   kb: () => loadNotebooks(),
   wrongq: () => loadWrongq(),
   news: () => loadNews(),
+  videos: () => loadVideos(),
+  fanwen: () => loadFanwen(),
   gaikuo: () => loadGaikuo(),
   gongwen: () => loadGongwen($('#gw-q').value.trim()),
   planlog: () => loadPlanLog(),
@@ -8899,11 +9077,15 @@ window.__onDropFiles = (items) => {
   const files = (items || []).map(x => b64ToFile(x.data, x.name));
   if (!files.length) return;
   const t = dropTarget();
-  if (t === 'qnote' || t === 'notes') {            // 小记：只收图片，别的类型说清楚
+  if (t === 'qnote' || t === 'notes') {            // 小记：图片当图片，别的当附件
     const imgs = files.filter(isImg);
-    if (!imgs.length) { toast('小记这里只能放图片', true); return; }
-    if (t === 'qnote') qnAddImgs(imgs); else addDraftImages(imgs);
-    toast(`已加 ${imgs.length} 张图`);
+    const atts = files.filter(f => !isImg(f));
+    if (t === 'qnote') { if (imgs.length) qnAddImgs(imgs); if (atts.length) qnAddFiles(atts); }
+    else { if (imgs.length) addDraftImages(imgs); if (atts.length) addDraftFiles(atts); }
+    const bits = [];
+    if (imgs.length) bits.push(`${imgs.length} 张图`);
+    if (atts.length) bits.push(`${atts.length} 个附件`);
+    toast('已加 ' + bits.join(' + '));
     return;
   }
   if (t === 'ai') files.forEach(f => aiHandleAttach(f));         // AI 开着 → 当附件
@@ -9030,7 +9212,7 @@ async function mkGetProf(scope) {
   return d;
 }
 const MK_VIEWS = ['csboard', 'thboard', 'workd', 'partydict', 'policydocd', 'essayd', 'writed',
-  'wqdetail', 'slresult', 'sltype', 'boardkb', 'docqad', 'cdetail', 'ckboard', 'viewer'];
+  'wqdetail', 'slresult', 'sltype', 'boardkb', 'docqad', 'cdetail', 'ckboard', 'viewer', 'fanwend'];
 
 // 进到有划重点的模块，就在正文顶部长出这张卡（时政那张是模块自己写的，不走这里）
 async function mkInject() {
