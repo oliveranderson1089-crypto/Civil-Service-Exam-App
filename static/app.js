@@ -90,7 +90,7 @@ const BOARD_FEATURES = {
     { key: 'theory', name: '理论基础', desc: '马原 · 毛概 · 中特 · 习思想 考点速记', icon: 'compass' },
   ],
   '应用文': [
-    { key: 'wapp', name: '应用文成文', desc: '导航位已留 · 生成逻辑待定', icon: 'edit' },
+    { key: 'wapp', name: '应用文成文', desc: '14 文种四大类 · 每日成文 + 提纲纲要 · 用当天素材写', icon: 'edit' },
     { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
     { key: 'gongwen', name: '应用文上位词', desc: '公文规范上位表述 · 按场景归类 · AI 归纳', icon: 'layers' },
   ],
@@ -3174,9 +3174,12 @@ async function loadVideos() {
     }
     box.innerHTML = d.items.map(v => {
       const long = /^(0?[3-9]|[1-9]\d):/.test(v.duration || '');   // 超过 3 分钟的标一下
+      // 封面用 <img referrerpolicy=no-referrer>，不用 CSS 背景图 ——
+      // B 站图床（i*.hdslb.com）有防盗链：**带我们域名的 Referer 会 403**，不带 Referer 反而 200。
+      // CSS background-image 没法去掉 Referer，只有 <img referrerpolicy> 能。央视/川观封面不受影响。
       return `<div class="vd-card">
-        <button class="vd-cover" data-vdplay="${v.id}"
-           style="${v.cover ? `background-image:url('${esc(v.cover)}')` : ''}">
+        <button class="vd-cover" data-vdplay="${v.id}">
+          ${v.cover ? `<img class="vd-cover-img" src="${esc(v.cover)}" referrerpolicy="no-referrer" alt="">` : ''}
           <span class="vd-play">▶</span>
           ${v.duration ? `<span class="vd-dur">${esc(v.duration)}</span>` : ''}
         </button>
@@ -6795,6 +6798,16 @@ $('#fw-tabs').addEventListener('click', e => {
   const c = e.target.closest('[data-fwb]'); if (!c) return;
   fwBoard = c.dataset.fwb; loadFanwen();
 });
+$('#fw-refresh').onclick = async () => {
+  const b = $('#fw-refresh'); b.disabled = true; $('#fw-msg').textContent = '正在抓取今天的人民时评…';
+  try {
+    const d = await api('/api/fanwen/refresh', { method: 'POST' });
+    $('#fw-msg').textContent = d.added > 0 ? `新增 ${d.added} 篇` : '今天暂无更新（周末可能无评论版）';
+    if (d.added > 0) { fwBoard = ''; loadFanwen(); }
+  } catch (e) { $('#fw-msg').textContent = ''; toast(e.message, true); }
+  b.disabled = false;
+  setTimeout(() => { $('#fw-msg').textContent = ''; }, 5000);
+};
 $('#fw-list').addEventListener('click', async e => {
   const s = e.target.closest('[data-fwstar]');
   if (s) {
@@ -8984,20 +8997,26 @@ window.__bmView = () => setTimeout(bmRestore, 700);   // 内容渲染完再问
 function matPickMembers(members) {
   return new Promise(res => {
     const el = $('#mat-share-sheet');
-    el.innerHTML = `<div class="ns-title">👥 共享给队友</div>
-      <p class="acct-hint" style="padding:0 16px">勾上就共享给他（他能在资料库看到并下载，但不能改不能删）；取消勾选就收回。</p>
-      <div class="ms-list">${members.map(m => `
-        <label class="ms-row"><input type="checkbox" value="${m.id}" ${m.shared ? 'checked' : ''}>
-          <span>${esc(m.username)}</span></label>`).join('')}</div>
-      <div class="ms-acts">
-        <button class="btn" id="ms-cancel">取消</button>
-        <button class="btn primary" id="ms-ok">确定</button>
+    // ★ 必须裹 .ns-mask（深色遮罩）+ .ns-panel（白底面板）—— 少了它们，内容就直接浮在
+    //   一张 position:fixed;inset:0 的**透明**层上，电脑端看着就是「完全透明的窗口」。
+    el.innerHTML = `<div class="ns-mask" data-sheet-close></div>
+      <div class="ns-panel">
+        <div class="ns-handle"></div>
+        <div class="ns-title">👥 共享给队友</div>
+        <p class="acct-hint" style="padding:0 16px;margin:0 0 6px">勾上就共享给他（他能在资料库看到并下载，但不能改不能删）；取消勾选就收回。</p>
+        <div class="ms-list">${members.map(m => `
+          <label class="ms-row"><input type="checkbox" value="${m.id}" ${m.shared ? 'checked' : ''}>
+            <span>${esc(m.username)}</span></label>`).join('')}</div>
+        <div class="ms-acts">
+          <button class="btn" id="ms-cancel">取消</button>
+          <button class="btn primary" id="ms-ok">确定</button>
+        </div>
       </div>`;
     el.classList.remove('hidden');
     const done = (v) => { el.classList.add('hidden'); res(v); };
     $('#ms-ok').onclick = () => done([...el.querySelectorAll('input:checked')].map(i => +i.value));
     $('#ms-cancel').onclick = () => done(null);
-    el.onclick = (e) => { if (e.target === el) done(null); };
+    el.querySelector('.ns-mask').onclick = () => done(null);
   });
 }
 

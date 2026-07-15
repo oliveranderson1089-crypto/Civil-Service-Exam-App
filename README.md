@@ -191,7 +191,7 @@
 - **提要框**：报纸上那段加粗提要，是正文第一段 + 紧跟一个空 `<p>` —— 用这个结构信号识别，拎出来单独当提要显示（不是每篇都有）。
 - **AI 范文拆解**（生成一次全局缓存）：中心论点 / 结构脉络（每段在做什么、分论点、论证方法）/ 亮点 / **可直接仿写的过渡句金句** / 能用在哪些申论主题。
 - 可 ☆ 收藏反复临摹；范文全文支持「划重点」。
-- 定时器 `gongkao-fanwen.timer` 每天 **07:10** 抓（人民日报见报后）；周末若无评论版会自动跳过。接口：`GET /api/fanwen`、`GET /api/fanwen/<id>`、`POST /api/fanwen/<id>/star`、`POST /api/fanwen/<id>/ai`。
+- 定时器 `gongkao-fanwen.timer` 每天 **07:10** 抓（人民日报见报后）；周末若无评论版会自动跳过。页面上也有「🔄 抓今天的」手动刷新。接口：`GET /api/fanwen`、`GET /api/fanwen/<id>`、`POST /api/fanwen/<id>/star`、`POST /api/fanwen/<id>/ai`、`POST /api/fanwen/refresh`。
 
 ### 每日复习量（自定义）
 

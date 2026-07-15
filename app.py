@@ -9362,6 +9362,21 @@ def fanwen_ai(mid):
     return jsonify({"content": reply, "cached": False})
 
 
+@app.post("/api/fanwen/refresh")
+def fanwen_refresh():
+    """手动抓一次今天的人民时评（平时定时器 07:10 跑）。抓取很轻量（纯 HTTP），同步跑就行。"""
+    before = get_db().execute("SELECT COUNT(*) FROM essay_models").fetchone()[0]
+    try:
+        r = subprocess.run(
+            [os.path.join(BASE, ".venv/bin/python3"), os.path.join(BASE, "crawl_rmsp.py")],
+            cwd=BASE, capture_output=True, text=True, timeout=90)
+    except Exception as ex:
+        return jsonify({"error": "抓取失败：" + str(ex)[:120]}), 500
+    after = get_db().execute("SELECT COUNT(*) FROM essay_models").fetchone()[0]
+    tail = (r.stdout or r.stderr or "").strip().splitlines()
+    return jsonify({"added": after - before, "msg": tail[-1] if tail else "完成"})
+
+
 # ---------------------------------------------------------------- 安卓包下载 / 应用内更新
 def _apk_meta():
     """从 dist/apk.json 读当前发布的版本信息（构建脚本生成）。"""

@@ -2946,6 +2946,7 @@ body.dark .rv-ex{background:#141b29;border-left-color:#3a6ad0;}
 .vd-cover{flex:0 0 168px;height:96px;border-radius:10px;background:#1a2434 center/cover no-repeat;
   position:relative;display:grid;place-items:center;text-decoration:none;overflow:hidden;
   border:none;padding:0;cursor:pointer;font:inherit;}
+.vd-cover-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
 .vd-play{width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;
   display:grid;place-items:center;font-size:14px;padding-left:2px;}
 .vd-cover:hover .vd-play{background:var(--blue);}
