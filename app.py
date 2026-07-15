@@ -9701,6 +9701,7 @@ def friends_request():
     db.execute("INSERT INTO friend_reqs(from_uid,to_uid,msg) VALUES(?,?,?)",
                (uid(), to, (data.get("msg") or "").strip()[:60]))
     db.commit()
+    _notify_chat(to, {"type": "friend"})                 # 对方好友请求红点即时亮
     return jsonify({"ok": True})
 
 
@@ -9733,6 +9734,8 @@ def friends_req_act(rid):
     else:
         db.execute("UPDATE friend_reqs SET status='rejected' WHERE id=?", (rid,))
     db.commit()
+    if action == "accept":
+        _notify_chat(r["from_uid"], {"type": "friend"})  # 通过了 → 对方好友列表即时更新
     return jsonify({"ok": True})
 
 
@@ -9862,6 +9865,7 @@ def drive_send(fid):
         return jsonify({"error": "对方不是你的好友"}), 400
     _chat_send_file(db, uid(), to, r["name"], r["stored_name"], r["size"], r["mime"], _drive_dir(uid()))
     db.commit()
+    _notify_chat(to, {"type": "msg", "from": uid()})     # 提交后再秒推
     return jsonify({"ok": True})
 
 
@@ -9887,6 +9891,7 @@ def _chat_send_file(db, frm, to, name, stored_name, size, mime, src_dir):
     db.execute(
         "INSERT INTO chat_msgs(from_uid,to_uid,kind,file_id,file_name,file_size,file_mime) "
         "VALUES(?,?,?,?,?,?,?)", (frm, to, kind, fid_to, name, size, mime or ""))
+    # 通知放到调用方 commit 之后（见 chat_send/drive_send），否则对方可能在提交前就来拉、扑空
 
 
 @app.get("/api/chat/conversations")
@@ -9957,6 +9962,7 @@ def chat_send(fid):
                    "VALUES(?,?,?,?,?,?,?,0,'chat')", (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size))
         _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me))
         db.commit()
+        _notify_chat(fid, {"type": "msg", "from": me})   # 提交后再秒推
         return jsonify({"ok": True})
     # 文本消息
     body = (request.get_json(silent=True) or {}).get("body", "").strip()
@@ -9965,6 +9971,7 @@ def chat_send(fid):
     db.execute("INSERT INTO chat_msgs(from_uid,to_uid,kind,body) VALUES(?,?,'text',?)",
                (me, fid, body[:4000]))
     db.commit()
+    _notify_chat(fid, {"type": "msg", "from": me})       # 秒推给对方
     return jsonify({"ok": True})
 
 
@@ -9986,6 +9993,58 @@ def chat_unread():
     n = get_db().execute("SELECT COUNT(*) FROM chat_msgs WHERE to_uid=? AND read_at IS NULL",
                          (uid(),)).fetchone()[0]
     return jsonify({"unread": n})
+
+
+# ---- 秒推：SSE（服务器→客户端单向推送）----
+# waitress 是单进程多线程，所以进程内一个 {用户→若干队列} 的注册表就能跨连接通信：
+# 有人给用户 X 发消息 → 往 X 的每个队列塞个信号 → X 那条 SSE 连接立刻把信号推给浏览器 →
+# 浏览器马上去拉新消息。发消息本身还是普通 POST，SSE 只负责「叮」一下。
+_chat_listeners = {}
+_listeners_lock = threading.Lock()
+
+
+def _notify_chat(user_id, payload):
+    with _listeners_lock:
+        qs = list(_chat_listeners.get(user_id, ()))
+    for q in qs:
+        try:
+            q.put_nowait(payload)
+        except Exception:
+            pass
+
+
+@app.get("/api/chat/stream")
+def chat_stream():
+    me = uid()
+    if not me:
+        return "unauthorized", 401
+    import queue as _q
+    ch = _q.Queue(maxsize=100)
+    with _listeners_lock:
+        _chat_listeners.setdefault(me, set()).add(ch)
+
+    def gen():
+        try:
+            yield "retry: 3000\n\n"          # 断了 3 秒重连
+            start = time.time()
+            while time.time() - start < 300:  # 一条连接最多活 5 分钟，之后让浏览器重连（防线程泄漏）
+                try:
+                    payload = ch.get(timeout=20)
+                    yield "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+                except _q.Empty:
+                    yield ": ping\n\n"        # 心跳：保活 + 探测对端是否断开（写失败就结束）
+        finally:
+            with _listeners_lock:
+                s = _chat_listeners.get(me)
+                if s:
+                    s.discard(ch)
+                    if not s:
+                        _chat_listeners.pop(me, None)
+
+    resp = Response(gen(), mimetype="text/event-stream")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Accel-Buffering"] = "no"      # 别让中间代理缓冲（Connection 头是 hop-by-hop，WSGI 不能设）
+    return resp
 
 
 # ---------------------------------------------------------------- 安卓包下载 / 应用内更新

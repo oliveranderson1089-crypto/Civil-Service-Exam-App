@@ -205,6 +205,7 @@ async function init() {
   goHome();
   refreshReviewBadge();
   refreshChatBadge();
+  chatConnect();               // 开秒推长连接
   hideSplash();
 }
 function hideSplash() {
@@ -7197,7 +7198,8 @@ function openChatroom(fid, name) {
   $('#cr-msgs').innerHTML = '<p class="empty">加载中…</p>';
   crLoad(true);
   clearInterval(crPoll);
-  crPoll = setInterval(() => { if ((stack[stack.length - 1] || {}).view === 'chatroom') crLoad(false); else clearInterval(crPoll); }, 3000);
+  // SSE 负责秒推；这个轮询只是兜底（万一 SSE 断了没重连上），放慢到 10 秒
+  crPoll = setInterval(() => { if ((stack[stack.length - 1] || {}).view === 'chatroom') crLoad(false); else clearInterval(crPoll); }, 10000);
 }
 async function crLoad(first) {
   try {
@@ -7250,6 +7252,33 @@ function updateChatBadge(n) {
 }
 // 首页/切换时刷未读角标（轮询，和现有 sync 同频）
 async function refreshChatBadge() { try { const d = await api('/api/chat/unread'); updateChatBadge(d.unread); } catch (_) {} }
+
+/* 秒推：SSE 长连接。服务器一「叮」，正在聊的立刻拉新消息、其它地方更新角标。
+   发消息还是普通 POST；这条连接只负责收「你有新消息」的信号。EventSource 断了会自动重连。 */
+let chatES = null;
+function chatConnect() {
+  if (!ME || chatES) return;
+  try {
+    chatES = new EventSource('/api/chat/stream');
+    chatES.onmessage = (e) => {
+      let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+      if (d.type === 'msg') onChatPush(d.from);
+      else if (d.type === 'friend') onFriendPush();
+    };
+    // onerror 不用管：EventSource 会按服务器给的 retry(3s) 自动重连
+  } catch (_) {}
+}
+function onChatPush(fromId) {
+  const v = (stack[stack.length - 1] || {}).view;
+  if (v === 'chatroom' && crFid === fromId) { crLoad(false); return; }   // 正跟他聊 → 立刻拉
+  refreshChatBadge();                                                     // 否则更新未读角标
+  if (v === 'chat' && chTab === 'convos') loadConvos();                   // 在会话列表 → 刷新
+}
+function onFriendPush() {
+  refreshChatBadge();
+  const v = (stack[stack.length - 1] || {}).view;
+  if (v === 'chat') { if (chTab === 'add') loadAddFriend(); if (chTab === 'friends') loadFriends(); loadConvos(); }
+}
 
 /* ================= 党的创新理论学习词典（12371.cn） ================= */
 let pdCat = '全部', pdTimer = null;
