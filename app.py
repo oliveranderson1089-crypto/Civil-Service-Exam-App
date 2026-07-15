@@ -8066,11 +8066,14 @@ def find_paper(pid):
         return jsonify({"error": "题目不存在"}), 404
     sents = _find_sents(r["material"])
     npt = len(json.loads(r["points"] or "[]"))
+    doctype = _find_doctype(r)                         # 贯彻执行题：认出文种，把格式骨架带给前端
     return jsonify({"id": r["id"], "qtype": r["qtype"], "type_name": r["type_name"],
                     "stem": r["stem"], "full": r["full"],
                     "word_min": r["word_min"], "word_max": r["word_max"],
                     "source": r["source"], "n_points": npt,
                     "material_words": _sl_words(r["material"]),   # 给定资料总字数（像范文推荐那样显示）
+                    "doctype": doctype,
+                    "doctype_fmt": (GW_MAP.get(doctype, {}).get("fmt", "") if doctype else ""),
                     "sents": [{"i": i, "p": s["p"], "t": s["t"]} for i, s in enumerate(sents)]})
 
 
@@ -8116,9 +8119,21 @@ def find_check():
     })
 
 
+def _find_doctype(r):
+    """贯彻执行题：从题干里认出是哪种文种（AI 命题和上传真题都靠题干判）。返回文种名或 ''。"""
+    if r["qtype"] != "guanche":
+        return ""
+    stem = r["stem"] or ""
+    # 题干通常写「撰写一份短评/调研报告…」；长名优先，免得「报告」先命中把「调研报告」盖掉
+    for k in sorted(GW_MAP.keys(), key=len, reverse=True):
+        if k in stem:
+            return k
+    return ""
+
+
 @app.post("/api/find/grade")
 def find_grade():
-    """第二步判定：照着找到的点写出来的答案，概括到不到位。"""
+    """第二步判定：照着找到的点写出来的答案，概括到不到位。贯彻执行题另判格式。"""
     d = request.get_json(silent=True) or {}
     pid = int(d.get("paper_id") or 0)
     answer = (d.get("answer") or "").strip()
@@ -8133,6 +8148,25 @@ def find_grade():
     std = "\n".join("%d. %s（%g 分）依据：%s" % (i + 1, p["point"], p["score"], p["evidence"][:60])
                     for i, p in enumerate(points))
 
+    # 贯彻执行题：除了内容采分点，还要判「格式」（标题/称谓/正文结构/落款是否合该文种）
+    doctype = _find_doctype(r)
+    fmt_rule, fmt_json = "", ""
+    if doctype:
+        spec = GW_MAP.get(doctype, {})
+        fmt_rule = (
+            "\n5. 【这是贯彻执行题，还要判格式】文种：%s。该文种的规范格式骨架：%s。\n"
+            "   逐项检查考生答案是否具备这些格式要件（标题、称谓、正文的分层结构、落款/署名日期等，"
+            "视文种而定），有的算 ok、缺的或写错的算 miss，并给一个总体档次。\n"
+            % (doctype, spec.get("fmt", "")))
+        fmt_json = ('"format":{"doctype":"%s","ok":["具备的格式要件"],"miss":["缺失/写错的格式要件"],'
+                    '"grade":"优|良|中|差","comment":"一句话点评格式规范程度"},') % doctype
+
+    style_note = ("有没有抄原文、有没有加自己的评论（归纳概括题不许评价）、有没有分条、"
+                  "字数够不够（当前 %d 字）" % len(re.sub(r"\s", "", answer)))
+    if doctype:
+        style_note = "语言是否得体（贯彻执行讲究语气和对象感）、有没有抄原文、字数够不够（当前 %d 字）" \
+            % len(re.sub(r"\s", "", answer))
+
     prompt = (
         "批改一道申论**%s**（%d 分，要求 %d~%d 字）。\n\n"
         "【题干】%s\n\n"
@@ -8143,15 +8177,14 @@ def find_grade():
         "**意思对上**，不要求用词一样。\n"
         "2. 「沾边但不到位」要说清差在哪：是抄原文没概括？是几个点并成了一坨？"
         "还是漏了关键限定词？\n"
-        "3. 另外指出**表述问题**：有没有抄原文、有没有加自己的评论（归纳概括题不许评价）、"
-        "有没有分条、字数够不够（当前 %d 字）。\n"
-        "4. 给分要实在，别送分。\n\n"
+        "3. 另外指出**表述问题**：%s。\n"
+        "4. 给分要实在，别送分。%s\n\n"
         "只输出 JSON：\n"
         '{"score":0,"items":[{"point":"采分点原话","got":"full|part|miss","score":0,'
         '"comment":"一句话说清写到没写到、差在哪"}],'
-        '"style":["表述问题，每条一句话"],"advice":"一句话：下次怎么改进"}'
+        '%s"style":["表述问题，每条一句话"],"advice":"一句话：下次怎么改进"}'
         % (r["type_name"], r["full"], r["word_min"], r["word_max"], r["stem"], std, answer,
-           len(re.sub(r"\s", "", answer))))
+           style_note, fmt_rule, fmt_json))
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论阅卷组组长。逐个采分点对照批改，"
                                        "给分实在，说清差在哪。严格输出 JSON。"},

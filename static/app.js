@@ -4333,9 +4333,13 @@ function frFoot() {
   }
   if (fdStep === 2) {
     const picked = fdPaper.sents.filter(s => fdPicked.has(s.i));
+    const gc = p.doctype;   // 贯彻执行：提示按文种格式成文
     $('#fr-foot').innerHTML = `
-      <div class="fr-tip">✍️ 照着<b>你勾到的（绿色）</b>写要点。要<b>概括</b>，不是抄原文；<b>分条写</b>。
+      <div class="fr-tip">✍️ 照着<b>你勾到的（绿色）</b>写要点。${gc
+        ? `这是<b>贯彻执行题</b>，要按<b>${esc(p.doctype)}</b>的格式成文（要点全 + 格式对 + 语言得体）。`
+        : `要<b>概括</b>，不是抄原文；<b>分条写</b>。`}
         ${p.word_min}~${p.word_max} 字。</div>
+      ${gc && p.doctype_fmt ? `<div class="fr-fmt-tip">📋 <b>${esc(p.doctype)}</b>格式骨架：${esc(p.doctype_fmt)}</div>` : ''}
       <div class="fr-picked">${picked.map(s => `<div>· ${esc(s.t)}</div>`).join('') || '<i>你没勾到任何要点</i>'}</div>
       <textarea id="fr-ans" placeholder="一、…\n二、…\n三、…"></textarea>
       <div class="fr-wc"><span id="fr-wc">0</span> / ${p.word_max} 字</div>
@@ -4429,6 +4433,10 @@ async function frDoGrade() {
             <b>${m[0]} [${it.score} 分] ${esc(it.point || '')}</b>
             <div class="fr-gc">${esc(it.comment || '')}</div></div>`;
         }).join('')}
+        ${g.format ? `<div class="fr-sec fr-fmt"><div class="fr-sec-t">📋 格式（${esc(g.format.doctype || '')}）${g.format.grade ? ` · ${esc(g.format.grade)}` : ''}</div>
+          ${(g.format.ok || []).length ? `<div class="fr-item">✅ 到位：${g.format.ok.map(esc).join('、')}</div>` : ''}
+          ${(g.format.miss || []).length ? `<div class="fr-item">❌ 欠缺：${g.format.miss.map(esc).join('、')}</div>` : ''}
+          ${g.format.comment ? `<div class="fr-gc">${esc(g.format.comment)}</div>` : ''}</div>` : ''}
         ${(g.style || []).length ? `<div class="fr-sec bad"><div class="fr-sec-t">表述问题</div>
           ${g.style.map(s => `<div class="fr-item">· ${esc(s)}</div>`).join('')}</div>` : ''}
         ${g.advice ? `<div class="fr-adv">💡 ${esc(g.advice)}</div>` : ''}
