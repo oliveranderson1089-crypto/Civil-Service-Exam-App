@@ -878,6 +878,10 @@ def init_db():
     # 加一列 meaning，由 build_ck_meaning.py 先查内置词典、查不到用 AI 补齐。
     if "meaning" not in _cols(con, "changkao_items"):
         con.execute("ALTER TABLE changkao_items ADD COLUMN meaning TEXT")
+    # 人民时评范文的「逐段批注」（对照精读）：analysis 是整篇拆解，看着和正文割裂；
+    # annotations 是 JSON {段号: 这段在做什么/好在哪/可仿写点}，渲染时跟在对应段落后面。
+    if "annotations" not in _cols(con, "essay_models"):
+        con.execute("ALTER TABLE essay_models ADD COLUMN annotations TEXT")
     # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
     if "mat_boards" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
@@ -9457,10 +9461,14 @@ def fanwen_detail(mid):
     r = get_db().execute("SELECT * FROM essay_models WHERE id=?", (mid,)).fetchone()
     if not r:
         return jsonify({"error": "未找到"}), 404
+    try:
+        ann = json.loads(r["annotations"]) if r["annotations"] else {}
+    except Exception:
+        ann = {}
     return jsonify({"id": r["id"], "pub_date": r["pub_date"], "column_name": r["column_name"],
                     "title": r["title"], "author": r["author"], "source_url": r["source_url"],
                     "pullquote": r["pullquote"] or "", "content": r["content"] or "",
-                    "analysis": r["analysis"] or ""})
+                    "analysis": r["analysis"] or "", "annotations": ann})
 
 
 @app.post("/api/fanwen/<int:mid>/star")
@@ -9509,6 +9517,48 @@ def fanwen_ai(mid):
     db.execute("UPDATE essay_models SET analysis=? WHERE id=?", (reply, mid))
     db.commit()
     return jsonify({"content": reply, "cached": False})
+
+
+@app.post("/api/fanwen/<int:mid>/annotate")
+def fanwen_annotate(mid):
+    """对照精读：给关键段落逐段批注，渲染时批注就跟在那段后面 —— 解决「解析和正文两头看、
+       对不上」的割裂感。返回 {段号: 批注}，生成一次缓存进 annotations。"""
+    r = get_db().execute("SELECT * FROM essay_models WHERE id=?", (mid,)).fetchone()
+    if not r:
+        return jsonify({"error": "未找到"}), 404
+    force = (request.get_json(silent=True) or {}).get("force")
+    if r["annotations"] and not force:
+        try:
+            return jsonify({"notes": json.loads(r["annotations"]), "cached": True})
+        except Exception:
+            pass
+    paras = [p for p in (r["content"] or "").split("\n") if p.strip()]
+    numbered = "\n".join("[%d] %s" % (i, p) for i, p in enumerate(paras))
+    prompt = (
+        "下面是《人民日报》「人民时评」范文《%s》，每段前面标了段号 [n]。\n"
+        "请给**关键段落**逐段批注（不必每段都批，挑真正有讲头的：论证手法、过渡、亮点句、可仿写处）。\n"
+        "每条批注一句话、具体、能直接学（如「用数据+案例支撑分论点一」「这句过渡承上启下，可套用」）。\n\n"
+        "%s\n\n"
+        '只输出 JSON：{"notes":[{"i":段号,"note":"批注"}]}' % (r["title"], numbered))
+    reply, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论老师，给范文逐段批注，具体到句、能直接学。严格输出 JSON。"},
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=3000, json_mode=True)
+    if err:
+        return err
+    notes = {}
+    try:
+        for x in json.loads(reply).get("notes") or []:
+            i = int(x.get("i"))
+            note = (x.get("note") or "").strip()
+            if 0 <= i < len(paras) and note:
+                notes[str(i)] = note
+    except Exception:
+        pass
+    db = get_db()
+    db.execute("UPDATE essay_models SET annotations=? WHERE id=?",
+               (json.dumps(notes, ensure_ascii=False), mid))
+    db.commit()
+    return jsonify({"notes": notes, "cached": False})
 
 
 @app.post("/api/fanwen/refresh")

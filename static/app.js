@@ -6925,6 +6925,7 @@ async function openFanwenItem(id) {
     renderFanwen();
   } catch (e) { $('#fw-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
+let fwReadMode = 'plain';        // plain=纯读；annotated=对照精读（AI 批注跟在每段后）
 function renderFanwen() {
   const d = fwData;
   const ai = d.analysis
@@ -6932,8 +6933,20 @@ function renderFanwen() {
         <button class="btn cd-ai-regen" id="fw-regen">重新生成</button></div>`
     : `<div class="poly-genbox"><p class="cd-tip" style="margin:0 0 10px">让 AI 拆开讲：中心论点、结构脉络、亮点、可仿写的过渡句金句，以及能用在哪些主题。</p>
         <button class="btn primary" id="fw-gen" style="width:100%;padding:12px;">🤖 生成 AI 范文拆解</button></div>`;
-  const body = (d.content || '').split('\n').filter(x => x.trim())
-    .map(p => `<p>${emKey(p.trim())}</p>`).join('');
+  const paras = (d.content || '').split('\n').filter(x => x.trim());
+  const ann = d.annotations || {};
+  const annotated = fwReadMode === 'annotated';
+  // 对照精读：每段后面紧跟这段的 AI 批注 —— 解读和正文对得上，不用两头翻
+  const body = paras.map((p, i) => {
+    let html = `<p>${emKey(p.trim())}</p>`;
+    if (annotated && ann[i]) html += `<div class="fw-anno">💡 ${emKey(ann[i])}</div>`;
+    return html;
+  }).join('');
+  const toolbar = `<div class="fw-readbar">
+    <button class="fw-rtab${!annotated ? ' on' : ''}" data-fwmode="plain">纯读</button>
+    <button class="fw-rtab${annotated ? ' on' : ''}" data-fwmode="annotated">对照精读</button>
+    <span class="fw-rhint">对照精读：AI 逐段批注就跟在每段后面</span>
+  </div>`;
   $('#fw-wrap').innerHTML = `
     <div class="poly-head"><h2>${esc(d.title)}</h2>
       <div class="fw-byline">人民时评${d.author ? ' · ' + esc(d.author) : ''}${d.pub_date ? ' · ' + esc(fmtDay(d.pub_date)) : ''}
@@ -6941,9 +6954,22 @@ function renderFanwen() {
     ${d.pullquote ? `<div class="fw-pull-big">${emKey(d.pullquote)}</div>` : ''}
     ${ai}
     <div class="poly-readert">范文全文</div>
-    <div class="poly-reader">${body}</div>`;
+    ${toolbar}
+    <div class="poly-reader${annotated ? ' fw-annotated' : ''}">${body}</div>`;
 }
 $('#fw-wrap').addEventListener('click', async e => {
+  const mt = e.target.closest('[data-fwmode]');
+  if (mt) {
+    const mode = mt.dataset.fwmode;
+    if (mode === 'annotated' && !(fwData.annotations && Object.keys(fwData.annotations).length)) {
+      mt.disabled = true; mt.textContent = '生成批注中…';
+      try {
+        const d = await api('/api/fanwen/' + fwData.id + '/annotate', { method: 'POST' });
+        fwData.annotations = d.notes || {};
+      } catch (err) { toast(err.message, true); mt.disabled = false; mt.textContent = '对照精读'; return; }
+    }
+    fwReadMode = mode; renderFanwen(); return;
+  }
   const g = e.target.closest('#fw-gen') || e.target.closest('#fw-regen');
   if (!g) return;
   g.disabled = true; g.textContent = 'AI 拆解生成中…（约二三十秒）';

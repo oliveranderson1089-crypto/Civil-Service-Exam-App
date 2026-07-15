@@ -475,6 +475,19 @@ main{max-width:none;margin:0;padding:0;}
 .fw-meta{font-size:12.5px;color:#9aa1ac;margin-top:8px;}
 .fw-byline{font-size:12.5px;color:#8a92a0;}
 .fw-byline .poly-src{margin-left:8px;}
+/* 对照精读：模式切换条 + 逐段批注 */
+.fw-readbar{display:flex;align-items:center;gap:8px;margin:8px 0;flex-wrap:wrap;}
+.fw-rtab{border:1px solid var(--line);background:#fff;border-radius:16px;padding:4px 14px;
+  font-size:13px;cursor:pointer;color:#5a6270;}
+.fw-rtab.on{background:var(--blue);color:#fff;border-color:var(--blue);}
+.fw-rhint{font-size:11.5px;color:#9aa1ac;}
+.fw-anno{margin:2px 0 14px 0;padding:8px 12px;background:#fff8ec;border-left:3px solid #e0a94b;
+  border-radius:0 8px 8px 0;font-size:13.5px;line-height:1.75;color:#7a5a2a;text-indent:0;
+  font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}
+.fw-anno b{color:#b8791f;}
+.poly-reader.fw-annotated p{margin-bottom:2px;}
+body.dark .fw-rtab{background:#141b29;color:#cfd5e0;}
+body.dark .fw-anno{background:#2a2416;color:#d8bf90;border-color:#8a6a2a;}
 /* 详情里的提要：报纸上那个加粗提要框 */
 .fw-pull-big{background:#faf3f2;border-left:4px solid #b23b2e;border-radius:0 10px 10px 0;
   padding:12px 15px;font-size:15.5px;line-height:1.85;color:#5a3b37;margin-bottom:16px;
