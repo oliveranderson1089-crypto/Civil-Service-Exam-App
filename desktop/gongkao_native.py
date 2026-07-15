@@ -18,10 +18,10 @@ os.environ.setdefault("QT_IM_MODULE", "fcitx")
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")
-from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk  # noqa: E402
+from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk, GdkPixbuf  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "4.3"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "4.4"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -118,6 +118,7 @@ class Gongkao(Gtk.Application):
         self.web.connect("decide-policy", self.on_decide)
         self.web.connect("run-file-chooser", self.on_file_chooser)   # 自己弹文件框，见下
         self.web.connect("context-menu", self.on_context_menu)       # 右键菜单加「粘贴图片」
+        self.web.connect("script-dialog", self.on_script_dialog)     # 吞掉 pdf.js 的「确定离开？」
 
         # 拖放：WebKitGTK 的 drop 事件里 dataTransfer.files 是空的（dragover 有效、drop 拿不到文件），
         # 所以从 GTK 这一层接管：自己收 uri-list，读出文件内容交给网页。
@@ -259,6 +260,19 @@ class Gongkao(Gtk.Application):
         self._js("window.__onPasteImage && window.__onPasteImage('data:image/png;base64,%s')" % b64)
         return True
 
+    def on_script_dialog(self, web, dialog):
+        """吞掉「您确定要离开此页面吗？」。
+           那个框是 pdf.js 有笔迹改动时挂的 beforeunload —— 但我们是单页应用，「返回」只是切视图、
+           并没有真的卸载页面，pdf.js 的 iframe 被收起时误触发，弹出来纯属打扰（而且笔迹我们自己存）。
+           这里对 BEFORE_UNLOAD_CONFIRM 一律「确认离开」且不显示对话框。其它 alert/confirm 照常。"""
+        try:
+            if dialog.get_dialog_type() == WebKit2.ScriptDialogType.BEFORE_UNLOAD_CONFIRM:
+                dialog.confirm_set_confirmed(True)
+                return True          # 已处理，别再弹默认框
+        except Exception:
+            pass
+        return False
+
     def on_context_menu(self, web, menu, event, hit):
         """剪贴板里有图时，右键菜单加一项「粘贴图片」——WebKit 自带的「粘贴」只粘文字。"""
         if not self._clip_image_b64():
@@ -292,6 +306,25 @@ class Gongkao(Gtk.Application):
             self.take_shot()
         elif act == "open":
             self.open_external(d.get("url") or "")
+        elif act == "copyimg":
+            self.copy_image(d.get("data") or "")
+
+    def copy_image(self, b64):
+        """把网页传来的 PNG（base64）**真的写进系统剪贴板**。
+           网页端 navigator.clipboard.write 在 WebKitGTK 里被拒（报 user denied，其实是不支持），
+           所以桌面版的「复制图片」改走这条：GTK 这层直接 set_image，粘到微信/文档都行。"""
+        try:
+            raw = base64.b64decode(b64.split(",")[-1])
+            loader = GdkPixbuf.PixbufLoader.new_with_type("png")
+            loader.write(raw)
+            loader.close()
+            pb = loader.get_pixbuf()
+            clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            clip.set_image(pb)
+            clip.store()
+            self._toast("图片已复制，可以粘贴了")
+        except Exception as e:
+            self._toast("复制图片失败：" + str(e)[:50])
 
     def open_external(self, uri):
         """网页请求「用系统浏览器打开这个链接」。

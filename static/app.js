@@ -726,7 +726,6 @@ async function copyImage(url, btn) {
   const label = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '复制中…'; }
   try {
-    if (!navigator.clipboard || !window.ClipboardItem) throw new Error('这个浏览器不支持复制图片');
     const blob = await (await fetch(url)).blob();
     let png = blob;
     if (blob.type !== 'image/png') {          // 剪贴板只吃 png
@@ -737,8 +736,19 @@ async function copyImage(url, btn) {
       bmp.close();
       png = await new Promise(r => cv.toBlob(r, 'image/png'));
     }
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
-    toast('图片已复制，可以直接粘贴了');
+    // 桌面版：WebKitGTK 的 navigator.clipboard.write 会被拒（报 user denied，其实是不支持），
+    // 所以走消息桥让壳用 GTK 剪贴板真复制。浏览器/手机走标准 Clipboard API。
+    if (window.__desktop) {
+      const b64 = await new Promise(res => {
+        const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(png);
+      });
+      deskMsg({ a: 'copyimg', data: b64 });
+      // 壳复制成功会自己 toast；这里不重复提示
+    } else {
+      if (!navigator.clipboard || !window.ClipboardItem) throw new Error('这个浏览器不支持复制图片');
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+      toast('图片已复制，可以直接粘贴了');
+    }
   } catch (e) {
     toast('复制图片失败：' + e.message, true);
   }
@@ -2615,7 +2625,11 @@ function renderAI() {
     + aiMsgs.map(m =>
       `<div class="ai-msg ${m.role}">${m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content)}</div>`).join('')
     + (aiBusy ? '<div class="ai-msg assistant ai-typing">思考中…</div>' : '');
-  const box = $('#ai-msgs'); box.scrollTop = box.scrollHeight;
+  const box = $('#ai-msgs');
+  // 等布局重排完再滚到底 —— 同步设 scrollTop 时 mdToHtml 的高度可能还没算好，
+  // 会出现「回复只露一行、其余被输入框挡住」（就是那个「只显示问题」的错觉）。
+  box.scrollTop = box.scrollHeight;
+  requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
   $('#ai-send').disabled = aiBusy;
 }
 let aiAtts = [];  // [{name, text}]
@@ -2675,10 +2689,28 @@ async function aiSend() {
     });
     aiMsgs.push({ role: 'assistant', content: d.reply || '（空回复）' });
     if (d.title) $('#aic-title').textContent = d.title;
+    aiBusy = false; renderAI();
+    aiRunActions(d.actions);          // AI 真做了事（加收录 / 打开某功能）→ 前端跟着执行/刷新
+    return;
   } catch (e) {
     aiMsgs.push({ role: 'assistant', content: '⚠️ ' + e.message });
   }
   aiBusy = false; renderAI();
+}
+// 执行 AI 工具产生的动作：收录类刷新对应列表，导航类打开功能页
+function aiRunActions(actions) {
+  if (!actions || !actions.length) return;
+  // 收录了新词：如果正看着「成语词语积累」，刷新一下让新词立刻出现
+  const v = (stack[stack.length - 1] || {}).view;
+  if (v === 'idiom' && typeof loadEntries === 'function') loadEntries();
+  for (const a of actions) {
+    if (a.type === 'navigate' && a.fn && typeof window[a.fn] === 'function') {
+      // 打开功能页前先收起 AI 面板（不然盖在上面看不到）
+      $('#ai-panel').classList.add('hidden'); if (window.applyPush) applyPush(); if (window.avoidFab) avoidFab();
+      try { window[a.fn](); } catch (_) {}
+      toast('已为你打开「' + (a.label || '') + '」');
+    }
+  }
 }
 function aiGrow() { const t = $('#ai-text'); t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
 $('#ai-send').onclick = aiSend;

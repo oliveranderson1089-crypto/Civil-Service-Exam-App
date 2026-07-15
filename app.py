@@ -206,6 +206,130 @@ def ai_chat(messages, temperature=0.4, max_tokens=1600, timeout=120, json_mode=F
     return d["choices"][0]["message"]["content"].strip()
 
 
+# ---------------------------------------------------------------- AI 工具调用（让 AI 真能操作应用）
+# 原来 AI 只会「嘴上说」帮你做了（比如说「已把成语加入收录」其实没写库）。
+# 给它 function calling：服务端能直接做的（加收录…）就执行；只能前端做的（跳到某功能）
+# 记成一个 action 交回前端执行。这样 AI 说「已加入」就是真的加了。
+def _ai_raw(messages, tools=None, temperature=0.4, max_tokens=1600, timeout=120):
+    """底层调用，返回完整 message 对象（可能含 tool_calls）。"""
+    conf = _ai_conf()
+    if not conf["key"]:
+        raise RuntimeError("AI 未配置，请管理员在「后台 → AI 设置」填写 API Key")
+    b = conf["base"]
+    url = b if b.endswith("/chat/completions") else (
+        b + "/chat/completions" if b.endswith("/v1") else b + "/v1/chat/completions")
+    payload = {"model": conf["model"], "messages": messages,
+               "temperature": temperature, "max_tokens": max_tokens, "stream": False}
+    if tools:
+        payload["tools"] = tools
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + conf["key"]})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        d = json.loads(r.read().decode("utf-8"))
+    return d["choices"][0]["message"]
+
+
+# 应用里能让 AI 帮你打开的功能（名字 → 前端的 openXxx 函数）
+AI_FEATURES = {
+    "成语词语积累": "openIdiom", "每日时政": "openNews", "每日新闻视频": "openVideos",
+    "人民时评范文": "openFanwen", "今日复习": "openReview", "常识积累": "openChangshi",
+    "错题本": "openWrongq", "小记": "openNotes", "资料库": "openMaterials",
+    "古诗文名句": "openClassics", "时政要文库": "openPolicyDocs", "任务清单": "openTasks",
+    "党的创新理论学习词典": "openPartyDict", "常考": "openChangkao",
+}
+
+AI_TOOLS = [
+    {"type": "function", "function": {
+        "name": "add_word",
+        "description": "把一个成语/词语/词组加入用户的「成语词语积累」收录。当用户说「收录/加入/记下这个词」时调用。",
+        "parameters": {"type": "object", "properties": {
+            "word": {"type": "string", "description": "要收录的成语或词语本身，如「佶屈聱牙」"},
+            "note": {"type": "string", "description": "可选备注"}},
+            "required": ["word"]}}},
+    {"type": "function", "function": {
+        "name": "open_feature",
+        "description": "帮用户打开应用里的某个功能页面，省得他自己在菜单里找。当用户说「打开/去/进入某功能」时调用。",
+        "parameters": {"type": "object", "properties": {
+            "feature": {"type": "string", "enum": list(AI_FEATURES.keys()),
+                        "description": "功能名"}},
+            "required": ["feature"]}}},
+]
+
+
+def _ai_add_entry(db, word, note):
+    info = lookup(word)
+    db.execute(
+        "INSERT INTO entries(user_id,word,pinyin,category,explanation,derivation,example,note,source) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (uid(), word, info["pinyin"], info["category"], info["explanation"],
+         info["derivation"], info["example"], note, info["source"]))
+    db.commit()
+
+
+def _ai_exec_tool(name, args, db):
+    """执行一个工具。返回 (给模型看的结果文本, 给前端的 action 或 None)。"""
+    if name == "add_word":
+        word = (args.get("word") or "").strip()
+        if not word:
+            return "没有指定要收录的词。", None
+        _ai_add_entry(db, word, (args.get("note") or "").strip())
+        n = db.execute("SELECT COUNT(*) FROM entries WHERE user_id=?", (uid(),)).fetchone()[0]
+        return "已把「%s」加入成语词语积累（在 行测→言语理解与表达→成语词语积累 里能看到），当前共 %d 条。" % (word, n), None
+    if name == "open_feature":
+        f = (args.get("feature") or "").strip()
+        fn = AI_FEATURES.get(f)
+        if not fn:
+            return "没有这个功能：" + f, None
+        return "已为用户打开「%s」。" % f, {"type": "navigate", "fn": fn, "label": f}
+    return "未知工具：" + str(name), None
+
+
+def ai_chat_agentic(messages, db, max_rounds=4, temperature=0.5, max_tokens=2000):
+    """带工具调用的对话循环。返回 (最终回复文本, [前端要执行的 action])。"""
+    msgs = list(messages)
+    actions = []
+    for _ in range(max_rounds):
+        m = _ai_raw(msgs, tools=AI_TOOLS, temperature=temperature, max_tokens=max_tokens)
+        tcs = m.get("tool_calls")
+        if not tcs:
+            return (m.get("content") or "").strip(), actions
+        msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": tcs})
+        for tc in tcs:
+            fn = tc.get("function") or {}
+            try:
+                a = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                a = {}
+            result, action = _ai_exec_tool(fn.get("name"), a, db)
+            if action:
+                actions.append(action)
+            msgs.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
+    # 轮数用完还在调工具：再要一次纯文本收尾
+    m = _ai_raw(msgs, temperature=temperature, max_tokens=max_tokens)
+    return (m.get("content") or "").strip(), actions
+
+
+def _ai_agentic_or_error(messages, db, **kw):
+    """带工具的对话 + 统一错误封装。返回 (reply, actions, None) 或 (None, None, (json,code))。"""
+    try:
+        reply, actions = ai_chat_agentic(messages, db, **kw)
+        return reply, actions, None
+    except urllib.error.HTTPError as e:
+        msg = "AI 服务返回错误 %d" % e.code
+        if e.code == 401:
+            msg = "API Key 无效或未授权，请在后台重新填写"
+        elif e.code == 402:
+            msg = "账户余额不足，请到 DeepSeek 充值"
+        elif e.code == 429:
+            msg = "请求过于频繁，请稍后再试"
+        return None, None, (jsonify({"error": msg}), 502)
+    except urllib.error.URLError as e:
+        return None, None, (jsonify({"error": "连不上 AI 服务：" + str(e.reason)}), 502)
+    except Exception as e:
+        return None, None, (jsonify({"error": "AI 调用失败：" + str(e)}), 502)
+
+
 # ---------------------------------------------------------------- 视觉模型（智谱 GLM-4.6V，OpenAI 兼容）
 # DeepSeek 没有视觉，图片相关（拍照识题、图形推理、图片附件）走这里。文字任务仍走 DeepSeek。
 def _vision_conf():
@@ -4753,7 +4877,9 @@ def aichat_send(cid):
     c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
     if not c:
         return jsonify({"error": "会话不存在"}), 404
-    sys_prompt = "你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。"
+    sys_prompt = ("你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。\n"
+                  "你能**真的操作这个应用**（通过给你的工具）：用户让你收录成语/词语就用 add_word 真的加进去、"
+                  "让你打开某个功能就用 open_feature 打开。别只是嘴上说做了 —— 要调用工具真做。做完再简短告诉用户结果。")
     if c["project_id"]:
         p = db.execute("SELECT * FROM ai_projects WHERE id=?", (c["project_id"],)).fetchone()
         if p and (p["instructions"] or "").strip():
@@ -4765,8 +4891,8 @@ def aichat_send(cid):
                       (cid,)).fetchall()
     msgs = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
     msgs.append({"role": "user", "content": content})
-    reply, err = _ai_call_or_error([{"role": "system", "content": sys_prompt}] + msgs,
-                                   temperature=0.6, max_tokens=2000)
+    reply, actions, err = _ai_agentic_or_error(
+        [{"role": "system", "content": sys_prompt}] + msgs, db, temperature=0.6, max_tokens=2000)
     if err:
         return err
     db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "user", content))
@@ -4777,7 +4903,7 @@ def aichat_send(cid):
         db.execute("UPDATE ai_chats SET title=? WHERE id=?", (title, cid))
     db.execute("UPDATE ai_chats SET updated_at=datetime('now','localtime') WHERE id=?", (cid,))
     db.commit()
-    return jsonify({"reply": reply, "title": title})
+    return jsonify({"reply": reply, "title": title, "actions": actions})
 
 
 @app.post("/api/aichat/projects")
