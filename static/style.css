@@ -165,7 +165,8 @@ main{max-width:none;margin:0;padding:0;}
 }
 
 /* ============ v2：导航 / 板块 / 资料库 ============ */
-.topbar{display:flex;align-items:center;gap:10px;position:static;
+/* 顶栏钉在最上面（原来 static，会跟着页面一起滚走）*/
+.topbar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50;
   padding:12px 14px;padding-top:max(12px,env(safe-area-inset-top));}
 .topbar-actions{position:static;margin-left:auto;display:flex;gap:7px;}
 .brand-min{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:600;min-width:0;}
@@ -2440,9 +2441,12 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
 .fab.open .fab-act{opacity:1;pointer-events:auto;}
 /* 扇出：每个工具声明自己的偏移量（--fx/--fy），正负号由球所在的象限翻转，
    所以加工具只要再给一组变量，不用写 4 条象限规则。 */
-#fab-ai   {--fx:66px; --fy:0px;}
-#fab-note {--fx:47px; --fy:47px;}
-#fab-pad  {--fx:0px;  --fy:66px;}
+/* 5 个工具排成四分之一圆弧（原来只给了 3 个位置，新加的批注/截图没位置就叠在中间看不见）*/
+#fab-ai   {--fx:100px; --fy:0px;}
+#fab-shot {--fx:92px;  --fy:38px;}
+#fab-note {--fx:71px;  --fy:71px;}
+#fab-pad  {--fx:38px;  --fy:92px;}
+#fab-ink  {--fx:0px;   --fy:100px;}
 .fab.open.dir-r .fab-act{--sx:1;}
 .fab.open.dir-l .fab-act{--sx:-1;}
 .fab.open.dir-dn .fab-act{--sy:1;}
@@ -2452,10 +2456,9 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
   background:rgba(20,30,50,.82);color:#fff;padding:2px 7px;border-radius:20px;
   top:50%;transform:translateY(-50%);opacity:0;transition:opacity .18s;}
 .fab.open .fab-act i{opacity:1;}
-.fab.dir-l #fab-ai i{right:52px;}
-.fab.dir-r #fab-ai i{left:52px;}
-.fab.dir-l #fab-pad i{right:52px;}
-.fab.dir-r #fab-pad i{left:52px;}
+/* 标签统一按方向摆（球在右半屏 → 标签在按钮左侧；在左半屏 → 右侧）*/
+.fab.dir-l .fab-act i{right:52px;}
+.fab.dir-r .fab-act i{left:52px;}
 body.pad-full .fab{display:none;}      /* 草稿纸全屏书写时，悬浮球让路（用纸上的 ✕ 关） */
 /* 草稿纸被拖窄（如右半屏再拖小）时，工具栏自动紧凑，别挤成三行吃掉书写区 */
 .pad.narrow .pad-bar{gap:5px 6px;padding:3px 7px 6px;}
@@ -2572,7 +2575,8 @@ body.dark .ch-tb th{background:rgba(63,146,214,.14);}
 body.dark .wq-tools .btn,body.dark .pl-link-btn{color:#cfd5e0;}
 
 /* ---- 电脑端：侧边翻页 + 回到顶部（给手写笔用，笔没有滚轮/中键） ---- */
-.pgbar{position:fixed;right:14px;top:50%;transform:translateY(-50%);z-index:60;
+/* 锚在右下、悬浮球上方（原来 top:50% 居中，会和底部的 ✨ 工具球在右边缘叠一起）*/
+.pgbar{position:fixed;right:14px;bottom:200px;z-index:60;
   display:none;flex-direction:column;gap:8px;}
 body.has-pen .pgbar{display:flex;}          /* 只有电脑端才出现 */
 .pgbtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);
@@ -3138,3 +3142,9 @@ body.dark .cr-attbtn{background:#1b2231;}
   padding:11px 13px;margin-bottom:7px;font-size:14.5px;cursor:pointer;color:#1f2733;}
 .ms-frow:hover{background:#e9eff7;}
 body.dark .ms-frow{background:#1a2233;color:#cfd5e0;}
+
+/* AI 解读折叠（#8）：点标题收起，方便读正文 */
+.cd-ai > .cd-sec-t{cursor:pointer;user-select:none;}
+.cd-ai > .cd-sec-t::after{content:' ▾';font-size:12px;opacity:.6;}
+.cd-ai.cd-collapsed > .cd-sec-t::after{content:' ▸ 点开';font-size:12px;opacity:.6;}
+.cd-ai.cd-collapsed > .cd-sec-b,.cd-ai.cd-collapsed > .cd-ai-regen{display:none;}

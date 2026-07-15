@@ -21,7 +21,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk, GdkPixbuf  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "4.4"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "4.5"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -222,12 +222,16 @@ class Gongkao(Gtk.Application):
 
     def on_drag_data(self, widget, ctx, x, y, data, info, time):
         files = []
+        too_big = False
         for uri in (data.get_uris() or [])[:10]:
             try:
                 p = GLib.filename_from_uri(uri)[0]
             except Exception:
                 continue
-            if not p or not os.path.isfile(p) or os.path.getsize(p) > 60 * 1024 * 1024:
+            if not p or not os.path.isfile(p):
+                continue
+            if os.path.getsize(p) > 200 * 1024 * 1024:   # 和云盘一致 200MB（apk 装机包多在这以内）
+                too_big = True
                 continue
             with open(p, "rb") as f:
                 files.append({"name": os.path.basename(p),
@@ -237,6 +241,8 @@ class Gongkao(Gtk.Application):
         if files:
             self._js("window.__onDropFiles && window.__onDropFiles(%s)"
                      % json.dumps(files, ensure_ascii=False))
+        elif too_big:
+            self._toast("文件超过 200MB，太大了")
         else:
             self._toast("这些东西读不出文件（只支持本地文件）")
 

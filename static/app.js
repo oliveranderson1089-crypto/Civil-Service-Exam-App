@@ -4706,8 +4706,13 @@ async function openDrillRec(rid) {
 let wrTab = 'daily', wrCur = null, wrPoll = 0;
 
 function openWrite(tab) {
+  const app = tab === 'yingyong';           // 从「应用文 → 应用文成文」进来
   wrTab = tab || 'daily';
-  push({ view: 'write', title: '成文' });
+  push({ view: 'write', title: app ? '应用文成文' : '议论文成文' });
+  // #5：议论文成文只放「每日成文 / 综合应用」；应用文成文只放「应用文」。相应地隐掉不属于本处的 tab
+  const show = app ? ['yingyong'] : ['daily', 'compose'];
+  document.querySelectorAll('#wr-tabs .tk-tab').forEach(b => b.classList.toggle('hidden', !show.includes(b.dataset.wk)));
+  if (!show.includes(wrTab)) wrTab = show[0];
   wrSwitch(wrTab);            // render() 只负责显隐视图，内容要自己拉
 }
 function wrSwitch(k) {
@@ -4718,6 +4723,111 @@ function wrSwitch(k) {
   else if (k === 'compose') loadWrCompose();
   else if (k === 'yingyong') loadWrGw();
 }
+// tab 点击切换（这个 handler 连同下面几个 load 函数在做应用文那次被误删了 → 每日成文/综合应用点了没反应、空白）
+$('#wr-tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tk-tab'); if (b) wrSwitch(b.dataset.wk);
+});
+async function loadWrDays() {
+  const box = $('#wr-days');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/write/days');
+    const undone = d.days.filter(x => !x.eid).length;
+    $('#wr-backfill').classList.toggle('hidden', !undone);
+    $('#wr-backfill').textContent = `⚡ 一键补齐往期（还差 ${undone} 天）`;
+    if (!d.days.length) { box.innerHTML = '<p class="empty">还没有素材，每天 08:00 自动更新～</p>'; return; }
+    box.innerHTML = d.days.map(x => x.eid ? `
+      <div class="wr-day done" data-weid="${x.eid}">
+        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-m"><b>${esc(x.title || '')}</b>
+          <span class="wr-tag">${esc(x.topic || '')}</span>
+          <span class="wr-w">${x.words} 字</span></div>
+      </div>` : `
+      <div class="wr-day">
+        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-m"><span class="wr-n">素材 ${x.n} 条（衔接 ${x.nl}）</span></div>
+        <button class="btn tiny primary" data-wgen="${x.date}">✍️ 写</button>
+      </div>`).join('');
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+
+$('#wr-days').addEventListener('click', async e => {
+  const g = e.target.closest('[data-wgen]');
+  if (g) {
+    g.disabled = true; g.textContent = '写作中…';
+    try {
+      const d = await api('/api/write/daily', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: g.dataset.wgen }),
+      });
+      openWrited(d.id);
+      loadWrDays();
+    } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '✍️ 写'; }
+    return;
+  }
+  const c = e.target.closest('[data-weid]');
+  if (c) openWrited(+c.dataset.weid);
+});
+
+$('#wr-backfill').onclick = async () => {
+  if (!await appConfirm('把往期素材一天一篇全部补齐？每篇要调一次 AI，会在后台慢慢跑，可以先去干别的。')) return;
+  try {
+    const d = await api('/api/write/backfill', { method: 'POST' });
+    wrWatch(d.task);
+  } catch (e) { toast(e.message, true); }
+};
+
+function wrWatch(tid) {
+  clearInterval(wrPoll);
+  $('#wr-backfill').disabled = true;
+  const msg = $('#wr-bfmsg');
+  wrPoll = setInterval(async () => {
+    try {
+      const t = await api('/api/write/task/' + tid);
+      msg.textContent = `${t.message || ''}（${t.progress}/${t.total}）`;
+      if (t.status === 'done' || t.status === 'error') {
+        clearInterval(wrPoll); wrPoll = 0;
+        $('#wr-backfill').disabled = false;
+        msg.textContent = t.message || '';
+        loadWrDays();
+        toast(t.status === 'done' ? '补齐完成' : t.message, t.status !== 'done');
+      }
+    } catch (_) { clearInterval(wrPoll); wrPoll = 0; $('#wr-backfill').disabled = false; }
+  }, 3000);
+}
+
+async function loadWrCompose() {
+  const box = $('#wr-cplist');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/write/list?mode=compose');
+    const today = new Date().toISOString().slice(0, 10);
+    $('#wr-gen-cp').textContent = d.items.some(x => x.date === today)
+      ? '🔄 今天这篇重写一遍' : '✍️ 写今天这篇';
+    box.innerHTML = d.items.length ? d.items.map(x => `
+      <div class="wr-day done" data-weid="${x.id}">
+        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-m"><b>${esc(x.title || '')}</b>
+          <span class="wr-tag">${esc(x.topic || '')}</span>
+          <span class="wr-w">${x.words} 字</span></div>
+      </div>`).join('') : '<p class="empty">还没写过。点上面的按钮，AI 会自己选题写一篇。</p>';
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#wr-cplist').addEventListener('click', e => {
+  const c = e.target.closest('[data-weid]'); if (c) openWrited(+c.dataset.weid);
+});
+$('#wr-gen-cp').onclick = async () => {
+  const b = $('#wr-gen-cp'); b.disabled = true; b.textContent = 'AI 选题写作中…（约 20 秒）';
+  try {
+    const d = await api('/api/write/compose', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: true }),
+    });
+    openWrited(d.id); loadWrCompose();
+  } catch (e) { toast(e.message, true); }
+  b.disabled = false;
+};
+
 
 /* ---- 应用文：按「类别 → 文种」铺开，每个文种给「提纲 + 范文」两样 ----
    提纲**不是文种**，是一种呈现方式（框架式、要点式），任何文种都能套。
@@ -7017,6 +7127,12 @@ $('#fw-wrap').addEventListener('click', async e => {
   } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 范文拆解'; }
 });
 
+// #8：AI 解读/拆解都很长，挡着正文。点它的标题可折叠收起（政策解读 / 范文拆解通用）
+document.addEventListener('click', e => {
+  const t = e.target.closest('.cd-ai > .cd-sec-t');
+  if (t) t.parentElement.classList.toggle('cd-collapsed');
+});
+
 /* ================= 云盘 ================= */
 let dvFolder = '';
 const FILE_ICON = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', ppt: '📙', pptx: '📙',
@@ -7201,7 +7317,12 @@ function openChatroom(fid, name) {
   // SSE 负责秒推；这个轮询只是兜底（万一 SSE 断了没重连上），放慢到 10 秒
   crPoll = setInterval(() => { if ((stack[stack.length - 1] || {}).view === 'chatroom') crLoad(false); else clearInterval(crPoll); }, 10000);
 }
+let crLoading = false;
 async function crLoad(first) {
+  // 并发锁：轮询 / SSE 推送 / 发送后刷新可能同时进来，都读同一个 crLastId、都拉同一批消息、
+  // 都往界面追加 → 同一条消息重复显示（对方以为你连发了好几条）。一次只跑一个。
+  if (crLoading && !first) return;
+  crLoading = true;
   try {
     const d = await api('/api/chat/' + crFid + '?after=' + crLastId);
     if (first) $('#cr-msgs').innerHTML = '';
@@ -7214,6 +7335,7 @@ async function crLoad(first) {
     }
     if (d.messages.length) { box.scrollTop = box.scrollHeight; requestAnimationFrame(() => box.scrollTop = box.scrollHeight); }
   } catch (e) { if (first) $('#cr-msgs').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  finally { crLoading = false; }
 }
 function crMsgHtml(m) {
   let inner;
@@ -7224,19 +7346,35 @@ function crMsgHtml(m) {
 }
 $('#cr-msgs').addEventListener('click', e => { const im = e.target.closest('[data-lbimg]'); if (im) lightbox(im.dataset.lbimg); });
 $('#cr-send').onclick = crSendText;
-$('#cr-text').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); crSendText(); } });
+// ⚠️ 打中文时按 Enter 是「确认候选词」，不能当发送 —— 不加 composing 守卫会导致边打字边误发、甚至连发好几条
+$('#cr-text').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !composing(e)) { e.preventDefault(); crSendText(); }
+});
+let crSending = false;      // 发送锁：一次动作只发一条，堵住「连发好几条一样的」
 async function crSendText() {
+  if (crSending) return;
   const t = $('#cr-text').value.trim(); if (!t) return;
-  $('#cr-text').value = '';
+  crSending = true; $('#cr-text').value = '';
   try { await api('/api/chat/' + crFid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: t }) }); crLoad(false); }
-  catch (e) { toast(e.message, true); }
+  catch (e) { toast(e.message, true); $('#cr-text').value = t; }   // 失败把字还回去
+  crSending = false;
 }
-$('#cr-file').addEventListener('change', async e => { const files = [...e.target.files]; e.target.value = ''; await crSendFiles(files); });
+$('#cr-file').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = '';       // 先清空，避免选同一张再选触发不到 change
+  if (!files.length) return;
+  // #11：选完不要马上发，先确认（原来一选就发过去了）
+  const names = files.length === 1 ? files[0].name : files.length + ' 个文件';
+  if (!(await appConfirm('发送「' + names + '」给 ' + esc(crName) + '？'))) return;
+  await crSendFiles(files);
+});
 async function crSendFiles(files) {
+  if (crSending) return;
+  crSending = true;
   for (const f of files) {
     const fd = new FormData(); fd.append('file', f, f.name);
     try { await api('/api/chat/' + crFid, { method: 'POST', body: fd }); } catch (err) { toast(f.name + '：' + err.message, true); }
   }
+  crSending = false;
   crLoad(false);
 }
 // 拖文件进聊天窗口直接发（浏览器；桌面壳走 __onDropFiles）
@@ -8721,10 +8859,11 @@ function padInit() {
    PDF 是同源 iframe：读它内部 #viewerContainer 的滚动，笔迹跟着页面一起滚、贴在原位。
    笔引擎（压感、合并采样顺滑、笔/荧光笔）和草稿纸同源。 */
 const Ink = {
-  on: false, tool: 'pen', color: '#e23b2e', size: 3,
+  on: false, tool: 'pen', color: '#e23b2e', size: 3, eraserSize: 18,   // 笔和橡皮各调各的粗细
   strokes: [], redo: [], cur: null, key: '', drawing: false, sawPen: false, raf: 0,
   scroller: null, _onScroll: null, cv: null, ctx: null,
   COLORS: ['#e23b2e', '#1a6fb5', '#f0a500', '#1e8449', '#111'],
+  curSize() { return this.tool === 'eraser' ? this.eraserSize : this.size; },
 
   rect() { return this.cv.getBoundingClientRect(); },
   scrollY() {
@@ -8751,8 +8890,8 @@ const Ink = {
     const pts = s.pts; if (!pts || !pts.length) return;
     const sy = this.scrollY();
     ctx.save(); ctx.lineJoin = ctx.lineCap = 'round';
-    let wid = s.size;
-    if (s.tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; wid = s.size * 6; }
+    let wid = s.size;                              // s.size 已是该工具自己的粗细（橡皮/笔各存各的）
+    if (s.tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; }
     else { ctx.strokeStyle = s.color; if (s.tool === 'hl') { ctx.globalAlpha = .3; wid = s.size * 3.2; } }
     const X = p => p.x * W, Y = p => p.y - sy;      // 内容坐标 → 当前屏幕坐标（减滚动量）
     if (pts.length === 1) {
@@ -8787,10 +8926,7 @@ const Ink = {
     e.preventDefault();
     try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
     this.drawing = true;
-    const W = this.rect().width || 1;
-    this.cur = { tool: this.tool, color: this.color, size: (this.size) / W, pts: [this.pt(e)] };
-    // 归一化粗细：size 是屏幕像素 → 存成「除以宽度」，换屏/缩放粗细一致；drawStroke 里再乘 W
-    this.cur.size = this.size;    // 直接用屏幕像素（内容 y 用绝对像素，粗细也用像素更直观）
+    this.cur = { tool: this.tool, color: this.color, size: this.curSize(), pts: [this.pt(e)] };
     this.paint();
   },
   move(e) {
@@ -8830,7 +8966,10 @@ const Ink = {
     document.querySelectorAll('#ink .ink-t[data-inkt]').forEach(b => b.classList.toggle('on', b.dataset.inkt === this.tool));
     $('#ink-colors').innerHTML = this.COLORS.map(c =>
       `<i class="ink-c${c === this.color && this.tool !== 'eraser' ? ' on' : ''}" data-ic="${c}" style="background:${c}"></i>`).join('');
-    $('#ink-size').value = this.size;
+    // 滑杆调的是「当前工具」的粗细：橡皮范围大一些（能一擦一大片），笔细一些
+    const sl = $('#ink-size');
+    if (this.tool === 'eraser') { sl.min = 6; sl.max = 60; } else { sl.min = 1; sl.max = 14; }
+    sl.value = this.curSize();
   },
   // scroller: 要跟随滚动的元素（PDF 是 iframe 内部的 #viewerContainer；其它视图是主滚动容器/null）
   // target:   画布要盖住的元素（PDF 是 iframe；不传就盖住顶栏以下的整个内容区）→ 笔尖对齐靠这个
@@ -8878,7 +9017,7 @@ const Ink = {
       const c = e.target.closest('[data-ic]');
       if (c) { this.color = c.dataset.ic; if (this.tool === 'eraser') this.tool = 'pen'; this.syncUI(); return; }
     });
-    $('#ink-size').addEventListener('input', e => { this.size = +e.target.value; });
+    $('#ink-size').addEventListener('input', e => { if (this.tool === 'eraser') this.eraserSize = +e.target.value; else this.size = +e.target.value; });
     $('#ink-undo').onclick = () => this.undo();
     $('#ink-clear').onclick = () => this.clear();
     $('#ink-done').onclick = () => this.close();
