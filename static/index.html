@@ -299,6 +299,7 @@
         <button id="rd-theme" title="护眼背景">护眼</button>
         <button id="rd-copy" title="复制全文">复制</button>
       </span>
+      <button id="viewer-ink" class="btn" title="在文件上勾画批注（笔迹会保留）">✏️ 批注</button>
       <button id="viewer-play" class="btn hidden" title="幻灯片播放">▶ 播放</button>
       <button id="viewer-full" class="btn" title="全屏">⛶ 全屏</button>
       <button id="viewer-mode" class="btn hidden">阅读模式</button>
@@ -1487,11 +1488,27 @@
 
 <!-- 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；长按可拖动 -->
 <div id="fab" class="fab">
+  <button class="fab-act" id="fab-ink" title="在当前页面上勾画批注（笔迹会保留）">✏️<i>批注</i></button>
   <button class="fab-act" id="fab-shot" title="截图（框选/圈选，可问 AI 或存起来）" hidden>📷<i>截图</i></button>
   <button class="fab-act" id="fab-note" title="随手记一条（不打断当前页面）">📒<i>小记</i></button>
   <button class="fab-act" id="fab-pad" title="草稿纸">📝<i>草稿纸</i></button>
   <button class="fab-act" id="fab-ai" title="AI 助手">AI<i>AI 助手</i></button>
   <button class="fab-main" id="fab-btn" title="工具">✦</button>
+</div>
+
+<!-- 通用手写批注层：透明画布盖在任意内容上，笔/荧光笔/橡皮/清屏，笔迹按页面保存 -->
+<div id="ink" class="ink hidden">
+  <canvas id="ink-cv"></canvas>
+  <div id="ink-bar" class="ink-bar">
+    <button class="ink-t on" data-inkt="pen" title="笔">✏️</button>
+    <button class="ink-t" data-inkt="hl" title="荧光笔">🖍️</button>
+    <button class="ink-t" data-inkt="eraser" title="橡皮（划过即擦）">🧽</button>
+    <span class="ink-colors" id="ink-colors"></span>
+    <input type="range" id="ink-size" min="1" max="12" step="1" value="3" title="粗细">
+    <button class="ink-t" id="ink-undo" title="撤销">↶</button>
+    <button class="ink-t" id="ink-clear" title="全屏清除">🗑 清屏</button>
+    <button class="ink-t ink-done" id="ink-done" title="收起批注（笔迹已保存）">✓ 完成</button>
+  </div>
 </div>
 
 <!-- 截图裁好后：去哪 -->

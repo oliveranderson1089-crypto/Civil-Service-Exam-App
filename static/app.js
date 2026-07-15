@@ -127,6 +127,7 @@ function render() {
   document.querySelector('.topbar').classList.toggle('hidden', st.view === 'doc');
   // 切换视图时停止朗读
   if (window.Reader && Reader.playing) Reader.stop();
+  if (window.Ink && Ink.on) Ink.close();                  // 切视图退出批注模式（笔迹已按页面存好）
   // 离开阅读页必须退出全屏，否则状态栏一直藏着
   if (st.view !== 'viewer' && document.body.classList.contains('viewer-full')) setViewerFull(false);
   // 离开「题目解析」就别再轮询进度了（dqPoll 是顶层 let，不挂在 window 上）
@@ -1355,13 +1356,29 @@ function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
   $('#viewer-reader').classList.add('hidden');
   $('#reader-tools').classList.add('hidden');
   $('#viewer-frame').classList.remove('hidden');
-  $('#viewer-frame').src = (ext === '.pdf' || OFFICE_EXT.includes(ext))
+  const isPdf = (ext === '.pdf' || OFFICE_EXT.includes(ext));
+  $('#viewer-frame').src = isPdf
     ? '/pdfjs/web/viewer.html?file=' + encodeURIComponent(fileUrl) : fileUrl;
+  $('#viewer-ink').classList.toggle('hidden', !isPdf);   // 批注只对 PDF/Office 预览给（跟随内部滚动）
+  if (isPdf) $('#viewer-frame').onload = hidePdfjsPen;   // 藏掉 pdf.js 自带那支「歪笔」，只留我们的批注
   // pdf/office 且有文本接口 → 提供「阅读模式」切换
   const canRead = (ext === '.pdf' || OFFICE_EXT.includes(ext)) && viewerTextUrl;
   $('#viewer-mode').classList.toggle('hidden', !canRead);
   $('#viewer-mode').textContent = '阅读模式';
   probeSlides(fileUrl);
+}
+// pdf.js 自带的手写/文本编辑器那支笔笔尖是歪的（改它的压缩代码风险大）。同源，直接往 iframe 注 CSS
+// 把它工具栏里的编辑按钮藏掉，只用我们对齐准确、能存能擦的「✏️ 批注」。
+function hidePdfjsPen() {
+  const f = $('#viewer-frame');
+  try {
+    const doc = f.contentDocument; if (!doc) return;
+    if (doc.getElementById('gk-hidepen')) return;
+    const st = doc.createElement('style'); st.id = 'gk-hidepen';
+    st.textContent = '#editorModeButtons,#editorInk,#editorFreeText,#editorStamp,'
+      + '#editorHighlight,#editorInkButton,#editorModeSeparator{display:none!important}';
+    doc.head.appendChild(st);
+  } catch (_) {}
 }
 
 /* ================= 幻灯片播放（逐页出图） =================
@@ -1439,6 +1456,7 @@ function setViewerFull(on) {
 }
 $('#viewer-full').onclick = () => setViewerFull(!_viewerFull);
 $('#viewer-exit').onclick = () => setViewerFull(false);
+$('#viewer-ink').onclick = () => inkHere();
 $('#viewer-mode').onclick = async () => {
   const reading = !$('#viewer-reader').classList.contains('hidden');
   if (reading) {
@@ -7552,6 +7570,8 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   // 📷 截图只有电脑桌面版有（壳负责抓屏）；手机截图交给系统，不放这
   if (window.__desktopShot) $('#fab-shot').hidden = false;
   $('#fab-shot').onclick = () => { fabClose(); shotAsk('menu'); };
+  // ✏️ 批注：给当前页面盖一层手写批注
+  $('#fab-ink').onclick = () => { fabClose(); inkHere(); };
   document.addEventListener('pointerdown', e => {          // 点别处收起扇出
     if (fab.classList.contains('open') && !e.target.closest('#fab')) fabClose();
   }, true);
@@ -8406,6 +8426,196 @@ function padInit() {
     else if (e.ctrlKey && k === 's') { e.preventDefault(); if (padMode === 'draft') { clearTimeout(padSaveT); padDraftSave(); } }
     else if (e.key === 'Escape') padClose();
   });
+}
+
+/* ================= 通用手写批注层（Ink）=================
+   一块透明画布盖在**任意内容**上，随处拿笔勾画/做笔记。解决三件事：
+     · 笔尖对齐：坐标是「指针相对画布」直接算的，笔尖落哪画哪（pdf.js 自带的笔尖是歪的）。
+     · 橡皮 + 全屏清除：橡皮划过即擦（destination-out）；清屏一键抹掉整页笔迹。
+     · 笔迹保留：按「页面/文档」存到本地，关了再打开还在（PDF 按资料 id、其它按视图名）。
+   PDF 是同源 iframe：读它内部 #viewerContainer 的滚动，笔迹跟着页面一起滚、贴在原位。
+   笔引擎（压感、合并采样顺滑、笔/荧光笔）和草稿纸同源。 */
+const Ink = {
+  on: false, tool: 'pen', color: '#e23b2e', size: 3,
+  strokes: [], redo: [], cur: null, key: '', drawing: false, sawPen: false, raf: 0,
+  scroller: null, _onScroll: null, cv: null, ctx: null,
+  COLORS: ['#e23b2e', '#1a6fb5', '#f0a500', '#1e8449', '#111'],
+
+  rect() { return this.cv.getBoundingClientRect(); },
+  scrollY() {
+    try { return this.scroller ? (this.scroller.scrollTop || 0) : 0; } catch (_) { return 0; }
+  },
+  // 屏幕点 → 内容坐标：x 按画布宽度归一化(0..1)，y 是内容绝对像素(加上滚动量) → 滚动后仍贴原位
+  pt(e) {
+    const r = this.rect();
+    return {
+      x: (e.clientX - r.left) / (r.width || 1),
+      y: (e.clientY - r.top) + this.scrollY(),
+      p: (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0,
+    };
+  },
+  fit() {
+    const r = this.rect();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.cv.width = Math.round(r.width * dpr);
+    this.cv.height = Math.round(r.height * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.paint();
+  },
+  drawStroke(ctx, s, W) {
+    const pts = s.pts; if (!pts || !pts.length) return;
+    const sy = this.scrollY();
+    ctx.save(); ctx.lineJoin = ctx.lineCap = 'round';
+    let wid = s.size;
+    if (s.tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; wid = s.size * 6; }
+    else { ctx.strokeStyle = s.color; if (s.tool === 'hl') { ctx.globalAlpha = .3; wid = s.size * 3.2; } }
+    const X = p => p.x * W, Y = p => p.y - sy;      // 内容坐标 → 当前屏幕坐标（减滚动量）
+    if (pts.length === 1) {
+      ctx.beginPath(); ctx.arc(X(pts[0]), Y(pts[0]), Math.max(.6, wid / 2), 0, 6.2832);
+      ctx.fillStyle = ctx.strokeStyle; ctx.fill(); ctx.restore(); return;
+    }
+    const varW = s.tool === 'pen' && pts.some(p => p.p > 0);
+    if (!varW) {
+      ctx.lineWidth = wid; ctx.beginPath(); ctx.moveTo(X(pts[0]), Y(pts[0]));
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(X(pts[i]), Y(pts[i]));
+      ctx.stroke();
+    } else {
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        ctx.lineWidth = wid * (.35 + 1.1 * (((a.p || .5) + (b.p || .5)) / 2));
+        ctx.beginPath(); ctx.moveTo(X(a), Y(a)); ctx.lineTo(X(b), Y(b)); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  },
+  paint() {
+    if (!this.ctx) return;
+    const r = this.rect(), W = r.width;
+    this.ctx.clearRect(0, 0, r.width, r.height);
+    for (const s of this.strokes) this.drawStroke(this.ctx, s, W);
+    if (this.cur) this.drawStroke(this.ctx, this.cur, W);
+  },
+  down(e) {
+    if (e.pointerType === 'pen') this.sawPen = true;
+    if (e.pointerType === 'touch' && this.sawPen) return;   // 用过笔就忽略手指 = 防手掌误触
+    if (e.button > 0) return;
+    e.preventDefault();
+    try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
+    this.drawing = true;
+    const W = this.rect().width || 1;
+    this.cur = { tool: this.tool, color: this.color, size: (this.size) / W, pts: [this.pt(e)] };
+    // 归一化粗细：size 是屏幕像素 → 存成「除以宽度」，换屏/缩放粗细一致；drawStroke 里再乘 W
+    this.cur.size = this.size;    // 直接用屏幕像素（内容 y 用绝对像素，粗细也用像素更直观）
+    this.paint();
+  },
+  move(e) {
+    if (!this.drawing || !this.cur) return;
+    e.preventDefault();
+    let evs = [];
+    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
+    if (!evs.length) evs = [e];
+    for (const ev of evs) this.cur.pts.push(this.pt(ev));
+    if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.paint(); });
+  },
+  up() {
+    if (!this.drawing) return;
+    this.drawing = false;
+    if (this.cur && this.cur.pts.length) { this.strokes.push(this.cur); this._cleared = null; }
+    this.cur = null; this.paint(); this.save();
+  },
+  undo() {
+    if (!this.strokes.length && this._cleared) { this.strokes = this._cleared; this._cleared = null; }  // 撤销「清屏」→ 全部找回
+    else if (this.strokes.length) this.strokes.pop();
+    else return;
+    this.paint(); this.save();
+  },
+  clear() { if (!this.strokes.length) return; this._cleared = this.strokes.slice(); this.strokes = []; this.paint(); this.save(); },
+  save() {
+    if (!this.key) return;
+    try {
+      if (this.strokes.length) localStorage.setItem('ink:' + this.key, JSON.stringify(this.strokes));
+      else localStorage.removeItem('ink:' + this.key);
+    } catch (_) {}
+  },
+  load() {
+    this.strokes = []; this.redo = [];
+    try { this.strokes = JSON.parse(localStorage.getItem('ink:' + this.key) || '[]') || []; } catch (_) {}
+  },
+  syncUI() {
+    document.querySelectorAll('#ink .ink-t[data-inkt]').forEach(b => b.classList.toggle('on', b.dataset.inkt === this.tool));
+    $('#ink-colors').innerHTML = this.COLORS.map(c =>
+      `<i class="ink-c${c === this.color && this.tool !== 'eraser' ? ' on' : ''}" data-ic="${c}" style="background:${c}"></i>`).join('');
+    $('#ink-size').value = this.size;
+  },
+  // scroller: 要跟随滚动的元素（PDF 是 iframe 内部的 #viewerContainer；其它视图是主滚动容器/null）
+  // target:   画布要盖住的元素（PDF 是 iframe；不传就盖住顶栏以下的整个内容区）→ 笔尖对齐靠这个
+  open(key, scroller, target) {
+    this.key = key || (('view:' + ((stack[stack.length - 1] || {}).view || 'home')));
+    this.scroller = scroller || null;
+    this.cv = $('#ink-cv'); this.ctx = this.cv.getContext('2d');
+    $('#ink').classList.remove('hidden');
+    // 把画布精确定位到目标区域（不传目标就是顶栏以下整个屏幕）—— 画布(0,0) 要正好对齐内容(0,0)
+    const r = target ? target.getBoundingClientRect() : null;
+    const top = r ? r.top : (($('.topbar') || {}).getBoundingClientRect ? $('.topbar').getBoundingClientRect().bottom : 0);
+    this.cv.style.left = (r ? r.left : 0) + 'px';
+    this.cv.style.top = top + 'px';
+    this.cv.style.width = (r ? r.width : window.innerWidth) + 'px';
+    this.cv.style.height = (r ? r.height : (window.innerHeight - top)) + 'px';
+    this.on = true; this.sawPen = false;
+    this.load();
+    this.fit();
+    this.syncUI();
+    if (!this._bound) { this.bind(); this._bound = true; }
+    // 跟随滚动重绘
+    this._onScroll = () => this.paint();
+    if (this.scroller) {
+      try { this.scroller.addEventListener('scroll', this._onScroll, { passive: true }); } catch (_) {}
+    }
+    window.addEventListener('resize', this._onResize = () => this.fit());
+  },
+  close() {
+    this.on = false;
+    $('#ink').classList.add('hidden');
+    if (this.scroller && this._onScroll) { try { this.scroller.removeEventListener('scroll', this._onScroll); } catch (_) {} }
+    if (this._onResize) window.removeEventListener('resize', this._onResize);
+    this.scroller = null; this.cur = null; this.drawing = false;
+  },
+  bind() {
+    const cv = this.cv;
+    cv.addEventListener('pointerdown', e => this.down(e));
+    cv.addEventListener('pointermove', e => this.move(e));
+    cv.addEventListener('pointerup', () => this.up());
+    cv.addEventListener('pointercancel', () => this.up());
+    cv.style.touchAction = 'none';
+    $('#ink').addEventListener('click', e => {
+      const t = e.target.closest('[data-inkt]');
+      if (t) { this.tool = t.dataset.inkt; this.syncUI(); return; }
+      const c = e.target.closest('[data-ic]');
+      if (c) { this.color = c.dataset.ic; if (this.tool === 'eraser') this.tool = 'pen'; this.syncUI(); return; }
+    });
+    $('#ink-size').addEventListener('input', e => { this.size = +e.target.value; });
+    $('#ink-undo').onclick = () => this.undo();
+    $('#ink-clear').onclick = () => this.clear();
+    $('#ink-done').onclick = () => this.close();
+  },
+};
+// 从工具球「✏️ 批注」进：给当前视图盖一层。PDF 查看器另有专门入口（跟随内部滚动）。
+function inkHere() {
+  const st = stack[stack.length - 1] || {};
+  // PDF/Office 预览：跟随 iframe 内部滚动，笔迹按资料 id 存
+  const vf = $('#viewer-frame');
+  if (st.view === 'viewer' && vf && !vf.classList.contains('hidden')) {
+    let sc = null;
+    try { sc = vf.contentDocument && vf.contentDocument.getElementById('viewerContainer'); } catch (_) {}
+    // 按文件 URL 里的 file= 参数存，同一份资料每次打开都取回上次的笔迹
+    let fk = vf.src;
+    try { fk = decodeURIComponent(new URL(vf.src, location.href).searchParams.get('file') || vf.src); } catch (_) {}
+    Ink.open('mat:' + fk.slice(-80), sc, vf);
+    return;
+  }
+  // 一般视图：盖住整块内容区（v1 不跟随滚动，就在当前屏上批注 —— PDF 那种才需要跟滚动）。
+  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''), null,
+    document.querySelector('#view-' + (st.view || 'home')) || null);
 }
 
 /* ================= 通用停靠（草稿纸 / AI 面板共用） =================

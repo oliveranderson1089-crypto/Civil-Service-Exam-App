@@ -2295,6 +2295,21 @@ body.dk-rz-y,body.dk-rz-y *{cursor:ns-resize !important;user-select:none !import
   background:rgba(26,111,181,.16);border:2px dashed var(--blue);transition:all .12s;}
 
 /* 草稿纸自己的皮 */
+/* 通用手写批注层 */
+.ink{position:fixed;inset:0;z-index:6200;pointer-events:none;}
+.ink.hidden{display:none;}
+#ink-cv{position:fixed;pointer-events:auto;cursor:crosshair;touch-action:none;}
+.ink-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);pointer-events:auto;
+  display:flex;align-items:center;gap:7px;padding:8px 12px;border-radius:30px;
+  background:rgba(28,36,52,.94);box-shadow:0 8px 30px rgba(0,0,0,.4);flex-wrap:wrap;max-width:94vw;}
+.ink-t{width:34px;height:34px;flex:none;display:grid;place-items:center;padding:0;border:none;
+  border-radius:9px;background:transparent;color:#cfdcea;font-size:16px;cursor:pointer;}
+.ink-t.on{background:var(--blue);color:#fff;}
+.ink-t.ink-done{width:auto;padding:0 14px;font-size:13.5px;background:#2e7d46;color:#fff;border-radius:18px;}
+.ink-colors{display:flex;gap:5px;padding:0 4px;}
+.ink-c{width:20px;height:20px;flex:none;border-radius:50%;cursor:pointer;border:2px solid transparent;}
+.ink-c.on{border-color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.5);}
+#ink-size{width:74px;accent-color:var(--blue);}
 .pad{z-index:70;background:var(--card);touch-action:none;}
 
 .pad-bar{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;
