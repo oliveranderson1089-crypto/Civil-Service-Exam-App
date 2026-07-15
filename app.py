@@ -7886,54 +7886,95 @@ def find_types():
          "tip": v[4], "n": n.get(k, 0)} for k, v in FIND_TYPES.items()]})
 
 
-def _find_gen_material(name, full, wmin, wmax, tip, topic):
-    """出材料 + 题干，按省考/国考真题规格（5~6 则、总 2000~3000 字）。
-    模型对「多少字」很不敏感，一次说了也压不住 → 出稿后实测字数，太短就带上这一稿要求扩写返工
-    （和范文推荐 gen_essays.fit_words 同一套办法）。返回 (material, stem, err)。"""
-    prompt = (
-        "命制一道申论**%s**（%d 分，%d~%d 字）。话题：%s。\n\n"
-        "【给定资料要求】按**省考/国考真题规格**出，别嫌长——真题一道小题对应的材料本就有两三千字：\n"
-        "1. **5~6 则材料，每则 350~550 字，总共 2000~3000 字**（这是硬性要求，不许偷懒写短）。\n"
-        "2. 要像真题：有具体的人、地、事、**数据**，有干部/群众/专家的**原话引用**，"
-        "不同材料从不同角度切入（做法、成效、问题、案例、政策）。\n"
-        "3. **必须掺入干扰信息**——背景铺垫、无关细节、和要点重复的同义表述、反面例子。"
-        "找点训练的价值全在这儿：材料里如果句句是要点，那就没什么可练的。\n"
-        "4. 采分点要**散落在多则材料里**（不能都堆在一则），逼考生通读全篇。\n"
-        "5. 每则材料用「材料一」「材料二」…开头，各占一段。\n\n"
-        "【题干要求】一句话，明确作答对象和范围。%s\n\n"
-        '只输出 JSON：{"stem":"题干","material":"给定资料全文（材料N 各占一行）"}'
-        % (name, full, wmin, wmax, topic, tip))
-    sys = ("你是申论命题人。材料按省考/国考真题规格（两三千字、5~6 则、多角度），"
-           "有细节、有原话、有数据、**有干扰信息**。严格输出 JSON。")
-    msgs = [{"role": "system", "content": sys}, {"role": "user", "content": prompt}]
-    MIN_WORDS = 1800                                  # 低于此判「太短」，带稿返工
-    best_mat, best_stem = "", ""
-    for _ in range(3):                                # 最多 3 次（1 出稿 + 2 扩写），控制在隧道超时内
-        rep, err = _ai_call_or_error(msgs, temperature=0.7, max_tokens=6000, timeout=300, json_mode=True)
+def _find_fit_words(base_prompt, lo, hi, sys, tries=1, temperature=0.78):
+    """出一则材料并把字数收进 [lo,hi]（对齐真题单则体量）。模型对「多少字」很不敏感，
+    一次说不管用 → 实测字数后带上这一稿要求扩/缩，返工。返回正文（失败给最接近的一稿）。"""
+    target = lo + int((hi - lo) * 0.5)
+    msgs = [{"role": "system", "content": sys}, {"role": "user", "content": base_prompt}]
+    best = ""
+    for _ in range(tries + 1):
+        rep, err = _ai_call_or_error(msgs, temperature=temperature,
+                                     max_tokens=max(1400, int(hi * 2.4)), timeout=300)
         if err:
             break
-        try:
-            j = json.loads(rep)
-        except Exception:
-            break
-        mat = (j.get("material") or "").strip()
-        stem = (j.get("stem") or "").strip()
-        n = _sl_words(mat)
-        if mat and stem and n >= MIN_WORDS:
-            return mat, stem, None
-        if n > _sl_words(best_mat):
-            best_mat, best_stem = mat, (stem or best_stem)
-        # 太短 → 带上这一稿，明确告诉它「才 N 字」并要求扩写（模型看到实测字数才会真扩）
+        txt = re.sub(r"[*#`]+", "", (rep or "")).strip()
+        n = _sl_words(txt)
+        if lo <= n <= hi:
+            return txt
+        if not best or abs(n - target) < abs(_sl_words(best) - target):
+            best = txt
+        how = "扩写到" if n < lo else "压缩到"
         msgs = msgs[:1] + [
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": rep},
-            {"role": "user", "content":
-                "这份给定资料才 %d 字，太短、不符合真题规格。请在**保留已有材料**的基础上，"
-                "把每则扩充到 350~550 字、补足到 5~6 则，总字数做到 2000~3000 字（多加细节、数据、"
-                "人物对话、干扰信息，别只是换句话）。仍然只输出同样结构的 JSON。" % n}]
-    if best_mat and best_stem:                        # 没达标但有稿，用最长的那稿兜底
-        return best_mat, best_stem, None
-    return None, None, (jsonify({"error": "AI 没出好材料，请重试"}), 502)
+            {"role": "user", "content": base_prompt},
+            {"role": "assistant", "content": txt},
+            {"role": "user", "content": "这一稿 %d 字，不符合要求。请%s %d~%d 字（目标 %d 字），"
+                                        "保持内容与结构，只输出正文。" % (n, how, lo, hi, target)}]
+    return best
+
+
+# 材料与题型一一对应：每种题型的材料该写什么、出几则、每则多少字（对齐真题单则体量）。
+# 重质不重量——宁可少出一两则、每则都到真题字数，也不堆一堆短材料（用户明确要求）。
+_FIND_MAT_SPEC = {
+    "guina": (2, (550, 850), [
+        "某地区/某单位在这方面的【具体做法与措施】：有主体、有动作、有数据、有干部或群众原话",
+        "另一处的【做法与成效】，并穿插一些【问题与困难、无关背景】作干扰（让考生得辨真伪）"]),
+    "zonghe": (1, (650, 950), [
+        "围绕一个【现象 / 观点 / 一句话】展开：先摆事实和现象，再给不同角度的看法、成因、影响、"
+        "正反面，供考生做『是什么→为什么→怎么样』的分析（掺入干扰信息）"]),
+    "duice": (2, (550, 850), [
+        "这个话题当前存在的【问题 / 困难 / 矛盾 / 短板】：具体是什么、卡在哪、谁受影响，"
+        "有一线声音和数据（对策要从这些问题里长出来，所以问题要铺清楚）",
+        "问题的成因、相关背景与零散做法，并掺入【无关细节、同义重复】作干扰"]),
+}
+
+
+def _find_gen_stem(name, full, wmin, wmax, tip, topic, material):
+    """据材料 + 题型出一句题干（贴合材料内容）。"""
+    prompt = ("给下面这道申论**%s**（%d 分，答案 %d~%d 字）命制**题干**：一句话，明确作答对象和范围，"
+              "紧扣给定资料的内容。%s\n话题：%s。\n"
+              "按真题写法输出（含「根据给定资料」「（%d 分）」「要求：…不超过 %d 字」这类），"
+              "只输出题干本身，不要引号、不要解释。\n\n给定资料节选：\n%s"
+              % (name, full, wmin, wmax, tip, topic, full, wmax, material[:1200]))
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论命题人，题干简洁规范。"},
+         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=220)
+    if err:
+        return "", err
+    stem = re.sub(r"[*#`]+", "", (rep or "")).strip().split("\n")[0].strip()
+    if not stem:
+        stem = "根据给定资料，完成本题。（%d 分）要求：全面、准确、有条理，不超过 %d 字。" % (full, wmax)
+    return stem, None
+
+
+def _find_gen_material(qtype, name, full, wmin, wmax, tip, topic):
+    """按【题型】出对应的给定资料 —— 每则都对齐真题单则字数（用户要求：宁可少出、每则要够）。
+    再据材料出题干。返回 (material, stem, err)。"""
+    n_pass, per, angles = _FIND_MAT_SPEC.get(qtype, _FIND_MAT_SPEC["guina"])
+    lo, hi = per
+    sys = ("你是申论命题人。给定资料贴近国考/省考真题：**单则材料就有真题的体量（%d~%d 字）**，"
+           "有具体地名、人名、数据、对话，并**掺入干扰信息**（背景铺垫、无关细节、同义重复、反面例子）"
+           "供考生练找点。直接输出材料正文，不要「材料N」标题、不要 Markdown 记号。" % (lo, hi))
+    passages, sofar = [], []
+    for i in range(n_pass):
+        angle = angles[i % len(angles)]
+        avoid = ("（避免和已写材料重复主旨：" + "；".join(sofar) + "）") if sofar else ""
+        p = ("请命制一份申论试卷的「给定资料」中的一则，主题：%s，服务于一道**%s**。\n"
+             "本则材料写：%s%s\n"
+             "字数 %d~%d 字（对齐真题单则材料体量，硬性要求，别写短）。" %
+             (topic, name, angle, avoid, lo, hi))
+        txt = _find_fit_words(p, lo, hi, sys)
+        if txt:
+            passages.append(txt)
+            sofar.append(txt[:40])
+    if not passages:
+        return None, None, (jsonify({"error": "AI 没出好材料，请重试"}), 502)
+    cn = "一二三四五六七八九十"
+    material = "\n\n".join("材料%s\n%s" % (cn[i] if i < len(cn) else str(i + 1), t)
+                           for i, t in enumerate(passages))
+    stem, err = _find_gen_stem(name, full, wmin, wmax, tip, topic, material)
+    if err:
+        return None, None, err
+    return material, stem, None
 
 
 @app.post("/api/find/gen")
@@ -7952,7 +7993,7 @@ def find_gen():
                        "ORDER BY RANDOM() LIMIT 1").fetchone()
         topic = r[0] if r else "基层治理"
 
-    material, stem, err = _find_gen_material(name, full, wmin, wmax, tip, topic)
+    material, stem, err = _find_gen_material(qtype, name, full, wmin, wmax, tip, topic)
     if err:
         return err
 

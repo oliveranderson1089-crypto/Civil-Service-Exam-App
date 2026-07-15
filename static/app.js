@@ -4212,7 +4212,7 @@ $('#fd-list').addEventListener('click', e => {
 });
 $('#fd-gen').onclick = async () => {
   const b = $('#fd-gen'); b.disabled = true; b.textContent = '出题中…（约 30~60 秒）';
-  $('#fd-msg').textContent = 'AI 正在按真题规格造材料（5~6 则、两三千字、掺干扰信息），字数不够会自动扩写，再标采分点…';
+  $('#fd-msg').textContent = 'AI 正在按题型出对应材料（每则对齐真题单则字数、掺干扰信息），字数不够会自动扩写，再标采分点…';
   try {
     const d = await api('/api/find/gen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
