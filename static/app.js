@@ -3204,6 +3204,11 @@ async function loadVideos() {
         </div>
       </div>`;
     }).join('');
+    // 封面加载完再淡入（B 站封面要一两秒，硬闪出来不好看）
+    box.querySelectorAll('.vd-cover-img').forEach(im => {
+      if (im.complete && im.naturalWidth) im.classList.add('vd-loaded');
+      else im.addEventListener('load', () => im.classList.add('vd-loaded'), { once: true });
+    });
   } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 $('#vd-tabs').addEventListener('click', e => {
@@ -3353,7 +3358,7 @@ async function playVideo(id) {
 }
 
 function vpMedia(wrap, d) {
-  const v = wrap.querySelector('.vp-v');
+  const stage = wrap.querySelector('.vp-stage');
   const seek = wrap.querySelector('.vp-seek');
   const tEl = wrap.querySelector('.vp-time');
   const totEl = wrap.querySelector('.vp-total');
@@ -3368,31 +3373,55 @@ function vpMedia(wrap, d) {
   const off = [];
   let acc = 0;
   chs.forEach(c => { off.push(acc); acc += c.dur || 0; });
-  const S = Object.assign(vpS, { v, chs, off, cur: -1, total: d.total || 0, seeking: false, hls: null });
 
-  function gnow() { return (S.off[S.cur] || 0) + (v.currentTime || 0); }
+  // 分段 mp4（央视一集切 4~6 段）切段时，单个 <video> 换 src 会黑屏一下。
+  // 双缓冲消除它：主视频在放第 i 段时，**副视频后台预载第 i+1 段**（preload=auto，
+  // 首帧早就解好了）；一段放完不重新加载，而是把副视频顶成主视频、直接播 —— 无缝。
+  const va = wrap.querySelector('.vp-v');
+  const multi = !hls && chs.length > 1;
+  let vb = null;
+  if (multi) {
+    vb = document.createElement('video');
+    vb.className = 'vp-v vp-hidden';
+    vb.playsInline = true; vb.preload = 'auto';
+    stage.insertBefore(vb, va.nextSibling);
+  }
+  const S = Object.assign(vpS, {
+    v: va, vb, chs, off, cur: -1, preCh: -1, total: d.total || 0, seeking: false, hls: null,
+  });
+
+  function gnow() { return (S.off[S.cur] || 0) + (S.v.currentTime || 0); }
   function paint() {
     if (S.seeking) return;
     const g = gnow();
     tEl.textContent = vpFmt(g);
     if (S.total > 0) seek.value = Math.round(g / S.total * 1000);
   }
-  function ready(at, go) {
-    // 川观那种只有一段、时长未知的：直接拿视频自己的时长当全长
-    if (!S.total && isFinite(v.duration)) { S.total = v.duration; totEl.textContent = vpFmt(S.total); }
-    if (at) v.currentTime = at;
-    if (go) v.play().catch(() => { });
+  function showActive() {                         // 主视频可见、副视频藏起来
+    S.v.classList.remove('vp-hidden');
+    if (S.vb) S.vb.classList.add('vp-hidden');
   }
-  function load(i, at, go) {
+  function ready(at, go) {
+    if (!S.total && isFinite(S.v.duration)) { S.total = S.v.duration; totEl.textContent = vpFmt(S.total); }
+    if (at) S.v.currentTime = at;
+    if (go) S.v.play().catch(() => { });
+  }
+  function prefetch(j) {                          // 后台预载第 j 段到副视频（只对分段 mp4）
+    if (!multi || !S.vb || j < 0 || j >= chs.length || S.preCh === j) return;
+    S.preCh = j;
+    S.vb.src = chs[j].url;
+    S.vb.load();
+  }
+  function load(i, at, go) {                      // 把第 i 段装进**主视频**（首段、跨段拖动走这里）
     S.cur = i;
-    if (hls) {                                   // m3u8：WebKit / Chrome 都不原生认，得靠 hls.js
+    if (hls) {                                    // m3u8：WebKit / Chrome 都不原生认，得靠 hls.js
       spin.classList.remove('hidden');
       loadHls().then(Hls => {
-        if (!vpS || vpS.v !== v) return;         // 加载期间用户关掉了
+        if (!vpS || vpS.v !== S.v) return;        // 加载期间用户关掉了
         if (S.hls) S.hls.destroy();
         S.hls = new Hls({ maxBufferLength: 30 });
         S.hls.loadSource(chs[i].url);
-        S.hls.attachMedia(v);
+        S.hls.attachMedia(S.v);
         S.hls.on(Hls.Events.MANIFEST_PARSED, () => ready(at, go));
         S.hls.on(Hls.Events.ERROR, (_e, data) => {
           if (!data.fatal) return;
@@ -3402,44 +3431,67 @@ function vpMedia(wrap, d) {
       }).catch(e => { spin.classList.add('hidden'); toast(e.message, true); });
       return;
     }
-    v.src = chs[i].url;
-    v.load();
-    v.addEventListener('loadedmetadata', () => ready(at, go), { once: true });
+    showActive();
+    S.v.src = chs[i].url;
+    S.v.load();
+    S.preCh = -1;                                 // 换了主视频，之前预载的作废
+    S.v.addEventListener('loadedmetadata', () => { ready(at, go); prefetch(i + 1); }, { once: true });
+  }
+  function swap(next) {                           // 副视频（已预载好 next 段）顶成主视频，无缝续播
+    unbind(S.v);
+    const old = S.v;
+    S.v = S.vb; S.vb = old;
+    S.cur = next;
+    showActive();
+    bind();
+    try { S.v.currentTime = 0; } catch (_) { }
+    S.v.play().catch(() => { });
+    pp.textContent = big.textContent = '⏸'; big.classList.add('hide');
+    S.preCh = -1;
+    prefetch(next + 1);                           // 再预载下一段
+  }
+  function advance() {                            // 一段放完
+    const next = S.cur + 1;
+    if (next >= chs.length) { pp.textContent = big.textContent = '▶'; big.classList.remove('hide'); return; }
+    if (multi && S.vb && S.preCh === next && S.vb.readyState >= 2) swap(next);   // 预载好了 → 无缝切
+    else load(next, 0, true);                     // 没来得及预载 → 老实重载
   }
   function seekTo(g) {
     g = Math.max(0, Math.min((S.total || 1) - 0.4, g));
     let i = 0;
     while (i < S.off.length - 1 && g >= S.off[i + 1]) i++;
     const local = g - (S.off[i] || 0);
-    if (i !== S.cur) load(i, local, !v.paused);
-    else v.currentTime = local;
+    if (i !== S.cur) load(i, local, !S.v.paused);
+    else S.v.currentTime = local;
   }
 
-  const toggle = () => { v.paused ? v.play().catch(() => { }) : v.pause(); };
+  const toggle = () => { const v = S.v; v.paused ? v.play().catch(() => { }) : v.pause(); };
+  function bind() {                               // 播放事件都绑在**当前主视频**上（切换时要跟着走）
+    const v = S.v;
+    v.onclick = toggle;
+    v.onplay = () => { pp.textContent = big.textContent = '⏸'; big.classList.add('hide'); };
+    v.onpause = () => { pp.textContent = big.textContent = '▶'; big.classList.remove('hide'); };
+    v.ontimeupdate = paint;
+    v.onwaiting = () => spin.classList.remove('hidden');
+    v.onplaying = () => spin.classList.add('hidden');
+    v.oncanplay = () => spin.classList.add('hidden');
+    v.onended = advance;
+    v.onerror = () => { spin.classList.add('hidden'); toast('这一段加载失败了，可以点「在浏览器里打开」', true); };
+  }
+  function unbind(v) {
+    v.onclick = v.onplay = v.onpause = v.ontimeupdate = v.onwaiting =
+      v.onplaying = v.oncanplay = v.onended = v.onerror = null;
+  }
+  bind();
   pp.onclick = toggle;
   big.onclick = toggle;
-  v.onclick = toggle;
-  v.onplay = () => { pp.textContent = big.textContent = '⏸'; big.classList.add('hide'); };
-  v.onpause = () => { pp.textContent = big.textContent = '▶'; big.classList.remove('hide'); };
-  v.ontimeupdate = paint;
-  v.onwaiting = () => spin.classList.remove('hidden');
-  v.onplaying = () => spin.classList.add('hidden');
-  v.oncanplay = () => spin.classList.add('hidden');
-  v.onended = () => {                            // 一段放完，无缝接下一段
-    if (S.cur < chs.length - 1) load(S.cur + 1, 0, true);
-    else { pp.textContent = big.textContent = '▶'; big.classList.remove('hide'); }
-  };
-  v.onerror = () => {
-    spin.classList.add('hidden');
-    toast('这一段加载失败了，可以点「在浏览器里打开」', true);
-  };
   seek.oninput = () => {
     S.seeking = true;
     tEl.textContent = vpFmt(seek.value / 1000 * S.total);
   };
   seek.onchange = () => { S.seeking = false; seekTo(seek.value / 1000 * S.total); };
-  wrap.querySelector('.vp-rate').onchange = e => { v.playbackRate = +e.target.value; };
-  wrap.querySelector('.vp-fs').onclick = () => vpToggleFs(wrap.querySelector('.vp-stage'), v);
+  wrap.querySelector('.vp-rate').onchange = e => { S.v.playbackRate = +e.target.value; if (S.vb) S.vb.playbackRate = +e.target.value; };
+  wrap.querySelector('.vp-fs').onclick = () => vpToggleFs(stage, S.v);
   // 空格播放/暂停、左右各跳 10 秒（跟常见播放器一致）
   S.keys = e => {
     if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || ''))) return;
@@ -3500,6 +3552,7 @@ function vpClose() {
   if (!vpS) return;
   const v = vpS.v;
   if (vpS.hls) { try { vpS.hls.destroy(); } catch (_) { } }   // 不销毁会一直在后台下分片
+  if (vpS.vb) { try { vpS.vb.pause(); vpS.vb.removeAttribute('src'); vpS.vb.load(); } catch (_) { } }  // 副视频也要停，否则后台还在下一段
   if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) { } }
   document.removeEventListener('keydown', vpS.esc);
   if (vpS.keys) document.removeEventListener('keydown', vpS.keys);
@@ -7471,18 +7524,30 @@ $('#mat-menu').addEventListener('click', async e => {
   $('#mat-menu').classList.add('hidden');
   const act = b.dataset.mm;
   if (act === 'share') {
-    const url = location.origin + '/api/materials/' + id + '/download';
+    const url = '/api/materials/' + id + '/download';
     try {
       if (window.GongkaoNative && typeof GongkaoNative.shareFile === 'function') {
         toast('正在准备分享…');
-        GongkaoNative.shareFile(url, name);
+        GongkaoNative.shareFile(location.origin + url, name);
         return;
       }
     } catch (_) {}
-    // 兜底：分享/复制文件名+说明
-    const card = document.createElement('div');
-    card.innerText = '「' + name + '」（来自公考助手资料库）';
-    shareCard(card);
+    // 浏览器支持「分享文件本身」的（部分桌面 Chrome / 手机浏览器）→ 直接弹系统分享，分享文件
+    if (navigator.share && navigator.canShare) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+          if (navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+        }
+      } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    // 电脑桌面版（WebKitGTK 没有系统分享面板）：把文件下下来 —— 到「下载」文件夹后就能手动发给别人，
+    // 比原来复制个文件名文本有用。（要在应用内分享给同学，用菜单里的「👥 共享给队友」。）
+    const a = document.createElement('a'); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    toast('已下载「' + name + '」，可从「下载」文件夹发给他人（应用内分享用「👥 共享给队友」）');
   } else if (act === 'rename') {
     const v = await appPrompt('重命名文档', '', name);
     if (v && v.trim() && v !== name) {

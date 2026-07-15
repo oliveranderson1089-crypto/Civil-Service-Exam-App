@@ -2946,7 +2946,9 @@ body.dark .rv-ex{background:#141b29;border-left-color:#3a6ad0;}
 .vd-cover{flex:0 0 168px;height:96px;border-radius:10px;background:#1a2434 center/cover no-repeat;
   position:relative;display:grid;place-items:center;text-decoration:none;overflow:hidden;
   border:none;padding:0;cursor:pointer;font:inherit;}
-.vd-cover-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+.vd-cover-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  opacity:0;transition:opacity .35s ease;}
+.vd-cover-img.vd-loaded{opacity:1;}
 .vd-play{width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;
   display:grid;place-items:center;font-size:14px;padding-left:2px;}
 .vd-cover:hover .vd-play{background:var(--blue);}
@@ -2998,6 +3000,8 @@ body.dark .vd-tags span{background:#1c2a45;color:#7fb0ff;}
 .vp-stage{position:relative;background:#000;aspect-ratio:16/9;width:100%;}
 .vp-v,.vp-if{position:absolute;inset:0;width:100%;height:100%;border:none;display:block;}
 .vp-v{object-fit:contain;background:#000;cursor:pointer;}
+/* 双缓冲的副视频：藏在后面预载下一段，切段时才顶上来（不能 display:none，否则不预载） */
+.vp-hidden{opacity:0;pointer-events:none;}
 .vp-big{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   width:62px;height:62px;border-radius:50%;border:none;background:rgba(0,0,0,.5);
   color:#fff;font-size:22px;cursor:pointer;transition:opacity .2s;padding-left:3px;}
