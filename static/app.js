@@ -4258,8 +4258,8 @@ function frRender() {
       <span class="${fdStep === 3 ? 'on' : ''}">③ 批改</span>
     </div>
     <div class="fr-stem">${esc(p.stem)}</div>
-    <div class="fr-meta">${esc(p.type_name)} · ${p.full} 分 · ${p.word_min}~${p.word_max} 字
-      · <b>共 ${p.n_points} 个采分点</b> · ${esc(p.source || '')}</div>`;
+    <div class="fr-meta">${esc(p.type_name)} · ${p.full} 分 · 答案 ${p.word_min}~${p.word_max} 字
+      · <b>共 ${p.n_points} 个采分点</b>${p.material_words ? ` · 给定资料 ${p.material_words} 字` : ''} · ${esc(p.source || '')}</div>`;
   frMat();
   frFoot();
 }
