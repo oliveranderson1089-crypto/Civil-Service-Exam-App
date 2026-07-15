@@ -7771,6 +7771,10 @@ FIND_TYPES = {
                "先亮观点/解释，再分层分析（是什么→为什么→怎么样），最后落回结论"),
     "duice": ("提出对策题", 20, 300, 400,
               "对策必须**从材料的问题里长出来**，一个问题对一条对策；要具体可执行，不许喊口号"),
+    "guanche": ("贯彻执行题", 20, 400, 600,
+                "先从材料里找全要点（这一步和归纳概括一样），再按指定文种的格式写成一篇 —— "
+                "格式对、要点全、语言得体。含讲话稿/宣传稿/公开信/新闻稿/倡议书/汇报/调研报告/"
+                "简报/案例介绍/编者按/方案/建议书/通知/短评等文种"),
 }
 # 断句：申论找点就是找句子，句子边界明确才判得准（自由划词区间对不齐，判定必然是玄学）。
 # 两个坑（实测踩出来的）：
@@ -7883,7 +7887,9 @@ def find_types():
         "SELECT qtype, COUNT(*) c FROM find_papers WHERE user_id=? GROUP BY qtype", (uid(),))}
     return jsonify({"types": [
         {"key": k, "name": v[0], "full": v[1], "word_min": v[2], "word_max": v[3],
-         "tip": v[4], "n": n.get(k, 0)} for k, v in FIND_TYPES.items()]})
+         "tip": v[4], "n": n.get(k, 0)} for k, v in FIND_TYPES.items()],
+        # 贯彻执行题的文种（供前端选：写哪种公文）
+        "doctypes": [{"k": d["k"], "cat": d["cat"], "min": d["min"], "max": d["max"]} for d in GW_DOCTYPES]})
 
 
 def _find_fit_words(base_prompt, lo, hi, sys, tries=1, temperature=0.78):
@@ -7929,35 +7935,57 @@ _FIND_MAT_SPEC = {
         "这个话题当前存在的【问题 / 困难 / 矛盾 / 短板】：具体是什么、卡在哪、谁受影响，有一线声音和数据",
         "另一类【问题及其成因】：换个侧面把问题铺清楚（对策要从问题里长出来）",
         "相关【背景、零散做法或他山之石】：可借鉴的经验，并掺入【无关细节、同义重复】作干扰"]),
+    "guanche": (3, (620, 820), [
+        "这件事的【背景与基本情况】：来龙去脉、现状、有关数据（写公文的由头/依据都从这里来）",
+        "各方的【具体做法 / 举措 / 经验】：分主体、有细节、有原话，是公文正文要点的主要来源",
+        "【成效、问题与各方反响】：做出了什么效果、还存在什么问题（掺入干扰信息，供辨别取舍）"]),
 }
 
 
-def _find_gen_stem(name, full, wmin, wmax, tip, topic, material):
-    """据材料 + 题型出一句题干（贴合材料内容）。"""
-    prompt = ("给下面这道申论**%s**（%d 分，答案 %d~%d 字）命制**题干**：一句话，明确作答对象和范围，"
-              "紧扣给定资料的内容。%s\n话题：%s。\n"
-              "按真题写法输出（含「根据给定资料」「（%d 分）」「要求：…不超过 %d 字」这类），"
-              "只输出题干本身，不要引号、不要解释。\n\n给定资料节选：\n%s"
-              % (name, full, wmin, wmax, tip, topic, full, wmax, material[:1200]))
+def _find_gen_stem(name, full, wmin, wmax, tip, topic, material, doctype=""):
+    """据材料 + 题型出一句题干（贴合材料内容）。贯彻执行题另指定文种 + 身份。"""
+    if doctype:                                       # 贯彻执行：设身份、指定文种、按文种字数
+        spec = GW_MAP.get(doctype, {})
+        demo = spec.get("demo") or {}
+        role, aud = demo.get("role") or "相关工作人员", demo.get("audience") or ""
+        prompt = ("给一道申论**贯彻执行题**命制**题干**：设定一个身份，让考生根据给定资料撰写一份**%s**，"
+                  "紧扣材料内容。参考身份「%s」%s。\n话题：%s。\n"
+                  "按真题写法输出（形如「假如你是……，请根据给定资料，撰写一份%s。（%d 分）要求："
+                  "格式规范、要点全面、条理清晰，不超过 %d 字。」），只输出题干本身，不要引号、不要解释。"
+                  "\n\n给定资料节选：\n%s"
+                  % (doctype, role, ("，面向「%s」" % aud if aud else ""), topic,
+                     doctype, full, wmax, material[:1200]))
+    else:
+        prompt = ("给下面这道申论**%s**（%d 分，答案 %d~%d 字）命制**题干**：一句话，明确作答对象和范围，"
+                  "紧扣给定资料的内容。%s\n话题：%s。\n"
+                  "按真题写法输出（含「根据给定资料」「（%d 分）」「要求：…不超过 %d 字」这类），"
+                  "只输出题干本身，不要引号、不要解释。\n\n给定资料节选：\n%s"
+                  % (name, full, wmin, wmax, tip, topic, full, wmax, material[:1200]))
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论命题人，题干简洁规范。"},
-         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=220)
+         {"role": "user", "content": prompt}], temperature=0.5, max_tokens=260)
     if err:
         return "", err
     stem = re.sub(r"[*#`]+", "", (rep or "")).strip().split("\n")[0].strip()
     if not stem:
-        stem = "根据给定资料，完成本题。（%d 分）要求：全面、准确、有条理，不超过 %d 字。" % (full, wmax)
+        if doctype:
+            stem = ("假如你是相关工作人员，请根据给定资料，撰写一份%s。（%d 分）"
+                    "要求：格式规范、要点全面、条理清晰，不超过 %d 字。" % (doctype, full, wmax))
+        else:
+            stem = "根据给定资料，完成本题。（%d 分）要求：全面、准确、有条理，不超过 %d 字。" % (full, wmax)
     return stem, None
 
 
-def _find_gen_material(qtype, name, full, wmin, wmax, tip, topic):
+def _find_gen_material(qtype, name, full, wmin, wmax, tip, topic, doctype=""):
     """按【题型】出对应的给定资料 —— 每则都对齐真题单则字数（用户要求：宁可少出、每则要够）。
-    再据材料出题干。返回 (material, stem, err)。"""
+    再据材料出题干。返回 (material, stem, err)。贯彻执行题另传文种 doctype。"""
     n_pass, per, angles = _FIND_MAT_SPEC.get(qtype, _FIND_MAT_SPEC["guina"])
     lo, hi = per
     sys = ("你是申论命题人。给定资料贴近国考/省考真题：**单则材料就有真题的体量（%d~%d 字）**，"
            "有具体地名、人名、数据、对话，并**掺入干扰信息**（背景铺垫、无关细节、同义重复、反面例子）"
            "供考生练找点。直接输出材料正文，不要「材料N」标题、不要 Markdown 记号。" % (lo, hi))
+    if doctype:                                       # 贯彻执行：材料要能支撑该文种的写作
+        sys += "这份给定资料将用于让考生写一篇「%s」，材料要提供足够支撑该文种的素材（由头、要点、事例）。" % doctype
     passages, sofar = [], []
     for i in range(n_pass):
         angle = angles[i % len(angles)]
@@ -7975,7 +8003,7 @@ def _find_gen_material(qtype, name, full, wmin, wmax, tip, topic):
     cn = "一二三四五六七八九十"
     material = "\n\n".join("材料%s\n%s" % (cn[i] if i < len(cn) else str(i + 1), t)
                            for i, t in enumerate(passages))
-    stem, err = _find_gen_stem(name, full, wmin, wmax, tip, topic, material)
+    stem, err = _find_gen_stem(name, full, wmin, wmax, tip, topic, material, doctype)
     if err:
         return None, None, err
     return material, stem, None
@@ -7991,17 +8019,25 @@ def find_gen():
     topic = (d.get("topic") or "").strip()
     name, full, wmin, wmax, tip = FIND_TYPES[qtype]
 
+    doctype = ""
+    if qtype == "guanche":                           # 贯彻执行：定文种，字数按该文种真题规格走
+        doctype = (d.get("doctype") or "").strip()
+        if doctype not in GW_MAP:
+            doctype = random.choice(GW_DOCTYPES)["k"]  # 没指定就随机挑一个文种
+        wmin, wmax = GW_MAP[doctype]["min"], GW_MAP[doctype]["max"]
+
     db = get_db()
     if not topic:                                    # 话题从最近的时政/概括句里挑，贴近真考
         r = db.execute("SELECT topic FROM gaikuo_items WHERE topic!='' "
                        "ORDER BY RANDOM() LIMIT 1").fetchone()
         topic = r[0] if r else "基层治理"
 
-    material, stem, err = _find_gen_material(qtype, name, full, wmin, wmax, tip, topic)
+    material, stem, err = _find_gen_material(qtype, name, full, wmin, wmax, tip, topic, doctype)
     if err:
         return err
 
-    pid, err = _find_build(db, uid(), qtype, stem, material, full, wmin, wmax, "AI 命题 · " + topic)
+    src = "AI 命题 · " + (doctype + " · " if doctype else "") + topic
+    pid, err = _find_build(db, uid(), qtype, stem, material, full, wmin, wmax, src)
     if err:
         return err
     return jsonify({"id": pid}), 201
@@ -8140,7 +8176,7 @@ def find_grade():
 
 @app.post("/api/find/upload")
 def find_upload():
-    """上传真题文档 → 拆出材料和小题 → 只留归纳概括/综合分析/提出对策，各标一套采分点。
+    """上传真题文档 → 拆出材料和小题 → 留归纳概括/综合分析/提出对策/贯彻执行，各标一套采分点（大作文跳过）。
        抽文本、拆题、判题型全部复用真题批改那条管线（_split_paper / _classify_questions）。"""
     f = request.files.get("file")
     if not f or not f.filename:
@@ -8173,7 +8209,7 @@ def find_upload():
     for q in qs:
         c = cls.get(q["seq"], {})
         key = c.get("qtype") or "guina"
-        if key not in FIND_TYPES:                 # 贯彻执行、大作文不属于「找点」训练
+        if key not in FIND_TYPES:                 # 大作文不属于「找点」训练（贯彻执行已纳入）
             skipped.append(_SL_TYPES.get(key, {}).get("name") or key)
             continue
         lo, hi = _sl_word_range(q["body"])
@@ -8185,7 +8221,7 @@ def find_upload():
         if not err:
             made.append({"id": pid, "type": FIND_TYPES[key][0], "seq": q["seq"]})
     if not made:
-        return jsonify({"error": "这份卷子里没有归纳概括/综合分析/提出对策题"
+        return jsonify({"error": "这份卷子里没有归纳概括/综合分析/提出对策/贯彻执行题"
                                  + ("（识别到：%s）" % "、".join(skipped) if skipped else "")}), 400
     return jsonify({"made": made, "skipped": skipped}), 201
 

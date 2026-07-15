@@ -2748,6 +2748,9 @@ body.dark .cki-from{background:#1c2a45;color:#7fb0ff;}
 .fd-type-h span{font-size:11.5px;color:var(--muted);}
 .fd-type p{margin:5px 0 0;font-size:12.3px;line-height:1.65;color:var(--muted);}
 .fd-type-n{margin-top:6px;font-size:11.5px;color:#1a6fb5;}
+.fd-doctypes{align-items:center;margin:-2px 0 12px;}
+.fd-doctypes .gw-sug-t{font-size:12.5px;color:var(--muted);margin-right:2px;}
+.fd-doctypes .chip.on{border-color:var(--blue);background:#eaf3fb;color:var(--blue);}
 .fd-bar{display:flex;gap:8px;flex-wrap:wrap;}
 .fd-bar input{flex:1;min-width:180px;}
 .fd-msg{margin-top:9px;font-size:12.5px;color:var(--muted);}

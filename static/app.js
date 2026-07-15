@@ -4176,22 +4176,38 @@ function openFind() {
   loadFindTypes();
   loadFindList();
 }
+let fdDoctypes = [];
 async function loadFindTypes() {
   try {
     const d = await api('/api/find/types');
+    fdDoctypes = d.doctypes || [];
     $('#fd-types').innerHTML = d.types.map((t, i) => `
       <div class="fd-type${i === 0 ? ' on' : ''}" data-fdt="${t.key}">
         <div class="fd-type-h"><b>${esc(t.name)}</b><span>${t.full} 分 · ${t.word_min}~${t.word_max} 字</span></div>
         <p>${esc(t.tip)}</p>
         <div class="fd-type-n">${t.n ? '练过 ' + t.n + ' 道' : '还没练过'}</div>
       </div>`).join('');
+    // 贯彻执行的文种选择条：🎲 随机 + 各文种（点选后按该文种的真题字数出题）
+    $('#fd-doctypes').innerHTML = '<span class="gw-sug-t">文种：</span>'
+      + '<button class="chip tiny on" data-fdd="">🎲 随机</button>'
+      + fdDoctypes.map(x => `<button class="chip tiny" data-fdd="${esc(x.k)}" title="${x.min}~${x.max} 字">${esc(x.k)}</button>`).join('');
+    fdSyncDoctypes();
   } catch (e) { $('#fd-types').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+function fdSyncDoctypes() {   // 只有选中「贯彻执行」时才显示文种选择条
+  $('#fd-doctypes').classList.toggle('hidden', fdType() !== 'guanche');
 }
 $('#fd-types').addEventListener('click', e => {
   const t = e.target.closest('[data-fdt]'); if (!t) return;
   document.querySelectorAll('#fd-types .fd-type').forEach(x => x.classList.toggle('on', x === t));
+  fdSyncDoctypes();
+});
+$('#fd-doctypes').addEventListener('click', e => {
+  const b = e.target.closest('[data-fdd]'); if (!b) return;
+  document.querySelectorAll('#fd-doctypes .chip').forEach(x => x.classList.toggle('on', x === b));
 });
 const fdType = () => (document.querySelector('#fd-types .fd-type.on') || {}).dataset?.fdt || 'guina';
+const fdDoctype = () => (document.querySelector('#fd-doctypes .chip.on') || {}).dataset?.fdd || '';
 
 async function loadFindList() {
   const box = $('#fd-list');
@@ -4216,7 +4232,7 @@ $('#fd-gen').onclick = async () => {
   try {
     const d = await api('/api/find/gen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qtype: fdType(), topic: $('#fd-topic').value.trim() }),
+      body: JSON.stringify({ qtype: fdType(), topic: $('#fd-topic').value.trim(), doctype: fdDoctype() }),
     });
     $('#fd-msg').textContent = '';
     openFindRun(d.id); loadFindList(); loadFindTypes();
