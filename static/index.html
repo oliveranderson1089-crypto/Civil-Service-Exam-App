@@ -1487,11 +1487,15 @@
 
 <!-- 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；长按可拖动 -->
 <div id="fab" class="fab">
+  <button class="fab-act" id="fab-shot" title="截图（框选/圈选，可问 AI 或存起来）" hidden>📷<i>截图</i></button>
   <button class="fab-act" id="fab-note" title="随手记一条（不打断当前页面）">📒<i>小记</i></button>
   <button class="fab-act" id="fab-pad" title="草稿纸">📝<i>草稿纸</i></button>
   <button class="fab-act" id="fab-ai" title="AI 助手">AI<i>AI 助手</i></button>
   <button class="fab-main" id="fab-btn" title="工具">✦</button>
 </div>
+
+<!-- 截图裁好后：去哪 -->
+<div id="shot-dest" class="note-sheet hidden" style="z-index:6100;"></div>
 
 <!-- 划重点：结果条 + 重点清单 -->
 <!-- 快速记：悬浮球点开，浮在当前页面上，记完就走，不跳转 -->

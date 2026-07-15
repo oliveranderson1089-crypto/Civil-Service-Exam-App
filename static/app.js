@@ -6133,7 +6133,8 @@ function renderCkList() {
         <button class="cki-star${on ? ' on' : ''}" data-ckstar="${esc(b)}:${it.id}"
           title="${tip}">${on ? '★' : '☆'}</button>
         ${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
-      ${it.content ? `<div class="cki-c">${esc(it.content)}</div>` : ''}
+      ${it.meaning ? `<div class="cki-mean"><b>释义</b>${esc(it.meaning)}</div>` : ''}
+      ${it.content ? `<div class="cki-c">${b === '实词' && it.meaning ? '<span class="cki-c-lab">搭配</span>' : ''}${esc(it.content)}</div>` : ''}
       ${note ? `<div class="cki-n">${(ckKind === 'classic' || b === '古诗文') ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
       ${(b === '上位词') ? '<div class="cki-more">点开看每个下位词的典故 / 出处 / 怎么考 ›</div>'
         : (b === '成语' || b === '实词') ? '<div class="cki-more">点开看典故 / 出处 / 怎么考 ›</div>' : ''}
@@ -6362,7 +6363,7 @@ const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e' };
 const RV_INTERVALS = [1, 2, 4, 7, 15, 30, 60];
 let rvQueue = [], rvTotal = 0, rvDoneN = 0;
 /* 词语句子 / 每日积累 / 错题 各背各的，不混成一副牌 */
-let rvAll = [], rvGroup = 'word';
+let rvAll = [], rvGroup = 'word', rvDoneToday = {};
 const RV_GROUP_NAME = { word: '词语句子', daily: '每日积累', wrongq: '错题' };
 /* 每日复习量：一天能背多少因人而异。堆太多就不想背了 —— 超出上限的**不会丢**，
    只是今天不出现（到期时间不变，明天照样在）。0 = 不限。 */
@@ -6412,6 +6413,7 @@ async function loadReview() {
     const d = await api('/api/review/today');
     rvAll = d.items || [];
     rvLim = d.limits || rvLim; rvPool = d.pool || rvPool;
+    rvDoneToday = d.done_today || {};
     if (rvLim) rvLimRender();
     const g = d.groups || {};
     document.querySelectorAll('[data-rvg]').forEach(b => {
@@ -6433,6 +6435,12 @@ function rvSelect(group) {
   $('#rv-done').classList.add('hidden');
   if (!rvTotal) {
     $('#rv-card-wrap').classList.add('hidden');
+    // 这个板块今天做过（额度用满）→ 明说「已完成 N 条」，别让人以为是空的/出错
+    const done = rvDoneToday[group] || 0;
+    const lim = (rvLim || {})[group] || 0;
+    $('#rv-empty').innerHTML = done > 0
+      ? `<p class="empty">✅ 「${RV_GROUP_NAME[group] || ''}」今日已完成 <b>${done}</b> 条${lim ? '（每日量 ' + lim + '）' : ''}，明天见～<br><span style="font-size:13px;color:var(--muted)">想多背可到「每日复习量」调高上限。</span></p>`
+      : '<p class="empty">🎉 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p>';
     $('#rv-empty').classList.remove('hidden');
     return;
   }
@@ -7483,6 +7491,9 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   $('#fab-ai').onclick = () => { fabClose(); openAI(); };
   $('#fab-note').onclick = () => { fabClose(); qnOpen(); };   // 📒 随手记（浮层，不跳走）
   $('#fab-pad').onclick = () => { fabClose(); padToggle(); };
+  // 📷 截图只有电脑桌面版有（壳负责抓屏）；手机截图交给系统，不放这
+  if (window.__desktopShot) $('#fab-shot').hidden = false;
+  $('#fab-shot').onclick = () => { fabClose(); shotAsk('menu'); };
   document.addEventListener('pointerdown', e => {          // 点别处收起扇出
     if (fab.classList.contains('open') && !e.target.closest('#fab')) fabClose();
   }, true);
@@ -8872,10 +8883,11 @@ $('#ai-panel').addEventListener('drop', e => {
 
 /* ---- #13 截图：壳抓图（GNOME 区域选择，鼠标/笔都能拖）→ 回到网页再用笔自由圈 ---- */
 let shotImg = null, shotPts = [], shotRect = null, shotDraw = false, shotPen = false;
-let shotCv, shotCtx;
+let shotCv, shotCtx, shotDest = 'ai';        // 截完去哪：ai=直接问AI；menu=让用户选（AI/小记/资料库）
 
-function shotAsk() {
+function shotAsk(dest) {
   if (!window.__desktopShot) { toast('截图功能只在电脑桌面版里有', true); return; }
+  shotDest = dest || 'ai';
   toast('拖选要截的区域…');
   deskMsg({ a: 'shot' });
 }
@@ -8950,7 +8962,7 @@ function shotBind() {
   $('#shot-redo').onclick = () => { shotPts = []; shotRect = null; shotPaint(); };
   $('#shot-all').onclick = () => { shotPts = []; shotRect = null; shotSend(true); };
   $('#shot-ok').onclick = () => shotSend(false);
-  $('#ai-shot').onclick = shotAsk;
+  $('#ai-shot').onclick = () => shotAsk('ai');       // AI 面板里的截图：直接问 AI
 }
 function shotSend(whole) {
   if (!shotImg) return;
@@ -8983,9 +8995,49 @@ function shotSend(whole) {
     if (!b) return;
     $('#shot').classList.add('hidden');
     shotImg = null;
-    openAI();
-    aiHandleAttach(new File([b], '截图.png', { type: 'image/png' }));
+    const file = new File([b], '截图' + Date.now() + '.png', { type: 'image/png' });
+    if (shotDest === 'menu') shotChoose(file);      // 工具球来的：让用户选去哪
+    else { openAI(); aiHandleAttach(file); }        // AI 面板来的：直接问 AI
   }, 'image/png');
+}
+// 截好后选去处：问 AI / 存到小记 / 存到资料库
+function shotChoose(file) {
+  const el = $('#shot-dest');
+  const url = URL.createObjectURL(file);
+  el.innerHTML = `<div class="ns-mask" data-sheet-close></div>
+    <div class="ns-panel">
+      <div class="ns-handle"></div>
+      <div class="ns-title">📷 截图好了，怎么用它？</div>
+      <img src="${url}" style="max-width:100%;max-height:38vh;display:block;margin:0 auto 12px;border-radius:8px;">
+      <div class="acm-list">
+        <button data-sd="ai">🤖 问 AI（讲解 / 出处 / 怎么做）</button>
+        <button data-sd="note">📒 存到小记</button>
+        <button data-sd="mat">📚 存到资料库</button>
+      </div>
+    </div>`;
+  el.classList.remove('hidden');
+  const close = () => { el.classList.add('hidden'); URL.revokeObjectURL(url); };
+  el.querySelector('.ns-mask').onclick = close;
+  el.querySelectorAll('[data-sd]').forEach(btn => {
+    btn.onclick = () => {
+      const d = btn.dataset.sd; close();
+      if (d === 'ai') { openAI(); aiHandleAttach(file); }
+      else if (d === 'note') {
+        if ($('#qnote').classList.contains('hidden')) qnOpen();
+        qnAddImgs([file]); toast('已加到小记，写两句就能记下');
+      } else if (d === 'mat') { uploadShot(file); }
+    };
+  });
+}
+async function uploadShot(file) {
+  toast('上传到资料库…');
+  const fd = new FormData();
+  fd.append('file', file, file.name); fd.append('board', ''); fd.append('section', ''); fd.append('title', '');
+  try {
+    await api('/api/materials', { method: 'POST', body: fd });
+    toast('已存到资料库（未分类）');
+    if ((stack[stack.length - 1] || {}).view === 'materials') loadMaterials();
+  } catch (e) { toast(e.message, true); }
 }
 shotBind();
 

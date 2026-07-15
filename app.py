@@ -750,6 +750,10 @@ def init_db():
     for col in ("example", "example_src", "confuse"):
         if col not in _cols(con, "changkao_items"):
             con.execute("ALTER TABLE changkao_items ADD COLUMN %s TEXT" % col)
+    # 高频实词的词义：原来只有 content=常用搭配（履行→责任/职责/使命…），没有这个词本身是啥意思。
+    # 加一列 meaning，由 build_ck_meaning.py 先查内置词典、查不到用 AI 补齐。
+    if "meaning" not in _cols(con, "changkao_items"):
+        con.execute("ALTER TABLE changkao_items ADD COLUMN meaning TEXT")
     # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
     if "mat_boards" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
@@ -8226,7 +8230,7 @@ def changkao_items():
         return jsonify({"board": board, "kind": "hyper", "items": [
             {"id": r["id"], "title": r["hyper"], "content": r["subs"], "note": r["note"]} for r in rows]})
     # 成语/实词来自老师讲义，插入顺序就是考频从高到低的顺序
-    rows = db.execute("SELECT id, title, content, note, freq FROM changkao_items WHERE board=? "
+    rows = db.execute("SELECT id, title, content, note, freq, meaning FROM changkao_items WHERE board=? "
                       "ORDER BY id LIMIT 1000", (board,)).fetchall()
     return jsonify({"board": board, "kind": "text", "items": [dict(r) for r in rows]})
 
@@ -9038,17 +9042,26 @@ def _review_due(db, u, today):
     n_ck = 894 if _lw == 0 else max(120, _lw * 3)
     if n_ck > 0:
         for r in db.execute(
-                "SELECT id, board, title, content, note, example, example_src FROM changkao_items "
-                "WHERE board IN ('成语','实词') "
+                "SELECT id, board, title, content, note, example, example_src, meaning "
+                "FROM changkao_items WHERE board IN ('成语','实词') "
                 "ORDER BY COALESCE(freq,0) DESC, id LIMIT ?", (n_ck,)):
             body = (r["content"] or "").strip()
-            back = body + (("\n\n📌 " + r["note"]) if r["note"] else "")
+            # 实词的 content 是「常用搭配」，词义单独放在 meaning —— 背面先给词义、再给搭配，才记得住
+            mean = (r["meaning"] or "").strip()
+            parts = []
+            if mean:
+                parts.append(("释义：" if r["board"] == "实词" else "") + mean)
+            if body:
+                parts.append(("搭配：" + body) if r["board"] == "实词" and mean else body)
+            back = "\n".join(parts)
+            if r["note"]:
+                back += "\n\n📌 " + r["note"]
             if r["example"]:                       # 光有释义记不住怎么用，背面给个例句
                 back += "\n\n✍️ 例句：" + r["example"] + (
                     ("\n　　—— " + r["example_src"]) if r["example_src"] else "")
             check("changkao", r["id"], "2000-01-01", {          # 全局内容，不按收录时间等一天
                 "title": r["title"] or "", "sub": r["board"] or "常考",
-                "body": body[:90],
+                "body": (mean or body)[:90],
                 "front": r["title"] or "", "front_sub": "常考 · " + (r["board"] or ""),
                 "back": back or "（无释义）"})
 
@@ -9154,15 +9167,25 @@ def review_today():
     for it in due:
         it["group"] = RV_GROUP.get(it["kind"], "wrongq")
         pool[it["group"]] += 1
+    # 今天已经复习过、且成功推到以后的（认识/模糊 → next_due>today）算已完成，要**从每日额度里扣掉**。
+    # 不然「每日复习量 40」只截断每次显示多少 —— 做完 40 条一刷新，池子里剩下的又冒出 40 条，
+    # 感觉像「进度被重置」。忘记的（next_due=today）不算完成，它本来就该今天再出现。
+    done_today = {"word": 0, "daily": 0, "wrongq": 0}
+    for r in db.execute(
+            "SELECT kind, COUNT(*) c FROM review_state "
+            "WHERE user_id=? AND last_done=? AND next_due>? GROUP BY kind",
+            (uid(), today, today)):
+        done_today[RV_GROUP.get(r["kind"], "wrongq")] += r["c"]
     kept, used = [], {"word": 0, "daily": 0, "wrongq": 0}
     for it in due:
         g = it["group"]
-        if lim[g] and used[g] >= lim[g]:      # 上限 0 = 不限
+        if lim[g] and (used[g] + done_today[g]) >= lim[g]:   # 上限 0 = 不限；今天做过的占额度
             continue
         used[g] += 1
         kept.append(it)
     return jsonify({"today": today, "count": len(kept), "items": kept,
-                    "groups": used, "pool": pool, "limits": lim})
+                    "groups": used, "pool": pool, "limits": lim,
+                    "done_today": done_today})
 
 
 @app.post("/api/review/done")

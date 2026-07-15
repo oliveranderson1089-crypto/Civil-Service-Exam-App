@@ -1670,6 +1670,13 @@ body.dark .tk-prog{background:#182338;color:#8fb4e6;}
 .cki-del:active{opacity:1;}
 .cki-c{font-size:14px;color:#37424f;line-height:1.75;margin-top:5px;}
 .cki-n{font-size:12.5px;color:#8a93a2;line-height:1.6;margin-top:6px;}
+/* 高频实词的词义 */
+.cki-mean{font-size:13.5px;color:#37424f;line-height:1.7;margin-top:6px;background:#f4f8ff;
+  border-left:3px solid var(--blue);border-radius:0 8px 8px 0;padding:6px 10px;}
+.cki-mean b{color:#1a6fb5;font-size:11.5px;margin-right:6px;font-weight:700;}
+.cki-c-lab{display:inline-block;font-size:11px;color:#8a93a2;background:#eef1f5;
+  border-radius:5px;padding:0 6px;margin-right:6px;vertical-align:1px;}
+body.dark .cki-mean{background:#16233a;}
 .ck-item[data-cki]{cursor:pointer;}
 
 /* —— 理论基础 —— */
