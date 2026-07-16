@@ -3020,6 +3020,32 @@ def api_search():
         results.append({"type": "work", "id": r["id"], "title": r["title"] or "篇目",
                         "board": "经典著作 · " + (r["book"] or ""),
                         "snippet": _snippet(body if ql in body.lower() else (r["interpretation"] or ""), q)})
+    # 手写批注：搜「我在哪儿圈过这句话」。锚里存着压着的原文（PDF 的取自 textLayer），
+    # 所以这里搜的是**你标过的内容**，不只是文件名。同一处只出一条（一句话上可能划了好几笔）。
+    seen_ann = set()
+    for r in db.execute("SELECT id,target,anchor_type,anchor FROM annotations "
+                        "WHERE user_id=? AND anchor LIKE ? ORDER BY id DESC LIMIT 200",
+                        (uid(), like)):
+        try:
+            a = json.loads(r["anchor"] or "{}")
+        except Exception:
+            continue
+        quote = (a.get("quote") or "").strip()
+        if not quote or ql not in quote.lower():
+            continue
+        sent = _ann_sentence(a) or quote        # 同一段上的好几笔＝同一处，按句子去重（见 _ann_sentence）
+        key = (r["target"], sent)
+        if key in seen_ann:
+            continue
+        seen_ann.add(key)
+        where, mat = _ann_where(db, uid(), r["target"])
+        if a.get("page"):
+            where += " · 第 %d 页" % a["page"]
+        results.append({"type": "annot", "id": r["id"], "title": sent[:40],
+                        "board": where, "target": r["target"], "mat": mat,
+                        "snippet": _snippet((a.get("prefix") or "") + quote + (a.get("suffix") or ""), q)})
+        if len(seen_ann) >= 12:
+            break
     return jsonify({"results": results, "q": q})
 
 
@@ -5104,6 +5130,49 @@ _ANN_TOTAL_MAX = 4_000_000   # 整页合计上限（压缩后一整页重度批�
 _ANN_LIST_MAX = 3000      # 读回上限：POST 是逐条加的，没有条数上限，别让单页长到把 load 拖垮
 
 
+_ANN_MAT_RE = re.compile(r"/api/materials/(\d+)/")
+_ANN_SENT_END = "。！？；!?;\n"
+
+
+def _ann_sentence(a):
+    """锚句是从落笔点截的 16 个字，本身是半截话（"什么（一句话概括几个主题）尝试使"）——
+    定位够用，但拿给人看不行。用前后文补成一句完整的。
+    它同时也是**去重的依据**：同一段上画了好几笔，每笔落点不同、quote 各不相同（滑动窗口），
+    按 quote 去重等于没去 —— 会冒出七八张几乎一样的卡片。按句子去重才是一处一条。"""
+    quote = (a.get("quote") or "").strip()
+    if not quote:
+        return ""
+    ctx = (a.get("prefix") or "") + quote + (a.get("suffix") or "")
+    i = ctx.find(quote)
+    if i < 0:
+        return quote
+    start = 0
+    for p in _ANN_SENT_END:                      # 往前找上一个句末
+        j = ctx.rfind(p, 0, i)
+        if j >= 0 and j + 1 > start:
+            start = j + 1
+    end = len(ctx)
+    for p in _ANN_SENT_END:                      # 往后找下一个句末
+        j = ctx.find(p, i + len(quote))
+        if j >= 0 and j + 1 < end:
+            end = j + 1
+    return ctx[start:end].strip() or quote
+
+
+def _ann_where(db, u, target):
+    """把批注的 target 翻成人看得懂的位置，顺带把资料信息带出来（前端点结果要用，省一次请求）。
+    target 里带着资料的 URL（mat:/api/materials/48/view、view:viewer:/api/materials/99/text），
+    从中抠出 id 查名字。返回 (显示用的位置, {id,name,ext} 或 None)。"""
+    m = _ANN_MAT_RE.search(target or "")
+    if m:
+        r = db.execute("SELECT id, title, orig_name, ext FROM materials WHERE id=? AND user_id=?",
+                       (int(m.group(1)), u)).fetchone()
+        if r:
+            name = r["title"] or r["orig_name"] or "资料"
+            return "批注 · " + name, {"id": r["id"], "name": name, "ext": r["ext"] or ""}
+    return "批注", None
+
+
 def _ann_row(r):
     return {
         "id": r["id"], "target": r["target"], "anchor_type": r["anchor_type"],
@@ -6191,7 +6260,7 @@ def _plan_stats(db, today):
     """给 AI 的「学情快照」：全部来自真实数据，不让它凭空想象。"""
     st = {}
     due = _review_due(db, uid(), today)
-    g = {"word": 0, "daily": 0, "wrongq": 0}
+    g = dict.fromkeys(RV_GROUPS, 0)
     for it in due:
         g[RV_GROUP.get(it["kind"], "wrongq")] += 1
     st["review_due"] = len(due)
@@ -7654,7 +7723,7 @@ def _gen_notifications(db):
     # 今日复习（遗忘曲线到期）
     due = _review_due(db, uid(), today)
     if due:
-        g = {"word": 0, "daily": 0, "wrongq": 0}
+        g = dict.fromkeys(RV_GROUPS, 0)
         for it in due:
             g[RV_GROUP.get(it["kind"], "wrongq")] += 1
         _n(db, "review", today, "今天有 %d 条要复习" % len(due),
@@ -9716,13 +9785,48 @@ def _review_due(db, u, today):
             "title": (r["topic"] or r["kind"] or "素材")[:36], "sub": r["kind"] or "素材",
             "body": body[:90], "front": front, "front_sub": front_sub,
             "back": back or "（无内容）"})
+    # 手写批注：你圈过的地方按遗忘曲线回来找你 —— 圈重点本来就是「这里要紧」的意思，
+    # 圈完再也不见面就白圈了。这是张「回看卡」：正面是你圈的那句话，翻开是它的上下文。
+    #   · 只有带原文的才进（pixel 锚是一坨没内容的像素，进了也没得看）；PDF 的原文取自 textLayer。
+    #   · 同一句话上划了好几笔只提醒一次，按**最早**那一笔的 id 记进度 —— 用升序取，
+    #     这样以后在同一句上再补几笔也不会让复习进度重来。
+    seen_ann = set()
+    # 没 quote 的（pixel 锚）在 SQL 里就滤掉：存量老批注全是 pixel 锚，光一个用户就有好几百条，
+    # 不滤的话 LIMIT 会被它们占满，带原文的新批注一条也取不到。
+    for r in db.execute("SELECT id, target, anchor, created_at FROM annotations "
+                        "WHERE user_id=? AND anchor LIKE '%\"quote\"%' ORDER BY id LIMIT 500", (u,)):
+        try:
+            a = json.loads(r["anchor"] or "{}")
+        except Exception:
+            continue
+        quote = (a.get("quote") or "").strip()
+        if not quote:
+            continue
+        sent = _ann_sentence(a) or quote        # 按句子去重＋卡片给整句（见 _ann_sentence）
+        key = (r["target"], sent)
+        if key in seen_ann:
+            continue
+        seen_ann.add(key)
+        where, _mat = _ann_where(db, u, r["target"])
+        if a.get("page"):
+            where += " · 第 %d 页" % a["page"]
+        ctx = ((a.get("prefix") or "") + quote + (a.get("suffix") or "")).strip()
+        check("annot", r["id"], r["created_at"], {
+            "title": sent[:36], "sub": where, "body": sent[:90],
+            "front": sent, "front_sub": where,
+            "back": ctx or sent})
     return due
 
 
-# 复习分组：词语句子 / 每日积累 / 错题，分开背，不混在一副牌里
-RV_GROUP = {"entry": "word", "classic": "word", "changkao": "word", "sucai": "daily", "wrongq": "wrongq"}
-RV_NAMES = {"word": "词语句子", "daily": "每日积累", "wrongq": "错题"}
-RV_LIMIT_DEF = {"word": 40, "daily": 20, "wrongq": 10}     # 每日复习量默认值（0 = 不限）
+# 复习分组：词语句子 / 每日积累 / 错题，分开背，不混在一副牌里。
+# 加新来源时**只改这里**：/api/review/done 的白名单直接取自它（见那儿的注释）。
+RV_GROUP = {"entry": "word", "classic": "word", "changkao": "word", "sucai": "daily",
+            "annot": "annot", "wrongq": "wrongq"}
+RV_NAMES = {"word": "词语句子", "daily": "每日积累", "annot": "批注", "wrongq": "错题"}
+# 每日复习量默认值（0 = 不限）。批注单独一组：跟「每日积累」挤一个额度的话，素材排在前面，
+# 20 条一占满，圈过的重点一条也出不来（实测过 —— 7 条批注全被截掉）。
+RV_LIMIT_DEF = {"word": 40, "daily": 20, "annot": 10, "wrongq": 10}
+RV_GROUPS = list(RV_LIMIT_DEF)                             # 分组名单只此一份，别再手抄
 
 
 def _rv_limits(db, u):
@@ -9743,7 +9847,7 @@ def review_limits_get():
     db = get_db()
     lim = _rv_limits(db, uid())
     due = _review_due(db, uid(), datetime.now().strftime("%Y-%m-%d"))
-    pool = {"word": 0, "daily": 0, "wrongq": 0}
+    pool = dict.fromkeys(RV_GROUPS, 0)
     for it in due:
         pool[RV_GROUP.get(it["kind"], "wrongq")] += 1
     return jsonify({"limits": lim, "default": RV_LIMIT_DEF, "names": RV_NAMES, "due": pool})
@@ -9771,25 +9875,25 @@ def review_today():
     today = datetime.now().strftime("%Y-%m-%d")
     db = get_db()
     due = _review_due(db, uid(), today)
-    order = {"entry": 0, "classic": 1, "sucai": 2, "wrongq": 3}
+    order = {"entry": 0, "classic": 1, "sucai": 2, "annot": 3, "wrongq": 4}
     # 组内排序：**已经在复习轮里的排前面**（stage>0 说明背过一遍了，别让它一直往后堆），
     # 然后才是新词。被上限截掉的不动 next_due —— 只是今天不出现，明天照样在。
     due.sort(key=lambda x: (order.get(x["kind"], 9), -int(x.get("stage") or 0), x["id"]))
     lim = _rv_limits(db, uid())
-    pool = {"word": 0, "daily": 0, "wrongq": 0}
+    pool = dict.fromkeys(RV_GROUPS, 0)
     for it in due:
         it["group"] = RV_GROUP.get(it["kind"], "wrongq")
         pool[it["group"]] += 1
     # 今天已经复习过、且成功推到以后的（认识/模糊 → next_due>today）算已完成，要**从每日额度里扣掉**。
     # 不然「每日复习量 40」只截断每次显示多少 —— 做完 40 条一刷新，池子里剩下的又冒出 40 条，
     # 感觉像「进度被重置」。忘记的（next_due=today）不算完成，它本来就该今天再出现。
-    done_today = {"word": 0, "daily": 0, "wrongq": 0}
+    done_today = dict.fromkeys(RV_GROUPS, 0)
     for r in db.execute(
             "SELECT kind, COUNT(*) c FROM review_state "
             "WHERE user_id=? AND last_done=? AND next_due>? GROUP BY kind",
             (uid(), today, today)):
         done_today[RV_GROUP.get(r["kind"], "wrongq")] += r["c"]
-    kept, used = [], {"word": 0, "daily": 0, "wrongq": 0}
+    kept, used = [], dict.fromkeys(RV_GROUPS, 0)
     for it in due:
         g = it["group"]
         if lim[g] and (used[g] + done_today[g]) >= lim[g]:   # 上限 0 = 不限；今天做过的占额度

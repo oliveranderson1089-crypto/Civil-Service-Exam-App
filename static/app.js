@@ -2897,7 +2897,8 @@ function hl(text, q) {
   catch (_) { return t; }
 }
 const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能',
-  draft: '草稿本', essay: '范文', gongwen: '应用文', changkao: '常考', theory: '理论', xiyu: '习语', work: '经典著作' };
+  draft: '草稿本', essay: '范文', gongwen: '应用文', changkao: '常考', theory: '理论', xiyu: '习语', work: '经典著作',
+  annot: '批注' };
 // 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
 const FEATURES = [
   { name: '备考规划', desc: '任务清单 · AI 按你的学情排当天计划', kw: '规划助手备考计划学习计划每日计划安排时间距考试', open: () => { openTasks(); setTimeout(() => tkSwitch('plan'), 60); } },
@@ -3019,6 +3020,10 @@ $('#search-results').addEventListener('click', async e => {
     setTimeout(() => { const b = document.querySelector('#news-boards [data-nb="习语"]'); if (b) b.click(); }, 260);
   } else if (r.type === 'work') {
     openWorkDetail(r.id);
+  } else if (r.type === 'annot') {
+    // 批注：打开它所在的那份资料，笔迹会自己按锚贴回原处（PDF 按页、阅读模式按那句话）
+    if (r.mat) openViewer(r.mat.id, r.mat.name, r.mat.ext);
+    else toast('这条批注不在资料库里', true);
   }
 });
 
@@ -6661,12 +6666,12 @@ const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文' 
 const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e' };
 const RV_INTERVALS = [1, 2, 4, 7, 15, 30, 60];
 let rvQueue = [], rvTotal = 0, rvDoneN = 0;
-/* 词语句子 / 每日积累 / 错题 各背各的，不混成一副牌 */
+/* 词语句子 / 每日积累 / 批注 / 错题 各背各的，不混成一副牌 */
 let rvAll = [], rvGroup = 'word', rvDoneToday = {};
-const RV_GROUP_NAME = { word: '词语句子', daily: '每日积累', wrongq: '错题' };
+const RV_GROUP_NAME = { word: '词语句子', daily: '每日积累', annot: '批注', wrongq: '错题' };
 /* 每日复习量：一天能背多少因人而异。堆太多就不想背了 —— 超出上限的**不会丢**，
    只是今天不出现（到期时间不变，明天照样在）。0 = 不限。 */
-const RV_LNAME = { word: '词语句子', daily: '每日积累', wrongq: '错题' };
+const RV_LNAME = { word: '词语句子', daily: '每日积累', annot: '批注', wrongq: '错题' };
 let rvLim = null, rvPool = null;
 function rvLimRender() {
   if (!rvLim) return;
@@ -9109,40 +9114,62 @@ function annRangeOf(nodes, pos, len) {
   }
   return null;
 }
-// 整篇正文只遍历一次，给 relayout 那种「一次定位很多笔」的场景复用（每笔各算一遍＝2N 次全文遍历）
+// 整篇正文只遍历一次，给 relayout 那种「一次定位很多笔」的场景复用（每笔各算一遍＝2N 次全文遍历）。
+// 块之间插 '\n'：锚句才不会横跨标题和正文（见 mkText 的注释）。
 function annCtx(root) {
-  return root ? { full: mkText(root, ANN_SKIP), nodes: mkNodes(root, ANN_SKIP) } : null;
+  return root ? { full: mkText(root, ANN_SKIP, '\n'), nodes: mkNodes(root, ANN_SKIP, '\n') } : null;
 }
-// 屏幕点 → { a: 锚, rect: 锚句现在的位置 }。画在空白处/图片上锚不住 → null，调用方退回 pixel 锚
-function annAnchorAt(root, x, y) {
+// 屏幕点 → { a: 锚, rect: 锚句现在的位置 }。画在空白处/图片上锚不住 → null，调用方退回 pixel 锚。
+// doc：这个点属于哪个文档 —— PDF 在同源 iframe 里，得用它自己的 document 做命中测试（x/y 也要是
+// 那个文档的视口坐标）。mkNodes/mkText/Range 跨 document 直接可用（实测过），所以只有这里要区分。
+function annAnchorAt(root, x, y, doc) {
   if (!root) return null;
+  doc = doc || document;
   let rg = null;
   // caretRangeFromPoint 走的是命中测试：批注画布正盖在文字上，不让开的话命中的是画布（拿到 BODY），
   // 一个锚都生成不出来。临时 pointer-events:none 让它「看穿」画布，取完立刻恢复。
+  // （PDF 那条路的 doc 在 iframe 里，画布在父文档、本来就不挡它，让开也无妨。）
   const cv = $('#ink-cv'), pe = cv ? cv.style.pointerEvents : null;
   if (cv) cv.style.pointerEvents = 'none';
   try {
-    if (document.caretRangeFromPoint) rg = document.caretRangeFromPoint(x, y);
-    else if (document.caretPositionFromPoint) {
-      const p = document.caretPositionFromPoint(x, y);
-      if (p) { rg = document.createRange(); rg.setStart(p.offsetNode, p.offset); }
+    if (doc.caretRangeFromPoint) rg = doc.caretRangeFromPoint(x, y);
+    else if (doc.caretPositionFromPoint) {
+      const p = doc.caretPositionFromPoint(x, y);
+      if (p) { rg = doc.createRange(); rg.setStart(p.offsetNode, p.offset); }
     }
   } catch (_) {}
   if (cv) cv.style.pointerEvents = pe;
   if (!rg || !rg.startContainer || rg.startContainer.nodeType !== 3) return null;
   if (!root.contains(rg.startContainer)) return null;
   const ctx = annCtx(root);
-  const pos = annPosOf(ctx.nodes, rg.startContainer, rg.startOffset);
+  let pos = annPosOf(ctx.nodes, rg.startContainer, rg.startOffset);
   if (pos < 0) return null;
-  // caretRangeFromPoint 在空白处会给「最近的」文本，可能离得很远 —— 验一下真压着字
-  const probe = annRangeOf(ctx.nodes, pos, 1);
+  // caretRangeFromPoint 在空白处会给「最近的」文本，可能离得很远 —— 验一下真压着字。
+  // 在段落右边空白划一道时 caret 会吸到行尾，pos 正好落在块分隔符上 —— 那个位置不属于任何文本
+  // 节点（annRangeOf 两头都不沾），得退一格拿这一块最后那个字来验。
+  let probe = annRangeOf(ctx.nodes, pos, 1);
+  if (!probe && pos > 0) probe = annRangeOf(ctx.nodes, pos - 1, 1);
   if (!probe) return null;
   const b = probe.getBoundingClientRect();
   if (y < b.top - 40 || y > b.bottom + 40) return null;        // 竖直差一行以上＝没压住文本
   const full = ctx.full;
-  const quote = full.slice(pos, pos + ANN_QLEN);
-  if (quote.replace(/\s/g, '').length < 4) return null;        // 太短锚不稳，不如退回 pixel
-  // rect 一并带出去：位置这儿已经算出来了，调用方不必再 annLocate 从头搜一遍
+  const enough = (s) => s.replace(/\s/g, '').length >= 4;      // 太短的锚不稳
+  let quote = full.slice(pos, pos + ANN_QLEN);
+  const nl = quote.indexOf('\n');
+  if (nl >= 0) quote = quote.slice(0, nl);                     // 锚句别跨块（块之间是 '\n'）
+  // 落在这一块的末尾（比如在段落右边的空白上划一道，caret 吸到行尾）→ 往后没字了，
+  // 往前取这一块的尾巴当锚，别让这一笔白白掉回 pixel。
+  if (!enough(quote)) {
+    const bs = full.lastIndexOf('\n', pos - 1) + 1;            // 这一块从哪开始
+    const from = Math.max(bs, pos - ANN_QLEN);
+    const back = full.slice(from, pos);
+    if (enough(back)) { quote = back; pos = from; }
+  }
+  if (!enough(quote)) return null;                             // 这一块本来就没几个字 → 退回 pixel
+  // rect 一并带出去：位置这儿已经算出来了，调用方不必再 annLocate 从头搜一遍。
+  // 注意要取**锚句起点**的矩形：pos 可能刚往前挪过，而 annLocate 以后重定位时给的正是起点的矩形，
+  // 这儿给错的话，第一次 relayout 笔迹就会跳一下。
+  const rr = annRangeOf(ctx.nodes, pos, 1);
   return {
     a: {
       quote,
@@ -9150,7 +9177,7 @@ function annAnchorAt(root, x, y) {
       suffix: full.slice(pos + quote.length, pos + quote.length + ANN_CTX),
       start: pos,
     },
-    rect: b,
+    rect: rr ? rr.getBoundingClientRect() : b,
   };
 }
 // 锚 → 这句话现在的屏幕矩形。找不到＝内容改了（孤儿标注），返回 null。
@@ -9235,17 +9262,24 @@ const Ink = {
       return !!(doc && doc.querySelector('.page[data-page-number]'));
     } catch (_) { return false; }
   },
-  // 屏幕点 → PDF 锚 {page, pw}。pw＝落笔时的页宽，用来算笔粗该跟着缩放放大多少倍
+  // 屏幕点 → PDF 锚 {page, pw, quote?}。pw＝落笔时的页宽，用来算笔粗该跟着缩放放大多少倍。
   pdfAnchorAt(clientX, clientY) {
     const doc = this.pdfDoc(), g = this._geo;
     if (!doc || !g || !g.fr) return null;
     try {
-      const el = doc.elementFromPoint(clientX - g.fr.left, clientY - g.fr.top);
+      const ix = clientX - g.fr.left, iy = clientY - g.fr.top;    // 换算成 iframe 自己的视口坐标
+      const el = doc.elementFromPoint(ix, iy);
       const page = el && el.closest && el.closest('.page[data-page-number]');
       if (!page) return null;
       const b = page.getBoundingClientRect();
       if (!b.width || !b.height) return null;
-      return { page: +page.dataset.pageNumber, pw: Math.round(b.width) };
+      const a = { page: +page.dataset.pageNumber, pw: Math.round(b.width) };
+      // 顺带记下这一笔压着的是哪句话（pdf.js 的 textLayer 里有文本）。**定位仍然只靠 page + 页内
+      // 归一化坐标**，quote 纯属附加信息 —— 但没有它，PDF 批注就只是一坨没内容的像素：搜不到、
+      // 也进不了复习。而用户画得最多的恰恰是 PDF。
+      const hit = annAnchorAt(page, ix, iy, doc);
+      if (hit) { a.quote = hit.a.quote; a.prefix = hit.a.prefix; a.suffix = hit.a.suffix; }
+      return a;
     } catch (_) { return null; }
   },
   /* ---------- 三种锚共用一个仿射变换 ----------
@@ -10629,24 +10663,39 @@ function mkPageRoot() {                 // 当前页面的「正文」在哪
   const pick = view.querySelector('.poly-reader, .cd-wrap, #cd-wrap, .doc-blocks, .aih-scroll');
   return pick || view;
 }
+// 段落/标题这些「块」：块与块之间的文字本来就不连着读
+const MK_BLOCK = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, pre, section, article, div';
+const mkBlockOf = (n) => (n.parentElement ? n.parentElement.closest(MK_BLOCK) : null);
 // skip 不传＝划重点用的名单（跳过 <mark>）；文本锚要传 ANN_SKIP（看得见 <mark> 里的字）。
-// 注意 mkText 和 mkNodes 必须用同一份 skip，否则算出来的偏移对不上。
-function mkText(root, skip) {
+// sep 不传＝所有文本节点直接首尾相接（划重点的老行为：它只拿去 indexOf，不在乎读不读得通）；
+//   文本锚要传 '\n' —— 不然标题和正文会粘成一串（"…学习问答今天问了什么…"），锚句跨块、
+//   拿去做复习卡就是一坨读不通的东西，也没法按句子去重。
+// **mkText 和 mkNodes 必须传同一份 skip 和 sep**，否则算出来的偏移对不上。
+function mkText(root, skip, sep) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (n) => (!n.nodeValue.trim() || n.parentElement.closest(skip || MK_SKIP))
       ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
-  let s = '';
-  while (w.nextNode()) s += w.currentNode.nodeValue;
+  let s = '', prev = null;
+  while (w.nextNode()) {
+    const n = w.currentNode;
+    if (sep) { const b = mkBlockOf(n); if (prev && b !== prev) s += sep; prev = b; }
+    s += n.nodeValue;
+  }
   return s;
 }
-function mkNodes(root, skip) {
+function mkNodes(root, skip, sep) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (n) => (!n.nodeValue.trim() || n.parentElement.closest(skip || MK_SKIP))
       ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
-  const out = []; let pos = 0;
-  while (w.nextNode()) { out.push({ n: w.currentNode, start: pos }); pos += w.currentNode.nodeValue.length; }
+  const out = []; let pos = 0, prev = null;
+  while (w.nextNode()) {
+    const n = w.currentNode;
+    if (sep) { const b = mkBlockOf(n); if (prev && b !== prev) pos += sep.length; prev = b; }
+    out.push({ n, start: pos });
+    pos += n.nodeValue.length;
+  }
   return out;
 }
 function mkWrapOne(root, hit) {
