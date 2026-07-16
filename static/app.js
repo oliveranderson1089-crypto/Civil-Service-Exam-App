@@ -7307,6 +7307,7 @@ function pickFriend(friends, title) {
 
 /* ================= 聊天 ================= */
 let chTab = 'convos', crFid = 0, crName = '', crLastId = 0, crPoll = 0;
+let crFriendAvatar = '', crMeAvatar = '', crLastTime = '';   // 头像 + 上一条时间（做时间分隔）
 function openChat() { push({ view: 'chat', title: '聊天' }); chSwitch('convos'); ensureNotifyPerm(); }
 function chSwitch(t) {
   chTab = t;
@@ -7317,6 +7318,13 @@ function chSwitch(t) {
   else loadAddFriend();
 }
 $('#ch-tabs').addEventListener('click', e => { const b = e.target.closest('[data-cht]'); if (b) chSwitch(b.dataset.cht); });
+// 头像：有图就贴图，没图就用名字首字（微信/QQ 那种圆头像）
+function avHtml(url, name, cls) {
+  const init = esc((name || '?').trim().slice(0, 1).toUpperCase() || '?');
+  return url
+    ? `<div class="${cls} has-img" style="background-image:url('${esc(url)}')"></div>`
+    : `<div class="${cls}">${init}</div>`;
+}
 async function loadConvos() {
   $('#ch-convos').innerHTML = '<p class="empty">加载中…</p>';
   try {
@@ -7325,7 +7333,7 @@ async function loadConvos() {
     if (!d.conversations.length) { $('#ch-convos').innerHTML = '<p class="empty">还没有会话。去「好友」找人聊，或「＋ 加好友」。</p>'; return; }
     $('#ch-convos').innerHTML = d.conversations.map(c => `
       <div class="ch-convo" data-crf="${c.id}" data-crn="${esc(c.username)}">
-        <div class="ch-av">${esc(c.username.slice(0, 1).toUpperCase())}</div>
+        ${avHtml(c.avatar, c.username, 'ch-av')}
         <div class="ch-cmid"><div class="ch-cn">${esc(c.username)}</div><div class="ch-cp">${esc(c.preview || '')}</div></div>
         <div class="ch-cright"><div class="ch-ct">${esc((c.time || '').slice(5, 16))}</div>${c.unread ? `<span class="ch-un">${c.unread}</span>` : ''}</div>
       </div>`).join('');
@@ -7341,7 +7349,7 @@ async function loadFriends() {
     if (!d.friends.length) { $('#ch-friends').innerHTML = '<p class="empty">还没有好友。点「＋ 加好友」搜用户名或 ID 添加。</p>'; return; }
     $('#ch-friends').innerHTML = d.friends.map(f => `
       <div class="ch-frow" data-crf="${f.id}" data-crn="${esc(f.username)}">
-        <div class="ch-av">${esc(f.username.slice(0, 1).toUpperCase())}</div>
+        ${avHtml(f.avatar, f.username, 'ch-av')}
         <div class="ch-cn">${esc(f.username)}</div>
         <button class="ch-chat" data-crf="${f.id}" data-crn="${esc(f.username)}">聊天</button>
         <button class="ch-fdel" data-fdel="${f.id}" title="删除好友">✕</button></div>`).join('');
@@ -7390,6 +7398,7 @@ $('#ch-add').addEventListener('click', async e => {
 // —— 聊天窗口 ——
 function openChatroom(fid, name) {
   crFid = fid; crName = name; crLastId = 0;
+  crFriendAvatar = ''; crMeAvatar = SKIN.avatar || ''; crLastTime = '';
   push({ view: 'chatroom', title: name });
   $('#cr-msgs').innerHTML = '<p class="empty">加载中…</p>';
   crLoad(true);
@@ -7405,17 +7414,21 @@ async function crLoad(first) {
   crLoading = true;
   try {
     const d = await api('/api/chat/' + crFid + '?after=' + crLastId);
+    if (d.friend_avatar !== undefined) crFriendAvatar = d.friend_avatar || '';
+    if (d.me_avatar) crMeAvatar = d.me_avatar;
     if (!crName && d.friend) {   // 从通知点进来时没带名字，拿到后补上标题
       crName = d.friend;
       const top = stack[stack.length - 1];
       if (top && top.view === 'chatroom') { top.title = crName; $('#top-title').textContent = crName; }
     }
-    if (first) $('#cr-msgs').innerHTML = '';
+    if (first) { $('#cr-msgs').innerHTML = ''; crLastTime = ''; }
     if (!d.messages.length && first) { $('#cr-msgs').innerHTML = '<p class="empty">还没有消息，发一条打个招呼吧 👋</p>'; }
     if (d.messages.length && $('#cr-msgs').querySelector('.empty')) $('#cr-msgs').innerHTML = '';
     const box = $('#cr-msgs');
     for (const m of d.messages) {
       crLastId = Math.max(crLastId, m.id);
+      if (crShouldSep(crLastTime, m.time)) box.insertAdjacentHTML('beforeend', `<div class="cr-time">${esc(crTimeLabel(m.time))}</div>`);
+      crLastTime = m.time || crLastTime;
       box.insertAdjacentHTML('beforeend', crMsgHtml(m));
     }
     if (d.messages.length) { box.scrollTop = box.scrollHeight; requestAnimationFrame(() => box.scrollTop = box.scrollHeight); }
@@ -7425,9 +7438,25 @@ async function crLoad(first) {
 function crMsgHtml(m) {
   let inner;
   if (m.kind === 'image') inner = `<img class="cr-img" src="/api/chat/file/${m.file_id}?inline=1" data-lbimg="/api/chat/file/${m.file_id}?inline=1">`;
-  else if (m.kind === 'file') inner = `<a class="cr-file" href="/api/chat/file/${m.file_id}" download>${dvIcon((m.file_name || '').split('.').pop())} <span>${esc(m.file_name || '文件')}</span><em>${fSize(m.file_size)}</em></a>`;
+  else if (m.kind === 'file') inner = `<a class="cr-file" href="/api/chat/file/${m.file_id}" download><span class="cr-fic">${dvIcon((m.file_name || '').split('.').pop())}</span><span class="cr-fmid"><span class="cr-fn">${esc(m.file_name || '文件')}</span><em>${fSize(m.file_size)}</em></span></a>`;
   else inner = esc(m.body).replace(/\n/g, '<br>');
-  return `<div class="cr-row ${m.mine ? 'mine' : 'theirs'}"><div class="cr-bubble ${m.kind}">${inner}</div></div>`;
+  const av = avHtml(m.mine ? crMeAvatar : crFriendAvatar, m.mine ? '我' : crName, 'cr-av');
+  return `<div class="cr-row ${m.mine ? 'mine' : 'theirs'}">${av}<div class="cr-bubble ${m.kind}">${inner}</div></div>`;
+}
+// 时间分隔：首条、或与上一条间隔超过 5 分钟就插一条居中时间（微信那样）
+function crShouldSep(prev, cur) {
+  if (!cur) return false;
+  if (!prev) return true;
+  return (new Date(cur.replace(/-/g, '/')) - new Date(prev.replace(/-/g, '/'))) > 5 * 60 * 1000;
+}
+function crTimeLabel(t) {
+  if (!t) return '';
+  const d = new Date(t.replace(/-/g, '/')), now = new Date();
+  const hm = t.slice(11, 16);
+  if (d.toDateString() === now.toDateString()) return hm;                 // 今天：只显示 时:分
+  const yst = new Date(now); yst.setDate(now.getDate() - 1);
+  if (d.toDateString() === yst.toDateString()) return '昨天 ' + hm;
+  return t.slice(5, 10).replace('-', '月') + '日 ' + hm;
 }
 $('#cr-msgs').addEventListener('click', e => { const im = e.target.closest('[data-lbimg]'); if (im) lightbox(im.dataset.lbimg); });
 $('#cr-send').onclick = crSendText;

@@ -9933,11 +9933,13 @@ def _are_friends(db, a, b):
 def friends_list():
     db = get_db()
     rows = db.execute(
-        "SELECT u.id, u.username FROM friends f JOIN users u ON u.id=f.friend_id "
+        "SELECT u.id, u.username, u.avatar FROM friends f JOIN users u ON u.id=f.friend_id "
         "WHERE f.user_id=? ORDER BY u.username", (uid(),)).fetchall()
     nreq = db.execute("SELECT COUNT(*) FROM friend_reqs WHERE to_uid=? AND status='pending'",
                       (uid(),)).fetchone()[0]
-    return jsonify({"friends": [dict(r) for r in rows], "n_req": nreq})
+    friends = [{"id": r["id"], "username": r["username"],
+                "avatar": ("/skin/%d/%s" % (r["id"], r["avatar"])) if r["avatar"] else ""} for r in rows]
+    return jsonify({"friends": friends, "n_req": nreq})
 
 
 @app.get("/api/friends/search")
@@ -10196,7 +10198,8 @@ def chat_convos():
         prev = ""
         if last:
             prev = last["body"] if last["kind"] == "text" else ("[图片]" if last["kind"] == "image" else "[文件] " + (last["file_name"] or ""))
-        convos.append({"id": fid, "username": _uname(db, fid), "preview": prev[:30],
+        convos.append({"id": fid, "username": _uname(db, fid), "avatar": _uavatar(db, fid),
+                       "preview": prev[:30],
                        "time": (last["created_at"] if last else ""), "unread": unread,
                        "last_id": last["id"] if last else 0})
     convos.sort(key=lambda c: -(c["last_id"]))
@@ -10225,7 +10228,8 @@ def chat_history(fid):
     db.execute("DELETE FROM notifications WHERE user_id=? AND kind='chat' AND link=?",
                (me, "chatroom:%d" % fid))
     db.commit()
-    return jsonify({"messages": out, "me": me, "friend": _uname(db, fid)})
+    return jsonify({"messages": out, "me": me, "friend": _uname(db, fid),
+                    "friend_avatar": _uavatar(db, fid), "me_avatar": _uavatar(db, me)})
 
 
 @app.post("/api/chat/<int:fid>")
@@ -10296,6 +10300,13 @@ def chat_unread():
 def _uname(db, user_id):
     r = db.execute("SELECT username FROM users WHERE id=?", (user_id,)).fetchone()
     return (r["username"] if r else "") or "好友"
+
+
+def _uavatar(db, user_id):
+    """某用户的头像 URL（公开可读的 /skin 路径）；没设头像返回空串。"""
+    r = db.execute("SELECT avatar FROM users WHERE id=?", (user_id,)).fetchone()
+    fn = (r["avatar"] if r else "") or ""
+    return ("/skin/%d/%s" % (user_id, fn)) if fn else ""
 
 
 def _chat_center_notify(db, to_uid, from_uid, from_name, preview, mid):
