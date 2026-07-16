@@ -7544,7 +7544,13 @@ async function crSendFiles(files) {
   if (crSending) return;
   crSending = true;
   for (const f of files) {
-    const fd = new FormData(); fd.append('file', f, f.name);
+    // 图片先在本地压缩（缩到 ≤1600px、JPEG），传得快、对方加载也快
+    let blob = f, name = f.name;
+    if (/^image\//.test(f.type)) {
+      try { blob = await compressImage(f); } catch (_) { blob = f; }
+      if (blob !== f && !/\.jpe?g$/i.test(name)) name = name.replace(/\.[^.]+$/, '') + '.jpg';
+    }
+    const fd = new FormData(); fd.append('file', blob, name);
     try { await api('/api/chat/' + crFid, { method: 'POST', body: fd }); } catch (err) { toast(f.name + '：' + err.message, true); }
   }
   crSending = false;

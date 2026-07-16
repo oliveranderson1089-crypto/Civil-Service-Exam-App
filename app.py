@@ -10275,13 +10275,22 @@ def chat_send(fid):
 
 @app.get("/api/chat/file/<int:fid>")
 def chat_file(fid):
-    """下载/查看聊天里的文件（就是收件人云盘里那一份）。"""
+    """下载/查看聊天里的文件。消息里存的是收件人云盘那一份的 id，所以**发送方**看自己发的图
+    时 owner_id 不等于自己 —— 改成：只要你是这条消息的收发双方之一，就放行，并从文件真正的
+    所有者目录里取。"""
     db = get_db()
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=?", (fid, uid())).fetchone()
+    me = uid()
+    r = db.execute("SELECT * FROM drive_files WHERE id=?", (fid,)).fetchone()
     if not r:
         return "文件不存在", 404
+    owner = r["owner_id"]
+    if owner != me:                    # 不是自己云盘里的 → 必须是自己参与的聊天引用了它
+        party = db.execute("SELECT 1 FROM chat_msgs WHERE file_id=? AND (from_uid=? OR to_uid=?)",
+                           (fid, me, me)).fetchone()
+        if not party:
+            return "无权访问", 403
     inline = request.args.get("inline") == "1"
-    return send_file(os.path.join(_drive_dir(uid()), r["stored_name"]),
+    return send_file(os.path.join(_drive_dir(owner), r["stored_name"]),
                      as_attachment=not inline, download_name=r["name"],
                      mimetype=r["mime"] or "application/octet-stream")
 
