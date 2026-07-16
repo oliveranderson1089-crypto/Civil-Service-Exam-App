@@ -5009,6 +5009,11 @@ def aichat_send(cid):
     if not c:
         return jsonify({"error": "会话不存在"}), 404
     sys_prompt = ("你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。\n"
+                  "【排版要求】用 Markdown 让回答层次分明、重点突出：\n"
+                  "· 用 `##`/`###` 小标题分段，用有序/无序列表列要点，别写成一大坨。\n"
+                  "· **把关键结论、术语、重点内容加粗**（`**这样**`）—— 不只是加粗标题；比如给古诗词就把**整首诗**"
+                  "或关键名句加粗突出，讲知识点就把**核心结论和易错点**加粗。\n"
+                  "· 需要时用 `>` 引用来突出原文/诗句，用表格对比。\n"
                   "你能**真的操作这个应用**（通过给你的工具）：用户让你收录成语/词语就用 add_word 真的加进去、"
                   "让你打开某个功能就用 open_feature 打开、让你记笔记就用 create_note。别只是嘴上说做了 —— 要调用工具真做。做完再简短告诉用户结果。\n"
                   "【错题识别】当用户发来一段内容（常常是截图 OCR 出来的文字）时，判断它是不是一道完整的题目：\n"
@@ -10203,6 +10208,15 @@ def chat_convos():
                        "time": (last["created_at"] if last else ""), "unread": unread,
                        "last_id": last["id"] if last else 0})
     convos.sort(key=lambda c: -(c["last_id"]))
+    # 文件传输助手（和自己的会话，跨设备传文件/暂存），永远置顶
+    slast = db.execute("SELECT * FROM chat_msgs WHERE from_uid=? AND to_uid=? ORDER BY id DESC LIMIT 1",
+                       (me, me)).fetchone()
+    sprev = ""
+    if slast:
+        sprev = slast["body"] if slast["kind"] == "text" else ("[图片]" if slast["kind"] == "image" else "[文件] " + (slast["file_name"] or ""))
+    convos.insert(0, {"id": me, "username": "文件传输助手", "avatar": "", "self": True,
+                      "preview": sprev[:30], "time": (slast["created_at"] if slast else ""),
+                      "unread": 0, "last_id": (slast["id"] if slast else 0)})
     return jsonify({"conversations": convos, "unread": total_unread})
 
 
@@ -10210,7 +10224,7 @@ def chat_convos():
 def chat_history(fid):
     db = get_db()
     me = uid()
-    if not _are_friends(db, me, fid):
+    if fid != me and not _are_friends(db, me, fid):   # fid==me = 文件传输助手
         return jsonify({"error": "不是好友"}), 403
     after = int(request.args.get("after") or 0)
     rows = db.execute(
@@ -10228,7 +10242,8 @@ def chat_history(fid):
     db.execute("DELETE FROM notifications WHERE user_id=? AND kind='chat' AND link=?",
                (me, "chatroom:%d" % fid))
     db.commit()
-    return jsonify({"messages": out, "me": me, "friend": _uname(db, fid),
+    fname = "文件传输助手" if fid == me else _uname(db, fid)
+    return jsonify({"messages": out, "me": me, "friend": fname,
                     "friend_avatar": _uavatar(db, fid), "me_avatar": _uavatar(db, me)})
 
 
@@ -10236,7 +10251,7 @@ def chat_history(fid):
 def chat_send(fid):
     db = get_db()
     me = uid()
-    if not _are_friends(db, me, fid):
+    if fid != me and not _are_friends(db, me, fid):   # fid==me 即「文件传输助手」，自己发给自己
         return jsonify({"error": "不是好友"}), 403
     # 文件消息（multipart）
     if request.files.get("file"):
@@ -10254,10 +10269,11 @@ def chat_send(fid):
                    "VALUES(?,?,?,?,?,?,?,0,'chat')", (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size))
         mid = _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me))
         myname = _uname(db, me)
-        _chat_center_notify(db, fid, me, myname, "[文件] " + (f.filename or ""), mid or 0)
+        if fid != me:                                 # 文件传输助手(自己)不给自己发通知
+            _chat_center_notify(db, fid, me, myname, "[文件] " + (f.filename or ""), mid or 0)
         db.commit()
         _notify_chat(fid, {"type": "msg", "from": me, "name": myname,
-                           "preview": "[文件] " + (f.filename or "")})   # 提交后再秒推
+                           "preview": "[文件] " + (f.filename or "")})   # 提交后再秒推（跨设备同步）
         return jsonify({"ok": True})
     # 文本消息
     body = (request.get_json(silent=True) or {}).get("body", "").strip()
@@ -10266,10 +10282,11 @@ def chat_send(fid):
     cur = db.execute("INSERT INTO chat_msgs(from_uid,to_uid,kind,body) VALUES(?,?,'text',?)",
                      (me, fid, body[:4000]))
     myname = _uname(db, me)
-    _chat_center_notify(db, fid, me, myname, body[:80], cur.lastrowid)
+    if fid != me:
+        _chat_center_notify(db, fid, me, myname, body[:80], cur.lastrowid)
     db.commit()
     _notify_chat(fid, {"type": "msg", "from": me, "name": myname,
-                       "preview": body[:60]})           # 秒推给对方
+                       "preview": body[:60]})           # 秒推给对方（自己的其它设备也会同步）
     return jsonify({"ok": True})
 
 

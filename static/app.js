@@ -2750,8 +2750,9 @@ function aiRunActions(actions) {
     }
   }
 }
-function aiGrow() { const t = $('#ai-text'); if (t && t._grow) t._grow(); }
-// 输入框可拖高：顶边加一条把手，拖动改高度。最小约 3 行、最高半屏，记住上次高度。
+// 手机端不用拖高（_grow 未装），走回原来的自动增高（最高 120）；桌面端交给拖高逻辑
+function aiGrow() { const t = $('#ai-text'); if (!t) return; if (t._grow) { t._grow(); return; } t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
+// 输入框可拖高（**仅桌面**）：顶边加一条把手，拖动改高度。最小约 3 行、最高半屏，记住上次高度。
 // 内容多时自动增高（不低于拖拽设定的高度、不超过半屏）。聊天和 AI 助手共用。
 function makeInputResizable(bar, ta, key) {
   if (!bar || !ta || bar.querySelector('.input-grip')) return;
@@ -2778,9 +2779,11 @@ function makeInputResizable(bar, ta, key) {
   grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
   ta._grow();                          // 初始高度 = 上次拖到的高度（或最小）
 }
-// 给两个输入框都装上（元素在初始 HTML 里，已存在）
-makeInputResizable(document.querySelector('.ai-input'), $('#ai-text'), 'aiInputH');
-makeInputResizable($('#cr-input'), $('#cr-text'), 'crInputH');
+// 只在**桌面**装拖高把手（手机端保持原来的紧凑自动增高，见 #4 反馈）
+if (!IS_MOBILE) {
+  makeInputResizable(document.querySelector('.ai-input'), $('#ai-text'), 'aiInputH');
+  makeInputResizable($('#cr-input'), $('#cr-text'), 'crInputH');
+}
 $('#ai-send').onclick = aiSend;
 /* AI 入口在悬浮工具球里（#fab-ai），见文件末尾的悬浮球逻辑 */
 // AI 面板：从上方下滑关闭/返回上一层（替代点右上角✕）
@@ -7383,8 +7386,8 @@ async function loadConvos() {
     updateChatBadge(d.unread);
     if (!d.conversations.length) { $('#ch-convos').innerHTML = '<p class="empty">还没有会话。去「好友」找人聊，或「＋ 加好友」。</p>'; return; }
     $('#ch-convos').innerHTML = d.conversations.map(c => `
-      <div class="ch-convo" data-crf="${c.id}" data-crn="${esc(c.username)}">
-        ${avHtml(c.avatar, c.username, 'ch-av')}
+      <div class="ch-convo${c.self ? ' ch-self' : ''}" data-crf="${c.id}" data-crn="${esc(c.username)}">
+        ${c.self ? '<div class="ch-av ch-av-self">📁</div>' : avHtml(c.avatar, c.username, 'ch-av')}
         <div class="ch-cmid"><div class="ch-cn">${esc(c.username)}</div><div class="ch-cp">${esc(c.preview || '')}</div></div>
         <div class="ch-cright"><div class="ch-ct">${esc((c.time || '').slice(5, 16))}</div>${c.unread ? `<span class="ch-un">${c.unread}</span>` : ''}</div>
       </div>`).join('');
@@ -7592,7 +7595,8 @@ function onChatPush(d) {
   if (viewing) { crLoad(false); if (v === 'chat') loadConvos(); return; }  // 正跟他聊且在前台 → 立刻拉
   refreshChatBadge();                                                    // 否则更新未读角标
   if (v === 'chat') loadConvos();                                        // 在聊天页（双栏）→ 刷新会话列表
-  if (d && typeof d === 'object') notifyChat(fromId, d.name, d.preview); // 通知栏推送
+  const isSelf = ME && fromId === ME.id;                                 // 文件传输助手（自己其它设备）不弹通知
+  if (!isSelf && d && typeof d === 'object') notifyChat(fromId, d.name, d.preview);
 }
 // 通知栏推送：APK 走原生通知，浏览器/桌面走 Web Notification。点开直达该好友聊天。
 function notifyChat(fromId, name, preview) {

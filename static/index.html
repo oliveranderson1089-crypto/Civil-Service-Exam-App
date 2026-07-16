@@ -625,9 +625,12 @@
         </div>
         <div id="cr-msgs" class="cr-msgs"></div>
         <div class="cr-input hidden" id="cr-input">
-          <label class="cr-attbtn" title="发文件/图片">📎<input type="file" id="cr-file" multiple hidden></label>
+          <div class="input-tools">
+            <label class="cr-attbtn" title="发文件/图片">📎<input type="file" id="cr-file" multiple hidden></label>
+            <span class="input-spacer"></span>
+            <button class="btn primary" id="cr-send">发送</button>
+          </div>
           <textarea id="cr-text" rows="1" placeholder="发消息…（可拖文件进来）"></textarea>
-          <button class="btn primary" id="cr-send">发送</button>
         </div>
         <div id="cr-empty" class="cr-empty">💬 选一个会话，开始聊天</div>
       </section>
@@ -1440,12 +1443,15 @@
     </div>
     <div id="ai-msgs" class="ai-msgs"></div>
     <div id="ai-atts" class="ai-atts"></div>
-    <div class="ai-input">
-      <button id="ai-attach" class="ai-attbtn" title="上传图片/文件">📎</button>
-      <button type="button" class="ai-attbtn hw-open-btn" data-hw="ai-text" title="手写输入（写完自动转文字）">✍️</button>
-      <button type="button" class="ai-attbtn hidden" id="ai-shot" title="截图（可用手写笔圈选）">📷</button>
+    <div class="ai-input" id="ai-input">
+      <div class="input-tools">
+        <button id="ai-attach" class="ai-attbtn" title="上传图片/文件">📎</button>
+        <button type="button" class="ai-attbtn hw-open-btn" data-hw="ai-text" title="手写输入（写完自动转文字）">✍️</button>
+        <button type="button" class="ai-attbtn hidden" id="ai-shot" title="截图（可用手写笔圈选）">📷</button>
+        <span class="input-spacer"></span>
+        <button id="ai-send" class="ai-sendbtn">发送</button>
+      </div>
       <textarea id="ai-text" rows="1" placeholder="问点什么…（可附图片/文件）"></textarea>
-      <button id="ai-send" class="ai-sendbtn">发送</button>
     </div>
     <input id="ai-attfile" type="file" accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.txt" hidden>
     <input id="ai-camfile" type="file" accept="image/*" capture="environment" hidden>
