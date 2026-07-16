@@ -9197,10 +9197,20 @@ const Ink = {
   },
   /* ---------- PDF 锚：把一笔钉到「第几页的页内某处」---------- */
   pdfDoc() { try { return this.frame && this.frame.contentDocument; } catch (_) { return null; } },
+  /* 一帧的几何快照：画布矩形、iframe 矩形、滚动量、各页矩形。一帧内共用（别每笔都量），
+     但**每帧必须重新取**：拿上一帧的页矩形去算这一帧的落笔点，滚动中就会把偏掉的坐标永久存进去。
+     页矩形是懒查的，用到哪页查哪页。 */
+  newFrame() {
+    let fr = null;
+    try { fr = this.frame ? this.frame.getBoundingClientRect() : null; } catch (_) {}
+    this._geo = { cr: this.rect(), fr, sy: this.scrollY(), pages: {} };
+    return this._geo;
+  },
   // 第 n 页此刻在画布坐标系里的矩形。缩放/滚动都体现在它身上 —— 所以笔迹自动跟着缩放和滚动。
-  // 每次 paint 只查一次（_pageCache），别每笔都 querySelector。
   pageRect(n) {
-    if (this._pageCache && this._pageCache[n] !== undefined) return this._pageCache[n];
+    const g = this._geo;
+    if (!g || !g.fr) return null;
+    if (g.pages[n] !== undefined) return g.pages[n];
     let r = null;
     const doc = this.pdfDoc();
     if (doc) {
@@ -9208,20 +9218,29 @@ const Ink = {
       if (el) {
         const b = el.getBoundingClientRect();          // iframe 视口坐标
         if (b.width && b.height) {
-          const fr = this.frame.getBoundingClientRect(), cr = this.rect();
-          r = { left: b.left + fr.left - cr.left, top: b.top + fr.top - cr.top, width: b.width, height: b.height };
+          r = { left: b.left + g.fr.left - g.cr.left, top: b.top + g.fr.top - g.cr.top,
+                width: b.width, height: b.height };
         }
       }
     }
-    if (this._pageCache) this._pageCache[n] = r;
+    g.pages[n] = r;
     return r;
+  },
+  // pdf.js 把页渲染出来了没。PDF 要加载一分多钟，加载期间「一页都找不到」是正常的，
+  // 不能当成「批注找不到页」去报警。
+  pdfReady() {
+    if (!this.frame) return true;
+    try {
+      const doc = this.pdfDoc();
+      return !!(doc && doc.querySelector('.page[data-page-number]'));
+    } catch (_) { return false; }
   },
   // 屏幕点 → PDF 锚 {page, pw}。pw＝落笔时的页宽，用来算笔粗该跟着缩放放大多少倍
   pdfAnchorAt(clientX, clientY) {
-    const doc = this.pdfDoc(); if (!doc) return null;
+    const doc = this.pdfDoc(), g = this._geo;
+    if (!doc || !g || !g.fr) return null;
     try {
-      const fr = this.frame.getBoundingClientRect();
-      const el = doc.elementFromPoint(clientX - fr.left, clientY - fr.top);
+      const el = doc.elementFromPoint(clientX - g.fr.left, clientY - g.fr.top);
       const page = el && el.closest && el.closest('.page[data-page-number]');
       if (!page) return null;
       const b = page.getBoundingClientRect();
@@ -9234,8 +9253,9 @@ const Ink = {
        pixel：x 按画布宽归一化、y 是内容绝对像素        → kx=W, ox=0,        ky=1, oy=-sy
        text ：同上，但 y 相对「那句话」                  → kx=W, ox=0,        ky=1, oy=ref-sy
        pdf  ：x/y 都归一化到页内，跟着缩放走             → kx/ox/ky/oy = 页矩形，ks=页宽/落笔时页宽
-     返回 null＝这一笔现在画不出来（文本锚孤儿、或那一页还没渲染）。 */
-  tfOf(s, W, sy) {
+     返回 null＝这一笔现在画不出来（文本锚孤儿、或那一页找不到）。用 newFrame() 的几何快照。 */
+  tfOf(s) {
+    const g = this._geo || this.newFrame();
     const a = s.a;
     if (a && a.page != null) {
       const pr = this.pageRect(a.page);
@@ -9243,11 +9263,11 @@ const Ink = {
       return { kx: pr.width, ox: pr.left, ky: pr.height, oy: pr.top, ks: pr.width / (a.pw || pr.width) };
     }
     if (s._ref === null) return null;
-    return { kx: W, ox: 0, ky: 1, oy: (s._ref || 0) - sy, ks: 1 };
+    return { kx: g.cr.width, ox: 0, ky: 1, oy: (s._ref || 0) - g.sy, ks: 1 };
   },
   // 屏幕点 → 存储坐标（tfOf 的逆变换）
   pt(e, tf) {
-    const r = this.rect();
+    const r = (this._geo || this.newFrame()).cr;
     return {
       x: ((e.clientX - r.left) - tf.ox) / (tf.kx || 1),
       y: ((e.clientY - r.top) - tf.oy) / (tf.ky || 1),
@@ -9290,11 +9310,30 @@ const Ink = {
   },
   paint() {
     if (!this.ctx) return;
-    const r = this.rect(), W = r.width, sy = this.scrollY();
-    this._pageCache = {};                      // PDF 页矩形每帧只查一次；缩放/滚动就靠它自然跟随
-    this.ctx.clearRect(0, 0, r.width, r.height);
-    for (const s of this.strokes) this.drawStroke(this.ctx, s, this.tfOf(s, W, sy));
-    if (this.cur) this.drawStroke(this.ctx, this.cur, this.tfOf(this.cur, W, sy));
+    const g = this.newFrame();
+    this.ctx.clearRect(0, 0, g.cr.width, g.cr.height);
+    // 画不出来的笔在这里一起数：文本锚找不到那句话、PDF 锚找不到那一页。数据都还在，只是不画 ——
+    // 但必须出声。静默消失就是当初那个空 catch 的病，换成 return null 也还是同一种病。
+    let missText = 0, missPage = 0;
+    const ready = this.pdfReady();
+    for (const s of this.strokes) {
+      const tf = this.tfOf(s);
+      if (!tf) { if (s.a && s.a.page != null) { if (ready) missPage++; } else missText++; }
+      this.drawStroke(this.ctx, s, tf);
+    }
+    if (this.cur) this.drawStroke(this.ctx, this.cur, this.tfOf(this.cur));
+    this.tellMissing(missText, missPage);
+  },
+  // 同一批「显示不出来」只说一次，别每帧刷屏
+  tellMissing(t, p) {
+    const k = t + ':' + p;
+    if ((t || p) && k !== this._toldMissing) {
+      const why = [];
+      if (t) why.push(t + ' 条找不到原文（原文改过）');
+      if (p) why.push(p + ' 条找不到对应的页（换过文件？）');
+      toast('有批注暂时显示不出来：' + why.join('；'), true);
+    }
+    this._toldMissing = k;
   },
   down(e) {
     if (this.tool === 'scroll') return;                     // ✋ 浏览模式：不画，交给下面滚动
@@ -9306,15 +9345,19 @@ const Ink = {
     this.drawing = true;
     // 落笔时就定好这一笔钉在哪：PDF 钉到「第几页的页内某处」；文本钉到「那句话」；
     // 都钉不住（大片空白/图片上）→ a=null 退回 pixel 锚（＝老行为，画在哪个屏幕位置就留在哪）
+    const g = this.newFrame();
     let a = this.pdfAnchorAt(e.clientX, e.clientY), ref = 0;
     if (!a) {
       const hit = annAnchorAt(this.root, e.clientX, e.clientY);
-      if (hit) { a = hit.a; ref = hit.rect.top - this.rect().top + this.scrollY(); }
+      if (hit) { a = hit.a; ref = hit.rect.top - g.cr.top + g.sy; }
     }
-    this._pageCache = {};
     this.cur = { tool: this.tool, color: this.color, size: this.curSize(), a, _ref: ref };
-    const tf = this.tfOf(this.cur, this.rect().width, this.scrollY());
-    if (!tf) { this.drawing = false; this.cur = null; return; }
+    const tf = this.tfOf(this.cur);
+    if (!tf) {                          // 这一笔现在没法定位（页找不到）：捕获也得还回去，
+      this.drawing = false; this.cur = null;      // 不然这一下拖动既不画、下面的 PDF 也收不到事件＝不滚
+      try { this.cv.releasePointerCapture(e.pointerId); } catch (_) {}
+      return;
+    }
     this.cur.pts = [this.pt(e, tf)];
     this.paint();
   },
@@ -9324,8 +9367,10 @@ const Ink = {
     let evs = [];
     try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
     if (!evs.length) evs = [e];
-    // 用落笔时那一笔的变换（页/锚句在这一笔期间不会变），别每个采样点都重算
-    const tf = this.tfOf(this.cur, this.rect().width, this.scrollY());
+    // 每次 move 重取一帧几何：页矩形和滚动量都可能已经变了（惯性滚动/自动滚页），
+    // 拿旧的算会把偏掉的坐标永久存进去。同一批合并采样点共用这一份就够了。
+    this.newFrame();
+    const tf = this.tfOf(this.cur);
     if (!tf) return;
     for (const ev of evs) this.cur.pts.push(this.pt(ev, tf));
     if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.paint(); });
@@ -9383,7 +9428,7 @@ const Ink = {
   // 每笔的参考原点（内容坐标系的 y）：文本锚＝那句话现在在哪；pixel 锚＝0（＝老的视口坐标行为）。
   // 存的是「内容坐标」而不是「屏幕坐标」，所以滚动只要减 scrollTop，不必重新定位（annLocate 不便宜）。
   relayout() {
-    const rect = this.rect(), sy = this.scrollY();
+    const g = this.newFrame();
     this.orphans = 0;
     const all = this.cur ? this.strokes.concat([this.cur]) : this.strokes;
     // 整篇正文只遍历一次给所有笔共用：以前每笔各算一遍，100 笔就是 200 遍全文，拖窗口直接卡死
@@ -9393,14 +9438,10 @@ const Ink = {
       // pixel 锚不用定位；PDF 锚每帧靠页矩形算（见 tfOf），也不走这里
       if (!isText(s)) { s._ref = 0; continue; }
       const b = annLocate(this.root, s.a, ctx);
-      if (b) s._ref = b.top - rect.top + sy;
+      if (b) s._ref = b.top - g.cr.top + g.sy;
       else { s._ref = null; this.orphans++; }     // 内容改了，这句话没了＝孤儿，不画（数据留着）
     }
-    // 孤儿也得出声。静默不画＝用户眼里「批注又没了」，和当初那个空 catch 是同一种病。
-    if (this.orphans && this.orphans !== this._toldOrphans) {
-      toast(this.orphans + ' 条批注找不到原文了（原文改过），暂时不显示', true);
-    }
-    this._toldOrphans = this.orphans;
+    // 「显示不出来」的提示统一在 paint() 里报（那儿连 PDF 找不到页的也一起数）
   },
   /* 存服务器（批注是长期资产，不该躺在一个浏览器的 5MiB 配额里；换设备/重装也不丢）。
      localStorage 降级成**离线暂存**：传上去就删掉本地那份 —— 正常情况下它几乎不占空间，
@@ -9495,7 +9536,7 @@ const Ink = {
     this.root = root || null;            // 文本锚挂在这个容器的文字上；不传＝只能 pixel 锚
     // 盖的是 PDF 的 iframe → 这一层能用 PDF 锚（钉到页内，跟着缩放/翻页走）
     this.frame = (target && target.tagName === 'IFRAME') ? target : null;
-    this._pageCache = {};
+    this._geo = null; this._toldMissing = null;    // 换了一页：几何快照和「说过的提示」都重来
     this.cv = $('#ink-cv'); this.ctx = this.cv.getContext('2d');
     $('#ink').classList.remove('hidden');
     // 把画布精确定位到目标区域（不传目标就是顶栏以下整个屏幕）—— 画布(0,0) 要正好对齐内容(0,0)
@@ -9518,13 +9559,13 @@ const Ink = {
     if (this._scrollHost) {
       try { this._scrollHost.addEventListener('scroll', this._onScroll, { passive: true }); } catch (_) {}
     }
-    // PDF 缩放（pdf.js 的 +/−）不发 scroll，页矩形却变了 —— 盯住它内部的 #viewer，
-    // 尺寸一变就重画，笔迹跟着缩放走。顺带兜住「PDF 还在渲染时就点了批注」：渲染完也会触发。
-    if (this.frame && window.ResizeObserver) {
-      try {
-        const v = this.pdfDoc() && this.pdfDoc().getElementById('viewer');
-        if (v) { this._ro = new ResizeObserver(() => this.paint()); this._ro.observe(v); }
-      } catch (_) {}
+    // PDF 缩放（pdf.js 的 +/−）不发 scroll，页矩形却变了 —— 盯住它内部的 #viewer，尺寸一变就重画。
+    // 「整份 PDF 十几 MB…打开要一分多钟」（见 probeSlides 那段注释），所以点开资料立刻点批注是常事，
+    // 那会儿 iframe 还是 about:blank、#viewer 根本不存在 —— 挂不上就等 frame 加载完再挂，
+    // 否则这一次批注期间缩放永远不重画。（frame.onload 已被 hidePdfjsPen 占用，只能 addEventListener。）
+    if (this.frame && window.ResizeObserver && !this.hookZoom()) {
+      this._onFrameLoad = () => this.hookZoom();
+      try { this.frame.addEventListener('load', this._onFrameLoad); } catch (_) {}
     }
     window.addEventListener('resize', this._onResize = () => this.fit());
   },
@@ -9539,12 +9580,27 @@ const Ink = {
     this.unhook();
     this.scroller = null; this.frame = null; this.cur = null; this.drawing = false;
   },
+  // 盯住 pdf.js 的 #viewer：缩放会改它的尺寸。挂上了返回 true；PDF 还没加载出来就返回 false，
+  // 由 open() 挂个 frame load 监听等它回来再挂一次。
+  hookZoom() {
+    if (this._ro) return true;
+    try {
+      const doc = this.pdfDoc();
+      const v = doc && doc.getElementById('viewer');
+      if (!v) return false;
+      this._ro = new ResizeObserver(() => this.paint());
+      this._ro.observe(v);
+      this.paint();                      // 页这会儿可能刚渲染出来，补画一次
+      return true;
+    } catch (_) { return false; }
+  },
   // 摘监听：open() 里重新挂之前也要先摘，否则反复开关会越挂越多
   unhook() {
     if (this._scrollHost && this._onScroll) { try { this._scrollHost.removeEventListener('scroll', this._onScroll); } catch (_) {} }
     if (this._onResize) window.removeEventListener('resize', this._onResize);
     if (this._ro) { try { this._ro.disconnect(); } catch (_) {} this._ro = null; }
-    this._scrollHost = null; this._onScroll = null; this._onResize = null;
+    if (this._onFrameLoad && this.frame) { try { this.frame.removeEventListener('load', this._onFrameLoad); } catch (_) {} }
+    this._scrollHost = null; this._onScroll = null; this._onResize = null; this._onFrameLoad = null;
   },
   bind() {
     const cv = this.cv;
