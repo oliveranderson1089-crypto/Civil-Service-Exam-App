@@ -1362,7 +1362,9 @@ function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
   $('#viewer-name').textContent = name;
   $('#viewer-dl').href = dlUrl || fileUrl;
   viewerTextUrl = textUrl || null;
-  push({ view: 'viewer', title: name });
+  // id 带上文件本身：批注按「这一份文档」存。不带的话每份 .md/.txt 都共用 view:viewer 这一个
+  // key，07-15 上画的圈打开 07-14 也会浮出来。
+  push({ view: 'viewer', title: name, id: (fileUrl || '').slice(-80) });
   if (READER_EXT.includes(ext)) { $('#viewer-mode').classList.add('hidden'); openReader(fileUrl, ext); return; }
   // 原版预览（pdf.js / iframe）
   $('#viewer-reader').classList.add('hidden');
@@ -9180,16 +9182,51 @@ const Ink = {
     this.paint(); this.save();
   },
   clear() { if (!this.strokes.length) return; this._cleared = this.strokes.slice(); this.strokes = []; this.paint(); this.save(); },
+  // 存盘格式（和草稿纸 padData 一个路子）：点存成 [x,y] / [x,y,压感] 的数组、坐标取整、
+  // 连续重复的点直接扔（笔停在原地时合并采样仍在不停入队）。全精度对象存法一份 PDF 批注能到
+  // 6MB，5MiB 配额一满 setItem 就永远抛 QuotaExceededError —— 新批注再也存不进去。
+  pack(strokes) {
+    const rx = (n) => Math.round(n * 1e4) / 1e4, ry = (n) => Math.round(n * 10) / 10;
+    return strokes.map(s => {
+      const pts = []; let lx = null, ly = null;
+      for (const q of (s.pts || [])) {
+        const x = rx(q.x), y = ry(q.y);
+        if (x === lx && y === ly) continue;
+        const p = Math.round((q.p || 0) * 100) / 100;
+        pts.push(p ? [x, y, p] : [x, y]);
+        lx = x; ly = y;
+      }
+      return { t: s.tool, c: s.color, w: s.size, p: pts };
+    }).filter(s => s.p.length);
+  },
+  // 读得懂两种格式：新的 {t,c,w,p:[[x,y]]}，和旧的 {tool,color,size,pts:[{x,y,p}]}（迁移漏网的）
+  unpack(data) {
+    return (data || []).map(s => (s.pts ? s : {
+      tool: s.t, color: s.c, size: s.w,
+      pts: (s.p || []).map(q => ({ x: q[0], y: q[1], p: q[2] || 0 })),
+    })).filter(s => s.pts && s.pts.length);
+  },
   save() {
     if (!this.key) return;
+    this._memKey = this.key;              // 内存里这份笔迹是哪一页的 —— load() 靠它兜底
     try {
-      if (this.strokes.length) localStorage.setItem('ink:' + this.key, JSON.stringify(this.strokes));
+      if (this.strokes.length) localStorage.setItem('ink:' + this.key, JSON.stringify(this.pack(this.strokes)));
       else localStorage.removeItem('ink:' + this.key);
-    } catch (_) {}
+      this._warned = false;
+    } catch (_) {
+      // 存不下就得说话：以前这里是空 catch，笔迹默默丢了，用户完全看不出发生过什么
+      if (!this._warned) { this._warned = true; toast('本地存储满了，这一页批注没存上', true); }
+    }
   },
   load() {
-    this.strokes = []; this.redo = [];
-    try { this.strokes = JSON.parse(localStorage.getItem('ink:' + this.key) || '[]') || []; } catch (_) {}
+    this.redo = [];
+    if (this._memKey !== this.key) this._cleared = null;   // 「清屏」的后悔药不能跨页面用
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem('ink:' + this.key) || 'null'); } catch (_) {}
+    if (d && d.length) { this.strokes = this.unpack(d); this._memKey = this.key; return; }
+    // 存盘失败过（配额满）时，内存里这份就是唯一的一份 —— 别再用空的存储把它冲掉
+    if (this._memKey === this.key && this.strokes.length) return;
+    this.strokes = []; this._memKey = this.key;
   },
   syncUI() {
     document.querySelectorAll('#ink .ink-t[data-inkt]').forEach(b => b.classList.toggle('on', b.dataset.inkt === this.tool));
@@ -9205,6 +9242,7 @@ const Ink = {
   // scroller: 要跟随滚动的元素（PDF 是 iframe 内部的 #viewerContainer；其它视图是主滚动容器/null）
   // target:   画布要盖住的元素（PDF 是 iframe；不传就盖住顶栏以下的整个内容区）→ 笔尖对齐靠这个
   open(key, scroller, target) {
+    this.unhook();                       // 已经开着又点一次入口（工具球/查看器条各有一个）：先摘干净
     this.key = key || (('view:' + ((stack[stack.length - 1] || {}).view || 'home')));
     this.scroller = scroller || null;
     this.cv = $('#ink-cv'); this.ctx = this.cv.getContext('2d');
@@ -9233,11 +9271,18 @@ const Ink = {
   },
   close() {
     this.on = false;
+    // 笔还没抬就被关掉（切视图会走 render() → Ink.close()）：这一笔也得算数，别默默丢
+    if (this.cur && this.cur.pts && this.cur.pts.length) { this.strokes.push(this.cur); this._cleared = null; this.save(); }
     $('#ink').classList.add('hidden');
     if (this.cv) this.cv.style.pointerEvents = 'auto';   // 别把「浏览模式」的透传状态留给下次
+    this.unhook();
+    this.scroller = null; this.cur = null; this.drawing = false;
+  },
+  // 摘监听：open() 里重新挂之前也要先摘，否则反复开关会越挂越多
+  unhook() {
     if (this._scrollHost && this._onScroll) { try { this._scrollHost.removeEventListener('scroll', this._onScroll); } catch (_) {} }
     if (this._onResize) window.removeEventListener('resize', this._onResize);
-    this.scroller = null; this._scrollHost = null; this.cur = null; this.drawing = false;
+    this._scrollHost = null; this._onScroll = null; this._onResize = null;
   },
   bind() {
     const cv = this.cv;
@@ -9279,6 +9324,36 @@ function inkHere() {
   // 需要跟随滚动的是 PDF，那条路单独用 iframe 内部滚动，不受此影响。）
   Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''), null, null);
 }
+
+/* 一次性把旧批注重写成紧凑格式：笔迹一笔不动，体积降到约 1/3.7。
+   旧的全精度存法（每点一个 {"x":0.8153038726993865,...} 对象、连重复点都留着）把 5MiB 配额占满后，
+   setItem 会一直抛 QuotaExceededError，新批注根本存不进去 —— 「批注保留不住」就是这么来的。 */
+function inkMigrate() {
+  try {
+    if (localStorage.getItem('inkFmt') === '2') return;
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf('ink:') === 0) keys.push(k);      // 先收齐再改，边遍历边写会乱序
+    }
+    for (const k of keys) {
+      const old = localStorage.getItem(k);
+      let d = null;
+      try { d = JSON.parse(old || 'null'); } catch (_) { continue; }
+      if (!d || !d.length || !d[0].pts) continue;          // 空的、或已经是新格式
+      const packed = JSON.stringify(Ink.pack(Ink.unpack(d)));
+      if (packed.length >= old.length) continue;
+      try {
+        localStorage.setItem(k, packed);                   // 覆盖写：新值更小，配额上放得下
+      } catch (_) {
+        try { localStorage.removeItem(k); localStorage.setItem(k, packed); }   // 满得连覆盖都被拒
+        catch (_) { try { localStorage.setItem(k, old); } catch (_) {} }       // 还不行就原样放回
+      }
+    }
+    localStorage.setItem('inkFmt', '2');
+  } catch (_) {}
+}
+inkMigrate();
 
 /* ================= 通用停靠（草稿纸 / AI 面板共用） =================
    半屏只是默认值：交界处的分隔线可以直接拖，比例按「每个停靠位」分别记住；
