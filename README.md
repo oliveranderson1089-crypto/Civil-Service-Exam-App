@@ -867,8 +867,8 @@ systemctl --user list-timers 'gongkao-*'
 - 「账户 → 手机通知」可开关，「发送测试通知」可验证系统有没有把通知挡掉。
 
 **好友聊天消息也进通知栏**：给你发消息时，服务端会给收件人写一条 `kind='chat'` 的消息中心通知（`_chat_center_notify`，`link=chatroom:<对方id>`，每条消息一条、`dkey` 带消息 id 保证逐条能被轮询器推送）。
-- **前台**：SSE 秒推，前端 `notifyChat()` 立刻弹 Web/系统通知（只要不是正开着那个人的聊天窗就弹，别的功能页也收得到）。
-- **后台/退出**：靠上面的 30 分钟 `AlarmManager` 轮询把它弹到手机通知栏，点开直达该会话。
+- **前台**：SSE 秒推 → `notifyChat()`。**APK 前台调 `GongkaoNative.notify(title,body,"chat:<id>")` 直接弹原生系统通知（秒到，不用等轮询）**；浏览器/桌面走 Web/系统通知。只要不是正开着那个人的聊天窗就弹，别的功能页也收得到。
+- **后台/退出**：靠 `AlarmManager` 轮询兜底，间隔**从 30 分钟缩到 5 分钟**（不精确闹钟仍省电）。真·后台秒推得上 FCM，暂未做。
 - **电脑端通知**：桌面壳(WebKitGTK)默认不弹网页通知，壳里处理 `permission-request`(放行) + `show-notification`(网页 `new Notification` → `Gio.Notification` 系统通知栏)，点通知 `app.present` 调窗口到前台（`DESKTOP_VER 4.6`）。浏览器/PWA 直接用 Web Notification。
 - 聊天通知**不计入铃铛未读角标**（聊天入口有自己的红点，避免重复计数）；**读了该会话就清掉**它堆积的那几条（`chat_history` 里 `DELETE ... kind='chat' AND link=chatroom:<id>`）。
 

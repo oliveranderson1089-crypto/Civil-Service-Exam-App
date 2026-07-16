@@ -426,6 +426,27 @@ public class MainActivity extends Activity {
         @android.webkit.JavascriptInterface
         public void notifyTest() { Notifier.showTest(MainActivity.this); }
 
+        /** 前台（App 开着）收到聊天消息时，网页调这个直接弹一条系统通知——秒推，不用等轮询。
+         *  tag 形如 "chat:<好友id>"；点通知打开对应会话。 */
+        @android.webkit.JavascriptInterface
+        public void notify(final String title, final String body, final String tag) {
+            if (!Notifier.enabled(MainActivity.this)) return;
+            runOnUiThread(() -> {
+                try {
+                    Notifier.ensureChannel(MainActivity.this);
+                    String t = tag == null ? "" : tag;
+                    int id = 700000 + Math.abs(t.hashCode() % 90000);        // 同一会话覆盖更新，不刷屏
+                    String link = t.startsWith("chat:") ? ("chatroom:" + t.substring(5)) : "";
+                    Notifier.show(MainActivity.this, id, title == null ? "新消息" : title,
+                                  body == null ? "" : body, link);
+                } catch (Exception ignored) {}
+            });
+        }
+
+        /** 网页请求通知权限（Android 13+ 需要）。 */
+        @android.webkit.JavascriptInterface
+        public void requestNotifyPerm() { runOnUiThread(MainActivity.this::askNotifyPermission); }
+
         @android.webkit.JavascriptInterface
         public boolean sysDark() { return sysDarkNow(); }
 

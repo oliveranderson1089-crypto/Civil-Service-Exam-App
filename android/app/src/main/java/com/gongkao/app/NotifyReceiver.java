@@ -15,7 +15,9 @@ import android.os.SystemClock;
 public class NotifyReceiver extends BroadcastReceiver {
 
     static final String ACTION_POLL = "com.gongkao.app.POLL";
-    static final long INTERVAL = 30 * 60 * 1000L;   // 半小时一次，用不精确闹钟省电
+    // 后台拉取间隔：从 30 分钟缩短到 5 分钟（用不精确闹钟仍省电、系统会就近合并）。
+    // 前台有消息靠 SSE + GongkaoNative.notify 秒推，这个只是后台/退出时的兜底。
+    static final long INTERVAL = 5 * 60 * 1000L;
 
     @Override
     public void onReceive(Context context, Intent intent) {
