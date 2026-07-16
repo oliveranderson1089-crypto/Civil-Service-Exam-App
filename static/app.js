@@ -9365,12 +9365,9 @@ const Ink = {
   async flush(key) {
     if (!key) return;
     // load 还没回来时手里只有半份（甚至空的）strokes，这时候整页 replace 会把服务器上这一页的
-    // 旧批注删光。等它回来再传。
-    if (this._loading === key) {
-      clearTimeout(this._saveT);
-      this._saveT = setTimeout(() => this.flush(key), 400);
-      return;
-    }
+    // 旧批注删光。等它回来再传 —— 重试用自己的定时器，别占 _saveT：那是「当前页防抖」的位子，
+    // 一开新页画一笔就会 clearTimeout 把这次补传取消掉。replace 是幂等的，重试多跑一次也无妨。
+    if (this._loading === key) { setTimeout(() => this.flush(key), 400); return; }
     const items = this.pack(this.key === key ? this.strokes : this.unpack(this._stashed(key)))
       .map(s => ({ kind: s.t === 'hl' ? 'hl' : 'ink', anchor_type: s.a ? 'text' : 'pixel',
                    anchor: s.a || {}, data: { t: s.t, c: s.c, w: s.w, p: s.p } }));
