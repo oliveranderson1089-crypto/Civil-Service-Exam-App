@@ -21,7 +21,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk, GdkPixbuf  # noqa: E402
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "4.5"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "4.6"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -59,6 +59,13 @@ class Gongkao(Gtk.Application):
         self.win = Gtk.ApplicationWindow(application=self)
         self.win.set_title("公考助手")
         self.win.set_default_size(1120, 800)
+        # 点系统通知 → 把窗口调到前台
+        try:
+            act = Gio.SimpleAction.new("present", None)
+            act.connect("activate", lambda *a: self.win and self.win.present())
+            self.add_action(act)
+        except Exception:
+            pass
         for p in ICONS:
             if os.path.exists(p):
                 try:
@@ -119,6 +126,14 @@ class Gongkao(Gtk.Application):
         self.web.connect("run-file-chooser", self.on_file_chooser)   # 自己弹文件框，见下
         self.web.connect("context-menu", self.on_context_menu)       # 右键菜单加「粘贴图片」
         self.web.connect("script-dialog", self.on_script_dialog)     # 吞掉 pdf.js 的「确定离开？」
+        # 桌面消息通知：WebKitGTK 默认不弹网页通知。这里放行通知权限、并把网页的
+        # new Notification(...) 接到系统通知栏（Gio.Notification）。网页端 notifyChat 用的就是 Web Notification。
+        # （信号名在个别 WebKit 版本可能没有，包 try 防止整壳起不来。）
+        try:
+            self.web.connect("permission-request", self.on_permission)
+            self.web.connect("show-notification", self.on_web_notification)
+        except Exception:
+            pass
 
         # 拖放：WebKitGTK 的 drop 事件里 dataTransfer.files 是空的（dragover 有效、drop 拿不到文件），
         # 所以从 GTK 这一层接管：自己收 uri-list，读出文件内容交给网页。
@@ -278,6 +293,32 @@ class Gongkao(Gtk.Application):
         except Exception:
             pass
         return False
+
+    def on_permission(self, web, request):
+        """放行网页的通知权限请求（这样 Notification.requestPermission() 会成功）。"""
+        try:
+            if isinstance(request, WebKit2.NotificationPermissionRequest):
+                request.allow()
+                return True
+        except Exception:
+            pass
+        return False           # 其它权限（定位/摄像头等）保持默认
+
+    def on_web_notification(self, web, notification):
+        """网页 new Notification(title,{body}) → 系统通知栏（收到聊天消息就靠它）。"""
+        try:
+            n = Gio.Notification.new(notification.get_title() or "公考助手")
+            body = notification.get_body() or ""
+            if body:
+                n.set_body(body)
+            try:
+                n.set_default_action("app.present")     # 点通知把窗口调到前台
+            except Exception:
+                pass
+            self.send_notification("gk-msg", n)
+            return True          # 已自行处理，WebKit 不用再管
+        except Exception:
+            return False
 
     def on_context_menu(self, web, menu, event, hit):
         """剪贴板里有图时，右键菜单加一项「粘贴图片」——WebKit 自带的「粘贴」只粘文字。"""

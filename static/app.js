@@ -7578,6 +7578,7 @@ async function refreshChatBadge() { try { const d = await api('/api/chat/unread'
 let chatES = null;
 function chatConnect() {
   if (!ME || chatES) return;
+  ensureNotifyPerm();                 // 早点要通知权限（桌面壳会自动放行），全应用都能收到消息提示
   try {
     chatES = new EventSource('/api/chat/stream');
     chatES.onmessage = (e) => {
@@ -7609,10 +7610,10 @@ function notifyChat(fromId, name, preview) {
       return;
     }
   } catch (_) {}
-  // 浏览器/桌面：仅在页面不在前台、且已授权时弹（在前台就靠角标，别打扰）
+  // 浏览器/桌面壳：只要不是正开着这个人的聊天窗（onChatPush 已判过），就弹系统通知。
+  // 不再要求页面隐藏——在别的功能页也该收到提示（像微信/QQ）。
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    if (!document.hidden) return;
     const n = new Notification(title, { body, tag: 'chat:' + fromId, icon: '/static/icon-192.png' });
     n.onclick = () => { try { window.focus(); } catch (_) {} openChatroom(fromId, name || ''); n.close(); };
   } catch (_) {}
