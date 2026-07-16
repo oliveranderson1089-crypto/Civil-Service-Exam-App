@@ -8225,6 +8225,49 @@ def find_grade():
     return jsonify(g)
 
 
+@app.get("/api/find/records")
+def find_records_list():
+    """找点/写点的历史记录：每次批改留一条，可回看。贯彻执行题带内容/格式分。"""
+    rows = get_db().execute(
+        "SELECT r.id, r.paper_id, r.score, r.full, r.grade, r.created_at, "
+        "p.qtype, p.type_name, p.stem, p.source "
+        "FROM find_records r JOIN find_papers p ON p.id=r.paper_id "
+        "WHERE r.user_id=? ORDER BY r.id DESC LIMIT 80", (uid(),)).fetchall()
+    out = []
+    for r in rows:
+        d = {"id": r["id"], "paper_id": r["paper_id"], "score": r["score"], "full": r["full"],
+             "qtype": r["qtype"], "type_name": r["type_name"], "stem": (r["stem"] or "")[:52],
+             "source": r["source"] or "", "created_at": r["created_at"]}
+        try:                                          # 贯彻执行：从批改 JSON 里取内容/格式分
+            g = json.loads(r["grade"] or "{}")
+            fm = g.get("format")
+            if g.get("content_score") is not None and fm:
+                d.update(content_score=g.get("content_score"), content_full=g.get("content_full"),
+                         format_score=fm.get("score"), format_full=fm.get("full"),
+                         doctype=fm.get("doctype"), format_grade=fm.get("grade"))
+        except Exception:
+            pass
+        out.append(d)
+    return jsonify({"items": out})
+
+
+@app.get("/api/find/record/<int:rid>")
+def find_record(rid):
+    """一条历史记录的详情：题干 + 完整批改（采分点/格式）+ 我写的答案。"""
+    r = get_db().execute(
+        "SELECT r.id, r.paper_id, r.score, r.full, r.grade, r.answer, r.created_at, "
+        "p.qtype, p.type_name, p.stem, p.word_min, p.word_max, p.source "
+        "FROM find_records r JOIN find_papers p ON p.id=r.paper_id "
+        "WHERE r.id=? AND r.user_id=?", (rid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "记录不存在"}), 404
+    return jsonify({"id": r["id"], "paper_id": r["paper_id"], "score": r["score"], "full": r["full"],
+                    "qtype": r["qtype"], "type_name": r["type_name"], "stem": r["stem"],
+                    "word_min": r["word_min"], "word_max": r["word_max"], "source": r["source"] or "",
+                    "answer": r["answer"] or "", "created_at": r["created_at"],
+                    "grade": json.loads(r["grade"] or "{}")})
+
+
 @app.post("/api/find/upload")
 def find_upload():
     """上传真题文档 → 拆出材料和小题 → 留归纳概括/综合分析/提出对策/贯彻执行，各标一套采分点（大作文跳过）。

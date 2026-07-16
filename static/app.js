@@ -116,8 +116,8 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'videos', 'fanwen', 'fanwend', 'drive', 'chat', 'chatroom'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', videos: '每日新闻视频' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'videos', 'fanwen', 'fanwend', 'drive', 'chat', 'chatroom'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', videos: '每日新闻视频' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -4419,29 +4419,11 @@ async function frDoGrade() {
       body: JSON.stringify({ paper_id: fdPaper.id, answer: ans, sents: [...fdPicked] }),
     });
     fdStep = 3;
-    const M = { full: ['✅', 'ok'], part: ['⚠️', 'part'], miss: ['❌', 'miss'] };
     $('#fr-head').innerHTML = `
-      <div class="fr-step"><span class="done">① 找点</span><span class="done">② 写点</span><span class="on">③ 批改</span></div>
-      <div class="fr-final"><b>${g.score}</b> / ${g.full} 分${g.content_score != null && g.format
-        ? `<span class="fr-brk">内容 ${g.content_score}/${g.content_full} + 格式 ${g.format.score}/${g.format.full}</span>` : ''}</div>`;
+      <div class="fr-step"><span class="done">① 找点</span><span class="done">② 写点</span><span class="on">③ 批改</span></div>`
+      + frScoreHtml(g);
     $('#fr-mat').innerHTML = '';
-    $('#fr-foot').innerHTML = `
-      <div class="fr-res">
-        <div class="fr-sec-t">逐个采分点</div>
-        ${(g.items || []).map(it => {
-          const m = M[it.got] || M.miss;
-          return `<div class="fr-item fr-g ${m[1]}">
-            <b>${m[0]} [${it.score} 分] ${esc(it.point || '')}</b>
-            <div class="fr-gc">${esc(it.comment || '')}</div></div>`;
-        }).join('')}
-        ${g.format ? `<div class="fr-sec fr-fmt"><div class="fr-sec-t">📋 格式（${esc(g.format.doctype || '')}）${g.format.grade ? ` · ${esc(g.format.grade)}` : ''}${g.format.full ? ` · ${g.format.score}/${g.format.full} 分` : ''}</div>
-          ${(g.format.ok || []).length ? `<div class="fr-item">✅ 到位：${g.format.ok.map(esc).join('、')}</div>` : ''}
-          ${(g.format.miss || []).length ? `<div class="fr-item">❌ 欠缺：${g.format.miss.map(esc).join('、')}</div>` : ''}
-          ${g.format.comment ? `<div class="fr-gc">${esc(g.format.comment)}</div>` : ''}</div>` : ''}
-        ${(g.style || []).length ? `<div class="fr-sec bad"><div class="fr-sec-t">表述问题</div>
-          ${g.style.map(s => `<div class="fr-item">· ${esc(s)}</div>`).join('')}</div>` : ''}
-        ${g.advice ? `<div class="fr-adv">💡 ${esc(g.advice)}</div>` : ''}
-      </div>
+    $('#fr-foot').innerHTML = frResultBody(g) + `
       <div class="fr-acts">
         <button class="btn primary" id="fr-again">🔄 再练这道</button>
         <button class="btn" id="fr-back">换一道</button>
@@ -4450,6 +4432,71 @@ async function frDoGrade() {
     $('#fr-back').onclick = () => { back(); loadFindList(); };
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = '交给我批'; }
+}
+// 批改结果的两块 HTML，做题页和「做题记录」详情共用
+function frScoreHtml(g) {
+  return `<div class="fr-final"><b>${g.score}</b> / ${g.full} 分${g.content_score != null && g.format
+    ? `<span class="fr-brk">内容 ${g.content_score}/${g.content_full} + 格式 ${g.format.score}/${g.format.full}</span>` : ''}</div>`;
+}
+function frResultBody(g) {
+  const M = { full: ['✅', 'ok'], part: ['⚠️', 'part'], miss: ['❌', 'miss'] };
+  return `<div class="fr-res">
+      <div class="fr-sec-t">逐个采分点</div>
+      ${(g.items || []).map(it => {
+        const m = M[it.got] || M.miss;
+        return `<div class="fr-item fr-g ${m[1]}">
+          <b>${m[0]} [${it.score} 分] ${esc(it.point || '')}</b>
+          <div class="fr-gc">${esc(it.comment || '')}</div></div>`;
+      }).join('')}
+      ${g.format ? `<div class="fr-sec fr-fmt"><div class="fr-sec-t">📋 格式（${esc(g.format.doctype || '')}）${g.format.grade ? ` · ${esc(g.format.grade)}` : ''}${g.format.full ? ` · ${g.format.score}/${g.format.full} 分` : ''}</div>
+        ${(g.format.ok || []).length ? `<div class="fr-item">✅ 到位：${g.format.ok.map(esc).join('、')}</div>` : ''}
+        ${(g.format.miss || []).length ? `<div class="fr-item">❌ 欠缺：${g.format.miss.map(esc).join('、')}</div>` : ''}
+        ${g.format.comment ? `<div class="fr-gc">${esc(g.format.comment)}</div>` : ''}</div>` : ''}
+      ${(g.style || []).length ? `<div class="fr-sec bad"><div class="fr-sec-t">表述问题</div>
+        ${g.style.map(s => `<div class="fr-item">· ${esc(s)}</div>`).join('')}</div>` : ''}
+      ${g.advice ? `<div class="fr-adv">💡 ${esc(g.advice)}</div>` : ''}
+    </div>`;
+}
+
+/* ---- 找点/写点 做题记录：每次批改都留着，可回看题干、采分点、格式分、我写的答案 ---- */
+$('#fd-recs').onclick = () => openFindRecs();
+async function openFindRecs() {
+  push({ view: 'findrec', title: '做题记录' });
+  const box = $('#frr-list');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/find/records');
+    box.innerHTML = d.items.length ? d.items.map(x => `
+      <div class="wr-day done" data-frrec="${x.id}">
+        <div class="wr-day-d">${esc(x.type_name)}${x.doctype ? ' · ' + esc(x.doctype) : ''}</div>
+        <div class="wr-day-m"><b>${esc(x.stem || '')}</b>
+          <span class="dr-acc${x.score >= x.full * 0.6 ? '' : ' bad'}">${x.score}/${x.full} 分</span>
+          ${x.content_score != null ? `<span class="wr-tag">内容 ${x.content_score}/${x.content_full} + 格式 ${x.format_score}/${x.format_full}</span>` : ''}
+          <span class="wr-w">${esc((x.created_at || '').slice(5, 16))}</span></div>
+      </div>`).join('') : '<p class="empty">还没练过题。做完一道就会留在这里。</p>';
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#frr-list').addEventListener('click', e => {
+  const c = e.target.closest('[data-frrec]'); if (c) openFindRec(+c.dataset.frrec);
+});
+async function openFindRec(rid) {
+  push({ view: 'findrecd', title: '这次的批改' });
+  $('#frd-head').innerHTML = '<p class="empty">加载中…</p>'; $('#frd-body').innerHTML = '';
+  try {
+    const d = await api('/api/find/record/' + rid);
+    const g = d.grade || {}; g.score = d.score; g.full = d.full;
+    $('#frd-head').innerHTML = `<div class="fr-stem">${esc(d.stem)}</div>
+      <div class="fr-meta">${esc(d.type_name)} · ${d.full} 分 · 答案 ${d.word_min}~${d.word_max} 字 · ${esc((d.created_at || '').slice(0, 16))}</div>`
+      + frScoreHtml(g);
+    $('#frd-body').innerHTML = frResultBody(g)
+      + `<div class="fr-sec"><div class="fr-sec-t">✍️ 我写的答案</div>
+         <div class="frd-ans">${esc(d.answer).replace(/\n/g, '<br>')}</div></div>`
+      + `<div class="fr-acts"><button class="btn primary" id="frd-again">🔄 再练这道</button>
+         <button class="btn" id="frd-back">返回记录</button></div>`;
+    $('#frd-again').onclick = () => openFindRun(d.paper_id);
+    $('#frd-back').onclick = () => back();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (e) { $('#frd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 
 /* ============= 专项练（行测六大板块）=============
