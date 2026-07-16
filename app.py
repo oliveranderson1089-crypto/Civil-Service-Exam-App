@@ -5095,6 +5095,8 @@ def aiproj_del(pid):
 _ANN_KINDS = ("ink", "hl", "note")
 _ANN_ANCHORS = ("text", "pdf", "pixel")
 _ANN_MAX = 200_000        # 单条标注 data 上限；一坨手写笔迹撑死几十 KB，200K 足够且挡住异常写入
+_ANN_TOTAL_MAX = 4_000_000   # 整页合计上限（压缩后一整页重度批注也就几百 KB）
+_ANN_LIST_MAX = 3000      # 读回上限：POST 是逐条加的，没有条数上限，别让单页长到把 load 拖垮
 
 
 def _ann_row(r):
@@ -5111,8 +5113,8 @@ def ann_list():
     if not target:
         return jsonify({"error": "缺少 target"}), 400
     rows = get_db().execute(
-        "SELECT * FROM annotations WHERE user_id=? AND target=? ORDER BY id",
-        (uid(), target)).fetchall()
+        "SELECT * FROM annotations WHERE user_id=? AND target=? ORDER BY id LIMIT ?",
+        (uid(), target, _ANN_LIST_MAX)).fetchall()
     return jsonify({"items": [_ann_row(r) for r in rows]})
 
 
@@ -5185,10 +5187,16 @@ def ann_replace():
     if not isinstance(items, list) or len(items) > 2000:
         return jsonify({"error": "items 不合法"}), 400
     rows = []
+    total = 0
     for it in items:
         f, err = _ann_parse(dict(it or {}, target=target))
         if err:
             return jsonify({"error": err}), 400
+        # 光有单条上限不够：2000 条 × 200K = 400MB 也是「合法」的，
+        # 而 Flask 没设 MAX_CONTENT_LENGTH，整包会先读进内存
+        total += len(f["data"]) + len(f["anchor"])
+        if total > _ANN_TOTAL_MAX:
+            return jsonify({"error": "这一页批注太大了"}), 400
         rows.append((uid(), target, f["anchor_type"], f["anchor"], f["kind"], f["data"]))
     db = get_db()
     db.execute("DELETE FROM annotations WHERE user_id=? AND target=?", (uid(), target))

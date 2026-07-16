@@ -9109,7 +9109,11 @@ function annRangeOf(nodes, pos, len) {
   }
   return null;
 }
-// 屏幕点 → 文本锚。画在空白处/图片上锚不住 → 返回 null，调用方退回 pixel 锚（老行为）
+// 整篇正文只遍历一次，给 relayout 那种「一次定位很多笔」的场景复用（每笔各算一遍＝2N 次全文遍历）
+function annCtx(root) {
+  return root ? { full: mkText(root, ANN_SKIP), nodes: mkNodes(root, ANN_SKIP) } : null;
+}
+// 屏幕点 → { a: 锚, rect: 锚句现在的位置 }。画在空白处/图片上锚不住 → null，调用方退回 pixel 锚
 function annAnchorAt(root, x, y) {
   if (!root) return null;
   let rg = null;
@@ -9127,29 +9131,34 @@ function annAnchorAt(root, x, y) {
   if (cv) cv.style.pointerEvents = pe;
   if (!rg || !rg.startContainer || rg.startContainer.nodeType !== 3) return null;
   if (!root.contains(rg.startContainer)) return null;
-  const nodes = mkNodes(root);
-  const pos = annPosOf(nodes, rg.startContainer, rg.startOffset);
+  const ctx = annCtx(root);
+  const pos = annPosOf(ctx.nodes, rg.startContainer, rg.startOffset);
   if (pos < 0) return null;
   // caretRangeFromPoint 在空白处会给「最近的」文本，可能离得很远 —— 验一下真压着字
-  const probe = annRangeOf(nodes, pos, 1);
-  if (probe) {
-    const b = probe.getBoundingClientRect();
-    if (y < b.top - 40 || y > b.bottom + 40) return null;      // 竖直差一行以上＝没压住文本
-  }
-  const full = mkText(root);
+  const probe = annRangeOf(ctx.nodes, pos, 1);
+  if (!probe) return null;
+  const b = probe.getBoundingClientRect();
+  if (y < b.top - 40 || y > b.bottom + 40) return null;        // 竖直差一行以上＝没压住文本
+  const full = ctx.full;
   const quote = full.slice(pos, pos + ANN_QLEN);
   if (quote.replace(/\s/g, '').length < 4) return null;        // 太短锚不稳，不如退回 pixel
+  // rect 一并带出去：位置这儿已经算出来了，调用方不必再 annLocate 从头搜一遍
   return {
-    quote,
-    prefix: full.slice(Math.max(0, pos - ANN_CTX), pos),
-    suffix: full.slice(pos + quote.length, pos + quote.length + ANN_CTX),
-    start: pos,
+    a: {
+      quote,
+      prefix: full.slice(Math.max(0, pos - ANN_CTX), pos),
+      suffix: full.slice(pos + quote.length, pos + quote.length + ANN_CTX),
+      start: pos,
+    },
+    rect: b,
   };
 }
-// 锚 → 这句话现在的屏幕矩形。找不到＝内容改了（孤儿标注），返回 null
-function annLocate(root, a) {
+// 锚 → 这句话现在的屏幕矩形。找不到＝内容改了（孤儿标注），返回 null。
+// ctx 传了就复用它（定位多笔时别每笔都重新遍历整篇正文）
+function annLocate(root, a, ctx) {
   if (!root || !a || !a.quote) return null;
-  const full = mkText(root), q = a.quote;
+  ctx = ctx || annCtx(root);
+  const full = ctx.full, q = a.quote;
   let pos = -1;
   if (a.start >= 0 && full.substr(a.start, q.length) === q) pos = a.start;   // 老位置还对得上（最常见）
   if (pos < 0) {                                                             // 带前后文找，消歧
@@ -9162,7 +9171,7 @@ function annLocate(root, a) {
     if (hits.length) pos = hits.reduce((b, c) => (Math.abs(c - a.start) < Math.abs(b - a.start) ? c : b));
   }
   if (pos < 0) return null;
-  const rg = annRangeOf(mkNodes(root), pos, 1);
+  const rg = annRangeOf(ctx.nodes, pos, 1);
   if (!rg) return null;
   const b = rg.getBoundingClientRect();
   return (b.width || b.height) ? b : null;
@@ -9248,11 +9257,9 @@ const Ink = {
     try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
     this.drawing = true;
     // 落笔时就把这一笔钉到它压着的那句话上；压不住文本（空白处/图片上）→ a=null 退回 pixel 锚
-    let a = annAnchorAt(this.root, e.clientX, e.clientY), ref = 0;
-    if (a) {
-      const b = annLocate(this.root, a);
-      if (b) ref = b.top - this.rect().top + this.scrollY(); else a = null;
-    }
+    const hit = annAnchorAt(this.root, e.clientX, e.clientY);
+    const a = hit ? hit.a : null;
+    const ref = hit ? (hit.rect.top - this.rect().top + this.scrollY()) : 0;
     this.cur = { tool: this.tool, color: this.color, size: this.curSize(), a, _ref: ref, pts: [this.pt(e, ref)] };
     this.paint();
   },
@@ -9277,7 +9284,15 @@ const Ink = {
     else return;
     this.paint(); this.save();
   },
-  clear() { if (!this.strokes.length) return; this._cleared = this.strokes.slice(); this.strokes = []; this.paint(); this.save(); },
+  clear() {
+    // 画布空着、也没有数据在路上 → 没什么可清。但 load 还没回来时画布**看着**是空的，
+    // 这时点清屏也是明确指令（「这页的批注我不要了」），得记下来，否则数据一回来又冒出来。
+    if (!this.strokes.length && !this._loading) return;
+    if (this.strokes.length) this._cleared = this.strokes.slice();
+    this.strokes = [];
+    this._wiped = true;
+    this.paint(); this.save();
+  },
   // 存盘格式（和草稿纸 padData 一个路子）：点存成 [x,y] / [x,y,压感] 的数组、坐标取整、
   // 连续重复的点直接扔（笔停在原地时合并采样仍在不停入队）。全精度对象存法一份 PDF 批注能到
   // 6MB，5MiB 配额一满 setItem 就永远抛 QuotaExceededError —— 新批注再也存不进去。
@@ -9310,12 +9325,19 @@ const Ink = {
     const rect = this.rect(), sy = this.scrollY();
     this.orphans = 0;
     const all = this.cur ? this.strokes.concat([this.cur]) : this.strokes;
+    // 整篇正文只遍历一次给所有笔共用：以前每笔各算一遍，100 笔就是 200 遍全文，拖窗口直接卡死
+    const ctx = (this.root && all.some(s => s.a)) ? annCtx(this.root) : null;
     for (const s of all) {
       if (!s.a) { s._ref = 0; continue; }
-      const b = annLocate(this.root, s.a);
+      const b = annLocate(this.root, s.a, ctx);
       if (b) s._ref = b.top - rect.top + sy;
       else { s._ref = null; this.orphans++; }     // 内容改了，这句话没了＝孤儿，不画（数据留着）
     }
+    // 孤儿也得出声。静默不画＝用户眼里「批注又没了」，和当初那个空 catch 是同一种病。
+    if (this.orphans && this.orphans !== this._toldOrphans) {
+      toast(this.orphans + ' 条批注找不到原文了（原文改过），暂时不显示', true);
+    }
+    this._toldOrphans = this.orphans;
   },
   /* 存服务器（批注是长期资产，不该躺在一个浏览器的 5MiB 配额里；换设备/重装也不丢）。
      localStorage 降级成**离线暂存**：传上去就删掉本地那份 —— 正常情况下它几乎不占空间，
@@ -9325,7 +9347,10 @@ const Ink = {
     this._memKey = this.key;              // 内存里这份笔迹是哪一页的 —— load() 靠它兜底
     this._stash();                        // 先落本地：关窗口/断网都不丢
     clearTimeout(this._saveT);            // 防抖：别每抬一次笔就打一次接口
-    this._saveT = setTimeout(() => this.flush(this.key), 700);
+    // key 必须**现在**捕获：写成 () => this.flush(this.key) 的话，700ms 后 this.key 可能已经翻到
+    // 别的页了 —— 那次 flush 就发到别的 target 上，这一页的笔迹反倒从没传上去。
+    const k = this.key;
+    this._saveT = setTimeout(() => this.flush(k), 700);
   },
   _stash() {
     try {
@@ -9339,6 +9364,13 @@ const Ink = {
   },
   async flush(key) {
     if (!key) return;
+    // load 还没回来时手里只有半份（甚至空的）strokes，这时候整页 replace 会把服务器上这一页的
+    // 旧批注删光。等它回来再传。
+    if (this._loading === key) {
+      clearTimeout(this._saveT);
+      this._saveT = setTimeout(() => this.flush(key), 400);
+      return;
+    }
     const items = this.pack(this.key === key ? this.strokes : this.unpack(this._stashed(key)))
       .map(s => ({ kind: s.t === 'hl' ? 'hl' : 'ink', anchor_type: s.a ? 'text' : 'pixel',
                    anchor: s.a || {}, data: { t: s.t, c: s.c, w: s.w, p: s.p } }));
@@ -9354,22 +9386,25 @@ const Ink = {
     try { return JSON.parse(localStorage.getItem('ink:' + key) || 'null') || []; } catch (_) { return []; }
   },
   async load() {
-    this.redo = [];
     const key = this.key;
     if (this._memKey !== key) { this._cleared = null; this.strokes = []; }  // 换了一页：清屏的后悔药也别跨页
     this._memKey = key;
+    this._wiped = false;                                  // 等接口这会儿用户点没点「清屏」
     const n0 = this.strokes.length;                       // 内存里原有的（同一页重开时非 0）
     const stash = this._stashed(key);                     // 离线时压在本地、还没传上去的
     let server = null;
+    this._loading = key;                                  // 这期间别让 flush 拿半份数据去覆盖服务器
     try {
       const d = await api('/api/annots?target=' + encodeURIComponent(key));
       server = (d.items || []).map(it => Object.assign({}, it.data, { a: it.anchor_type === 'text' ? it.anchor : null }));
     } catch (_) {}                                        // 断网：下面退回本地那份
+    if (this._loading === key) this._loading = null;
     if (this.key !== key) return;                         // 等接口的工夫用户已经翻页了，别把笔迹画串页
     // 等接口这会儿用户可能已经落笔了 —— 那几笔必须留住，接在取回来的后面，别被覆盖掉
-    const mine = this.strokes.slice(n0);
+    const mine = this.strokes.slice(this._wiped ? 0 : n0);
     let base;
-    if (stash.length) { base = this.unpack(stash); this.flush(key); }   // 本地暂存＝还没传上去的，最新
+    if (this._wiped) base = [];       // 用户在等接口的工夫点了「清屏」：那是明确指令，别把旧的又搬回来
+    else if (stash.length) { base = this.unpack(stash); this.flush(key); }   // 本地暂存＝还没传上去的，最新
     else if (server && server.length) base = this.unpack(server);
     else if (n0) { base = this.strokes.slice(0, n0); this.flush(key); }
     // ↑ 内存里有、服务器和本地都没有 ＝ 还没传上去（防抖没到点、或本地配额满存不下），
@@ -9424,6 +9459,8 @@ const Ink = {
     this.on = false;
     // 笔还没抬就被关掉（切视图会走 render() → Ink.close()）：这一笔也得算数，别默默丢
     if (this.cur && this.cur.pts && this.cur.pts.length) { this.strokes.push(this.cur); this._cleared = null; this.save(); }
+    // 关之前把还压着的那次防抖传完：定时器留到关掉之后才到点，那时 key 可能已经指向别的页了
+    if (this._saveT) { clearTimeout(this._saveT); this._saveT = 0; this.flush(this.key); }
     $('#ink').classList.add('hidden');
     if (this.cv) this.cv.style.pointerEvents = 'auto';   // 别把「浏览模式」的透传状态留给下次
     this.unhook();
@@ -10441,8 +10478,14 @@ window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」（
    任何模块的正文都能划：不重渲染页面，而是直接在**已经渲染好的 DOM 里**找到那些句子、就地包一层 <mark>。
    所以时政、常识、理论、范文、讲义、错题解析…统统适用，不用每个模块单独写一遍。
    要害：AI 挑的句子必须逐字来自原文（服务端已核对），否则在 DOM 里根本找不到。 */
-const MK_SKIP = 'button, input, textarea, select, nav, .topbar, .tk-tab, .chip, .btn, ' +
-  '.pgbar, .fab, .bm-tip, .mk-bar, .mk-card, mark, script, style, .cd-sec-t, .slt-sec';
+// 「不是正文」的东西：按钮、工具栏、脚本…… 取正文时一律跳过
+const MK_SKIP_BASE = 'button, input, textarea, select, nav, .topbar, .tk-tab, .chip, .btn, ' +
+  '.pgbar, .fab, .bm-tip, .mk-bar, .mk-card, script, style, .cd-sec-t, .slt-sec';
+// 划重点自己还要跳过 <mark>：已经标过的别再标一遍
+const MK_SKIP = MK_SKIP_BASE + ', mark';
+// 但**文本锚不能跳过 <mark>**：划重点会把重点句包进 <mark>，跳过的话锚句就从全文里消失、
+// 那一页的手写批注全变孤儿不画 —— 而用户圈的重点，恰恰就是 AI 划重点也会标的句子。
+const ANN_SKIP = MK_SKIP_BASE;
 let mkMarks = [], mkRoot = null;
 
 function mkPageRoot() {                 // 当前页面的「正文」在哪
@@ -10454,18 +10497,20 @@ function mkPageRoot() {                 // 当前页面的「正文」在哪
   const pick = view.querySelector('.poly-reader, .cd-wrap, #cd-wrap, .doc-blocks, .aih-scroll');
   return pick || view;
 }
-function mkText(root) {
+// skip 不传＝划重点用的名单（跳过 <mark>）；文本锚要传 ANN_SKIP（看得见 <mark> 里的字）。
+// 注意 mkText 和 mkNodes 必须用同一份 skip，否则算出来的偏移对不上。
+function mkText(root, skip) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (!n.nodeValue.trim() || n.parentElement.closest(MK_SKIP))
+    acceptNode: (n) => (!n.nodeValue.trim() || n.parentElement.closest(skip || MK_SKIP))
       ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
   let s = '';
   while (w.nextNode()) s += w.currentNode.nodeValue;
   return s;
 }
-function mkNodes(root) {
+function mkNodes(root, skip) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (!n.nodeValue.trim() || n.parentElement.closest(MK_SKIP))
+    acceptNode: (n) => (!n.nodeValue.trim() || n.parentElement.closest(skip || MK_SKIP))
       ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
   const out = []; let pos = 0;
