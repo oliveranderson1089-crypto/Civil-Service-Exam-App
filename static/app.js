@@ -2750,7 +2750,37 @@ function aiRunActions(actions) {
     }
   }
 }
-function aiGrow() { const t = $('#ai-text'); t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
+function aiGrow() { const t = $('#ai-text'); if (t && t._grow) t._grow(); }
+// 输入框可拖高：顶边加一条把手，拖动改高度。最小约 3 行、最高半屏，记住上次高度。
+// 内容多时自动增高（不低于拖拽设定的高度、不超过半屏）。聊天和 AI 助手共用。
+function makeInputResizable(bar, ta, key) {
+  if (!bar || !ta || bar.querySelector('.input-grip')) return;
+  const MIN = 74;
+  const maxH = () => Math.round(window.innerHeight * 0.5);   // 最高半屏
+  const base = () => Math.max(MIN, Math.min(maxH(), parseInt(localStorage.getItem(key) || '', 10) || MIN));
+  ta._grow = () => { ta.style.height = 'auto'; ta.style.height = Math.max(base(), Math.min(maxH(), ta.scrollHeight)) + 'px'; };
+  ta.addEventListener('input', ta._grow);
+  const grip = document.createElement('div');
+  grip.className = 'input-grip'; grip.title = '拖动上边可调高输入框（最高半屏）';
+  bar.appendChild(grip);
+  let sy = 0, sh = 0, dragging = false;
+  grip.addEventListener('pointerdown', e => {
+    dragging = true; sy = e.clientY; sh = ta.getBoundingClientRect().height;
+    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    document.body.classList.add('resizing-ns'); e.preventDefault();
+  });
+  grip.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const h = Math.max(MIN, Math.min(maxH(), Math.round(sh + (sy - e.clientY))));  // 往上拖=变高
+    ta.style.height = h + 'px'; localStorage.setItem(key, h);
+  });
+  const end = e => { if (!dragging) return; dragging = false; document.body.classList.remove('resizing-ns'); try { grip.releasePointerCapture(e.pointerId); } catch (_) {} };
+  grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
+  ta._grow();                          // 初始高度 = 上次拖到的高度（或最小）
+}
+// 给两个输入框都装上（元素在初始 HTML 里，已存在）
+makeInputResizable(document.querySelector('.ai-input'), $('#ai-text'), 'aiInputH');
+makeInputResizable($('#cr-input'), $('#cr-text'), 'crInputH');
 $('#ai-send').onclick = aiSend;
 /* AI 入口在悬浮工具球里（#fab-ai），见文件末尾的悬浮球逻辑 */
 // AI 面板：从上方下滑关闭/返回上一层（替代点右上角✕）
@@ -7496,10 +7526,10 @@ $('#cr-text').addEventListener('keydown', e => {
 let crSending = false;      // 发送锁：一次动作只发一条，堵住「连发好几条一样的」
 async function crSendText() {
   if (crSending) return;
-  const t = $('#cr-text').value.trim(); if (!t) return;
-  crSending = true; $('#cr-text').value = '';
+  const el = $('#cr-text'); const t = el.value.trim(); if (!t) return;
+  crSending = true; el.value = ''; if (el._grow) el._grow();
   try { await api('/api/chat/' + crFid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: t }) }); crLoad(false); }
-  catch (e) { toast(e.message, true); $('#cr-text').value = t; }   // 失败把字还回去
+  catch (e) { toast(e.message, true); el.value = t; if (el._grow) el._grow(); }   // 失败把字还回去
   crSending = false;
 }
 $('#cr-file').addEventListener('change', async e => {

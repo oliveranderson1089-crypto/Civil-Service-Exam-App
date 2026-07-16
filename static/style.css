@@ -1084,9 +1084,15 @@ img,svg,video{max-width:100%;}
 .ai-msg.assistant pre.md-code{background:#0f1324;color:#e8eaf0;padding:10px 12px;border-radius:8px;overflow-x:auto;}
 .ai-typing{color:var(--muted);}
 .ai-input{display:flex;gap:8px;padding:10px 12px;padding-bottom:calc(10px + env(safe-area-inset-bottom));
-  background:#fff;border-top:1px solid var(--line);align-items:flex-end;max-width:860px;width:100%;margin:0 auto;}
+  background:#fff;border-top:1px solid var(--line);align-items:flex-end;max-width:860px;width:100%;margin:0 auto;position:relative;}
 #ai-text{flex:1;border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:15px;
-  outline:none;resize:none;max-height:120px;font-family:inherit;line-height:1.5;}
+  outline:none;resize:none;overflow-y:auto;font-family:inherit;line-height:1.5;}
+/* 输入框可拖高：顶边中间一条把手，拖动改高度（最小约 3 行、最高半屏）——聊天和 AI 助手共用 */
+.input-grip{position:absolute;top:-6px;left:0;right:0;height:13px;cursor:ns-resize;touch-action:none;
+  z-index:4;display:flex;align-items:center;justify-content:center;}
+.input-grip::before{content:"";width:46px;height:4px;border-radius:3px;background:#ccd3dd;transition:background .15s;}
+.input-grip:hover::before,body.resizing-ns .input-grip::before{background:var(--blue);}
+body.resizing-ns{cursor:ns-resize;user-select:none;}
 #ai-text:focus{border-color:var(--blue);box-shadow:var(--ring);}
 .ai-sendbtn{border:none;background:var(--blue);color:#fff;border-radius:12px;padding:11px 18px;font-size:15px;cursor:pointer;flex:0 0 auto;}
 .ai-sendbtn:active{background:var(--blue-d);}
@@ -3175,10 +3181,10 @@ body.dark .ch-cn{color:#e2e7ef;}
 .cr-fn{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1f2733;}
 .cr-file em{font-size:11.5px;color:#98a1ad;font-style:normal;}
 .cr-input{display:flex;gap:8px;align-items:flex-end;padding:10px 12px;border-top:1px solid var(--line);
-  padding-bottom:calc(10px + env(safe-area-inset-bottom));background:var(--card);}
+  padding-bottom:calc(10px + env(safe-area-inset-bottom));background:var(--card);position:relative;}
 .cr-attbtn{flex:none;width:38px;height:38px;display:grid;place-items:center;font-size:18px;cursor:pointer;
   border-radius:9px;background:#eef1f5;}
-#cr-text{flex:1;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;font-size:15px;resize:none;max-height:120px;}
+#cr-text{flex:1;border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;font-size:15px;resize:none;overflow-y:auto;line-height:1.5;}
 body.dark .cr-row.theirs .cr-bubble{background:#1a2233;border-color:#2a3345;color:#cfd5e0;}
 body.dark .cr-row.mine .cr-bubble{background:#3d6b3f;color:#eaf7ea;}
 body.dark .cr-file{background:#1a2233;border-color:#2a3345;}
