@@ -972,6 +972,26 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_gk_date ON gaikuo_items(date);
+        -- 标注（手写批注/高亮/笔记）。存服务器＝换设备不丢、多端同步、能进复习/搜索。
+        -- 锚（anchor）决定这条标注"贴在哪"，三种：
+        --   text  ：{quote,prefix,suffix,start} 按文本定位。字号/字体/宽度/设备随便变都贴着那句话。
+        --           （同 AI 划重点的做法，见 app.js mkWrapOne；也就是 W3C Web Annotation 的
+        --            TextQuoteSelector。）文本类内容一律走这条。
+        --   pdf   ：{page,x,y} 归一化到页内 —— PDF 是固定版式，但缩放会变像素，所以按页归一化。
+        --   pixel ：{} 兜底（图片等固定内容，或画在空白处锚不住文本时）＝老的视口坐标行为。
+        -- data 存这条标注自己的内容：手写＝笔迹点（相对锚，不是相对屏幕）；笔记＝文字。
+        CREATE TABLE IF NOT EXISTS annotations(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            target TEXT NOT NULL,          -- 标注挂在哪份内容上（mat:<id> / view:<视图>:<id>）
+            anchor_type TEXT NOT NULL,     -- text | pdf | pixel
+            anchor TEXT NOT NULL,          -- JSON，按 anchor_type 解释
+            kind TEXT NOT NULL,            -- ink 手写 | hl 高亮 | note 文字
+            data TEXT,                     -- JSON，见上
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_ann_target ON annotations(user_id, target);
         """
     )
     # entries 老表可能缺 user_id 列（先补列，再建索引）
@@ -5067,6 +5087,115 @@ def aiproj_del(pid):
     db.execute("DELETE FROM ai_projects WHERE id=? AND user_id=?", (pid, uid()))
     db.commit()
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- 标注（手写批注/高亮/笔记）
+# 存服务器而不是 localStorage：批注是长期资产，不该躺在一个浏览器的 5MiB 配额里
+# （2026-07-16 就是被这个配额撑爆、setItem 静默失败，笔迹全丢）。
+_ANN_KINDS = ("ink", "hl", "note")
+_ANN_ANCHORS = ("text", "pdf", "pixel")
+_ANN_MAX = 200_000        # 单条标注 data 上限；一坨手写笔迹撑死几十 KB，200K 足够且挡住异常写入
+
+
+def _ann_row(r):
+    return {
+        "id": r["id"], "target": r["target"], "anchor_type": r["anchor_type"],
+        "anchor": json.loads(r["anchor"] or "{}"), "kind": r["kind"],
+        "data": json.loads(r["data"] or "null"), "updated_at": r["updated_at"],
+    }
+
+
+@app.get("/api/annots")
+def ann_list():
+    target = (request.args.get("target") or "").strip()
+    if not target:
+        return jsonify({"error": "缺少 target"}), 400
+    rows = get_db().execute(
+        "SELECT * FROM annotations WHERE user_id=? AND target=? ORDER BY id",
+        (uid(), target)).fetchall()
+    return jsonify({"items": [_ann_row(r) for r in rows]})
+
+
+def _ann_parse(data):
+    """校验一条标注的入参，返回 (字段dict, 错误)。"""
+    target = (data.get("target") or "").strip()
+    kind = (data.get("kind") or "").strip()
+    at = (data.get("anchor_type") or "").strip()
+    if not target or len(target) > 200:
+        return None, "target 不合法"
+    if kind not in _ANN_KINDS:
+        return None, "kind 不合法"
+    if at not in _ANN_ANCHORS:
+        return None, "anchor_type 不合法"
+    anchor = json.dumps(data.get("anchor") or {}, ensure_ascii=False)
+    body = json.dumps(data.get("data"), ensure_ascii=False)
+    if len(body) > _ANN_MAX:
+        return None, "这条标注太大了"
+    return {"target": target, "kind": kind, "anchor_type": at, "anchor": anchor, "data": body}, None
+
+
+@app.post("/api/annots")
+def ann_create():
+    f, err = _ann_parse(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({"error": err}), 400
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO annotations(user_id,target,anchor_type,anchor,kind,data) VALUES(?,?,?,?,?,?)",
+        (uid(), f["target"], f["anchor_type"], f["anchor"], f["kind"], f["data"]))
+    db.commit()
+    return jsonify({"id": cur.lastrowid}), 201
+
+
+@app.put("/api/annots/<int:aid>")
+def ann_update(aid):
+    f, err = _ann_parse(request.get_json(silent=True) or {})
+    if err:
+        return jsonify({"error": err}), 400
+    db = get_db()
+    cur = db.execute(
+        "UPDATE annotations SET anchor_type=?,anchor=?,kind=?,data=?,"
+        "updated_at=datetime('now','localtime') WHERE id=? AND user_id=?",
+        (f["anchor_type"], f["anchor"], f["kind"], f["data"], aid, uid()))
+    db.commit()
+    if not cur.rowcount:
+        return jsonify({"error": "没找到这条标注"}), 404
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/annots/<int:aid>")
+def ann_delete(aid):
+    db = get_db()
+    cur = db.execute("DELETE FROM annotations WHERE id=? AND user_id=?", (aid, uid()))
+    db.commit()
+    if not cur.rowcount:
+        return jsonify({"error": "没找到这条标注"}), 404
+    return jsonify({"ok": True})
+
+
+@app.post("/api/annots/replace")
+def ann_replace():
+    """整页替换：前端画布是「一页笔迹」的整体，逐条 diff 不值当。
+    一次事务里换掉这个 target 的全部标注，避免中途失败留下半页。"""
+    data = request.get_json(silent=True) or {}
+    target = (data.get("target") or "").strip()
+    items = data.get("items")
+    if not target or len(target) > 200:
+        return jsonify({"error": "target 不合法"}), 400
+    if not isinstance(items, list) or len(items) > 2000:
+        return jsonify({"error": "items 不合法"}), 400
+    rows = []
+    for it in items:
+        f, err = _ann_parse(dict(it or {}, target=target))
+        if err:
+            return jsonify({"error": err}), 400
+        rows.append((uid(), target, f["anchor_type"], f["anchor"], f["kind"], f["data"]))
+    db = get_db()
+    db.execute("DELETE FROM annotations WHERE user_id=? AND target=?", (uid(), target))
+    db.executemany(
+        "INSERT INTO annotations(user_id,target,anchor_type,anchor,kind,data) VALUES(?,?,?,?,?,?)", rows)
+    db.commit()
+    return jsonify({"ok": True, "n": len(rows)})
 
 
 # ---------------------------------------------------------------- 常识积累（7板块）

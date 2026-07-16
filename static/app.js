@@ -1502,6 +1502,8 @@ function applyReaderStyle() {
   r.style.fontSize = readerFont + 'px';
   r.classList.toggle('sepia', readerSepia);
   r.classList.toggle('serif', readerSerif);
+  // 字号/字体一变正文就重排，批注的锚要重新定位，否则笔迹还停在旧位置（这正是原来的病）
+  if (window.Ink && Ink.on) { Ink.relayout(); Ink.paint(); }
 }
 async function openReader(fileUrl, ext) {
   $('#viewer-frame').classList.add('hidden'); $('#viewer-frame').src = 'about:blank';
@@ -9081,6 +9083,91 @@ function padInit() {
   });
 }
 
+/* ================= 文本锚：把标注钉在「那句话」上，而不是「那个像素」上 =================
+   坐标锚定的批注，内容一重排就和它标的东西脱节：实测在阅读模式画一道线、点一下工具栏的
+   「A+」（16px→20px），那一条就跑了 94px、笔迹纹丝不动＝错位 173px（约 2.3 行）；
+   同一份批注拿到手机上（1600px→390px）错位 180px。所以「批注存服务器同步到手机」这件事，
+   在坐标模型下是没有意义的 —— 同步过去全落在别的段落上。
+   这里改成按文本定位：存下「那句话」+ 前后文，重排后按文本把位置找回来。
+   和 AI 划重点同一个路子（mkWrapOne 就是按文本偏移 + Range 定位的），
+   也就是 W3C Web Annotation 的 TextQuoteSelector。 */
+const ANN_CTX = 24;          // 前后各取多少字消歧（同一句话在一页里可能出现多次）
+const ANN_QLEN = 16;         // 锚句取多长：够唯一又不至于内容一改就整段对不上
+
+// (文本节点, 节点内偏移) → 全文偏移；mkNodes 给的就是「节点 → 起始偏移」表
+function annPosOf(nodes, node, off) {
+  for (const { n, start } of nodes) if (n === node) return start + off;
+  return -1;
+}
+// 全文偏移 → Range（拿它的 getBoundingClientRect 得到「这句话现在在屏幕哪」）
+function annRangeOf(nodes, pos, len) {
+  let r = null;
+  for (const { n, start } of nodes) {
+    const end = start + n.nodeValue.length;
+    if (!r && pos >= start && pos < end) { r = document.createRange(); r.setStart(n, pos - start); }
+    if (r && pos + len > start && pos + len <= end) { r.setEnd(n, pos + len - start); return r; }
+  }
+  return null;
+}
+// 屏幕点 → 文本锚。画在空白处/图片上锚不住 → 返回 null，调用方退回 pixel 锚（老行为）
+function annAnchorAt(root, x, y) {
+  if (!root) return null;
+  let rg = null;
+  // caretRangeFromPoint 走的是命中测试：批注画布正盖在文字上，不让开的话命中的是画布（拿到 BODY），
+  // 一个锚都生成不出来。临时 pointer-events:none 让它「看穿」画布，取完立刻恢复。
+  const cv = $('#ink-cv'), pe = cv ? cv.style.pointerEvents : null;
+  if (cv) cv.style.pointerEvents = 'none';
+  try {
+    if (document.caretRangeFromPoint) rg = document.caretRangeFromPoint(x, y);
+    else if (document.caretPositionFromPoint) {
+      const p = document.caretPositionFromPoint(x, y);
+      if (p) { rg = document.createRange(); rg.setStart(p.offsetNode, p.offset); }
+    }
+  } catch (_) {}
+  if (cv) cv.style.pointerEvents = pe;
+  if (!rg || !rg.startContainer || rg.startContainer.nodeType !== 3) return null;
+  if (!root.contains(rg.startContainer)) return null;
+  const nodes = mkNodes(root);
+  const pos = annPosOf(nodes, rg.startContainer, rg.startOffset);
+  if (pos < 0) return null;
+  // caretRangeFromPoint 在空白处会给「最近的」文本，可能离得很远 —— 验一下真压着字
+  const probe = annRangeOf(nodes, pos, 1);
+  if (probe) {
+    const b = probe.getBoundingClientRect();
+    if (y < b.top - 40 || y > b.bottom + 40) return null;      // 竖直差一行以上＝没压住文本
+  }
+  const full = mkText(root);
+  const quote = full.slice(pos, pos + ANN_QLEN);
+  if (quote.replace(/\s/g, '').length < 4) return null;        // 太短锚不稳，不如退回 pixel
+  return {
+    quote,
+    prefix: full.slice(Math.max(0, pos - ANN_CTX), pos),
+    suffix: full.slice(pos + quote.length, pos + quote.length + ANN_CTX),
+    start: pos,
+  };
+}
+// 锚 → 这句话现在的屏幕矩形。找不到＝内容改了（孤儿标注），返回 null
+function annLocate(root, a) {
+  if (!root || !a || !a.quote) return null;
+  const full = mkText(root), q = a.quote;
+  let pos = -1;
+  if (a.start >= 0 && full.substr(a.start, q.length) === q) pos = a.start;   // 老位置还对得上（最常见）
+  if (pos < 0) {                                                             // 带前后文找，消歧
+    const i = full.indexOf((a.prefix || '') + q + (a.suffix || ''));
+    if (i >= 0) pos = i + (a.prefix || '').length;
+  }
+  if (pos < 0) {                                                             // 只按这句话找，多处取离老位置最近的
+    const hits = []; let i = full.indexOf(q);
+    while (i >= 0 && hits.length < 50) { hits.push(i); i = full.indexOf(q, i + 1); }
+    if (hits.length) pos = hits.reduce((b, c) => (Math.abs(c - a.start) < Math.abs(b - a.start) ? c : b));
+  }
+  if (pos < 0) return null;
+  const rg = annRangeOf(mkNodes(root), pos, 1);
+  if (!rg) return null;
+  const b = rg.getBoundingClientRect();
+  return (b.width || b.height) ? b : null;
+}
+
 /* ================= 通用手写批注层（Ink）=================
    一块透明画布盖在**任意内容**上，随处拿笔勾画/做笔记。解决三件事：
      · 笔尖对齐：坐标是「指针相对画布」直接算的，笔尖落哪画哪（pdf.js 自带的笔尖是歪的）。
@@ -9099,12 +9186,13 @@ const Ink = {
   scrollY() {
     try { return this.scroller ? (this.scroller.scrollTop || 0) : 0; } catch (_) { return 0; }
   },
-  // 屏幕点 → 内容坐标：x 按画布宽度归一化(0..1)，y 是内容绝对像素(加上滚动量) → 滚动后仍贴原位
-  pt(e) {
+  // 屏幕点 → 存储坐标：x 按画布宽度归一化(0..1) → 换设备/换宽度按比例缩放；
+  // y 是「相对这一笔的参考原点」的像素(ref 见 relayout)：文本锚＝相对那句话，pixel 锚＝相对内容顶部。
+  pt(e, ref) {
     const r = this.rect();
     return {
       x: (e.clientX - r.left) / (r.width || 1),
-      y: (e.clientY - r.top) + this.scrollY(),
+      y: (e.clientY - r.top) + this.scrollY() - (ref || 0),
       p: (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0,
     };
   },
@@ -9114,11 +9202,13 @@ const Ink = {
     this.cv.width = Math.round(r.width * dpr);
     this.cv.height = Math.round(r.height * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.relayout();                     // 宽度变了＝内容重排了，锚要重新定位
     this.paint();
   },
   drawStroke(ctx, s, W) {
     const pts = s.pts; if (!pts || !pts.length) return;
-    const sy = this.scrollY();
+    if (s._ref === null) return;                   // 孤儿（锚失效）：宁可不画，也别画到别的段落上
+    const sy = this.scrollY() - (s._ref || 0);     // 内容坐标 → 屏幕：减滚动、加这一笔的参考原点
     ctx.save(); ctx.lineJoin = ctx.lineCap = 'round';
     let wid = s.size;                              // s.size 已是该工具自己的粗细（橡皮/笔各存各的）
     if (s.tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; }
@@ -9157,7 +9247,13 @@ const Ink = {
     e.preventDefault();
     try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
     this.drawing = true;
-    this.cur = { tool: this.tool, color: this.color, size: this.curSize(), pts: [this.pt(e)] };
+    // 落笔时就把这一笔钉到它压着的那句话上；压不住文本（空白处/图片上）→ a=null 退回 pixel 锚
+    let a = annAnchorAt(this.root, e.clientX, e.clientY), ref = 0;
+    if (a) {
+      const b = annLocate(this.root, a);
+      if (b) ref = b.top - this.rect().top + this.scrollY(); else a = null;
+    }
+    this.cur = { tool: this.tool, color: this.color, size: this.curSize(), a, _ref: ref, pts: [this.pt(e, ref)] };
     this.paint();
   },
   move(e) {
@@ -9166,7 +9262,7 @@ const Ink = {
     let evs = [];
     try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
     if (!evs.length) evs = [e];
-    for (const ev of evs) this.cur.pts.push(this.pt(ev));
+    for (const ev of evs) this.cur.pts.push(this.pt(ev, this.cur._ref));
     if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.paint(); });
   },
   up() {
@@ -9196,19 +9292,42 @@ const Ink = {
         pts.push(p ? [x, y, p] : [x, y]);
         lx = x; ly = y;
       }
-      return { t: s.tool, c: s.color, w: s.size, p: pts };
+      const o = { t: s.tool, c: s.color, w: s.size, p: pts };
+      if (s.a) o.a = s.a;                          // 文本锚：这一笔贴在「哪句话」上
+      return o;
     }).filter(s => s.p.length);
   },
   // 读得懂两种格式：新的 {t,c,w,p:[[x,y]]}，和旧的 {tool,color,size,pts:[{x,y,p}]}（迁移漏网的）
   unpack(data) {
     return (data || []).map(s => (s.pts ? s : {
-      tool: s.t, color: s.c, size: s.w,
+      tool: s.t, color: s.c, size: s.w, a: s.a || null,
       pts: (s.p || []).map(q => ({ x: q[0], y: q[1], p: q[2] || 0 })),
     })).filter(s => s.pts && s.pts.length);
   },
+  // 每笔的参考原点（内容坐标系的 y）：文本锚＝那句话现在在哪；pixel 锚＝0（＝老的视口坐标行为）。
+  // 存的是「内容坐标」而不是「屏幕坐标」，所以滚动只要减 scrollTop，不必重新定位（annLocate 不便宜）。
+  relayout() {
+    const rect = this.rect(), sy = this.scrollY();
+    this.orphans = 0;
+    const all = this.cur ? this.strokes.concat([this.cur]) : this.strokes;
+    for (const s of all) {
+      if (!s.a) { s._ref = 0; continue; }
+      const b = annLocate(this.root, s.a);
+      if (b) s._ref = b.top - rect.top + sy;
+      else { s._ref = null; this.orphans++; }     // 内容改了，这句话没了＝孤儿，不画（数据留着）
+    }
+  },
+  /* 存服务器（批注是长期资产，不该躺在一个浏览器的 5MiB 配额里；换设备/重装也不丢）。
+     localStorage 降级成**离线暂存**：传上去就删掉本地那份 —— 正常情况下它几乎不占空间，
+     配额问题从根上没了；离线时笔迹先压在本地，下次进这一页再补传。 */
   save() {
     if (!this.key) return;
     this._memKey = this.key;              // 内存里这份笔迹是哪一页的 —— load() 靠它兜底
+    this._stash();                        // 先落本地：关窗口/断网都不丢
+    clearTimeout(this._saveT);            // 防抖：别每抬一次笔就打一次接口
+    this._saveT = setTimeout(() => this.flush(this.key), 700);
+  },
+  _stash() {
     try {
       if (this.strokes.length) localStorage.setItem('ink:' + this.key, JSON.stringify(this.pack(this.strokes)));
       else localStorage.removeItem('ink:' + this.key);
@@ -9218,15 +9337,46 @@ const Ink = {
       if (!this._warned) { this._warned = true; toast('本地存储满了，这一页批注没存上', true); }
     }
   },
-  load() {
+  async flush(key) {
+    if (!key) return;
+    const items = this.pack(this.key === key ? this.strokes : this.unpack(this._stashed(key)))
+      .map(s => ({ kind: s.t === 'hl' ? 'hl' : 'ink', anchor_type: s.a ? 'text' : 'pixel',
+                   anchor: s.a || {}, data: { t: s.t, c: s.c, w: s.w, p: s.p } }));
+    try {
+      await api('/api/annots/replace', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: key, items }),
+      });
+      try { localStorage.removeItem('ink:' + key); } catch (_) {}   // 传上去了，本地那份就不留了
+    } catch (_) {}                        // 离线/失败：本地暂存还在，下次进这一页再补
+  },
+  _stashed(key) {
+    try { return JSON.parse(localStorage.getItem('ink:' + key) || 'null') || []; } catch (_) { return []; }
+  },
+  async load() {
     this.redo = [];
-    if (this._memKey !== this.key) this._cleared = null;   // 「清屏」的后悔药不能跨页面用
-    let d = null;
-    try { d = JSON.parse(localStorage.getItem('ink:' + this.key) || 'null'); } catch (_) {}
-    if (d && d.length) { this.strokes = this.unpack(d); this._memKey = this.key; return; }
-    // 存盘失败过（配额满）时，内存里这份就是唯一的一份 —— 别再用空的存储把它冲掉
-    if (this._memKey === this.key && this.strokes.length) return;
-    this.strokes = []; this._memKey = this.key;
+    const key = this.key;
+    if (this._memKey !== key) { this._cleared = null; this.strokes = []; }  // 换了一页：清屏的后悔药也别跨页
+    this._memKey = key;
+    const n0 = this.strokes.length;                       // 内存里原有的（同一页重开时非 0）
+    const stash = this._stashed(key);                     // 离线时压在本地、还没传上去的
+    let server = null;
+    try {
+      const d = await api('/api/annots?target=' + encodeURIComponent(key));
+      server = (d.items || []).map(it => Object.assign({}, it.data, { a: it.anchor_type === 'text' ? it.anchor : null }));
+    } catch (_) {}                                        // 断网：下面退回本地那份
+    if (this.key !== key) return;                         // 等接口的工夫用户已经翻页了，别把笔迹画串页
+    // 等接口这会儿用户可能已经落笔了 —— 那几笔必须留住，接在取回来的后面，别被覆盖掉
+    const mine = this.strokes.slice(n0);
+    let base;
+    if (stash.length) { base = this.unpack(stash); this.flush(key); }   // 本地暂存＝还没传上去的，最新
+    else if (server && server.length) base = this.unpack(server);
+    else if (n0) { base = this.strokes.slice(0, n0); this.flush(key); }
+    // ↑ 内存里有、服务器和本地都没有 ＝ 还没传上去（防抖没到点、或本地配额满存不下），
+    //   这份是唯一的一份，保住并补传。注意 server=[] 是 truthy，别把「还没传」当成「服务器说这页是空的」。
+    else base = [];
+    this.strokes = base.concat(mine);
+    if (this.on) { this.relayout(); this.paint(); }
   },
   syncUI() {
     document.querySelectorAll('#ink .ink-t[data-inkt]').forEach(b => b.classList.toggle('on', b.dataset.inkt === this.tool));
@@ -9241,10 +9391,11 @@ const Ink = {
   },
   // scroller: 要跟随滚动的元素（PDF 是 iframe 内部的 #viewerContainer；其它视图是主滚动容器/null）
   // target:   画布要盖住的元素（PDF 是 iframe；不传就盖住顶栏以下的整个内容区）→ 笔尖对齐靠这个
-  open(key, scroller, target) {
+  open(key, scroller, target, root) {
     this.unhook();                       // 已经开着又点一次入口（工具球/查看器条各有一个）：先摘干净
     this.key = key || (('view:' + ((stack[stack.length - 1] || {}).view || 'home')));
     this.scroller = scroller || null;
+    this.root = root || null;            // 文本锚挂在这个容器的文字上；不传＝只能 pixel 锚
     this.cv = $('#ink-cv'); this.ctx = this.cv.getContext('2d');
     $('#ink').classList.remove('hidden');
     // 把画布精确定位到目标区域（不传目标就是顶栏以下整个屏幕）—— 画布(0,0) 要正好对齐内容(0,0)
@@ -9317,12 +9468,19 @@ function inkHere() {
     Ink.open('mat:' + fk.slice(-80), sc, vf);
     return;
   }
-  // 一般视图：盖住**整屏**（顶栏以下），传 null target = 全视口，想全屏勾画。
-  // scroller 传 null = 笔迹按**视口坐标**存：画在哪个屏幕位置，关了再开还在那个屏幕位置，
-  // 不受页面滚动影响。（曾用 document.scrollingElement 做「跟随整页滚动」，但一旦关闭后页面滚回
-  // 顶部，内容坐标很大的笔迹就被画到可视画布下方、像是丢了 —— 一般视图内容通常一两屏，视口坐标最稳。
-  // 需要跟随滚动的是 PDF，那条路单独用 iframe 内部滚动，不受此影响。）
-  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''), null, null);
+  // 阅读模式（.md/.txt/PDF 转出来的文本）：**文本锚**。笔迹钉在「那句话」上 —— 改字号、换字体、
+  // 换设备宽度、内容重排，笔迹都跟着那句话走（坐标锚定下点一次 A+ 就错位 2.3 行）。
+  // root=#viewer-reader 是文字所在的容器，它自己带滚动（.reader{overflow-y:auto}），
+  // 锚存的是内容坐标，滚动只是减 scrollTop，笔迹自然跟着内容滚。
+  const rd = $('#viewer-reader');
+  if (st.view === 'viewer' && rd && !rd.classList.contains('hidden')) {
+    Ink.open('view:viewer' + (st.id ? ':' + st.id : ''), rd, null, rd);
+    return;
+  }
+  // 其它视图：暂时仍是 pixel 锚（按视口坐标，画在哪个屏幕位置就留在哪）。
+  // 文本锚推广到这些视图是第二期的事 —— 它们的正文容器（mkPageRoot）和滚动容器五花八门，
+  // 得一个个核对，先让阅读模式这条路跑稳。
+  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''), null, null, null);
 }
 
 /* 一次性把旧批注重写成紧凑格式：笔迹一笔不动，体积降到约 1/3.7。
@@ -9354,6 +9512,25 @@ function inkMigrate() {
   } catch (_) {}
 }
 inkMigrate();
+
+/* 把本地存着的旧批注传到服务器，传上去就把本地那份删掉。
+   跑完 localStorage 里的 ink: 基本清空 —— 5MiB 配额那个坎从根上没了（老批注是 pixel 锚，
+   行为和以前一样；以后重新画的才带文本锚）。失败就留着，下次进应用再传。 */
+async function inkUpload() {
+  let keys = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf('ink:') === 0) keys.push(k);
+    }
+  } catch (_) { return; }
+  for (const k of keys) {
+    const target = k.slice(4);
+    if (!target) continue;
+    await Ink.flush(target);             // flush 读本地暂存、传上去、成功即删本地
+  }
+}
+setTimeout(inkUpload, 3000);             // 别和启动那波请求抢，晚一点再传
 
 /* ================= 通用停靠（草稿纸 / AI 面板共用） =================
    半屏只是默认值：交界处的分隔线可以直接拖，比例按「每个停靠位」分别记住；
