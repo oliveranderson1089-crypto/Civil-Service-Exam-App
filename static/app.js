@@ -4422,7 +4422,8 @@ async function frDoGrade() {
     const M = { full: ['✅', 'ok'], part: ['⚠️', 'part'], miss: ['❌', 'miss'] };
     $('#fr-head').innerHTML = `
       <div class="fr-step"><span class="done">① 找点</span><span class="done">② 写点</span><span class="on">③ 批改</span></div>
-      <div class="fr-final"><b>${g.score}</b> / ${g.full} 分</div>`;
+      <div class="fr-final"><b>${g.score}</b> / ${g.full} 分${g.content_score != null && g.format
+        ? `<span class="fr-brk">内容 ${g.content_score}/${g.content_full} + 格式 ${g.format.score}/${g.format.full}</span>` : ''}</div>`;
     $('#fr-mat').innerHTML = '';
     $('#fr-foot').innerHTML = `
       <div class="fr-res">
@@ -4433,7 +4434,7 @@ async function frDoGrade() {
             <b>${m[0]} [${it.score} 分] ${esc(it.point || '')}</b>
             <div class="fr-gc">${esc(it.comment || '')}</div></div>`;
         }).join('')}
-        ${g.format ? `<div class="fr-sec fr-fmt"><div class="fr-sec-t">📋 格式（${esc(g.format.doctype || '')}）${g.format.grade ? ` · ${esc(g.format.grade)}` : ''}</div>
+        ${g.format ? `<div class="fr-sec fr-fmt"><div class="fr-sec-t">📋 格式（${esc(g.format.doctype || '')}）${g.format.grade ? ` · ${esc(g.format.grade)}` : ''}${g.format.full ? ` · ${g.format.score}/${g.format.full} 分` : ''}</div>
           ${(g.format.ok || []).length ? `<div class="fr-item">✅ 到位：${g.format.ok.map(esc).join('、')}</div>` : ''}
           ${(g.format.miss || []).length ? `<div class="fr-item">❌ 欠缺：${g.format.miss.map(esc).join('、')}</div>` : ''}
           ${g.format.comment ? `<div class="fr-gc">${esc(g.format.comment)}</div>` : ''}</div>` : ''}

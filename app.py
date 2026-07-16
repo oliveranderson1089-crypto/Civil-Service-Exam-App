@@ -7828,11 +7828,14 @@ def _find_locate(sents, evidence):
 def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requirement=""):
     """材料 + 题干 → AI 标出采分点（逐字依据），存成一套可判的题。"""
     name, dfull, dmin, dmax = FIND_TYPES[qtype][0], FIND_TYPES[qtype][1], FIND_TYPES[qtype][2], FIND_TYPES[qtype][3]
+    pts_full = full or dfull
+    if qtype == "guanche":                          # 贯彻执行：格式另占约 1/4，采分点只分内容那部分
+        pts_full = pts_full - max(2, round(pts_full * 0.25))
     prompt = (
         "下面是一道申论**%s**的给定资料和题干。请像阅卷组一样，把**采分点**标出来。\n\n"
         "【题干】%s\n\n【给定资料】\n%s\n\n"
         "【要求】\n"
-        "1. 一个采分点 = 一个独立的得分要点。%d 分的题一般 5~8 个点。\n"
+        "1. 一个采分点 = 一个独立的得分要点。%d 分（内容部分）一般 5~8 个点。\n"
         "2. 每个点给：\n"
         "   · point：概括后的要点表述（12~30 字，这是**答案里该写的话**，不是原文）\n"
         "   · evidence：这个点在材料里的依据，**从材料里逐字复制**（一句或连续两句，"
@@ -7841,7 +7844,7 @@ def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requi
         "3. **材料里有干扰信息**（背景铺垫、无关细节、重复表述），不要把它们标成采分点。\n"
         "4. 同一个意思在材料里出现两次的，**只标一个点**，evidence 取最完整的那处。\n\n"
         '只输出 JSON：{"points":[{"point":"","evidence":"","score":0}]}'
-        % (name, stem, material[:8000], full or dfull, full or dfull))
+        % (name, stem, material[:8000], pts_full, pts_full))
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论阅卷组组长。采分点的依据必须逐字来自材料，"
                                        "绝不改写、不编造。严格输出 JSON。"},
@@ -8148,17 +8151,20 @@ def find_grade():
     std = "\n".join("%d. %s（%g 分）依据：%s" % (i + 1, p["point"], p["score"], p["evidence"][:60])
                     for i, p in enumerate(points))
 
-    # 贯彻执行题：除了内容采分点，还要判「格式」（标题/称谓/正文结构/落款是否合该文种）
+    # 贯彻执行题：除了内容采分点，还要判「格式」（标题/称谓/正文结构/落款是否合该文种），并**计入总分**
     doctype = _find_doctype(r)
-    fmt_rule, fmt_json = "", ""
+    fmt_rule, fmt_json, fmt_full = "", "", 0
     if doctype:
         spec = GW_MAP.get(doctype, {})
+        fmt_full = max(2, round(int(r["full"]) * 0.25))     # 格式占约 1/4（20 分题≈5 分格式 + 15 分内容）
         fmt_rule = (
             "\n5. 【这是贯彻执行题，还要判格式】文种：%s。该文种的规范格式骨架：%s。\n"
             "   逐项检查考生答案是否具备这些格式要件（标题、称谓、正文的分层结构、落款/署名日期等，"
-            "视文种而定），有的算 ok、缺的或写错的算 miss，并给一个总体档次。\n"
-            % (doctype, spec.get("fmt", "")))
-        fmt_json = ('"format":{"doctype":"%s","ok":["具备的格式要件"],"miss":["缺失/写错的格式要件"],'
+            "视文种而定），有的算 ok、缺的或写错的算 miss，给一个总体档次。\n"
+            "   **格式满分 %d 分**，按规范程度给 format.score（0~%d）。内容采分点的得分照常填在 items 和 score 里，"
+            "两者分开算。\n"
+            % (doctype, spec.get("fmt", ""), fmt_full, fmt_full))
+        fmt_json = ('"format":{"doctype":"%s","score":0,"ok":["具备的格式要件"],"miss":["缺失/写错的格式要件"],'
                     '"grade":"优|良|中|差","comment":"一句话点评格式规范程度"},') % doctype
 
     style_note = ("有没有抄原文、有没有加自己的评论（归纳概括题不许评价）、有没有分条、"
@@ -8197,6 +8203,18 @@ def find_grade():
     except Exception:
         return jsonify({"error": "AI 返回格式异常，请重试"}), 502
 
+    if doctype and fmt_full:
+        # 贯彻执行：总分 = 内容（按采分点得分，折算到 full-fmt_full）+ 格式（0~fmt_full）
+        content_full = sum(float(p.get("score") or 0) for p in points) or float(r["full"])
+        content_raw = float(g.get("score") or 0)                  # AI 给的内容采分点得分合计
+        content_target = int(r["full"]) - fmt_full
+        content_final = round(content_raw / content_full * content_target, 1) if content_full else 0
+        fm = g.get("format") or {}
+        fmt_score = max(0.0, min(float(fmt_full), float(fm.get("score") or 0)))
+        fm["score"], fm["full"] = round(fmt_score, 1), fmt_full
+        g["format"] = fm
+        g["content_score"], g["content_full"] = content_final, content_target
+        g["score"] = round(content_final + fmt_score, 1)
     score = float(g.get("score") or 0)
     db.execute("INSERT INTO find_records(user_id,paper_id,marks,find_result,answer,grade,score,full) "
                "VALUES(?,?,?,?,?,?,?,?)",
