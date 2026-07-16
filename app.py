@@ -994,92 +994,6 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_ann_target ON annotations(user_id, target);
         """
     )
-    # entries 老表可能缺 user_id 列（先补列，再建索引）
-    if "user_id" not in _cols(con, "entries"):
-        con.execute("ALTER TABLE entries ADD COLUMN user_id INTEGER")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)")
-    # ai_chats 补 starred（置顶）
-    if "starred" not in _cols(con, "ai_chats"):
-        con.execute("ALTER TABLE ai_chats ADD COLUMN starred INTEGER DEFAULT 0")
-    # 应用文比大作文多一层：得先有「文种 + 发文场景 + 我是谁 + 写给谁」才谈得上选素材
-    if "spec" not in _cols(con, "daily_essays"):
-        con.execute("ALTER TABLE daily_essays ADD COLUMN spec TEXT")
-    # 每日复习量：一天能背多少是因人而异的，原来写死 120 条（只能改环境变量），堆起来就不想背了
-    if "rv_limits" not in _cols(con, "users"):
-        con.execute("ALTER TABLE users ADD COLUMN rv_limits TEXT")
-    # 专项练加了难度档，统计要按难度分开（不然入门刷出来的高正确率会盖住真实水平）
-    if "level" not in _cols(con, "drill_log"):
-        con.execute("ALTER TABLE drill_log ADD COLUMN level TEXT DEFAULT 'mid'")
-    # AI 出的题要过**第二个模型的独立核验**才能发给人做（实测抽检：单模型出题一致率只有 89%，
-    # 也就是每 9 道就有 1 道值得怀疑；而且真抓到过事实错误 —— 「山水林田湖草沙」那道就是错的）。
-    for col, dflt in (("checked", "0"), ("agree", "0"), ("audit_ans", "''"),
-                      ("audit_note", "''"), ("flaw", "''")):
-        if col not in _cols(con, "drill_bank"):
-            con.execute("ALTER TABLE drill_bank ADD COLUMN %s TEXT DEFAULT %s" % (col, dflt))
-    # 成语/实词的例句：光有释义记不住怎么用。**先从真实官方语料里找**（人民日报时政、时政要文、
-    # 习语金句都是真文本），找到就是真出处；找不到才让 AI 仿写，并**明说是仿写**。
-    for col in ("example", "example_src", "confuse"):
-        if col not in _cols(con, "changkao_items"):
-            con.execute("ALTER TABLE changkao_items ADD COLUMN %s TEXT" % col)
-    # 高频实词的词义：原来只有 content=常用搭配（履行→责任/职责/使命…），没有这个词本身是啥意思。
-    # 加一列 meaning，由 build_ck_meaning.py 先查内置词典、查不到用 AI 补齐。
-    if "meaning" not in _cols(con, "changkao_items"):
-        con.execute("ALTER TABLE changkao_items ADD COLUMN meaning TEXT")
-    # 人民时评范文的「逐段批注」（对照精读）：analysis 是整篇拆解，看着和正文割裂；
-    # annotations 是 JSON {段号: 这段在做什么/好在哪/可仿写点}，渲染时跟在对应段落后面。
-    if "annotations" not in _cols(con, "essay_models"):
-        con.execute("ALTER TABLE essay_models ADD COLUMN annotations TEXT")
-    # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
-    if "mat_boards" not in _cols(con, "users"):
-        con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
-    # 外观定制：头像 / 应用内壁纸 / 登录页壁纸（存文件名，图片放 uploads/skin/<uid>/）
-    for col in ("avatar", "wall_app", "wall_login"):
-        if col not in _cols(con, "users"):
-            con.execute("ALTER TABLE users ADD COLUMN %s TEXT" % col)
-    # ci_ai 结构化：补 出处/例句 列
-    for col in ("derivation", "example"):
-        if col not in _cols(con, "ci_ai"):
-            con.execute("ALTER TABLE ci_ai ADD COLUMN %s TEXT" % col)
-    # 视频要能在 APP 里直接播（原来点播放键是往外跳浏览器 —— 桌面版还跳不动）。
-    #   kind: 决定用哪种播法 —— cctv=自己拿 mp4 分段放；bili=嵌官方播放器；sc=川观（抓到直链才能放）
-    #   play: 抓取时就把播放地址算好存下来，用户点播放时不用现去请求人家的接口（快，也不容易失败）
-    for col in ("kind", "play"):
-        if col not in _cols(con, "video_items"):
-            con.execute("ALTER TABLE video_items ADD COLUMN %s TEXT" % col)
-    # 老数据没有 kind：按 guid 的长相反推（BV 开头是 B 站，32 位十六进制是央视，剩下的是川观）
-    con.execute("UPDATE video_items SET kind = CASE "
-                "WHEN guid LIKE 'BV%' THEN 'bili' "
-                "WHEN guid GLOB '[0-9a-f]*' AND length(guid)=32 THEN 'cctv' "
-                "ELSE 'sc' END WHERE kind IS NULL OR kind=''")
-    # 习语金句：补 关键词/申论运用 列
-    for col in ("keyword", "apply"):
-        if col not in _cols(con, "xiyu_items"):
-            con.execute("ALTER TABLE xiyu_items ADD COLUMN %s TEXT" % col)
-    # 上位词：补「典故/来源」列（AI 讲一次就缓存，像古诗文赏析那样点开即看）
-    if "story" not in _cols(con, "hyper_items"):
-        con.execute("ALTER TABLE hyper_items ADD COLUMN story TEXT")
-    # 常考成语/实词：补「典故」列（看懂来历自然就记住了，不用死背）
-    if "story" not in _cols(con, "changkao_items"):
-        con.execute("ALTER TABLE changkao_items ADD COLUMN story TEXT")
-    # 每日时政：补「重点标注」列（在原文里划出考点，不用通读全文）
-    if "marks" not in _cols(con, "news_items"):
-        con.execute("ALTER TABLE news_items ADD COLUMN marks TEXT")
-    # 古诗文考频排序
-    if "freq" not in _cols(con, "classics"):
-        con.execute("ALTER TABLE classics ADD COLUMN freq INTEGER DEFAULT 0")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_cls_freq ON classics(freq)")
-    # 衔接表达例句
-    if "example" not in _cols(con, "sucai_items"):
-        con.execute("ALTER TABLE sucai_items ADD COLUMN example TEXT")
-    # 每日一诗：常识判断考点
-    if "common" not in _cols(con, "classic_daily"):
-        con.execute("ALTER TABLE classic_daily ADD COLUMN common TEXT")
-    # 首页卡片自定义排序（拖拽保存，JSON 数组）
-    if "home_order" not in _cols(con, "users"):
-        con.execute("ALTER TABLE users ADD COLUMN home_order TEXT")
-    # 各功能页卡片排序（JSON 对象：网格键→顺序数组）
-    if "ui_orders" not in _cols(con, "users"):
-        con.execute("ALTER TABLE users ADD COLUMN ui_orders TEXT")
     con.executescript("""
         -- 互监待办：每人独立打勾（旧 shared_todos.done 保留兼容）
         CREATE TABLE IF NOT EXISTS shared_todo_done(
@@ -1272,6 +1186,97 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_drafts ON drafts(user_id, updated_at DESC);
     """)
+    # ↓↓ 到这里为止所有表都建好了，下面才开始「补列」（ALTER）。
+    # 顺序很要紧：changkao_items / hyper_items / xiyu_items 的建表在上面第二个 executescript 里，
+    # 而它们的 ALTER 原本排在那之前 —— 全新空库上 _cols() 对不存在的表返回空集合，
+    # 于是 "col not in set()" 成立、直接 ALTER 一张还没有的表 → init_db() 必崩。
+    # 生产库因为表早就在所以从没暴露，换机/新部署就会炸。
+    # entries 老表可能缺 user_id 列（先补列，再建索引）
+    if "user_id" not in _cols(con, "entries"):
+        con.execute("ALTER TABLE entries ADD COLUMN user_id INTEGER")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)")
+    # ai_chats 补 starred（置顶）
+    if "starred" not in _cols(con, "ai_chats"):
+        con.execute("ALTER TABLE ai_chats ADD COLUMN starred INTEGER DEFAULT 0")
+    # 应用文比大作文多一层：得先有「文种 + 发文场景 + 我是谁 + 写给谁」才谈得上选素材
+    if "spec" not in _cols(con, "daily_essays"):
+        con.execute("ALTER TABLE daily_essays ADD COLUMN spec TEXT")
+    # 每日复习量：一天能背多少是因人而异的，原来写死 120 条（只能改环境变量），堆起来就不想背了
+    if "rv_limits" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN rv_limits TEXT")
+    # 专项练加了难度档，统计要按难度分开（不然入门刷出来的高正确率会盖住真实水平）
+    if "level" not in _cols(con, "drill_log"):
+        con.execute("ALTER TABLE drill_log ADD COLUMN level TEXT DEFAULT 'mid'")
+    # AI 出的题要过**第二个模型的独立核验**才能发给人做（实测抽检：单模型出题一致率只有 89%，
+    # 也就是每 9 道就有 1 道值得怀疑；而且真抓到过事实错误 —— 「山水林田湖草沙」那道就是错的）。
+    for col, dflt in (("checked", "0"), ("agree", "0"), ("audit_ans", "''"),
+                      ("audit_note", "''"), ("flaw", "''")):
+        if col not in _cols(con, "drill_bank"):
+            con.execute("ALTER TABLE drill_bank ADD COLUMN %s TEXT DEFAULT %s" % (col, dflt))
+    # 成语/实词的例句：光有释义记不住怎么用。**先从真实官方语料里找**（人民日报时政、时政要文、
+    # 习语金句都是真文本），找到就是真出处；找不到才让 AI 仿写，并**明说是仿写**。
+    for col in ("example", "example_src", "confuse"):
+        if col not in _cols(con, "changkao_items"):
+            con.execute("ALTER TABLE changkao_items ADD COLUMN %s TEXT" % col)
+    # 高频实词的词义：原来只有 content=常用搭配（履行→责任/职责/使命…），没有这个词本身是啥意思。
+    # 加一列 meaning，由 build_ck_meaning.py 先查内置词典、查不到用 AI 补齐。
+    if "meaning" not in _cols(con, "changkao_items"):
+        con.execute("ALTER TABLE changkao_items ADD COLUMN meaning TEXT")
+    # 人民时评范文的「逐段批注」（对照精读）：analysis 是整篇拆解，看着和正文割裂；
+    # annotations 是 JSON {段号: 这段在做什么/好在哪/可仿写点}，渲染时跟在对应段落后面。
+    if "annotations" not in _cols(con, "essay_models"):
+        con.execute("ALTER TABLE essay_models ADD COLUMN annotations TEXT")
+    # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
+    if "mat_boards" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
+    # 外观定制：头像 / 应用内壁纸 / 登录页壁纸（存文件名，图片放 uploads/skin/<uid>/）
+    for col in ("avatar", "wall_app", "wall_login"):
+        if col not in _cols(con, "users"):
+            con.execute("ALTER TABLE users ADD COLUMN %s TEXT" % col)
+    # ci_ai 结构化：补 出处/例句 列
+    for col in ("derivation", "example"):
+        if col not in _cols(con, "ci_ai"):
+            con.execute("ALTER TABLE ci_ai ADD COLUMN %s TEXT" % col)
+    # 视频要能在 APP 里直接播（原来点播放键是往外跳浏览器 —— 桌面版还跳不动）。
+    #   kind: 决定用哪种播法 —— cctv=自己拿 mp4 分段放；bili=嵌官方播放器；sc=川观（抓到直链才能放）
+    #   play: 抓取时就把播放地址算好存下来，用户点播放时不用现去请求人家的接口（快，也不容易失败）
+    for col in ("kind", "play"):
+        if col not in _cols(con, "video_items"):
+            con.execute("ALTER TABLE video_items ADD COLUMN %s TEXT" % col)
+    # 老数据没有 kind：按 guid 的长相反推（BV 开头是 B 站，32 位十六进制是央视，剩下的是川观）
+    con.execute("UPDATE video_items SET kind = CASE "
+                "WHEN guid LIKE 'BV%' THEN 'bili' "
+                "WHEN guid GLOB '[0-9a-f]*' AND length(guid)=32 THEN 'cctv' "
+                "ELSE 'sc' END WHERE kind IS NULL OR kind=''")
+    # 习语金句：补 关键词/申论运用 列
+    for col in ("keyword", "apply"):
+        if col not in _cols(con, "xiyu_items"):
+            con.execute("ALTER TABLE xiyu_items ADD COLUMN %s TEXT" % col)
+    # 上位词：补「典故/来源」列（AI 讲一次就缓存，像古诗文赏析那样点开即看）
+    if "story" not in _cols(con, "hyper_items"):
+        con.execute("ALTER TABLE hyper_items ADD COLUMN story TEXT")
+    # 常考成语/实词：补「典故」列（看懂来历自然就记住了，不用死背）
+    if "story" not in _cols(con, "changkao_items"):
+        con.execute("ALTER TABLE changkao_items ADD COLUMN story TEXT")
+    # 每日时政：补「重点标注」列（在原文里划出考点，不用通读全文）
+    if "marks" not in _cols(con, "news_items"):
+        con.execute("ALTER TABLE news_items ADD COLUMN marks TEXT")
+    # 古诗文考频排序
+    if "freq" not in _cols(con, "classics"):
+        con.execute("ALTER TABLE classics ADD COLUMN freq INTEGER DEFAULT 0")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_cls_freq ON classics(freq)")
+    # 衔接表达例句
+    if "example" not in _cols(con, "sucai_items"):
+        con.execute("ALTER TABLE sucai_items ADD COLUMN example TEXT")
+    # 每日一诗：常识判断考点
+    if "common" not in _cols(con, "classic_daily"):
+        con.execute("ALTER TABLE classic_daily ADD COLUMN common TEXT")
+    # 首页卡片自定义排序（拖拽保存，JSON 数组）
+    if "home_order" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN home_order TEXT")
+    # 各功能页卡片排序（JSON 对象：网格键→顺序数组）
+    if "ui_orders" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN ui_orders TEXT")
     # 备考规划：把 AI 给出的今日重点存下来，刷新后还能看到
     for col in ("summary", "summary_date"):
         if col not in _cols(con, "plan_profile"):
