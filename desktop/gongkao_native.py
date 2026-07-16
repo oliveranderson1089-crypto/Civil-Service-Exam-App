@@ -20,8 +20,29 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")
 from gi.repository import Gtk, WebKit2, GLib, Gio, Gdk, GdkPixbuf  # noqa: E402
 
+# 系统通知走 libnotify（比 Gio.send_notification 靠谱：不要求 .desktop 文件名和 application_id 对上）
+try:
+    gi.require_version("Notify", "0.7")
+    from gi.repository import Notify  # noqa: E402
+    Notify.init("公考助手")
+    HAVE_NOTIFY = True
+except Exception:
+    HAVE_NOTIFY = False
+# 托盘小图标（像 QQ/微信最小化后那个）
+try:
+    gi.require_version("AyatanaAppIndicator3", "0.1")
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator  # noqa: E402
+    HAVE_TRAY = True
+except Exception:
+    try:
+        gi.require_version("AppIndicator3", "0.1")
+        from gi.repository import AppIndicator3 as AppIndicator  # noqa: E402
+        HAVE_TRAY = True
+    except Exception:
+        HAVE_TRAY = False
+
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "4.6"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "4.7"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -149,7 +170,48 @@ class Gongkao(Gtk.Application):
         self.web.load_uri(resolve_url())
         self.win.add(self.web)
         self.win.connect("key-press-event", self.on_key)   # F5 刷新等快捷键
+        self.win.connect("delete-event", self.on_close)    # 点 ✕ 收进托盘，不退出（后台还收消息）
         self.win.show_all()
+        self.setup_tray()
+
+    def setup_tray(self):
+        """系统托盘小图标（像 QQ/微信），最小化/关闭后还能看到、点开、退出。"""
+        if not HAVE_TRAY:
+            return
+        try:
+            icon = next((p for p in ICONS if os.path.exists(p)), "")
+            self.tray = AppIndicator.Indicator.new(
+                "com.gongkao.app", "gongkao-assistant",
+                AppIndicator.IndicatorCategory.APPLICATION_STATUS)
+            self.tray.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+            self.tray.set_title("公考助手")
+            if icon:
+                try:
+                    self.tray.set_icon_full(icon, "公考助手")
+                except Exception:
+                    pass
+            menu = Gtk.Menu()
+            mi = Gtk.MenuItem(label="显示公考助手")
+            mi.connect("activate", lambda *a: self.win and self.win.present())
+            menu.append(mi)
+            mq = Gtk.MenuItem(label="退出")
+            mq.connect("activate", lambda *a: self.quit())
+            menu.append(mq)
+            menu.show_all()
+            self.tray.set_menu(menu)
+            try:
+                self.tray.set_secondary_activate_target(mi)  # 左/中键点图标唤起窗口
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def on_close(self, *a):
+        """✕ 不真退出：藏起窗口留在托盘，SSE 还连着、能收消息弹通知。真退出走托盘菜单「退出」。"""
+        if HAVE_TRAY and getattr(self, "tray", None):
+            self.win.hide()
+            return True     # 拦下默认的销毁
+        return False        # 没托盘就照常退出，别把用户困住
 
     def on_key(self, widget, event):
         ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
@@ -305,17 +367,23 @@ class Gongkao(Gtk.Application):
         return False           # 其它权限（定位/摄像头等）保持默认
 
     def on_web_notification(self, web, notification):
-        """网页 new Notification(title,{body}) → 系统通知栏（收到聊天消息就靠它）。"""
+        """网页 new Notification(title,{body}) → 系统通知（收到聊天消息就靠它）。用 libnotify。"""
         try:
-            n = Gio.Notification.new(notification.get_title() or "公考助手")
+            title = notification.get_title() or "公考助手"
             body = notification.get_body() or ""
-            if body:
-                n.set_body(body)
-            try:
-                n.set_default_action("app.present")     # 点通知把窗口调到前台
-            except Exception:
-                pass
-            self.send_notification("gk-msg", n)
+            if HAVE_NOTIFY:
+                ic = next((p for p in ICONS if os.path.exists(p)), "")
+                n = Notify.Notification.new(title, body, ic or None)
+                try:
+                    n.add_action("present", "打开", lambda *a: self.win and self.win.present())
+                except Exception:
+                    pass
+                n.show()
+            else:                # 兜底：Gio（要求 .desktop 名与 app-id 一致，未必弹）
+                gn = Gio.Notification.new(title)
+                if body:
+                    gn.set_body(body)
+                self.send_notification("gk-msg", gn)
             return True          # 已自行处理，WebKit 不用再管
         except Exception:
             return False

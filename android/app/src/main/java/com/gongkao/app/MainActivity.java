@@ -271,8 +271,8 @@ public class MainActivity extends Activity {
 
         Notifier.ensureChannel(this);
         askNotifyPermission();
-        NotifyReceiver.schedule(this);           // 定时把服务器的新消息弹到通知栏
-        Notifier.fetchAndNotify(this, false);    // 打开时也顺便查一次
+        // 轮询改成「前台不轮询、退后台才轮询」（见 onResume/onStop）——前台有 SSE 秒推，
+        // 省得每台设备开着 App 还每 5 分钟空敲一次服务器。
         takeNotifyLink(getIntent());
 
         String url = prefs.getString(KEY, "");
@@ -646,6 +646,21 @@ public class MainActivity extends Activity {
             cameraUri = null;
             return false;
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 回到前台：SSE 秒推接管 → 停掉定时轮询（省服务器/省电）；顺手拉一次补上后台漏的
+        NotifyReceiver.cancel(this);
+        if (Notifier.enabled(this)) Notifier.fetchAndNotify(this, false);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        // 退到后台/锁屏：前台 SSE 断了 → 起 5 分钟定时轮询兜底
+        NotifyReceiver.schedule(this);
     }
 
     @Override

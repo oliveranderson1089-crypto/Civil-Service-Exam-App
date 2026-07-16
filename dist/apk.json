@@ -1,5 +1,5 @@
 {
-  "version_code": 20,
-  "version_name": "2.9",
-  "notes": "收到聊天消息前台秒弹原生通知；后台轮询30分钟缩到5分钟。"
+  "version_code": 21,
+  "version_name": "3.0",
+  "notes": "前台停轮询(SSE秒推接管)、退后台才每5分钟轮询；配合修好的消息通知。"
 }

@@ -1,5 +1,5 @@
 {
-  "version_code": 46,
-  "version_name": "4.6",
-  "notes": "收到聊天消息时弹系统通知栏；消息双栏 + 文件传输助手。"
+  "version_code": 47,
+  "version_name": "4.7",
+  "notes": "桌面通知改 libnotify（修好不弹）；加系统托盘图标、✕收进托盘。"
 }

@@ -858,7 +858,7 @@ systemctl --user list-timers 'gongkao-*'
 
 消息中心的内容会直接弹到手机通知栏（就是下拉看到的那个系统通知列表），点通知直接打开 App 并跳到对应页面。
 
-- `NotifyReceiver` 用 `AlarmManager.setInexactRepeating` 每 30 分钟拉一次 `/api/notifications`（省电，不用精确闹钟）；开机后自动恢复定时。
+- `NotifyReceiver` 用 `AlarmManager.setInexactRepeating` 每 5 分钟拉一次 `/api/notifications`（省电，不用精确闹钟）；开机后自动恢复定时。**只在退到后台才轮询**：`onResume` 里 `NotifyReceiver.cancel`（前台有 SSE 秒推，省得每台设备开着 App 还一直空敲服务器）+ 拉一次补漏；`onStop` 里 `NotifyReceiver.schedule`。
 - App 没在运行也会被系统唤起（清单里静态注册的 receiver）。
 - 用 WebView 的登录 Cookie 请求，没登录就不打扰。
 - 已弹过的用 `notify_last_id` 记住，不重复；一次最多弹 5 条，**只留最新的**（否则条数上限会把最新的挤掉，而 `lastId` 已推进，那几条就永远看不到了）。
@@ -869,7 +869,7 @@ systemctl --user list-timers 'gongkao-*'
 **好友聊天消息也进通知栏**：给你发消息时，服务端会给收件人写一条 `kind='chat'` 的消息中心通知（`_chat_center_notify`，`link=chatroom:<对方id>`，每条消息一条、`dkey` 带消息 id 保证逐条能被轮询器推送）。
 - **前台**：SSE 秒推 → `notifyChat()`。**APK 前台调 `GongkaoNative.notify(title,body,"chat:<id>")` 直接弹原生系统通知（秒到，不用等轮询）**；浏览器/桌面走 Web/系统通知。只要不是正开着那个人的聊天窗就弹，别的功能页也收得到。
 - **后台/退出**：靠 `AlarmManager` 轮询兜底，间隔**从 30 分钟缩到 5 分钟**（不精确闹钟仍省电）。真·后台秒推得上 FCM，暂未做。
-- **电脑端通知**：桌面壳(WebKitGTK)默认不弹网页通知，壳里处理 `permission-request`(放行) + `show-notification`(网页 `new Notification` → `Gio.Notification` 系统通知栏)，点通知 `app.present` 调窗口到前台（`DESKTOP_VER 4.6`）。浏览器/PWA 直接用 Web Notification。
+- **电脑端通知**：桌面壳(WebKitGTK)默认不弹网页通知，壳里处理 `permission-request`(放行) + `show-notification`(网页 `new Notification`)。**踩过的坑**：一开始用 `Gio.send_notification` 一直不弹——它要求 `application_id`(`com.gongkao.app`) 与安装的 `.desktop` 文件名(`gongkao-assistant.desktop`)一致，对不上就静默失败。改用 **libnotify**(`Notify.Notification`)后正常（不挑 .desktop 名）。另加**系统托盘小图标**(AyatanaAppIndicator3，「显示/退出」菜单)，点 ✕ **收进托盘不退出**（SSE 还连着、能继续收消息弹通知），像 QQ/微信（`DESKTOP_VER 4.7`）。浏览器/PWA 直接用 Web Notification。
 - 聊天通知**不计入铃铛未读角标**（聊天入口有自己的红点，避免重复计数）；**读了该会话就清掉**它堆积的那几条（`chat_history` 里 `DELETE ... kind='chat' AND link=chatroom:<id>`）。
 
 **重新构建（Gradle）**
