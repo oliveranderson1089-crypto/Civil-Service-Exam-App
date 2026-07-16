@@ -2,8 +2,8 @@
 # 公考助手每日备份：数据库快照（VACUUM INTO，WAL 模式下也能导出完整一致的单文件）
 # + uploads 增量镜像 + config.json。快照保留最近 14 天。
 set -euo pipefail
-APP=/home/pei-gen-li/gongkao-app
-DEST=/home/pei-gen-li/gongkao-backups
+APP="$(cd "$(dirname "$0")" && pwd)"          # 脚本就在项目里，跟着项目走，移动目录无需改本文件
+DEST="${GONGKAO_BACKUP_DEST:-$HOME/AppStore/backups/gongkao}"
 DAY=$(date +%F)
 
 mkdir -p "$DEST/db" "$DEST/uploads"

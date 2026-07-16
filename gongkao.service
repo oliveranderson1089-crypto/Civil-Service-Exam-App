@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/pei-gen-li/gongkao-app
+WorkingDirectory=%h/AppStore/apps/gongkao-app
 Environment=NO_PROXY=*
-ExecStart=/home/pei-gen-li/gongkao-app/.venv/bin/python3 /home/pei-gen-li/gongkao-app/app.py --host 0.0.0.0 --port 8011
+ExecStart=%h/AppStore/apps/gongkao-app/.venv/bin/python3 %h/AppStore/apps/gongkao-app/app.py --host 0.0.0.0 --port 8011
 Restart=on-failure
 RestartSec=3
 

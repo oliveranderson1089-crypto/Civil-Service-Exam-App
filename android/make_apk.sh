@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # 用 Gradle 构建「公考助手」APK，并生成 dist/gongkao.apk + dist/apk.json（应用内更新比对用）。
-# 需要：~/.local/jdk17、~/android-sdk（build-tools;34.0.0、platforms;android-34）、
+# 需要：~/.local/jdk17、~/AppStore/toolchains/android-sdk（build-tools;34.0.0、platforms;android-34）、
 #       ~/.local/gradle-8.9（或项目内 ./gradlew）。
 set -e
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DIST="$HERE/../dist"
 export JAVA_HOME="${JAVA_HOME:-$HOME/.local/jdk17}"
-export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/android-sdk}"
+export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/AppStore/toolchains/android-sdk}"
 export PATH="$JAVA_HOME/bin:$PATH"
 
 # 本机优先用已装的 gradle（依赖直连、不必下发行版）；没有再退 wrapper

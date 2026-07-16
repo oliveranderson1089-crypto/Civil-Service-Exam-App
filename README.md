@@ -762,7 +762,7 @@ gongkao-app/
 ## 二、启动
 
 ```bash
-cd ~/gongkao-app
+cd ~/AppStore/apps/gongkao-app
 ./run.sh              # 默认 8011 端口；换端口： ./run.sh 9000
 ```
 
@@ -824,7 +824,7 @@ sudo apt install fonts-arphic-uming                     # PDF 中文字体
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp ~/gongkao-app/gongkao.service ~/.config/systemd/user/
+cp ~/AppStore/apps/gongkao-app/gongkao.service ~/.config/systemd/user/   # 单元用 %h 定位，无需改路径
 systemctl --user daemon-reload && systemctl --user enable --now gongkao.service
 loginctl enable-linger $USER
 systemctl --user list-timers 'gongkao-*'
@@ -874,14 +874,14 @@ systemctl --user list-timers 'gongkao-*'
 
 **重新构建（Gradle）**
 ```bash
-cd ~/gongkao-app/android
+cd ~/AppStore/apps/gongkao-app/android
 # 改版本号：app/build.gradle 的 versionCode / versionName
 APK_NOTES="这次改了什么" ./make_apk.sh
 # 产物：dist/gongkao.apk + dist/apk.json（供应用内更新比对）
 ```
 > **已从手工构建迁移到 Gradle**（AGP 8.5.2 + Gradle 8.9 + JDK17）。`make_apk.sh` 跑 `:app:assembleRelease` 再复制产物、写 `apk.json`。标准项目布局 `app/src/main/{java,res,AndroidManifest.xml}`，`namespace` 与签名 keystore（`android/debug.keystore`，alias `gongkao`）都沿用，所以**新包签名与旧包一致、可直接覆盖安装**。
 > 迁 Gradle 只换"打包方式"，**界面和功能不变**（整个 UI 是 WebView 加载的网页）。好处是以后能一行加原生库（如离线手写 ML Kit）。旧的手工脚本保留为 `build_apk.sh.superseded` 仅作参考。
-> 依赖：便携 JDK17（`~/.local/jdk17`）、Android SDK（`~/android-sdk`，build-tools;34.0.0、platforms;android-34、cmdline-tools）、Gradle 8.9（`~/.local/gradle-8.9`，或项目内 `./gradlew`）。首次构建会从 Google Maven / Maven Central 下 AGP 和依赖（本机东京可直连）。
+> 依赖：便携 JDK17（`~/.local/jdk17`）、Android SDK（`~/AppStore/toolchains/android-sdk`，build-tools;34.0.0、platforms;android-34、cmdline-tools；路径写在 `android/local.properties` 的 `sdk.dir` 与 `make_apk.sh` 的 `ANDROID_SDK_ROOT` 默认值，可用同名环境变量覆盖）、Gradle 8.9（`~/.local/gradle-8.9`，或项目内 `./gradlew`）。首次构建会从 Google Maven / Maven Central 下 AGP 和依赖（本机东京可直连）。
 
 ### 电脑桌面版（Linux .deb · 原生 GTK）
 
