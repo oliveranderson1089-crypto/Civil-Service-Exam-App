@@ -9186,8 +9186,8 @@ function annLocate(root, a, ctx) {
    笔引擎（压感、合并采样顺滑、笔/荧光笔）和草稿纸同源。 */
 const Ink = {
   on: false, tool: 'pen', color: '#e23b2e', size: 3, eraserSize: 18,   // 笔和橡皮各调各的粗细
-  strokes: [], redo: [], cur: null, key: '', drawing: false, sawPen: false, raf: 0,
-  scroller: null, _onScroll: null, cv: null, ctx: null,
+  strokes: [], cur: null, key: '', drawing: false, sawPen: false, raf: 0,
+  scroller: null, _onScroll: null, cv: null, ctx: null, frame: null, root: null,
   COLORS: ['#e23b2e', '#1a6fb5', '#f0a500', '#1e8449', '#111'],
   curSize() { return this.tool === 'eraser' ? this.eraserSize : this.size; },
 
@@ -9195,13 +9195,62 @@ const Ink = {
   scrollY() {
     try { return this.scroller ? (this.scroller.scrollTop || 0) : 0; } catch (_) { return 0; }
   },
-  // 屏幕点 → 存储坐标：x 按画布宽度归一化(0..1) → 换设备/换宽度按比例缩放；
-  // y 是「相对这一笔的参考原点」的像素(ref 见 relayout)：文本锚＝相对那句话，pixel 锚＝相对内容顶部。
-  pt(e, ref) {
+  /* ---------- PDF 锚：把一笔钉到「第几页的页内某处」---------- */
+  pdfDoc() { try { return this.frame && this.frame.contentDocument; } catch (_) { return null; } },
+  // 第 n 页此刻在画布坐标系里的矩形。缩放/滚动都体现在它身上 —— 所以笔迹自动跟着缩放和滚动。
+  // 每次 paint 只查一次（_pageCache），别每笔都 querySelector。
+  pageRect(n) {
+    if (this._pageCache && this._pageCache[n] !== undefined) return this._pageCache[n];
+    let r = null;
+    const doc = this.pdfDoc();
+    if (doc) {
+      const el = doc.querySelector('.page[data-page-number="' + n + '"]');
+      if (el) {
+        const b = el.getBoundingClientRect();          // iframe 视口坐标
+        if (b.width && b.height) {
+          const fr = this.frame.getBoundingClientRect(), cr = this.rect();
+          r = { left: b.left + fr.left - cr.left, top: b.top + fr.top - cr.top, width: b.width, height: b.height };
+        }
+      }
+    }
+    if (this._pageCache) this._pageCache[n] = r;
+    return r;
+  },
+  // 屏幕点 → PDF 锚 {page, pw}。pw＝落笔时的页宽，用来算笔粗该跟着缩放放大多少倍
+  pdfAnchorAt(clientX, clientY) {
+    const doc = this.pdfDoc(); if (!doc) return null;
+    try {
+      const fr = this.frame.getBoundingClientRect();
+      const el = doc.elementFromPoint(clientX - fr.left, clientY - fr.top);
+      const page = el && el.closest && el.closest('.page[data-page-number]');
+      if (!page) return null;
+      const b = page.getBoundingClientRect();
+      if (!b.width || !b.height) return null;
+      return { page: +page.dataset.pageNumber, pw: Math.round(b.width) };
+    } catch (_) { return null; }
+  },
+  /* ---------- 三种锚共用一个仿射变换 ----------
+     存储点 → 画布点：X = x*kx + ox，Y = y*ky + oy；笔粗 ×= ks。pt() 就是它的逆。
+       pixel：x 按画布宽归一化、y 是内容绝对像素        → kx=W, ox=0,        ky=1, oy=-sy
+       text ：同上，但 y 相对「那句话」                  → kx=W, ox=0,        ky=1, oy=ref-sy
+       pdf  ：x/y 都归一化到页内，跟着缩放走             → kx/ox/ky/oy = 页矩形，ks=页宽/落笔时页宽
+     返回 null＝这一笔现在画不出来（文本锚孤儿、或那一页还没渲染）。 */
+  tfOf(s, W, sy) {
+    const a = s.a;
+    if (a && a.page != null) {
+      const pr = this.pageRect(a.page);
+      if (!pr) return null;
+      return { kx: pr.width, ox: pr.left, ky: pr.height, oy: pr.top, ks: pr.width / (a.pw || pr.width) };
+    }
+    if (s._ref === null) return null;
+    return { kx: W, ox: 0, ky: 1, oy: (s._ref || 0) - sy, ks: 1 };
+  },
+  // 屏幕点 → 存储坐标（tfOf 的逆变换）
+  pt(e, tf) {
     const r = this.rect();
     return {
-      x: (e.clientX - r.left) / (r.width || 1),
-      y: (e.clientY - r.top) + this.scrollY() - (ref || 0),
+      x: ((e.clientX - r.left) - tf.ox) / (tf.kx || 1),
+      y: ((e.clientY - r.top) - tf.oy) / (tf.ky || 1),
       p: (e.pointerType === 'pen' && e.pressure > 0) ? e.pressure : 0,
     };
   },
@@ -9214,15 +9263,13 @@ const Ink = {
     this.relayout();                     // 宽度变了＝内容重排了，锚要重新定位
     this.paint();
   },
-  drawStroke(ctx, s, W) {
-    const pts = s.pts; if (!pts || !pts.length) return;
-    if (s._ref === null) return;                   // 孤儿（锚失效）：宁可不画，也别画到别的段落上
-    const sy = this.scrollY() - (s._ref || 0);     // 内容坐标 → 屏幕：减滚动、加这一笔的参考原点
+  drawStroke(ctx, s, tf) {
+    const pts = s.pts; if (!pts || !pts.length || !tf) return;   // tf=null：孤儿 / 那一页还没渲染
     ctx.save(); ctx.lineJoin = ctx.lineCap = 'round';
-    let wid = s.size;                              // s.size 已是该工具自己的粗细（橡皮/笔各存各的）
+    let wid = s.size * (tf.ks || 1);               // s.size 已是该工具自己的粗细（橡皮/笔各存各的）
     if (s.tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; }
-    else { ctx.strokeStyle = s.color; if (s.tool === 'hl') { ctx.globalAlpha = .3; wid = s.size * 3.2; } }
-    const X = p => p.x * W, Y = p => p.y - sy;      // 内容坐标 → 当前屏幕坐标（减滚动量）
+    else { ctx.strokeStyle = s.color; if (s.tool === 'hl') { ctx.globalAlpha = .3; wid *= 3.2; } }
+    const X = p => p.x * tf.kx + tf.ox, Y = p => p.y * tf.ky + tf.oy;   // 存储坐标 → 画布坐标
     if (pts.length === 1) {
       ctx.beginPath(); ctx.arc(X(pts[0]), Y(pts[0]), Math.max(.6, wid / 2), 0, 6.2832);
       ctx.fillStyle = ctx.strokeStyle; ctx.fill(); ctx.restore(); return;
@@ -9243,10 +9290,11 @@ const Ink = {
   },
   paint() {
     if (!this.ctx) return;
-    const r = this.rect(), W = r.width;
+    const r = this.rect(), W = r.width, sy = this.scrollY();
+    this._pageCache = {};                      // PDF 页矩形每帧只查一次；缩放/滚动就靠它自然跟随
     this.ctx.clearRect(0, 0, r.width, r.height);
-    for (const s of this.strokes) this.drawStroke(this.ctx, s, W);
-    if (this.cur) this.drawStroke(this.ctx, this.cur, W);
+    for (const s of this.strokes) this.drawStroke(this.ctx, s, this.tfOf(s, W, sy));
+    if (this.cur) this.drawStroke(this.ctx, this.cur, this.tfOf(this.cur, W, sy));
   },
   down(e) {
     if (this.tool === 'scroll') return;                     // ✋ 浏览模式：不画，交给下面滚动
@@ -9256,11 +9304,18 @@ const Ink = {
     e.preventDefault();
     try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
     this.drawing = true;
-    // 落笔时就把这一笔钉到它压着的那句话上；压不住文本（空白处/图片上）→ a=null 退回 pixel 锚
-    const hit = annAnchorAt(this.root, e.clientX, e.clientY);
-    const a = hit ? hit.a : null;
-    const ref = hit ? (hit.rect.top - this.rect().top + this.scrollY()) : 0;
-    this.cur = { tool: this.tool, color: this.color, size: this.curSize(), a, _ref: ref, pts: [this.pt(e, ref)] };
+    // 落笔时就定好这一笔钉在哪：PDF 钉到「第几页的页内某处」；文本钉到「那句话」；
+    // 都钉不住（大片空白/图片上）→ a=null 退回 pixel 锚（＝老行为，画在哪个屏幕位置就留在哪）
+    let a = this.pdfAnchorAt(e.clientX, e.clientY), ref = 0;
+    if (!a) {
+      const hit = annAnchorAt(this.root, e.clientX, e.clientY);
+      if (hit) { a = hit.a; ref = hit.rect.top - this.rect().top + this.scrollY(); }
+    }
+    this._pageCache = {};
+    this.cur = { tool: this.tool, color: this.color, size: this.curSize(), a, _ref: ref };
+    const tf = this.tfOf(this.cur, this.rect().width, this.scrollY());
+    if (!tf) { this.drawing = false; this.cur = null; return; }
+    this.cur.pts = [this.pt(e, tf)];
     this.paint();
   },
   move(e) {
@@ -9269,7 +9324,10 @@ const Ink = {
     let evs = [];
     try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
     if (!evs.length) evs = [e];
-    for (const ev of evs) this.cur.pts.push(this.pt(ev, this.cur._ref));
+    // 用落笔时那一笔的变换（页/锚句在这一笔期间不会变），别每个采样点都重算
+    const tf = this.tfOf(this.cur, this.rect().width, this.scrollY());
+    if (!tf) return;
+    for (const ev of evs) this.cur.pts.push(this.pt(ev, tf));
     if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.paint(); });
   },
   up() {
@@ -9297,11 +9355,14 @@ const Ink = {
   // 连续重复的点直接扔（笔停在原地时合并采样仍在不停入队）。全精度对象存法一份 PDF 批注能到
   // 6MB，5MiB 配额一满 setItem 就永远抛 QuotaExceededError —— 新批注再也存不进去。
   pack(strokes) {
-    const rx = (n) => Math.round(n * 1e4) / 1e4, ry = (n) => Math.round(n * 10) / 10;
+    const r4 = (n) => Math.round(n * 1e4) / 1e4, r1 = (n) => Math.round(n * 10) / 10;
     return strokes.map(s => {
+      // y 的精度得看这一笔用的哪种锚：pixel/text 的 y 是像素，留 0.1 足够；
+      // **PDF 锚的 y 是 0..1 归一化**，留 0.1 的话 0.18 会被round成 0.2 —— 乘回页高就是偏 42px。
+      const ry = (s.a && s.a.page != null) ? r4 : r1;
       const pts = []; let lx = null, ly = null;
       for (const q of (s.pts || [])) {
-        const x = rx(q.x), y = ry(q.y);
+        const x = r4(q.x), y = ry(q.y);
         if (x === lx && y === ly) continue;
         const p = Math.round((q.p || 0) * 100) / 100;
         pts.push(p ? [x, y, p] : [x, y]);
@@ -9326,9 +9387,11 @@ const Ink = {
     this.orphans = 0;
     const all = this.cur ? this.strokes.concat([this.cur]) : this.strokes;
     // 整篇正文只遍历一次给所有笔共用：以前每笔各算一遍，100 笔就是 200 遍全文，拖窗口直接卡死
-    const ctx = (this.root && all.some(s => s.a)) ? annCtx(this.root) : null;
+    const isText = (s) => s.a && s.a.page == null;
+    const ctx = (this.root && all.some(isText)) ? annCtx(this.root) : null;
     for (const s of all) {
-      if (!s.a) { s._ref = 0; continue; }
+      // pixel 锚不用定位；PDF 锚每帧靠页矩形算（见 tfOf），也不走这里
+      if (!isText(s)) { s._ref = 0; continue; }
       const b = annLocate(this.root, s.a, ctx);
       if (b) s._ref = b.top - rect.top + sy;
       else { s._ref = null; this.orphans++; }     // 内容改了，这句话没了＝孤儿，不画（数据留着）
@@ -9369,7 +9432,8 @@ const Ink = {
     // 一开新页画一笔就会 clearTimeout 把这次补传取消掉。replace 是幂等的，重试多跑一次也无妨。
     if (this._loading === key) { setTimeout(() => this.flush(key), 400); return; }
     const items = this.pack(this.key === key ? this.strokes : this.unpack(this._stashed(key)))
-      .map(s => ({ kind: s.t === 'hl' ? 'hl' : 'ink', anchor_type: s.a ? 'text' : 'pixel',
+      .map(s => ({ kind: s.t === 'hl' ? 'hl' : 'ink',
+                   anchor_type: !s.a ? 'pixel' : (s.a.page != null ? 'pdf' : 'text'),
                    anchor: s.a || {}, data: { t: s.t, c: s.c, w: s.w, p: s.p } }));
     try {
       await api('/api/annots/replace', {
@@ -9393,7 +9457,8 @@ const Ink = {
     this._loading = key;                                  // 这期间别让 flush 拿半份数据去覆盖服务器
     try {
       const d = await api('/api/annots?target=' + encodeURIComponent(key));
-      server = (d.items || []).map(it => Object.assign({}, it.data, { a: it.anchor_type === 'text' ? it.anchor : null }));
+      server = (d.items || []).map(it => Object.assign({}, it.data,
+        { a: (it.anchor_type === 'text' || it.anchor_type === 'pdf') ? it.anchor : null }));
     } catch (_) {}                                        // 断网：下面退回本地那份
     if (this._loading === key) this._loading = null;
     if (this.key !== key) return;                         // 等接口的工夫用户已经翻页了，别把笔迹画串页
@@ -9428,6 +9493,9 @@ const Ink = {
     this.key = key || (('view:' + ((stack[stack.length - 1] || {}).view || 'home')));
     this.scroller = scroller || null;
     this.root = root || null;            // 文本锚挂在这个容器的文字上；不传＝只能 pixel 锚
+    // 盖的是 PDF 的 iframe → 这一层能用 PDF 锚（钉到页内，跟着缩放/翻页走）
+    this.frame = (target && target.tagName === 'IFRAME') ? target : null;
+    this._pageCache = {};
     this.cv = $('#ink-cv'); this.ctx = this.cv.getContext('2d');
     $('#ink').classList.remove('hidden');
     // 把画布精确定位到目标区域（不传目标就是顶栏以下整个屏幕）—— 画布(0,0) 要正好对齐内容(0,0)
@@ -9450,6 +9518,14 @@ const Ink = {
     if (this._scrollHost) {
       try { this._scrollHost.addEventListener('scroll', this._onScroll, { passive: true }); } catch (_) {}
     }
+    // PDF 缩放（pdf.js 的 +/−）不发 scroll，页矩形却变了 —— 盯住它内部的 #viewer，
+    // 尺寸一变就重画，笔迹跟着缩放走。顺带兜住「PDF 还在渲染时就点了批注」：渲染完也会触发。
+    if (this.frame && window.ResizeObserver) {
+      try {
+        const v = this.pdfDoc() && this.pdfDoc().getElementById('viewer');
+        if (v) { this._ro = new ResizeObserver(() => this.paint()); this._ro.observe(v); }
+      } catch (_) {}
+    }
     window.addEventListener('resize', this._onResize = () => this.fit());
   },
   close() {
@@ -9461,12 +9537,13 @@ const Ink = {
     $('#ink').classList.add('hidden');
     if (this.cv) this.cv.style.pointerEvents = 'auto';   // 别把「浏览模式」的透传状态留给下次
     this.unhook();
-    this.scroller = null; this.cur = null; this.drawing = false;
+    this.scroller = null; this.frame = null; this.cur = null; this.drawing = false;
   },
   // 摘监听：open() 里重新挂之前也要先摘，否则反复开关会越挂越多
   unhook() {
     if (this._scrollHost && this._onScroll) { try { this._scrollHost.removeEventListener('scroll', this._onScroll); } catch (_) {} }
     if (this._onResize) window.removeEventListener('resize', this._onResize);
+    if (this._ro) { try { this._ro.disconnect(); } catch (_) {} this._ro = null; }
     this._scrollHost = null; this._onScroll = null; this._onResize = null;
   },
   bind() {
@@ -9491,7 +9568,9 @@ const Ink = {
 // 从工具球「✏️ 批注」进：给当前视图盖一层。PDF 查看器另有专门入口（跟随内部滚动）。
 function inkHere() {
   const st = stack[stack.length - 1] || {};
-  // PDF/Office 预览：跟随 iframe 内部滚动，笔迹按资料 id 存
+  // PDF/Office 预览：**PDF 锚** —— 笔迹钉到「第几页的页内某处」，页内坐标归一化，
+  // 所以缩放（pdf.js 的 +/-）、滚动、换设备、换窗口宽度都跟着那一页走，笔粗也按页宽同比缩放。
+  // （老的存法是「iframe 内部滚动的绝对像素」，一缩放就全错位。）
   const vf = $('#viewer-frame');
   if (st.view === 'viewer' && vf && !vf.classList.contains('hidden')) {
     let sc = null;
@@ -9499,7 +9578,7 @@ function inkHere() {
     // 按文件 URL 里的 file= 参数存，同一份资料每次打开都取回上次的笔迹
     let fk = vf.src;
     try { fk = decodeURIComponent(new URL(vf.src, location.href).searchParams.get('file') || vf.src); } catch (_) {}
-    Ink.open('mat:' + fk.slice(-80), sc, vf);
+    Ink.open('mat:' + fk.slice(-80), sc, vf, null);
     return;
   }
   // 阅读模式（.md/.txt/PDF 转出来的文本）：**文本锚**。笔迹钉在「那句话」上 —— 改字号、换字体、
