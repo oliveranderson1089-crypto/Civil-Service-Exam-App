@@ -601,28 +601,36 @@
   </section>
 
   <!-- ===== 聊天：会话/好友列表 ===== -->
+  <!-- ===== 聊天：微信/QQ 式双栏（左会话列表 + 右聊天窗），移动端切换单栏 ===== -->
   <section id="view-chat" class="view hidden">
-    <div class="ch-tabs" id="ch-tabs">
-      <button class="ch-tab active" data-cht="convos">💬 消息</button>
-      <button class="ch-tab" data-cht="friends">👥 好友</button>
-      <button class="ch-tab" data-cht="add">＋ 加好友<span class="ch-reqbadge hidden" id="ch-reqbadge"></span></button>
-    </div>
-    <div id="ch-convos" class="ch-pane"></div>
-    <div id="ch-friends" class="ch-pane hidden"></div>
-    <div id="ch-add" class="ch-pane hidden">
-      <div class="ch-search"><input id="ch-search" placeholder="搜用户名或 ID 加好友…"><button class="btn" id="ch-searchbtn">搜索</button></div>
-      <div id="ch-reqs"></div>
-      <div id="ch-results"></div>
-    </div>
-  </section>
-
-  <!-- ===== 聊天窗口 ===== -->
-  <section id="view-chatroom" class="view hidden">
-    <div id="cr-msgs" class="cr-msgs"></div>
-    <div class="cr-input">
-      <label class="cr-attbtn" title="发文件/图片">📎<input type="file" id="cr-file" multiple hidden></label>
-      <textarea id="cr-text" rows="1" placeholder="发消息…（可拖文件进来）"></textarea>
-      <button class="btn primary" id="cr-send">发送</button>
+    <div id="chat-2pane">
+      <aside id="chat-side">
+        <div class="ch-tabs" id="ch-tabs">
+          <button class="ch-tab active" data-cht="convos">💬 消息</button>
+          <button class="ch-tab" data-cht="friends">👥 好友</button>
+          <button class="ch-tab" data-cht="add">＋ 加好友<span class="ch-reqbadge hidden" id="ch-reqbadge"></span></button>
+        </div>
+        <div id="ch-convos" class="ch-pane"></div>
+        <div id="ch-friends" class="ch-pane hidden"></div>
+        <div id="ch-add" class="ch-pane hidden">
+          <div class="ch-search"><input id="ch-search" placeholder="搜用户名或 ID 加好友…"><button class="btn" id="ch-searchbtn">搜索</button></div>
+          <div id="ch-reqs"></div>
+          <div id="ch-results"></div>
+        </div>
+      </aside>
+      <section id="chat-main">
+        <div id="cr-peer" class="cr-peer hidden">
+          <button id="cr-back" class="cr-back" title="返回列表">‹</button>
+          <span id="cr-peername"></span>
+        </div>
+        <div id="cr-msgs" class="cr-msgs"></div>
+        <div class="cr-input hidden" id="cr-input">
+          <label class="cr-attbtn" title="发文件/图片">📎<input type="file" id="cr-file" multiple hidden></label>
+          <textarea id="cr-text" rows="1" placeholder="发消息…（可拖文件进来）"></textarea>
+          <button class="btn primary" id="cr-send">发送</button>
+        </div>
+        <div id="cr-empty" class="cr-empty">💬 选一个会话，开始聊天</div>
+      </section>
     </div>
   </section>
 

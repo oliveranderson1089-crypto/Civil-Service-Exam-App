@@ -116,11 +116,16 @@ let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
 let stack = [];
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'videos', 'fanwen', 'fanwend', 'drive', 'chat', 'chatroom'];
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'videos', 'fanwen', 'fanwend', 'drive', 'chat'];
 const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', videos: '每日新闻视频' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
+  // 聊天双栏：移动端按栈顶 state.room 决定显示会话列表还是聊天窗（back 出栈即回列表）
+  if (st.view === 'chat') {
+    const p2 = $('#chat-2pane');
+    if (p2 && IS_MOBILE) p2.classList.toggle('show-room', !!st.room);
+  }
   $('#top-title').textContent = st.title || TITLES[st.view] || '公考助手';
   $('#nav-back').classList.toggle('hidden', stack.length <= 1);
   // 文档编辑器自带顶栏，隐藏全局顶栏
@@ -7308,7 +7313,23 @@ function pickFriend(friends, title) {
 /* ================= 聊天 ================= */
 let chTab = 'convos', crFid = 0, crName = '', crLastId = 0, crPoll = 0;
 let crFriendAvatar = '', crMeAvatar = '', crLastTime = '';   // 头像 + 上一条时间（做时间分隔）
-function openChat() { push({ view: 'chat', title: '聊天' }); chSwitch('convos'); ensureNotifyPerm(); }
+function openChat() {
+  push({ view: 'chat', title: '聊天' }); chSwitch('convos'); ensureNotifyPerm();
+  crShowEmpty();                       // 桌面进来先在右栏显示空态；移动端只看列表
+}
+// 右栏空态（还没选会话）
+function crShowEmpty() {
+  crFid = 0; clearInterval(crPoll);
+  const p2 = $('#chat-2pane'); if (p2) p2.classList.remove('show-room');
+  $('#cr-peer').classList.add('hidden'); $('#cr-input').classList.add('hidden');
+  $('#cr-empty').classList.remove('hidden'); $('#cr-msgs').innerHTML = '';
+}
+// 当前是否正开着和某人的聊天窗（桌面：选了会话；移动端：栈顶带 room）
+function crInRoom() {
+  const st = stack[stack.length - 1] || {};
+  if (st.view !== 'chat') return false;
+  return IS_MOBILE ? !!st.room : !!crFid;
+}
 function chSwitch(t) {
   chTab = t;
   document.querySelectorAll('#ch-tabs .ch-tab').forEach(b => b.classList.toggle('active', b.dataset.cht === t));
@@ -7395,17 +7416,24 @@ $('#ch-add').addEventListener('click', async e => {
   const req = e.target.closest('[data-req]');
   if (req) { try { await api('/api/friends/requests/' + req.dataset.req, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: req.dataset.ra }) }); loadAddFriend(); } catch (err) { toast(err.message, true); } }
 });
-// —— 聊天窗口 ——
+// —— 打开某人的聊天窗（右栏）——
 function openChatroom(fid, name) {
   crFid = fid; crName = name; crLastId = 0;
   crFriendAvatar = ''; crMeAvatar = SKIN.avatar || ''; crLastTime = '';
-  push({ view: 'chatroom', title: name });
+  if ((stack[stack.length - 1] || {}).view !== 'chat') push({ view: 'chat', title: '聊天' });
+  if (IS_MOBILE) push({ view: 'chat', room: fid, title: name });   // 移动端压栈：back 能回列表
+  const p2 = $('#chat-2pane'); if (p2) p2.classList.add('show-room');
+  $('#cr-peername').textContent = name || '';
+  $('#cr-peer').classList.remove('hidden');
+  $('#cr-input').classList.remove('hidden');
+  $('#cr-empty').classList.add('hidden');
   $('#cr-msgs').innerHTML = '<p class="empty">加载中…</p>';
   crLoad(true);
   clearInterval(crPoll);
   // SSE 负责秒推；这个轮询只是兜底（万一 SSE 断了没重连上），放慢到 10 秒
-  crPoll = setInterval(() => { if ((stack[stack.length - 1] || {}).view === 'chatroom') crLoad(false); else clearInterval(crPoll); }, 10000);
+  crPoll = setInterval(() => { if (crInRoom()) crLoad(false); else clearInterval(crPoll); }, 10000);
 }
+$('#cr-back').onclick = () => { if (IS_MOBILE) back(); else crShowEmpty(); };
 let crLoading = false;
 async function crLoad(first) {
   // 并发锁：轮询 / SSE 推送 / 发送后刷新可能同时进来，都读同一个 crLastId、都拉同一批消息、
@@ -7416,10 +7444,11 @@ async function crLoad(first) {
     const d = await api('/api/chat/' + crFid + '?after=' + crLastId);
     if (d.friend_avatar !== undefined) crFriendAvatar = d.friend_avatar || '';
     if (d.me_avatar) crMeAvatar = d.me_avatar;
-    if (!crName && d.friend) {   // 从通知点进来时没带名字，拿到后补上标题
+    if (!crName && d.friend) {   // 从通知点进来时没带名字，拿到后补上
       crName = d.friend;
-      const top = stack[stack.length - 1];
-      if (top && top.view === 'chatroom') { top.title = crName; $('#top-title').textContent = crName; }
+      $('#cr-peername').textContent = crName;
+      const top = stack[stack.length - 1] || {};
+      if (IS_MOBILE && top.room) { top.title = crName; $('#top-title').textContent = crName; }
     }
     if (first) { $('#cr-msgs').innerHTML = ''; crLastTime = ''; }
     if (!d.messages.length && first) { $('#cr-msgs').innerHTML = '<p class="empty">还没有消息，发一条打个招呼吧 👋</p>'; }
@@ -7493,10 +7522,10 @@ async function crSendFiles(files) {
 }
 // 拖文件进聊天窗口直接发（浏览器；桌面壳走 __onDropFiles）
 (function () {
-  const el = $('#view-chatroom'); if (!el) return;
-  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('cr-drop'); });
+  const el = $('#chat-main'); if (!el) return;
+  el.addEventListener('dragover', e => { if (!crFid) return; e.preventDefault(); el.classList.add('cr-drop'); });
   el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.classList.remove('cr-drop'); });
-  el.addEventListener('drop', e => { e.preventDefault(); el.classList.remove('cr-drop'); const fs = [...(e.dataTransfer.files || [])]; if (fs.length) crSendFiles(fs); });
+  el.addEventListener('drop', e => { e.preventDefault(); el.classList.remove('cr-drop'); if (!crFid) return; const fs = [...(e.dataTransfer.files || [])]; if (fs.length) crSendFiles(fs); });
 })();
 function updateChatBadge(n) {
   const b = $('#chat-badge'); if (!b) return;
@@ -7523,10 +7552,10 @@ function chatConnect() {
 function onChatPush(d) {
   const fromId = (d && typeof d === 'object') ? d.from : d;   // 兼容旧格式（只有 id）
   const v = (stack[stack.length - 1] || {}).view;
-  const viewing = (v === 'chatroom' && crFid === fromId && !document.hidden);
-  if (viewing) { crLoad(false); return; }                                // 正跟他聊且在前台 → 立刻拉，不打扰
+  const viewing = (crInRoom() && crFid === fromId && !document.hidden);
+  if (viewing) { crLoad(false); if (v === 'chat') loadConvos(); return; }  // 正跟他聊且在前台 → 立刻拉
   refreshChatBadge();                                                    // 否则更新未读角标
-  if (v === 'chat' && chTab === 'convos') loadConvos();                  // 在会话列表 → 刷新
+  if (v === 'chat') loadConvos();                                        // 在聊天页（双栏）→ 刷新会话列表
   if (d && typeof d === 'object') notifyChat(fromId, d.name, d.preview); // 通知栏推送
 }
 // 通知栏推送：APK 走原生通知，浏览器/桌面走 Web Notification。点开直达该好友聊天。
@@ -7924,8 +7953,7 @@ const SYNC_REFRESH = {
   videos: () => loadVideos(),
   fanwen: () => loadFanwen(),
   drive: () => loadDrive(),
-  chat: () => chSwitch(chTab),
-  chatroom: () => crLoad(false),
+  chat: () => { chSwitch(chTab); if (crInRoom()) crLoad(false); },
   gaikuo: () => loadGaikuo(),
   gongwen: () => loadGongwen($('#gw-q').value.trim()),
   planlog: () => loadPlanLog(),
@@ -10061,7 +10089,7 @@ function dropTarget() {                 // 当前该把文件丢给谁
   if (st.view === 'notes') return 'notes';          // 小记页 → 进编辑器的图片区
   if (st.view === 'materials') return 'materials';
   if (st.view === 'shenlun') return 'shenlun';
-  if (st.view === 'chatroom') return 'chatroom';    // 聊天窗口 → 拖文件直接发
+  if (st.view === 'chat' && crFid) return 'chatroom';  // 正开着聊天窗 → 拖文件直接发
   if (st.view === 'drive') return 'drive';          // 云盘 → 拖文件上传到当前文件夹
   return '';
 }
@@ -10071,14 +10099,14 @@ window.__onDragOver = () => {
   else if (t === 'shenlun') $('#view-shenlun').classList.add('drag-on');
   else if (t === 'qnote') $('#qnote').classList.add('drop-on');
   else if (t === 'notes') { const c = document.querySelector('.composer'); if (c) c.classList.add('drop-on'); }
-  else if (t === 'chatroom') $('#view-chatroom').classList.add('cr-drop');
+  else if (t === 'chatroom') $('#chat-main').classList.add('cr-drop');
 };
 window.__onDragLeave = () => {
   $('#view-materials').classList.remove('drag-on');
   $('#view-shenlun').classList.remove('drag-on');
   const q = $('#qnote'); if (q) q.classList.remove('drop-on');
   const c = document.querySelector('.composer'); if (c) c.classList.remove('drop-on');
-  $('#view-chatroom').classList.remove('cr-drop');
+  const cm = $('#chat-main'); if (cm) cm.classList.remove('cr-drop');
 };
 const isImg = (f) => /^image\//.test(f.type || '') || /\.(jpe?g|png|gif|webp|bmp|heic)$/i.test(f.name || '');
 window.__onDropFiles = (items) => {
