@@ -1,10 +1,11 @@
-/* 小记（仿语雀）：随手记 / 图片附件 / 标签 / 动态流
+/* 小记（仿语雀）
  *
- * 由 app.js 按它原有的区段边界切出（原 L539-1277）。顺序即原顺序 —— index.html 里
- * 按同样次序引入，执行序与拆分前逐字节一致。
+ * 由 app.js 按它自己的区段边界切出（原 L539-1277）。
+ * index.html 里的引入次序 = 这里的原次序，不能调换：app.js 的 415 个事件绑定
+ * 依赖执行先后，顺序变了行为就变了。
  *
- * 下面 /* global *​/ 是这个模块的依赖清单：它用到、但定义在别处的符号。
- * eslint 靠它继续抓 no-undef；将来若转 ES modules，这就是现成的 import 表。
+ * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
+ * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, IC, IS_MOBILE, KB, OFFICE_EXT, SECTIONS,
    api, appConfirm, c, composing, createDock, deskMsg,

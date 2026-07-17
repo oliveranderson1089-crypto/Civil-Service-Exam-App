@@ -1,10 +1,11 @@
-/* 外壳：导航栈 / 初始化 / 首页卡片 / 应用内弹窗 / 卡片拖拽排序
+/* 外壳：导航栈 / 初始化 / 首页 / 应用内弹窗 / 卡片拖拽排序
  *
- * 由 app.js 按它原有的区段边界切出（原 L157-538）。顺序即原顺序 —— index.html 里
- * 按同样次序引入，执行序与拆分前逐字节一致。
+ * 由 app.js 按它自己的区段边界切出（原 L157-538）。
+ * index.html 里的引入次序 = 这里的原次序，不能调换：app.js 的 415 个事件绑定
+ * 依赖执行先后，顺序变了行为就变了。
  *
- * 下面 /* global *​/ 是这个模块的依赖清单：它用到、但定义在别处的符号。
- * eslint 靠它继续抓 no-undef；将来若转 ES modules，这就是现成的 import 表。
+ * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
+ * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, ALL_BOARDS, BOARD_FEATURES, IC, IDIOM_BOARD, IS_MOBILE,
    Ink, KB, ME, SECTIONS, SECTION_EXTRA, SECTION_FEATURES,
