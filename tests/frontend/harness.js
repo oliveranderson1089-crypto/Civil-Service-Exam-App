@@ -22,6 +22,7 @@ const EXPORTS = [
   'SYNC_REFRESH', 'saveDoc', 'matSave', 'matLoad', 'matStrokes', 'matKey',
   'wrSwitch', 'api', 'esc', 'fmtSize', 'fmtTime', 'composing',
   'checkSync', '_syncEditing', 'aiRunActions',
+  'Ink', 'annCtx', 'annLocate', 'annPosOf', 'annRangeOf',
 ];
 
 function boot(opts = {}) {
