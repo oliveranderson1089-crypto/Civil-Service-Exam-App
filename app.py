@@ -10,8 +10,6 @@ import base64
 import hashlib
 import io
 import json
-import logging
-import math
 import os
 import random
 import re
@@ -27,7 +25,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta
 
-from flask import (Flask, g, jsonify, redirect, request, session,
+from flask import (Flask, jsonify, redirect, request, session,
                    send_file, send_from_directory, Response)
 from werkzeug.security import check_password_hash, generate_password_hash
 from pypinyin import Style, pinyin as _pinyin
@@ -44,7 +42,7 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
 from reportlab.lib.styles import ParagraphStyle
 
 from core import (BASE, CONFIG, DB, STATIC, UPLOADS, _cols, close_db,
-                  current_user, get_db, log, uid)
+                  current_user, get_db, log, uid, uname)
 from mods.annots import _ann_sentence, _ann_where
 from mods.annots import bp as annots_bp
 
@@ -5345,11 +5343,6 @@ def shared_todos_del(tid):
 
 
 # ---------------------------------------------------------------- 组队（互监搭档：邀请制）
-def _uname(db, u):
-    r = db.execute("SELECT username FROM users WHERE id=?", (u,)).fetchone()
-    return r["username"] if r else "?"
-
-
 @app.get("/api/team")
 def team_info():
     """我的组队状态 + 收到/发出的申请（前端据此渲染组队 UI）。"""
@@ -5360,14 +5353,14 @@ def team_info():
     if team:
         tinfo = {"id": team, "members": _team_members(db, team),
                  "partner": next((m for m in _team_members(db, team) if m["id"] != me), None)}
-    incoming = [{"id": r["id"], "from_uid": r["from_uid"], "from_name": _uname(db, r["from_uid"]),
+    incoming = [{"id": r["id"], "from_uid": r["from_uid"], "from_name": uname(db, r["from_uid"]),
                  "kind": r["kind"]} for r in db.execute(
         "SELECT * FROM team_requests WHERE to_uid=? AND status='pending' ORDER BY id DESC", (me,))]
-    outgoing = [{"id": r["id"], "to_uid": r["to_uid"], "to_name": _uname(db, r["to_uid"]),
+    outgoing = [{"id": r["id"], "to_uid": r["to_uid"], "to_name": uname(db, r["to_uid"]),
                  "kind": r["kind"]} for r in db.execute(
         "SELECT * FROM team_requests WHERE from_uid=? AND status='pending' ORDER BY id DESC", (me,))]
     return jsonify({"team": tinfo, "incoming": incoming, "outgoing": outgoing,
-                    "me": _uname(db, me), "me_id": me, "study": _study_stats(db, me)})
+                    "me": uname(db, me), "me_id": me, "study": _study_stats(db, me)})
 
 
 @app.get("/api/team/search")
@@ -5436,7 +5429,7 @@ def team_accept(rid):
                 if p["minutes"]:
                     txt += "（%d 分钟）" % p["minutes"]
                 db.execute("INSERT INTO shared_todos(text,created_by,source,src_uid,plan_date,team_id) "
-                           "VALUES(?,?,'plan',?,?,?)", (txt[:200], _uname(db, u), u, today, tid))
+                           "VALUES(?,?,'plan',?,?,?)", (txt[:200], uname(db, u), u, today, tid))
         db.commit()
         _bump_sync()
         return jsonify({"ok": True, "team_id": tid})
@@ -6500,7 +6493,7 @@ DTEST_QUOTA = {
 }
 
 # 图形推理 / 资料分析的程序化出题已抽到 figgen.py（题库·模拟卷也要用，见 gen_quiz.py）
-from figgen import _gen_figure_q, _gen_math_q, _gen_ziliao, _MATH_GEN  # noqa: E402
+from figgen import _gen_figure_q, _gen_math_q, _gen_ziliao  # noqa: E402
 
 def _dtest_material(db, today):
     """凑出可考素材，按板块分开给：常识/时政（常识判断）、成语实词上位词（言语理解）、我的错题（出变式题）。"""
@@ -8390,7 +8383,10 @@ def shenlun_paper_upload():
             text = _ocr_image(tmp)
         else:
             text = _pdf_text_or_ocr(tmp, ext)
-    except Exception as e:
+    except Exception:
+        # 回给用户的是「扫描件太糊」，可真实原因也可能是 OCR 引擎挂了/依赖缺失——
+        # 那句提示会把人往错方向带，真因得留在日志里。
+        log.warning("申论卷解析失败 %s，将按「读不到文字」回给用户", f.filename, exc_info=True)
         text = ""
     finally:
         try:
@@ -10009,11 +10005,6 @@ def _drive_dir(user_id):
     return d
 
 
-def _uname(db, u):
-    r = db.execute("SELECT username FROM users WHERE id=?", (u,)).fetchone()
-    return r["username"] if r else ("用户" + str(u))
-
-
 def _are_friends(db, a, b):
     return bool(db.execute("SELECT 1 FROM friends WHERE user_id=? AND friend_id=?", (a, b)).fetchone())
 
@@ -10237,7 +10228,7 @@ def drive_send(fid):
         return jsonify({"error": "对方不是你的好友"}), 400
     me = uid()
     mid = _chat_send_file(db, me, to, r["name"], r["stored_name"], r["size"], r["mime"], _drive_dir(me))
-    myname = _uname(db, me)
+    myname = uname(db, me)
     _chat_center_notify(db, to, me, myname, "[文件] " + (r["name"] or ""), mid or 0)
     db.commit()
     _notify_chat(to, {"type": "msg", "from": me, "name": myname,
@@ -10288,7 +10279,7 @@ def chat_convos():
         prev = ""
         if last:
             prev = last["body"] if last["kind"] == "text" else ("[图片]" if last["kind"] == "image" else "[文件] " + (last["file_name"] or ""))
-        convos.append({"id": fid, "username": _uname(db, fid), "avatar": _uavatar(db, fid),
+        convos.append({"id": fid, "username": uname(db, fid), "avatar": _uavatar(db, fid),
                        "preview": prev[:30],
                        "time": (last["created_at"] if last else ""), "unread": unread,
                        "last_id": last["id"] if last else 0})
@@ -10327,7 +10318,7 @@ def chat_history(fid):
     db.execute("DELETE FROM notifications WHERE user_id=? AND kind='chat' AND link=?",
                (me, "chatroom:%d" % fid))
     db.commit()
-    fname = "文件传输助手" if fid == me else _uname(db, fid)
+    fname = "文件传输助手" if fid == me else uname(db, fid)
     return jsonify({"messages": out, "me": me, "friend": fname,
                     "friend_avatar": _uavatar(db, fid), "me_avatar": _uavatar(db, me)})
 
@@ -10353,7 +10344,7 @@ def chat_send(fid):
         db.execute("INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
                    "VALUES(?,?,?,?,?,?,?,0,'chat')", (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size))
         mid = _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me))
-        myname = _uname(db, me)
+        myname = uname(db, me)
         if fid != me:                                 # 文件传输助手(自己)不给自己发通知
             _chat_center_notify(db, fid, me, myname, "[文件] " + (f.filename or ""), mid or 0)
         db.commit()
@@ -10366,7 +10357,7 @@ def chat_send(fid):
         return jsonify({"error": "空消息"}), 400
     cur = db.execute("INSERT INTO chat_msgs(from_uid,to_uid,kind,body) VALUES(?,?,'text',?)",
                      (me, fid, body[:4000]))
-    myname = _uname(db, me)
+    myname = uname(db, me)
     if fid != me:
         _chat_center_notify(db, fid, me, myname, body[:80], cur.lastrowid)
     db.commit()
@@ -10408,11 +10399,6 @@ def chat_unread():
 # waitress 是单进程多线程，所以进程内一个 {用户→若干队列} 的注册表就能跨连接通信：
 # 有人给用户 X 发消息 → 往 X 的每个队列塞个信号 → X 那条 SSE 连接立刻把信号推给浏览器 →
 # 浏览器马上去拉新消息。发消息本身还是普通 POST，SSE 只负责「叮」一下。
-def _uname(db, user_id):
-    r = db.execute("SELECT username FROM users WHERE id=?", (user_id,)).fetchone()
-    return (r["username"] if r else "") or "好友"
-
-
 def _uavatar(db, user_id):
     """某用户的头像 URL（公开可读的 /skin 路径）；没设头像返回空串。"""
     r = db.execute("SELECT avatar FROM users WHERE id=?", (user_id,)).fetchone()

@@ -61,3 +61,13 @@ def current_user():
 
 def uid():
     return session.get("user_id")
+
+
+def uname(db, u):
+    """查用户名。查不到说明是孤儿记录（用户已删而引用还在），给个带 id 的占位好排查。
+
+    原先 app.py 里同名的 _uname 定义了三遍（组队/好友/聊天各一份，兜底文案分别是
+    "?"、"用户N"、"好友"）——后定义的覆盖前面的，实际全都在用最后那份，另两份是死代码。
+    """
+    r = db.execute("SELECT username FROM users WHERE id=?", (u,)).fetchone()
+    return (r["username"] if r else "") or ("用户%s" % u)
