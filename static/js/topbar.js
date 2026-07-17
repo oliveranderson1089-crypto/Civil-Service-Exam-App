@@ -13,7 +13,7 @@
 $('#admin-btn').onclick = () => { location.href = '/admin'; };
 async function doLogout() {
   if (!(await appConfirm('退出登录？'))) return;
-  try { await fetch('/logout', { method: 'POST' }); } catch (_) {}
+  try { await fetch('/logout', { method: 'POST' }); } catch (_) { /* 退登接口失败也要往下走：本地状态已清，留在页面上更糟 */ }
   location.href = '/login';
 }
 // 关键点加粗：书名号/引号/【】/「」/“X个XX”等高频要点；换行转 <br>

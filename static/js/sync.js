@@ -85,7 +85,7 @@ document.addEventListener('click', e => {
   const href = a.getAttribute('href') || '';
   if (/^https?:\/\//i.test(href) && href.indexOf(location.host) < 0) {
     e.preventDefault();
-    try { if (window.GongkaoNative && window.GongkaoNative.openUrl) { window.GongkaoNative.openUrl(href); return; } } catch (_) {}
+    try { if (window.GongkaoNative && window.GongkaoNative.openUrl) { window.GongkaoNative.openUrl(href); return; } } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
     window.open(href, '_blank', 'noopener');
   }
 });
@@ -207,7 +207,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   try {
     const p = JSON.parse(lsGet('aifab') || 'null');
     if (p) { fab.style.left = p.x + 'px'; fab.style.top = p.y + 'px'; fab.style.right = 'auto'; fab.style.bottom = 'auto'; }
-  } catch (_) {}
+  } catch (_) { /* 存的悬浮球位置读坏了就用默认位置 */ }
   requestAnimationFrame(fabClamp);          // 上次记的位置可能落在这个窗口外面，先夹回来
 
   function dirs() {                       // 扇出方向：别扇到屏幕外
@@ -315,7 +315,7 @@ $('#mat-menu').addEventListener('click', async e => {
         GongkaoNative.shareFile(location.origin + url, name);
         return;
       }
-    } catch (_) {}
+    } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
     // 浏览器支持「分享文件本身」的（部分桌面 Chrome / 手机浏览器）→ 直接弹系统分享，分享文件
     if (navigator.share && navigator.canShare) {
       try {

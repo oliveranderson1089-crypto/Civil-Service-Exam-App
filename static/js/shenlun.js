@@ -80,7 +80,7 @@ async function loadSlPapers() {
         <div class="sl-hi-s ${p.done >= p.total ? 'good' : 'ok'}">${p.done}<span>/${p.total}</span></div>
         <button class="sl-hi-del" data-slpdel="${p.id}">🗑</button>
       </div>`).join('') : '<p class="empty">还没有真题卷。点右上角「上传真题」，PDF/Word/图片都行，会自动拆出各道题。</p>';
-  } catch (_) {}
+  } catch (_) { /* 列表拉不到就显示空态，下次进来会重试 */ }
 }
 $('#sl-papers').addEventListener('click', async e => {
   const del = e.target.closest('[data-slpdel]');
@@ -149,7 +149,7 @@ async function loadSlHistory() {
         <button class="sl-hi-del" data-sldel="${it.id}">🗑</button>
       </div>`;
     }).join('') : '<p class="empty">还没有批改记录，挑一道题练一练吧～</p>';
-  } catch (_) {}
+  } catch (_) { /* 列表拉不到就显示空态，下次进来会重试 */ }
 }
 $('#sl-hist').addEventListener('click', async e => {
   const del = e.target.closest('[data-sldel]');

@@ -61,7 +61,7 @@ function annAnchorAt(root, x, y, doc) {
       const p = doc.caretPositionFromPoint(x, y);
       if (p) { rg = doc.createRange(); rg.setStart(p.offsetNode, p.offset); }
     }
-  } catch (_) {}
+  } catch (_) { /* 跨域 iframe 读不到是预期；命中不到就退回上层判断 */ }
   if (cv) cv.style.pointerEvents = pe;
   if (!rg || !rg.startContainer || rg.startContainer.nodeType !== 3) return null;
   if (!root.contains(rg.startContainer)) return null;
@@ -153,7 +153,7 @@ const Ink = {
      页矩形是懒查的，用到哪页查哪页。 */
   newFrame() {
     let fr = null;
-    try { fr = this.frame ? this.frame.getBoundingClientRect() : null; } catch (_) {}
+    try { fr = this.frame ? this.frame.getBoundingClientRect() : null; } catch (_) { /* 这一步失败不影响画线，下面有兜底 */ }
     this._geo = { cr: this.rect(), fr, sy: this.scrollY(), pages: {} };
     return this._geo;
   },
@@ -355,7 +355,7 @@ const Ink = {
     if (e.button > 0) return;
     e.preventDefault();
     if (this.takePick(e)) return;                           // 正在给某一笔挑新位置：这一下是「挂哪」，不是画
-    try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
+    try { this.cv.setPointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
     this.drawing = true;
     // 落笔时就定好这一笔钉在哪：PDF 钉到「第几页的页内某处」；文本钉到「那句话」；
     // 都钉不住（大片空白/图片上）→ a=null 退回 pixel 锚（＝老行为，画在哪个屏幕位置就留在哪）
@@ -369,7 +369,7 @@ const Ink = {
     const tf = this.tfOf(this.cur);
     if (!tf) {                          // 这一笔现在没法定位（页找不到）：捕获也得还回去，
       this.drawing = false; this.cur = null;      // 不然这一下拖动既不画、下面的 PDF 也收不到事件＝不滚
-      try { this.cv.releasePointerCapture(e.pointerId); } catch (_) {}
+      try { this.cv.releasePointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
       return;
     }
     this.cur.pts = [this.pt(e, tf)];
@@ -379,7 +379,7 @@ const Ink = {
     if (!this.drawing || !this.cur) return;
     e.preventDefault();
     let evs = [];
-    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
+    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) { /* 有的 WebKit 返回空表，下面会退回事件本身 */ }
     if (!evs.length) evs = [e];
     // 每次 move 重取一帧几何：页矩形和滚动量都可能已经变了（惯性滚动/自动滚页），
     // 拿旧的算会把偏掉的坐标永久存进去。同一批合并采样点共用这一份就够了。
@@ -496,7 +496,7 @@ const Ink = {
         body: JSON.stringify({ target: key, items }),
       });
       lsDel('ink:' + key);   // 传上去了，本地那份就不留了
-    } catch (_) {}                        // 离线/失败：本地暂存还在，下次进这一页再补
+    } catch (_) { /* 这一步失败不影响画线，下面有兜底 */ }                        // 离线/失败：本地暂存还在，下次进这一页再补
   },
   _stashed(key) {
     try { return JSON.parse(lsGet('ink:' + key) || 'null') || []; } catch (_) { return []; }
@@ -514,7 +514,7 @@ const Ink = {
       const d = await api('/api/annots?target=' + encodeURIComponent(key));
       server = (d.items || []).map(it => Object.assign({}, it.data,
         { a: (it.anchor_type === 'text' || it.anchor_type === 'pdf') ? it.anchor : null }));
-    } catch (_) {}                                        // 断网：下面退回本地那份
+    } catch (_) { /* 这一步失败不影响画线，下面有兜底 */ }                                        // 断网：下面退回本地那份
     if (this._loading === key) this._loading = null;
     if (this.key !== key) return;                         // 等接口的工夫用户已经翻页了，别把笔迹画串页
     // 等接口这会儿用户可能已经落笔了 —— 那几笔必须留住，接在取回来的后面，别被覆盖掉
@@ -571,7 +571,7 @@ const Ink = {
       || this.scroller === document.documentElement || this.scroller === document.body)
       ? window : this.scroller;
     if (this._scrollHost) {
-      try { this._scrollHost.addEventListener('scroll', this._onScroll, { passive: true }); } catch (_) {}
+      try { this._scrollHost.addEventListener('scroll', this._onScroll, { passive: true }); } catch (_) { /* 这一步失败不影响画线，下面有兜底 */ }
     }
     // PDF 缩放（pdf.js 的 +/−）不发 scroll，页矩形却变了 —— 盯住它内部的 #viewer，尺寸一变就重画。
     // 「整份 PDF 十几 MB…打开要一分多钟」（见 probeSlides 那段注释），所以点开资料立刻点批注是常事，
@@ -579,7 +579,7 @@ const Ink = {
     // 否则这一次批注期间缩放永远不重画。（frame.onload 已被 hidePdfjsPen 占用，只能 addEventListener。）
     if (this.frame && window.ResizeObserver && !this.hookZoom()) {
       this._onFrameLoad = () => this.hookZoom();
-      try { this.frame.addEventListener('load', this._onFrameLoad); } catch (_) {}
+      try { this.frame.addEventListener('load', this._onFrameLoad); } catch (_) { /* 这一步失败不影响画线，下面有兜底 */ }
     }
     window.addEventListener('resize', this._onResize = () => this.fit());
   },
@@ -612,10 +612,10 @@ const Ink = {
   },
   // 摘监听：open() 里重新挂之前也要先摘，否则反复开关会越挂越多
   unhook() {
-    if (this._scrollHost && this._onScroll) { try { this._scrollHost.removeEventListener('scroll', this._onScroll); } catch (_) {} }
+    if (this._scrollHost && this._onScroll) { try { this._scrollHost.removeEventListener('scroll', this._onScroll); } catch (_) { /* 这一步失败不影响画线，下面有兜底 */ } }
     if (this._onResize) window.removeEventListener('resize', this._onResize);
-    if (this._ro) { try { this._ro.disconnect(); } catch (_) {} this._ro = null; }
-    if (this._onFrameLoad && this.frame) { try { this.frame.removeEventListener('load', this._onFrameLoad); } catch (_) {} }
+    if (this._ro) { try { this._ro.disconnect(); } catch (_) { /* 本来就是收尾清理，失败也没有后续影响 */ } this._ro = null; }
+    if (this._onFrameLoad && this.frame) { try { this.frame.removeEventListener('load', this._onFrameLoad); } catch (_) { /* 本来就是收尾清理，失败也没有后续影响 */ } }
     this._scrollHost = null; this._onScroll = null; this._onResize = null; this._onFrameLoad = null;
   },
   bind() {
@@ -648,10 +648,10 @@ function inkHere() {
   const vf = $('#viewer-frame');
   if (st.view === 'viewer' && vf && !vf.classList.contains('hidden')) {
     let sc = null;
-    try { sc = vf.contentDocument && vf.contentDocument.getElementById('viewerContainer'); } catch (_) {}
+    try { sc = vf.contentDocument && vf.contentDocument.getElementById('viewerContainer'); } catch (_) { /* 跨域 iframe 读不到是预期；命中不到就退回上层判断 */ }
     // 按文件 URL 里的 file= 参数存，同一份资料每次打开都取回上次的笔迹
     let fk = vf.src;
-    try { fk = decodeURIComponent(new URL(vf.src, location.href).searchParams.get('file') || vf.src); } catch (_) {}
+    try { fk = decodeURIComponent(new URL(vf.src, location.href).searchParams.get('file') || vf.src); } catch (_) { /* 跨域 iframe 读不到是预期；命中不到就退回上层判断 */ }
     Ink.open('mat:' + fk.slice(-80), sc, vf, null);
     return;
   }
@@ -734,7 +734,7 @@ function inkMigrate() {
         localStorage.setItem(k, packed);                   // 覆盖写：新值更小，配额上放得下
       } catch (_) {
         try { localStorage.removeItem(k); localStorage.setItem(k, packed); }   // 满得连覆盖都被拒
-        catch (_) { try { localStorage.setItem(k, old); } catch (_) {} }       // 还不行就原样放回
+        catch (_) { try { localStorage.setItem(k, old); } catch (_) { /* 这一步失败不影响画线，下面有兜底 */ } }       // 还不行就原样放回
       }
     }
     lsSet('inkFmt', '2');

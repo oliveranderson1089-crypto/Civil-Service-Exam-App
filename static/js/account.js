@@ -62,8 +62,8 @@ $('#acct-sec-save').onclick = async () => {
   } catch (e) { toast(e.message, true); }
 };
 $('#acct-refresh').onclick = () => {
-  if (window.GongkaoNative && window.GongkaoNative.reload) { try { window.GongkaoNative.reload(); return; } catch (_) {} }
+  if (window.GongkaoNative && window.GongkaoNative.reload) { try { window.GongkaoNative.reload(); return; } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ } }
   location.reload();
 };
-$('#acct-server').onclick = () => { try { window.GongkaoNative && window.GongkaoNative.changeServer(); } catch (_) {} };
+$('#acct-server').onclick = () => { try { window.GongkaoNative && window.GongkaoNative.changeServer(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ } };
 $('#acct-logout').onclick = doLogout;

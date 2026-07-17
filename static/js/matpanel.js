@@ -72,7 +72,7 @@ function matLoad(key) {
   try {
     const d = JSON.parse(lsGet(key) || 'null');
     if (d) matStrokes = d.map(s => ({ tool: s.t, color: s.c, pts: (s.p || []).map(q => ({ x: q[0], y: q[1] })) }));
-  } catch (_) {}
+  } catch (_) { /* 本地存的勾画读坏了就当没有，重新画即可 */ }
 }
 function matSyncUI() {
   document.querySelectorAll('#matpad [data-mt]').forEach(b => b.classList.toggle('on', b.dataset.mt === matTool));
@@ -89,7 +89,7 @@ function matInit() {
     if (e.pointerType === 'touch' && matSawPen) return;   // 用过笔就防手掌误触
     if (e.button > 0) return;
     e.preventDefault();
-    try { matCv.setPointerCapture(e.pointerId); } catch (_) {}
+    try { matCv.setPointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
     matDrawing = true;
     matCur = { tool: matTool, color: matColor, pts: [matPt(e)] };
     matPaint();
@@ -98,7 +98,7 @@ function matInit() {
     if (!matDrawing || !matCur) return;
     e.preventDefault();
     let evs = [];
-    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
+    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) { /* 有的 WebKit 返回空表，下面会退回事件本身 */ }
     if (!evs.length) evs = [e];
     for (const ev of evs) matCur.pts.push(matPt(ev));
     if (!matRaf) matRaf = requestAnimationFrame(() => { matRaf = 0; matPaint(); });

@@ -93,7 +93,7 @@ async function loadAddFriend() {
           <button class="btn tiny primary" data-req="${r.id}" data-ra="accept">接受</button>
           <button class="btn tiny" data-req="${r.id}" data-ra="reject">拒绝</button></div>`).join('')
       : '';
-  } catch (_) {}
+  } catch (_) { /* 拉不到就先空着，15 秒后的轮询会补上 */ }
   $('#ch-results').innerHTML = '';
 }
 $('#ch-searchbtn').onclick = chDoSearch;
@@ -259,7 +259,7 @@ function chatConnect() {
       else if (d.type === 'friend') onFriendPush();
     };
     // onerror 不用管：EventSource 会按服务器给的 retry(3s) 自动重连
-  } catch (_) {}
+  } catch (_) { /* 拉不到就先空着，15 秒后的轮询会补上 */ }
 }
 function onChatPush(d) {
   const fromId = (d && typeof d === 'object') ? d.from : d;   // 兼容旧格式（只有 id）
@@ -281,14 +281,14 @@ function notifyChat(fromId, name, preview) {
       GongkaoNative.notify(title, body, 'chat:' + fromId);
       return;
     }
-  } catch (_) {}
+  } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
   // 浏览器/桌面壳：只要不是正开着这个人的聊天窗（onChatPush 已判过），就弹系统通知。
   // 不再要求页面隐藏——在别的功能页也该收到提示（像微信/QQ）。
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const n = new Notification(title, { body, tag: 'chat:' + fromId, icon: '/static/icon-192.png' });
-    n.onclick = () => { try { window.focus(); } catch (_) {} openChatroom(fromId, name || ''); n.close(); };
-  } catch (_) {}
+    n.onclick = () => { try { window.focus(); } catch (_) { /* 浏览器不支持这个能力就算了，不是错 */ } openChatroom(fromId, name || ''); n.close(); };
+  } catch (_) { /* 浏览器不支持这个能力就算了，不是错 */ }
 }
 // 首次进入聊天时，礼貌地请求一次通知权限（拒绝也不再烦）
 function ensureNotifyPerm() {
@@ -298,7 +298,7 @@ function ensureNotifyPerm() {
       return;
     }
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
-  } catch (_) {}
+  } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
 }
 function onFriendPush() {
   refreshChatBadge();

@@ -38,7 +38,7 @@ async function refreshNoteCounts() {
       const n = el.dataset.cnt === '' ? (d.total || 0) : (d.counts[el.dataset.cnt] || 0);
       el.textContent = n ? n : '';
     });
-  } catch (_) {}
+  } catch (_) { /* 拉不到就先空着，下次进来或轮询会补上 */ }
 }
 function openNotes(board) {
   curTag = '';
@@ -456,7 +456,7 @@ async function loadFeedTags() {
       ? `<button class="tagchip${curTag === '' ? ' active' : ''}" data-tag="">全部</button>` +
         d.tags.map(t => `<button class="tagchip${curTag === t ? ' active' : ''}" data-tag="${esc(t)}"># ${esc(t)}</button>`).join('')
       : '';
-  } catch (_) {}
+  } catch (_) { /* 拉不到就先空着，下次进来或轮询会补上 */ }
 }
 $('#feed-tags').addEventListener('click', e => {
   const c = e.target.closest('[data-tag]'); if (!c) return;
@@ -586,7 +586,7 @@ function makeFloat(el, key, handle) {
   };
   el.restore = () => {                        // 打开时调：恢复上次的位置和大小
     let v = null;
-    try { v = JSON.parse(lsGet(K) || 'null'); } catch (_) {}
+    try { v = JSON.parse(lsGet(K) || 'null'); } catch (_) { /* 拉不到就先空着，下次进来或轮询会补上 */ }
     if (!v) return;                           // 没拖过 → 用 CSS 里的默认位置和大小
     el.style.width = Math.max(280, v.w) + 'px';
     el.style.height = Math.max(220, v.h) + 'px';
@@ -614,7 +614,7 @@ function makeFloat(el, key, handle) {
   (handle || el).addEventListener('pointerup', e => {
     if (!moving) return;
     moving = false;
-    try { (handle || el).releasePointerCapture(e.pointerId); } catch (_) {}
+    try { (handle || el).releasePointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
     clamp(); save();
   });
 
@@ -638,7 +638,7 @@ function makeFloat(el, key, handle) {
   grip.addEventListener('pointerup', e => {
     if (!sizing) return;
     sizing = false;
-    try { grip.releasePointerCapture(e.pointerId); } catch (_) {}
+    try { grip.releasePointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
     clamp(); save();
   });
   addEventListener('resize', clamp);

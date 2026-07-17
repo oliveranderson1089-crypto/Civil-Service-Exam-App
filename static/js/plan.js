@@ -151,7 +151,7 @@ async function fillPlanExams() {
       $('#pl-weak').value = d.profile.weak || '';
       $('#pl-note').value = d.profile.note || '';
     }
-  } catch (_) {}
+  } catch (_) { /* 取不到就让表单留空，用户自己填 */ }
 }
 function renderPlan(d) {
   const p = d.profile;

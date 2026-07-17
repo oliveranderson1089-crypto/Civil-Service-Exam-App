@@ -118,7 +118,12 @@ $('#qzr-wrap').addEventListener('click', async e => {
           fd.append('analyze', '0');
           await api('/api/wrongq', { method: 'POST', body: fd });
           toast('已答错，这题自动收进错题本');
-        } catch (_) { }
+        } catch (e) {
+          // 这是「自动」收错题：成功时会 toast，失败却一声不响的话，用户会以为收进去了
+          // —— 等到复习错题本时才发现这题根本不在里面。
+          console.warn('[题库] 自动收错题失败：%s', (e && e.message) || e);
+          toast('这题没能自动收进错题本，可到错题本手动加', true);
+        }
       }
     } catch (err) { toast(err.message, true); }
   }

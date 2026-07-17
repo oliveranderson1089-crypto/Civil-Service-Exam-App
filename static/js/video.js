@@ -323,7 +323,7 @@ function vpMedia(wrap, d) {
     S.cur = next;
     showActive();
     bind();
-    try { S.v.currentTime = 0; } catch (_) { }
+    try { S.v.currentTime = 0; } catch (_) { /* 视频还没就绪，跳到 0 秒没意义也没影响 */ }
     S.v.play().catch(() => { });
     pp.textContent = big.textContent = '⏸'; big.classList.add('hide');
     S.preCh = -1;
@@ -394,12 +394,12 @@ function vpToggleFs(stage, v) {
     (doc.exitFullscreen || doc.webkitExitFullscreen || function () { }).call(doc);
     return;
   }
-  if (v.webkitDisplayingFullscreen) { try { v.webkitExitFullscreen(); } catch (_) { } return; }
+  if (v.webkitDisplayingFullscreen) { try { v.webkitExitFullscreen(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ } return; }
 
   const req = stage.requestFullscreen || stage.webkitRequestFullscreen;
   if (req) {
     let p;
-    try { p = req.call(stage); } catch (_) { }
+    try { p = req.call(stage); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
     // 请求失败（比如 iOS 的 div 全屏）就退回 <video> 原生全屏
     if (p && p.catch) p.catch(() => vpVideoFs(v));
   } else {
@@ -407,7 +407,7 @@ function vpToggleFs(stage, v) {
   }
 }
 function vpVideoFs(v) {
-  if (v.webkitEnterFullscreen) { try { v.webkitEnterFullscreen(); } catch (_) { } }
+  if (v.webkitEnterFullscreen) { try { v.webkitEnterFullscreen(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ } }
   else if (v.requestFullscreen) { v.requestFullscreen().catch(() => { }); }
 }
 // 进/出全屏时：横屏视频转屏 + 同步全屏按钮图标。锁屏方向要在全屏态里才允许，所以放这。
@@ -424,15 +424,15 @@ document.addEventListener('fullscreenchange', () => {
     } else if (!on && screen.orientation && screen.orientation.unlock) {
       screen.orientation.unlock();
     }
-  } catch (_) { }
+  } catch (_) { /* 这台设备不支持锁定横屏，就按竖屏放 */ }
 });
 
 function vpClose() {
   if (!vpS) return;
   const v = vpS.v;
-  if (vpS.hls) { try { vpS.hls.destroy(); } catch (_) { } }   // 不销毁会一直在后台下分片
-  if (vpS.vb) { try { vpS.vb.pause(); vpS.vb.removeAttribute('src'); vpS.vb.load(); } catch (_) { } }  // 副视频也要停，否则后台还在下一段
-  if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) { } }
+  if (vpS.hls) { try { vpS.hls.destroy(); } catch (_) { /* hls 实例已经销毁过了 */ } }   // 不销毁会一直在后台下分片
+  if (vpS.vb) { try { vpS.vb.pause(); vpS.vb.removeAttribute('src'); vpS.vb.load(); } catch (_) { /* 播放器已经关了/没在放，停它本来就没事可做 */ } }  // 副视频也要停，否则后台还在下一段
+  if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch (_) { /* 播放器已经关了/没在放，停它本来就没事可做 */ } }
   document.removeEventListener('keydown', vpS.esc);
   if (vpS.keys) document.removeEventListener('keydown', vpS.keys);
   if (document.fullscreenElement) { (document.exitFullscreen || function () { }).call(document); }

@@ -18,7 +18,7 @@ function refreshNotifyBtn() {
   const b = $('#acct-notify');
   if (!b) return;
   if (!n) { b.textContent = '手机通知（需安装 App）'; return; }
-  try { b.textContent = '手机通知：' + (n.notifyEnabled() ? '已开启 ✓' : '已关闭'); } catch (_) {}
+  try { b.textContent = '手机通知：' + (n.notifyEnabled() ? '已开启 ✓' : '已关闭'); } catch (_) { /* 壳没提供这个接口就不显示状态，普通浏览器里本来就没有 */ }
 }
 $('#acct-notify').onclick = () => {
   const n = nativeNotify();

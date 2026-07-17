@@ -90,7 +90,7 @@ function shotBind() {
     const p = shotPt(e);
     shotPts = [p];
     shotRect = shotPen ? null : { x: p.x, y: p.y, w: 0, h: 0, x0: p.x, y0: p.y };
-    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+    try { cv.setPointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
   });
   cv.addEventListener('pointermove', e => {
     if (!shotDraw) return;

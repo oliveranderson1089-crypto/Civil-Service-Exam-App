@@ -35,7 +35,7 @@ function createDock(el, key, defDock, onChange) {
       if (d.sizes) Object.assign(st.sizes, d.sizes);
       else { if (d.h) { st.sizes.bottom = d.h; st.sizes.top = d.h; }    // 兼容旧格式
              if (d.w) { st.sizes.left = d.w; st.sizes.right = d.w; } }
-    } catch (_) {}
+    } catch (_) { /* 存的位置读坏了就用默认停靠，不值得为它打扰用户 */ }
   })();
 
   function apply(doSave) {
@@ -93,7 +93,7 @@ function createDock(el, key, defDock, onChange) {
     e.preventDefault();
     // ★ 关键：把指针锁在 grip 上。不然拖动时指针一旦划过 PDF 的 iframe，pointerup 会被 iframe 吞掉，
     //   父窗口收不到「松手」→ 表现就是「松开鼠标还在调大小，一动就变」。
-    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    try { grip.setPointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
     document.body.classList.add(dockVert(st.dock) ? 'dk-rz-x' : 'dk-rz-y');
     grip.classList.add('on');
     const mv = (ev) => {
@@ -107,7 +107,7 @@ function createDock(el, key, defDock, onChange) {
       grip.removeEventListener('pointermove', mv);
       grip.removeEventListener('pointerup', up);
       grip.removeEventListener('pointercancel', up);
-      try { grip.releasePointerCapture(e.pointerId); } catch (_) {}
+      try { grip.releasePointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
       document.body.classList.remove('dk-rz-x', 'dk-rz-y');
       grip.classList.remove('on');
       st.sizes[st.dock] = size(st.dock);

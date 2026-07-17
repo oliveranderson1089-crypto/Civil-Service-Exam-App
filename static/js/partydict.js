@@ -60,7 +60,7 @@ $('#pd-list').addEventListener('click', e => {
 const deskTTS = () => !!(window.__desktopTTS && window.webkit && window.webkit.messageHandlers
   && window.webkit.messageHandlers.gk);
 function deskMsg(o) {
-  try { window.webkit.messageHandlers.gk.postMessage(JSON.stringify(o)); } catch (_) {}
+  try { window.webkit.messageHandlers.gk.postMessage(JSON.stringify(o)); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
 }
 // 引擎：piper=离线神经语音（默认，不联网、起声快）／edge=微软在线（音质最好，要联网）
 // ⚠️ 曾经有第三档「系统默认」= speech-dispatcher，已删除：它的 PulseAudio 输出模块会段错误

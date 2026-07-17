@@ -82,7 +82,7 @@ function hwInit() {
     if (!hwDrawing || !hwCur) return;
     e.preventDefault();
     let evs = [];                       // 高频合并采样 → 线更顺（有的 WebKit 返回空表，退回事件本身）
-    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
+    try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) { /* 有的 WebKit 返回空表，下面会退回事件本身 */ }
     if (!evs.length) evs = [e];
     for (const ev of evs) {
       const p = pos(ev);
@@ -122,7 +122,7 @@ function hwInit() {
     hwEl.eng.checked = (hwEngine === 'local');
     hwEl.eng.onchange = () => {
       hwEngine = hwEl.eng.checked ? 'local' : 'cloud'; lsSet('hwEng', hwEngine);
-      try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) {}
+      try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
     };
   }
 }
@@ -142,7 +142,7 @@ function hwInk() {
 let __hwReq = 0; const __hwCbs = {};
 window.__hwNative = function (reqId, jsonStr) {
   const cb = __hwCbs[reqId]; if (!cb) return; delete __hwCbs[reqId];
-  let r = null; try { r = JSON.parse(jsonStr); } catch (_) {}
+  let r = null; try { r = JSON.parse(jsonStr); } catch (_) { /* 识别服务返回的不是 JSON，下面按「没识别出来」处理 */ }
   cb(r && r.ok ? (r.candidates || []) : null);   // null = 模型未就绪/失败 → 退服务端
 };
 function hwNativeReady() {
@@ -223,7 +223,7 @@ function openHandwrite(targetId) {
   hwTarget = document.getElementById(targetId);
   if (!hwTarget) return;
   hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
-  try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) {}  // 仅"更快"模式才预下载端上模型
+  try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }  // 仅"更快"模式才预下载端上模型
   hwEl.modal.classList.remove('hidden');
   hwApplyFs();
   requestAnimationFrame(() => { hwEl._fit(); hwSetCands([]); hwFireInput(); });

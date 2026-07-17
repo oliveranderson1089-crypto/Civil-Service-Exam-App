@@ -68,7 +68,7 @@ async function bmRestore() {             // 进阅读页时问一句：上次看
       <button class="btn tiny" id="bm-go">跳回去</button>
       <button class="bm-x" id="bm-hide">✕</button>`;
     $('#bm-tip').classList.remove('hidden');
-  } catch (_) {}
+  } catch (_) { /* 取不到书签就不显示「跳回去」，不影响正常阅读 */ }
 }
 document.addEventListener('click', e => {
   if (e.target.closest('#bm-go')) {

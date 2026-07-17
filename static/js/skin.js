@@ -43,7 +43,7 @@ async function loadSkin() {
   try {
     SKIN = await api('/api/skin');
     applySkin();
-  } catch (_) {}
+  } catch (_) { /* 取不到皮肤就用默认外观，不该因此拦住进门 */ }
 }
 function renderSkinPrev() {
   [['avatar', '公'], ['wall_app', '无'], ['wall_login', '无']].forEach(([k, empty]) => {

@@ -221,7 +221,7 @@ function makeInputResizable(bar, ta, key) {
   let sy = 0, sh = 0, dragging = false;
   grip.addEventListener('pointerdown', e => {
     dragging = true; sy = e.clientY; sh = ta.getBoundingClientRect().height;
-    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    try { grip.setPointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
     document.body.classList.add('resizing-ns'); e.preventDefault();
   });
   grip.addEventListener('pointermove', e => {
@@ -229,7 +229,7 @@ function makeInputResizable(bar, ta, key) {
     const h = Math.max(MIN, Math.min(maxH(), Math.round(sh + (sy - e.clientY))));  // 往上拖=变高
     ta.style.height = h + 'px'; lsSet(key, h);
   });
-  const end = e => { if (!dragging) return; dragging = false; document.body.classList.remove('resizing-ns'); try { grip.releasePointerCapture(e.pointerId); } catch (_) {} };
+  const end = e => { if (!dragging) return; dragging = false; document.body.classList.remove('resizing-ns'); try { grip.releasePointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ } };
   grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
   ta._grow();                          // 初始高度 = 上次拖到的高度（或最小）
 }

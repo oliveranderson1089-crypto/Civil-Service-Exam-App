@@ -80,16 +80,16 @@ window.Reader = {
     // 调语速：取消当前发声，但 idx 不动 → 从当前这句接着读，不从头
     if (!this.playing) return;
     this.gen++;
-    try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
-    try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
+    try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
+    try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
     deskStop(); clearTimeout(this._deskT); this._deskCb = null;
     setTimeout(() => this.next(), 60);
   },
   stop() {
     this.playing = false; this.gen++; this.segs = []; this.idx = 0;
     if (this.card) { this.card.classList.remove('reading-src'); this.card = null; }
-    try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) {}
-    try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {}
+    try { if (this.native()) window.GongkaoNative.ttsCancel(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
+    try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
     deskStop(); clearTimeout(this._deskT); this._deskCb = null;
     this.ui();
   },
@@ -117,20 +117,20 @@ async function shareCard(card) {
   const payload = text + '\n\n—— 来自「公考助手」';
   try {
     if (window.GongkaoNative && typeof GongkaoNative.share === 'function') { GongkaoNative.share(payload); return; }
-  } catch (_) {}
+  } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
   if (navigator.share) {
     try { await navigator.share({ text: payload }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
   }
   // 剪贴板兜底（旧 APK / 无分享面板环境）
   let copied = false;
-  try { await navigator.clipboard.writeText(payload); copied = true; } catch (_) {}
+  try { await navigator.clipboard.writeText(payload); copied = true; } catch (_) { /* clipboard API 不给用，下面退回 execCommand */ }
   if (!copied) {
     try {
       const ta = document.createElement('textarea');
       ta.value = payload; ta.style.position = 'fixed'; ta.style.opacity = '0';
       document.body.appendChild(ta); ta.select();
       copied = document.execCommand('copy'); ta.remove();
-    } catch (_) {}
+    } catch (_) { /* execCommand 也不行就是真复制不了，copied 保持 false，下面会提示 */ }
   }
   toast(copied ? '已复制内容，去微信等应用粘贴即可（更新 APK 后可直接弹分享面板）' : '分享失败', !copied);
 }

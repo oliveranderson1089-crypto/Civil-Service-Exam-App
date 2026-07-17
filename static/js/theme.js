@@ -18,7 +18,7 @@ function sysIsDark() {
   if (typeof window.__sysDark === 'boolean') return window.__sysDark;
   try {
     if (window.GongkaoNative && typeof GongkaoNative.sysDark === 'function') return !!GongkaoNative.sysDark();
-  } catch (_) {}
+  } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
   return !!(_themeMedia && _themeMedia.matches);
 }
 function applyTheme() {

@@ -119,7 +119,7 @@ function padDown(e) {
   if (e.pointerType === 'touch' && padSawPen) return;             // 用过笔之后忽略触摸 = 防手掌误触
   if (e.button > 0) return;
   e.preventDefault();
-  try { padCv.setPointerCapture(e.pointerId); } catch (_) {}
+  try { padCv.setPointerCapture(e.pointerId); } catch (_) { /* 捕获失败不影响画线，指针事件照样收得到 */ }
   padDrawing = true;
   padCur = { tool: padTool, color: padColor, size: padSize / padW(), pts: [padPt(e)] };
   padPaint();
@@ -130,7 +130,7 @@ function padMove(e) {
   // 高频合并采样能让线更顺；但有的实现（含部分 WebKit）会返回空表，那就退回事件本身，
   // 否则一笔只剩落笔那个点，画出来是个小点。
   let evs = [];
-  try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) {}
+  try { if (e.getCoalescedEvents) evs = e.getCoalescedEvents(); } catch (_) { /* 有的 WebKit 返回空表，下面会退回事件本身 */ }
   if (!evs.length) evs = [e];
   for (const ev of evs) padCur.pts.push(padPt(ev));
   if (!padRaf) padRaf = requestAnimationFrame(() => { padRaf = 0; padPaint(); });
@@ -210,7 +210,7 @@ function padLoad() {
   try {
     const d = JSON.parse(lsGet(padKey()) || 'null');
     if (d && d.pages && d.pages.length) padSetData(d);
-  } catch (_) {}
+  } catch (_) { /* 本地草稿读坏了就从空白开始，总比整个页面打不开强 */ }
 }
 
 /* 草稿本：存服务器（多本、手机电脑同步） */

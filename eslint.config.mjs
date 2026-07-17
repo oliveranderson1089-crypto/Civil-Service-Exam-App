@@ -80,7 +80,9 @@ export default [
       "no-cond-assign": "error",
       "no-self-assign": "error",
       "no-constant-condition": ["error", { checkLoops: false }],
-      // 本轮的正题：空 catch 就是「静默失败」本身
+      // 空 catch 就是「静默失败」本身。注意 no-empty 认注释：写了理由的块不算空 ——
+      // 所以现存那 83 处逐个写明了「为什么这儿安全」，而**新写的、没写理由的**空 catch
+      // 会被这条拦下。它因此从 83 个噪音变成了一道真门禁：要吞异常可以，先说清为什么。
       "no-empty": ["warn", { allowEmptyCatch: false }],
       "no-fallthrough": "error",
       "use-isnan": "error",

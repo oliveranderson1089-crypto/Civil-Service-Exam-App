@@ -172,7 +172,7 @@ async function refreshReviewBadge() {
     if (d.count > 0) { b.textContent = d.count > 99 ? '99+' : d.count; b.classList.remove('hidden'); }
     else b.classList.add('hidden');
     $('#rev-desc').textContent = d.count > 0 ? `今天有 ${d.count} 条要复习` : '今日复习完成，棒！';
-  } catch (_) {}
+  } catch (_) { /* 角标拉不到就不显示，下次进来会重试 */ }
 }
 $('#home-cards').addEventListener('click', e => {
   if (hcDragSuppress) return;   // 刚拖拽完的抬手不算点击

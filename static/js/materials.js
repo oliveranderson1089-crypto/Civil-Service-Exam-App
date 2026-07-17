@@ -24,7 +24,7 @@ async function renderMatFilter() {
   try {
     const d = await api('/api/materials/boards');
     (d.boards || []).forEach(b => { if (b && !ALL_BOARDS.includes(b) && !matCustomBoards.includes(b)) matCustomBoards.push(b); });
-  } catch (_) {}
+  } catch (_) { /* 这一步失败不影响主流程，下面有兜底 */ }
   const all = ALL_BOARDS.concat(matCustomBoards);
   $('#mat-filter').innerHTML = `<button class="chip ${matBoard === '' ? 'active' : ''}" data-mb="">全部</button>` +
     all.map(b => `<button class="chip ${b === matBoard ? 'active' : ''}" data-mb="${esc(b)}">${esc(b)}</button>`).join('') +
@@ -174,7 +174,7 @@ function hidePdfjsPen() {
     st.textContent = '#editorModeButtons,#editorInk,#editorFreeText,#editorStamp,'
       + '#editorHighlight,#editorInkButton,#editorModeSeparator{display:none!important}';
     doc.head.appendChild(st);
-  } catch (_) {}
+  } catch (_) { /* 这一步失败不影响主流程，下面有兜底 */ }
 }
 
 /* ================= 幻灯片播放（逐页出图） =================
@@ -209,14 +209,14 @@ function openSlideshow() {
   if (!ssMid || !ssTotal) return;
   $('#slideshow').classList.remove('hidden');
   document.body.classList.add('ss-open');
-  try { if (window.GongkaoNative && GongkaoNative.fullscreen) GongkaoNative.fullscreen(true); } catch (_) {}
+  try { if (window.GongkaoNative && GongkaoNative.fullscreen) GongkaoNative.fullscreen(true); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
   ssShow(1);
 }
 function closeSlideshow() {
   $('#slideshow').classList.add('hidden');
   document.body.classList.remove('ss-open');
   $('#ss-img').src = '';
-  try { if (window.GongkaoNative && GongkaoNative.fullscreen) GongkaoNative.fullscreen(false); } catch (_) {}
+  try { if (window.GongkaoNative && GongkaoNative.fullscreen) GongkaoNative.fullscreen(false); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
 }
 $('#viewer-play').onclick = openSlideshow;
 $('#ss-close').onclick = closeSlideshow;
@@ -248,7 +248,7 @@ function setViewerFull(on) {
   // 让原生壳一起隐藏状态栏/导航栏（沉浸式），否则「全屏」只全屏了网页那一半
   try {
     if (window.GongkaoNative && typeof GongkaoNative.fullscreen === 'function') GongkaoNative.fullscreen(on);
-  } catch (_) {}
+  } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
 }
 $('#viewer-full').onclick = () => setViewerFull(!_viewerFull);
 $('#viewer-exit').onclick = () => setViewerFull(false);
@@ -308,7 +308,7 @@ $('#rd-serif').onclick = () => { readerSerif = !readerSerif; $('#rd-serif').text
 $('#rd-copy').onclick = async () => {
   const text = $('#viewer-reader').innerText || '';
   if (!text) { toast('没有可复制的内容', true); return; }
-  try { await navigator.clipboard.writeText(text); toast('已复制全文'); return; } catch (_) { }
+  try { await navigator.clipboard.writeText(text); toast('已复制全文'); return; } catch (_) { /* 这一步失败不影响主流程，下面有兜底 */ }
   const ta = document.createElement('textarea'); ta.value = text;
   ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
   try { document.execCommand('copy'); toast('已复制全文'); } catch (e) { toast('复制失败，请长按选择', true); }
@@ -390,7 +390,7 @@ function uploadXhr(fd, onProgress) {
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) return resolve(JSON.parse(xhr.responseText || '{}'));
       let msg = '上传失败（' + xhr.status + '）';
-      try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) {}
+      try { msg = JSON.parse(xhr.responseText).error || msg; } catch (_) { /* 这一步失败不影响主流程，下面有兜底 */ }
       reject(new Error(msg));
     };
     xhr.onerror = () => reject(new Error('网络中断'));

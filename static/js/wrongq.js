@@ -26,7 +26,7 @@ async function loadWqBoards() {
       `<button class="chip active" data-wc="">全部${d.total ? ' ' + d.total : ''}</button>` +
       `<button class="chip" data-wc="__star">★ 收藏${d.star ? ' ' + d.star : ''}</button>` +
       d.boards.map(b => `<button class="chip" data-wc="${esc(b.name)}">${esc(b.name)} ${b.count}</button>`).join('');
-  } catch (_) { }
+  } catch (_) { /* 分类拉不到就先空着，下次进来会重试 */ }
 }
 $('#wq-cats').addEventListener('click', e => {
   const c = e.target.closest('[data-wc]'); if (!c) return;

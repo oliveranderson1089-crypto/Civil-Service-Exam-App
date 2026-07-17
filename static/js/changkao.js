@@ -88,7 +88,7 @@ async function loadCkStarred() {
   try {
     const d = await api('/api/changkao/stars?ids=1');
     ckStarred = new Set(d.ids || []);
-  } catch (_) {}
+  } catch (_) { /* 取不到就按默认显示，下次进来会重拉 */ }
 }
 function renderCkList() {
   const q = $('#ckb-search').value.trim();
@@ -224,7 +224,7 @@ async function ckLoadConfuse(cid, quiet) {
     const d = await api(`/api/changkao/${cid}/confuse${quiet ? '' : '?force=1'}`);
     if (quiet && !d.cached) return;         // 静默模式只显示已经生成过的，不主动烧 AI
     ckRenderConfuse(box, d);
-  } catch (_) {}
+  } catch (_) { /* 取不到就按默认显示，下次进来会重拉 */ }
 }
 function ckRenderConfuse(box, d) {
   const q = d.quiz;
