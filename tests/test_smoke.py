@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from conftest import appmod, pass_captcha
+from conftest import DB, appmod, pass_captcha
 
 # 会打外网 / 调 AI / 跑爬虫 / 生成大文件的，冒烟阶段不碰
 SKIP_MARKS = ("/export", "/download", "/refresh", "/crawl", "/ai/", "/aichat",
@@ -24,12 +24,12 @@ def _plain_get_routes():
 
 class TestInit:
     def test_空库能建起全部表(self):
-        n = sqlite3.connect(appmod.DB).execute(
+        n = sqlite3.connect(DB).execute(
             "select count(*) from sqlite_master where type='table'").fetchone()[0]
         assert n > 50, f"只建了 {n} 张表，init_db() 可能中途被吞了异常"
 
     def test_关键表都在(self):
-        got = {r[0] for r in sqlite3.connect(appmod.DB).execute(
+        got = {r[0] for r in sqlite3.connect(DB).execute(
             "select name from sqlite_master where type='table'")}
         for t in ("users", "entries", "annotations", "materials", "notes", "review_state"):
             assert t in got, f"缺表 {t}"

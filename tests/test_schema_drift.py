@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from conftest import BASE, appmod
+from conftest import BASE, DB, appmod
 
 sys.path.insert(0, str(BASE))
 
@@ -23,7 +23,7 @@ sys.path.insert(0, str(BASE))
 def _fresh(tmp_path):
     """拷一份 conftest 已建好的空库——它就是 app.py init_db() 的产物。"""
     p = tmp_path / "fresh.db"
-    shutil.copy(appmod.DB, p)
+    shutil.copy(DB, p)
     return sqlite3.connect(p)
 
 

@@ -10,12 +10,12 @@ no such table 直接 500。这和 changkao_items.freq、news_items.board 是同�
 import sqlite3
 
 import core
-from conftest import appmod
+from conftest import DB, appmod
 
 
 class TestRefTables:
     def test_空库也建得出两张词典表(self):
-        got = {r[0] for r in sqlite3.connect(appmod.DB).execute(
+        got = {r[0] for r in sqlite3.connect(DB).execute(
             "select name from sqlite_master where type='table'")}
         for t in ("ref_idiom", "ref_ci"):
             assert t in got, f"{t} 没建——没跑过 build_db.py 的新库上 lookup() 会崩"
@@ -35,7 +35,7 @@ class TestRefTables:
 
     def test_有数据时查得到(self, flask_app):
         """灌一条进去，确认 lookup 真的会读这张表（不是永远返回 found=False）。"""
-        con = sqlite3.connect(appmod.DB)
+        con = sqlite3.connect(DB)
         con.execute("INSERT OR REPLACE INTO ref_idiom(word,pinyin,explanation,derivation,example) "
                     "VALUES('测试成语','cè shì','测试释义','出处','例句')")
         con.commit()
@@ -47,7 +47,7 @@ class TestRefTables:
             assert r["explanation"] == "测试释义"
             assert r["category"] == "成语"
         finally:
-            con = sqlite3.connect(appmod.DB)
+            con = sqlite3.connect(DB)
             con.execute("DELETE FROM ref_idiom WHERE word='测试成语'")
             con.commit()
             con.close()

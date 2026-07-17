@@ -177,6 +177,12 @@ def _study_stats(db, u):
     return {"streak": streak, "total": total}
 
 
+def _truthy(v, default=True):
+    if v is None:
+        return default
+    return str(v).lower() not in ("0", "false", "no", "")
+
+
 def uname(db, u):
     """查用户名。查不到说明是孤儿记录（用户已删而引用还在），给个带 id 的占位好排查。
 

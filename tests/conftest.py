@@ -22,11 +22,14 @@ os.environ["GONGKAO_UPLOADS"] = str(_TMP / "uploads")
 os.environ["GONGKAO_CONFIG"] = str(_TMP / "config.json")
 
 sys.path.insert(0, str(BASE))
+import core  # noqa: E402  DB/路径常量拆模块后归了 core
 import app as appmod  # noqa: E402
 
 # 保命闸：确认测试没连上生产库
-assert appmod.DB == str(_TMP / "test.db"), f"测试库指向了 {appmod.DB}，拒绝运行"
-assert "AppStore/apps/gongkao-app/app.db" not in appmod.DB
+assert core.DB == str(_TMP / "test.db"), f"测试库指向了 {core.DB}，拒绝运行"
+assert "AppStore/apps/gongkao-app/app.db" not in core.DB
+
+DB = core.DB
 
 
 def pytest_sessionfinish(session, exitstatus):

@@ -10,7 +10,7 @@ import sqlite3
 
 import pytest
 
-from conftest import appmod, pass_captcha
+from conftest import DB, appmod, pass_captcha
 from mods import annots as annmod   # 批注已拆到 mods/annots.py，常量和 get_db 都在那儿
 
 TARGET = "mat:/api/materials/1/view"
@@ -34,7 +34,7 @@ def _list(client, target=TARGET):
 @pytest.fixture(autouse=True)
 def _clean_annots():
     """测试库是 session 级共享的，每条用例前清干净，免得互相看见对方的批注。"""
-    con = sqlite3.connect(appmod.DB)
+    con = sqlite3.connect(DB)
     con.execute("DELETE FROM annotations")
     con.commit()
     con.close()

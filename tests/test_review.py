@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from conftest import appmod
+from conftest import DB, appmod
 from mods import review as rvmod   # 复习已拆到 mods/review.py
 
 TODAY = datetime.now().strftime("%Y-%m-%d")
@@ -19,7 +19,7 @@ YESTERDAY = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def _db():
-    return sqlite3.connect(appmod.DB)
+    return sqlite3.connect(DB)
 
 
 def _uid(username="tester"):
