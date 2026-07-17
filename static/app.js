@@ -33,6 +33,45 @@ function toast(msg, err) {
   t._t = setTimeout(() => t.classList.add('hidden'), 2300);
 }
 const esc = (s) => (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---- 本地存储：写失败必须看得见 ----
+   localStorage 的坑不是理论上的：2026-07-16 批注笔迹把 5MiB 配额撑爆，setItem 抛
+   QuotaExceededError，被 catch(_){} 吞掉，用户画了一整页笔迹全丢、界面上还好好的
+   （画布内存里还在，刷新才发现没了）。见 ebf9da5。
+
+   全项目的 localStorage 写入都走这两个函数：
+   - 满了就告诉用户，别装作存上了
+   - 同一把钥匙只吵一次，免得每笔一弹
+   - 返回 false 让调用方能自己决定要不要降级 */
+const _lsWarned = new Set();
+function lsSet(key, val) {
+  try {
+    localStorage.setItem(key, val);
+    _lsWarned.delete(key);
+    return true;
+  } catch (e) {
+    const quota = e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22);
+    console.warn('[存储] 写入失败 %s：%s', key, (e && e.name) || e);
+    if (!_lsWarned.has(key)) {
+      _lsWarned.add(key);
+      toast(quota ? '本地存储已满，这次没保存上' : '本地存储写入失败，这次没保存上', true);
+    }
+    return false;
+  }
+}
+function lsGet(key, dflt) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? dflt : v;
+  } catch (e) {                       // 隐私模式/禁用 cookie 时 localStorage 本身会抛
+    console.warn('[存储] 读取失败 %s：%s', key, (e && e.name) || e);
+    return dflt;
+  }
+}
+function lsDel(key) {
+  try { localStorage.removeItem(key); return true; }
+  catch (e) { console.warn('[存储] 删除失败 %s：%s', key, (e && e.name) || e); return false; }
+}
 function fmtSize(n) {
   if (n < 1024) return n + ' B';
   if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
@@ -1063,8 +1102,7 @@ function makeFloat(el, key, handle) {
   };
   const save = () => {
     const r = el.getBoundingClientRect();
-    try { localStorage.setItem(K, JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height })); }
-    catch (_) {}
+    lsSet(K, JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height }));
   };
   el.restore = () => {                        // 打开时调：恢复上次的位置和大小
     let v = null;
@@ -2777,7 +2815,7 @@ function makeInputResizable(bar, ta, key) {
   grip.addEventListener('pointermove', e => {
     if (!dragging) return;
     const h = Math.max(MIN, Math.min(maxH(), Math.round(sh + (sy - e.clientY))));  // 往上拖=变高
-    ta.style.height = h + 'px'; localStorage.setItem(key, h);
+    ta.style.height = h + 'px'; lsSet(key, h);
   });
   const end = e => { if (!dragging) return; dragging = false; document.body.classList.remove('resizing-ns'); try { grip.releasePointerCapture(e.pointerId); } catch (_) {} };
   grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
@@ -4074,13 +4112,13 @@ function hwInit() {
   };
   hwEl.done.onclick = hwClose;
   hwEl.auto.checked = hwAuto;
-  hwEl.auto.onchange = () => { hwAuto = hwEl.auto.checked; localStorage.setItem('hwAuto', hwAuto ? '1' : '0'); };
-  if (hwEl.fs) hwEl.fs.onclick = () => { hwFs = !hwFs; localStorage.setItem('hwFs', hwFs ? '1' : '0'); hwApplyFs(); };
+  hwEl.auto.onchange = () => { hwAuto = hwEl.auto.checked; lsSet('hwAuto', hwAuto ? '1' : '0'); };
+  if (hwEl.fs) hwEl.fs.onclick = () => { hwFs = !hwFs; lsSet('hwFs', hwFs ? '1' : '0'); hwApplyFs(); };
   // 默认云端 Google(准)，打勾切「更快(本地/端上)」——手机 ML Kit、电脑 Zinnia
   if (hwEl.eng) {
     hwEl.eng.checked = (hwEngine === 'local');
     hwEl.eng.onchange = () => {
-      hwEngine = hwEl.eng.checked ? 'local' : 'cloud'; localStorage.setItem('hwEng', hwEngine);
+      hwEngine = hwEl.eng.checked ? 'local' : 'cloud'; lsSet('hwEng', hwEngine);
       try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) {}
     };
   }
@@ -5569,7 +5607,7 @@ function bindBar() {
   const rec = $('#dt-records'); if (rec) rec.onclick = openDtRecords;
   document.querySelectorAll('[data-dtm]').forEach(b => b.onclick = async () => {
     const m = b.dataset.dtm; if (m === dtMode) return;
-    dtMode = m; localStorage.setItem('dtMode', m);
+    dtMode = m; lsSet('dtMode', m);
     // 切换模式：同一套题、保留你的作答，只改「何时揭晓答案」，不重新出题、不清空
     if (dtSubmitted || !dtItems.length) { loadDtest(); return; }
     if (m === 'study') {
@@ -5587,9 +5625,9 @@ function bindBar() {
     const n = +b.dataset.dtc; if (n === dtCount) return;
     if (dtItems.length && !dtSubmitted) {
       if (!(await appConfirm('换成 ' + n + ' 题需要重新出题，当前作答会清空。'))) return;
-      dtCount = n; localStorage.setItem('dtCount', n); dtGen(true);
+      dtCount = n; lsSet('dtCount', n); dtGen(true);
     } else {
-      dtCount = n; localStorage.setItem('dtCount', n);
+      dtCount = n; lsSet('dtCount', n);
       document.querySelectorAll('[data-dtc]').forEach(x => x.classList.toggle('on', +x.dataset.dtc === dtCount));
     }
   });
@@ -7737,14 +7775,14 @@ function ttsSetup() {
 }
 document.addEventListener('click', e => {
   const b = e.target.closest('.tts-opt');
-  if (b) { localStorage.setItem('ttsEngine', b.dataset.tts); ttsSetup(); return; }
+  if (b) { lsSet('ttsEngine', b.dataset.tts); ttsSetup(); return; }
   if (e.target.closest('#tts-try')) {
     Reader.stop();
     deskSay('金无足赤，人无完人。这是朗读试听。', 1.0, '');
   }
 });
 document.addEventListener('change', e => {
-  if (e.target.id === 'tts-voice') { localStorage.setItem('ttsVoice', e.target.value); }
+  if (e.target.id === 'tts-voice') { lsSet('ttsVoice', e.target.value); }
 });
 
 /* ================= 逐条朗读（安卓 TTS 桥 / 浏览器 speechSynthesis） ================= */
@@ -8217,7 +8255,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     dragging = false;
     if (moved) {
       const r = fab.getBoundingClientRect();
-      try { localStorage.setItem('aifab', JSON.stringify({ x: r.left, y: r.top })); } catch (_) {}
+      try { lsSet('aifab', JSON.stringify({ x: r.left, y: r.top })); } catch (_) {}
       dirs(); e.preventDefault(); e.stopPropagation();
     } else toggle();
   });
@@ -8339,7 +8377,7 @@ function applyTheme() {
 window.__onSysTheme = function (dark) { window.__sysDark = !!dark; applyTheme(); };
 document.addEventListener('click', e => {
   const b = e.target.closest('.theme-opt'); if (!b || !b.dataset.theme) return;
-  localStorage.setItem('theme', b.dataset.theme);
+  lsSet('theme', b.dataset.theme);
   applyTheme();
   toast(b.textContent.trim() + ' 已应用');
 });
@@ -8382,7 +8420,7 @@ function updModal({ title, ver, notes, size, btn, key, onGo }) {
   $('#upd-go').textContent = btn;
   $('#upd-modal').classList.remove('hidden');
   $('#upd-later').onclick = () => {
-    if (key) localStorage.setItem('skipUpdate', key);   // 这一版说过「以后再说」就别再弹
+    if (key) lsSet('skipUpdate', key);   // 这一版说过「以后再说」就别再弹
     $('#upd-modal').classList.add('hidden');
   };
   $('#upd-go').onclick = () => { $('#upd-modal').classList.add('hidden'); onGo(); };
@@ -8991,8 +9029,8 @@ function padSaveSoon() {
   padSaveT = setTimeout(() => (padMode === 'draft' ? padDraftSave() : padSave()), padMode === 'draft' ? 1200 : 700);
 }
 function padSave() {
-  try { localStorage.setItem(padKey(), JSON.stringify(Object.assign(padData(), { pg: padPg }))); }
-  catch (_) {}                                                    // 存不下就算了，别影响做题
+  // 存不下不会中断做题（lsSet 不抛，只提示一次），但草稿丢了用户得知道
+  lsSet(padKey(), JSON.stringify(Object.assign(padData(), { pg: padPg })));
 }
 function padLoad() {
   try {
@@ -9813,8 +9851,12 @@ function inkMigrate() {
         catch (_) { try { localStorage.setItem(k, old); } catch (_) {} }       // 还不行就原样放回
       }
     }
-    localStorage.setItem('inkFmt', '2');
-  } catch (_) {}
+    lsSet('inkFmt', '2');
+  } catch (e) {
+    // 迁移是尽力而为（里面每一步都有自己的降级），但整体失败不该无声无息：
+    // 没迁成的话下次进来还会再试一遍，是幂等的。
+    console.warn('[批注] 旧格式迁移未完成：%s', (e && e.message) || e);
+  }
 }
 inkMigrate();
 
@@ -9852,7 +9894,7 @@ function createDock(el, key, defDock, onChange) {
     const min = dockVert(d) ? 280 : 190;
     return Math.round(Math.min(max, Math.max(min, v)));
   };
-  const save = () => { try { localStorage.setItem(key, JSON.stringify({ d: st.dock, sizes: st.sizes })); } catch (_) {} };
+  const save = () => { try { lsSet(key, JSON.stringify({ d: st.dock, sizes: st.sizes })); } catch (_) {} };
   (function load() {
     try {
       const d = JSON.parse(localStorage.getItem(key) || 'null');
@@ -9965,7 +10007,7 @@ function fabClamp() {
   if (Math.abs(x - r.left) < .5 && Math.abs(y - r.top) < .5) return;
   fab.style.left = x + 'px'; fab.style.top = y + 'px';
   fab.style.right = 'auto'; fab.style.bottom = 'auto';
-  try { localStorage.setItem('aifab', JSON.stringify({ x, y })); } catch (_) {}
+  try { lsSet('aifab', JSON.stringify({ x, y })); } catch (_) {}
 }
 addEventListener('resize', fabClamp);
 addEventListener('load', () => requestAnimationFrame(fabClamp));
@@ -10007,7 +10049,7 @@ function avoidFab() {
     y = Math.min(Math.max(4, y), innerHeight - f.height - 4);
     fab.style.left = x + 'px'; fab.style.top = y + 'px';
     fab.style.right = 'auto'; fab.style.bottom = 'auto';
-    try { localStorage.setItem('aifab', JSON.stringify({ x, y })); } catch (_) {}
+    try { lsSet('aifab', JSON.stringify({ x, y })); } catch (_) {}
   }
 }
 
@@ -10142,10 +10184,8 @@ function applySkin() {
   b.style.setProperty('--wall', SKIN.wall_app ? 'url("' + SKIN.wall_app + '")' : 'none');
   b.style.setProperty('--wall-dim', (skinDim() / 100).toFixed(2));
   // 登录页要用的，缓存到本地（它没登录，拿不到接口）
-  try {
-    localStorage.setItem('wallLogin', SKIN.wall_login || '');
-    localStorage.setItem('skinDim', String(skinDim()));
-  } catch (_) {}
+  lsSet('wallLogin', SKIN.wall_login || '');
+  lsSet('skinDim', String(skinDim()));
 }
 async function loadSkin() {
   try {
@@ -10192,7 +10232,7 @@ $('#view-account').addEventListener('click', async e => {
   } catch (err) { toast(err.message, true); }
 });
 $('#skin-dim').addEventListener('input', e => {
-  localStorage.setItem('skinDim', e.target.value);
+  lsSet('skinDim', e.target.value);
   $('#skin-dimv').textContent = e.target.value + '%';
   applySkin();
 });
@@ -10273,11 +10313,11 @@ function matFit() {
 function matSave() {
   if (!matKey) return;
   const r = (n) => Math.round(n * 1e4) / 1e4;
-  try {
-    localStorage.setItem(matKey, JSON.stringify(matStrokes.map(s => ({
-      t: s.tool, c: s.color, p: s.pts.map(q => [r(q.x), r(q.y)]),
-    }))));
-  } catch (_) {}
+  // 这页勾画只存本地（考场上划重点是临时的，见面板顶部注释）。写失败必须让用户知道——
+  // 原先这儿是 catch(_){}，配额满时划了一整篇材料全丢、界面还好好的。
+  lsSet(matKey, JSON.stringify(matStrokes.map(s => ({
+    t: s.tool, c: s.color, p: s.pts.map(q => [r(q.x), r(q.y)]),
+  }))));
 }
 function matLoad(key) {
   matKey = key; matStrokes = [];
