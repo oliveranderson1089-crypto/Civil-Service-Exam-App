@@ -18,8 +18,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 import uuid
 from datetime import datetime, timedelta
 
@@ -39,11 +37,9 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
                                 TableStyle, HRFlowable)
 from reportlab.lib.styles import ParagraphStyle
 
-from mods.agent import _ai_agentic_or_error, _gen_ai_explanation
 from schema import init_db
-from core import (BASE, CFG, CONFIG, DB, STATIC, UPLOADS, bg_new, bg_set,
-                  close_db, current_user, get_db, log, lookup, row_to_dict,
-                  uid, uname)
+from core import (BASE, CFG, DB, STATIC, UPLOADS, bg_new, bg_set, close_db,
+                  current_user, get_db, log, uid, uname)
 from mods.bookmarks import bp as bookmarks_bp
 from mods.dtest import bp as dtest_bp
 from mods.kb import bp as kb_bp
@@ -51,8 +47,13 @@ from mods.review import RV_GROUP, RV_GROUPS, _review_due
 from mods.review import bp as review_bp
 from mods.search import bp as search_bp
 from mods.sync import bp as sync_bp
+from mods.aisession import bp as aisession_bp
+from mods.entries import bp as entries_bp
+from mods.handwrite import bp as handwrite_bp
+from mods.lianjie import bp as lianjie_bp
+from mods.notifications import bp as notifications_bp
+from mods.ocr import bp as ocr_bp
 from mods.admin import bp as admin_bp
-from mods.aichat import _user_stats
 from mods.aichat import bp as aichat_bp
 from mods.essays import bp as essays_bp
 from mods.hyper import bp as hyper_bp
@@ -64,7 +65,6 @@ from mods.theory import bp as theory_bp
 from mods.xiyu import bp as xiyu_bp
 from mods.ai import (_ai_call_or_error, vision_chat, vision_configured,
                      vision_ocr)
-from mods.changkao import CK_TO_ENTRY
 from mods.files import (IMAGE_EXT, OFFICE_EXT, _extract_text, _ocr_image,
                         _ocr_image_page, _office_to_pdf, _strip_artifacts,
                         _user_dir)
@@ -93,6 +93,12 @@ app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 单文件最大 64MB
 app.teardown_appcontext(close_db)
 app.register_blueprint(annots_bp)
 app.register_blueprint(admin_bp)
+app.register_blueprint(aisession_bp)
+app.register_blueprint(entries_bp)
+app.register_blueprint(handwrite_bp)
+app.register_blueprint(lianjie_bp)
+app.register_blueprint(notifications_bp)
+app.register_blueprint(ocr_bp)
 app.register_blueprint(bookmarks_bp)
 app.register_blueprint(dtest_bp)
 app.register_blueprint(kb_bp)
@@ -788,67 +794,8 @@ def classics_export():
 # ---------------------------------------------------------------- AI 助手
 # 已拆到 mods/aichat.py。
 
-# ================================================================ OCR 识图（tesseract）
-@app.post("/api/ocr")
-def api_ocr():
-    f = request.files.get("file") or request.files.get("image")
-    if not f or not f.filename:
-        return jsonify({"error": "没有图片"}), 400
-    ext = os.path.splitext(f.filename)[1].lower() or ".jpg"
-    tmp = os.path.join(tempfile.gettempdir(), "ocr_" + uuid.uuid4().hex + ext)
-    f.save(tmp)
-    # 优先用视觉模型识别（手写 / 排版 / 公式都比 tesseract 强），失败再退 tesseract
-    if vision_configured():
-        try:
-            vt = vision_ocr(tmp)
-            if vt.strip():
-                try:
-                    os.remove(tmp)
-                except Exception:
-                    log.debug("临时文件没删掉", exc_info=True)
-                return jsonify({"text": vt.strip(), "engine": "vision"})
-        except Exception:
-            log.warning("vision OCR 失败，回退到本地 OCR", exc_info=True)
-    # 预处理：摆正方向 / 灰度 / 放大 / 拉对比度 / 锐化 —— 显著提升拍照识别率
-    proc = tmp
-    try:
-        from PIL import Image, ImageOps, ImageFilter
-        im = Image.open(tmp)
-        im = ImageOps.exif_transpose(im)
-        im = im.convert("L")
-        w, h = im.size
-        if max(w, h) < 2200:
-            s = min(3.0, 2200.0 / max(w, h))
-            im = im.resize((int(w * s), int(h * s)), Image.LANCZOS)
-        im = ImageOps.autocontrast(im, cutoff=2)
-        im = im.filter(ImageFilter.SHARPEN)
-        proc = tmp + ".png"
-        im.save(proc)
-    except Exception:
-        proc = tmp
-    text = ""
-    try:
-        out = subprocess.run(["tesseract", proc, "stdout", "-l", "chi_sim+eng",
-                              "--oem", "1", "--psm", "6"],
-                             capture_output=True, timeout=120)
-        text = out.stdout.decode("utf-8", "ignore")
-    except Exception as e:
-        for p in {tmp, proc}:
-            try:
-                os.remove(p)
-            except Exception:
-                log.debug("临时文件没删掉", exc_info=True)
-        return jsonify({"error": "识别失败：" + str(e)}), 500
-    for p in {tmp, proc}:
-        try:
-            os.remove(p)
-        except Exception:
-            log.debug("临时文件没删掉", exc_info=True)
-    # tesseract 中文常在汉字间插空格，去掉相邻汉字间的空白
-    text = re.sub(r"(?<=[一-鿿，。！？；：、（）《》“”])[ \t]+(?=[一-鿿，。！？；：、（）《》“”])", "", text)
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    return jsonify({"text": text})
-
+# ---------------------------------------------------------------- OCR 识图（tesseract）
+# 已拆到 mods/ocr.py。
 
 # ---------------------------------------------------------------- 错题本
 # 已拆到 mods/wrongq.py。
@@ -976,145 +923,7 @@ def gaikuo_list():
 # 已拆到 mods/xiyu.py。
 
 # ---------------------------------------------------------------- 全局 AI 会话中心
-@app.get("/api/aichat/home")
-def aichat_home():
-    db = get_db()
-    db.execute("DELETE FROM ai_chats WHERE user_id=? AND created_at < datetime('now','localtime','-1 hour') "
-               "AND NOT EXISTS(SELECT 1 FROM ai_msgs m WHERE m.chat_id=ai_chats.id)", (uid(),))
-    db.commit()
-    chats = db.execute(
-        "SELECT c.id, c.title, c.updated_at, c.project_id, c.starred, p.name pname FROM ai_chats c "
-        "LEFT JOIN ai_projects p ON p.id=c.project_id "
-        "WHERE c.user_id=? AND EXISTS(SELECT 1 FROM ai_msgs m WHERE m.chat_id=c.id) "
-        "ORDER BY c.starred DESC, c.updated_at DESC LIMIT 50", (uid(),)).fetchall()
-    projects = db.execute(
-        "SELECT p.id, p.name, p.instructions,"
-        "(SELECT COUNT(*) FROM ai_chats c WHERE c.project_id=p.id) cnt "
-        "FROM ai_projects p WHERE p.user_id=? ORDER BY p.id DESC", (uid(),)).fetchall()
-    return jsonify({"chats": [dict(r) for r in chats], "projects": [dict(r) for r in projects]})
-
-
-@app.post("/api/aichat/chats")
-def aichat_new():
-    data = request.get_json(silent=True) or {}
-    pid = data.get("project_id")
-    db = get_db()
-    cur = db.execute("INSERT INTO ai_chats(user_id,project_id,title) VALUES(?,?,?)",
-                     (uid(), pid, ""))
-    db.commit()
-    return jsonify({"id": cur.lastrowid}), 201
-
-
-@app.get("/api/aichat/chats/<int:cid>")
-def aichat_get(cid):
-    db = get_db()
-    c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
-    if not c:
-        return jsonify({"error": "未找到"}), 404
-    msgs = db.execute("SELECT role, content FROM ai_msgs WHERE chat_id=? ORDER BY id", (cid,)).fetchall()
-    return jsonify({"id": c["id"], "title": c["title"], "project_id": c["project_id"],
-                    "msgs": [dict(r) for r in msgs]})
-
-
-@app.put("/api/aichat/chats/<int:cid>")
-def aichat_update(cid):
-    data = request.get_json(silent=True) or {}
-    db = get_db()
-    c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
-    if not c:
-        return jsonify({"error": "未找到"}), 404
-    if "title" in data:
-        t = (data.get("title") or "").strip()[:40]
-        if t:
-            db.execute("UPDATE ai_chats SET title=? WHERE id=?", (t, cid))
-    if "project_id" in data:
-        pid = data.get("project_id")
-        db.execute("UPDATE ai_chats SET project_id=? WHERE id=?", (pid, cid))
-    if "starred" in data:
-        db.execute("UPDATE ai_chats SET starred=? WHERE id=?", (1 if data.get("starred") else 0, cid))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.delete("/api/aichat/chats/<int:cid>")
-def aichat_del(cid):
-    db = get_db()
-    db.execute("DELETE FROM ai_msgs WHERE chat_id IN (SELECT id FROM ai_chats WHERE id=? AND user_id=?)", (cid, uid()))
-    db.execute("DELETE FROM ai_chats WHERE id=? AND user_id=?", (cid, uid()))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.post("/api/aichat/chats/<int:cid>/send")
-def aichat_send(cid):
-    data = request.get_json(silent=True) or {}
-    content = (data.get("content") or "").strip()
-    if not content:
-        return jsonify({"error": "请输入内容"}), 400
-    db = get_db()
-    c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
-    if not c:
-        return jsonify({"error": "会话不存在"}), 404
-    sys_prompt = ("你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。\n"
-                  "【排版要求】用 Markdown 让回答层次分明、重点突出：\n"
-                  "· 用 `##`/`###` 小标题分段，用有序/无序列表列要点，别写成一大坨。\n"
-                  "· **把关键结论、术语、重点内容加粗**（`**这样**`）—— 不只是加粗标题；比如给古诗词就把**整首诗**"
-                  "或关键名句加粗突出，讲知识点就把**核心结论和易错点**加粗。\n"
-                  "· 需要时用 `>` 引用来突出原文/诗句，用表格对比。\n"
-                  "你能**真的操作这个应用**（通过给你的工具）：用户让你收录成语/词语就用 add_word 真的加进去、"
-                  "让你打开某个功能就用 open_feature 打开、让你记笔记就用 create_note。别只是嘴上说做了 —— 要调用工具真做。做完再简短告诉用户结果。\n"
-                  "【错题识别】当用户发来一段内容（常常是截图 OCR 出来的文字）时，判断它是不是一道完整的题目：\n"
-                  "· 如果**确实是一道完整题目**（有题干，通常还有 A/B/C/D 选项），就用 add_wrong_question 把它加入错题本，"
-                  "并顺手判断板块/题型、能定的话给出答案与简要解析；加完简短告诉用户已收录。\n"
-                  "· 如果**拿不准这是不是题目**、或内容残缺（只有半道题、只是知识点/材料），**不要**调用工具，"
-                  "而是用一句话反问用户：「这看起来像是……，需要我把它加入错题本吗？」等用户确认再决定。")
-    if c["project_id"]:
-        p = db.execute("SELECT * FROM ai_projects WHERE id=?", (c["project_id"],)).fetchone()
-        if p and (p["instructions"] or "").strip():
-            sys_prompt += "\n\n【本项目要求】" + p["instructions"].strip()
-    stats = _user_stats()
-    if stats:
-        sys_prompt += "\n\n" + stats
-    hist = db.execute("SELECT role, content FROM ai_msgs WHERE chat_id=? ORDER BY id DESC LIMIT 20",
-                      (cid,)).fetchall()
-    msgs = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
-    msgs.append({"role": "user", "content": content})
-    reply, actions, err = _ai_agentic_or_error(
-        [{"role": "system", "content": sys_prompt}] + msgs, db, temperature=0.6, max_tokens=2000)
-    if err:
-        return err
-    db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "user", content))
-    db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "assistant", reply))
-    title = c["title"]
-    if not title:
-        title = content[:24]
-        db.execute("UPDATE ai_chats SET title=? WHERE id=?", (title, cid))
-    db.execute("UPDATE ai_chats SET updated_at=datetime('now','localtime') WHERE id=?", (cid,))
-    db.commit()
-    return jsonify({"reply": reply, "title": title, "actions": actions})
-
-
-@app.post("/api/aichat/projects")
-def aiproj_new():
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    if not name:
-        return jsonify({"error": "请输入项目名"}), 400
-    db = get_db()
-    cur = db.execute("INSERT INTO ai_projects(user_id,name,instructions) VALUES(?,?,?)",
-                     (uid(), name, (data.get("instructions") or "").strip()))
-    db.commit()
-    return jsonify({"id": cur.lastrowid, "name": name}), 201
-
-
-@app.delete("/api/aichat/projects/<int:pid>")
-def aiproj_del(pid):
-    db = get_db()
-    db.execute("UPDATE ai_chats SET project_id=NULL WHERE project_id=? AND user_id=?", (pid, uid()))
-    db.execute("DELETE FROM ai_projects WHERE id=? AND user_id=?", (pid, uid()))
-    db.commit()
-    return jsonify({"ok": True})
-
+# 已拆到 mods/aisession.py。
 
 # ---------------------------------------------------------------- 标注（手写批注/高亮/笔记）
 # 已拆到 mods/annots.py。_ann_sentence / _ann_where 在下面的搜索和复习里还要用，
@@ -1134,29 +943,7 @@ except Exception:
 # 都用它，从那儿 import 回来。
 
 # ---------------------------------------------------------------- 衔接表达 · 例句
-@app.post("/api/sucai/<int:sid>/example")
-def sucai_example(sid):
-    db = get_db()
-    r = db.execute("SELECT * FROM sucai_items WHERE id=?", (sid,)).fetchone()
-    if not r:
-        return jsonify({"error": "未找到"}), 404
-    force = bool((request.get_json(silent=True) or {}).get("force"))
-    if r["example"] and not force:
-        return jsonify({"example": r["example"], "cached": True})
-    prompt = ("下面是一句申论写作的衔接表达/万能句式：\n%s\n\n请用它写一个申论语境下的规范例句"
-              "（书面化、紧扣治理/民生/发展类主题，30~60字），只输出例句本身。" % r["content"])
-    if force and r["example"]:
-        prompt += "\n注意：换一个主题和角度，不要写成：" + r["example"]
-    rep, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是申论写作辅导老师，例句规范、书面化。"},
-         {"role": "user", "content": prompt}], temperature=0.85, max_tokens=200)
-    if err:
-        return err
-    ex = rep.strip()
-    db.execute("UPDATE sucai_items SET example=? WHERE id=?", (ex, sid))
-    db.commit()
-    return jsonify({"example": ex, "cached": False})
-
+# 已拆到 mods/lianjie.py。
 
 # ---------------------------------------------------------------- 共享待办（互相监督，每人独立打勾）
 def _my_team(db, u=None):
@@ -2497,145 +2284,7 @@ def dtest_wrong():
 # 已拆到 mods/dtest.py。
 
 # ---------------------------------------------------------------- 消息中心（有新内容就提醒，点开直达）
-def _n(db, kind, dkey, title, body, link):
-    """写一条通知；同一个用户、同一类、同一天只会有一条。"""
-    db.execute("INSERT OR IGNORE INTO notifications(user_id,kind,dkey,title,body,link) "
-               "VALUES(?,?,?,?,?,?)", (uid(), kind, dkey, title, body, link))
-
-
-def _topic_brief(rows, n=3):
-    """把「板块·专题」列成一句人话：人文常识·文学常识、科技常识·物理常识 等"""
-    parts = ["%s·%s" % (r["board"], r["topic"]) for r in rows[:n]]
-    return "、".join(parts) + ("　等" if len(rows) > n else "")
-
-
-def _gen_notifications(db):
-    """按各内容库的当日数据现算通知——不用改那一堆定时脚本，也不会漏。"""
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    # 常识积累（人文/科技/法律 每天新增）
-    rows = db.execute("SELECT board, topic, COUNT(*) c FROM changshi_items WHERE date=? "
-                      "GROUP BY board, topic ORDER BY c DESC", (today,)).fetchall()
-    if rows:
-        total = sum(r["c"] for r in rows)
-        _n(db, "changshi", today, "常识积累更新了 %d 条" % total,
-           _topic_brief(rows), "changshi")
-
-    # 新出法律单独提醒（考前一年新法是必考点）
-    nl = db.execute("SELECT title FROM changshi_items WHERE date=? AND board='法律常识' "
-                    "AND topic='其他新出法律'", (today,)).fetchall()
-    if nl:
-        _n(db, "newlaw", today, "新增 %d 部新法要点" % len(nl),
-           "、".join(r["title"] for r in nl[:3]), "changshi:法律常识")
-
-    # 每日时政
-    c = db.execute("SELECT COUNT(*) FROM news_items WHERE date(created_at)=?", (today,)).fetchone()[0]
-    if c:
-        _n(db, "news", today, "每日时政更新了 %d 条" % c, "党内 / 国内 / 四川 / 国际", "news")
-
-    # 习语金句
-    c = db.execute("SELECT COUNT(*) FROM xiyu_items WHERE date=?", (today,)).fetchone()[0]
-    if c:
-        _n(db, "xiyu", today, "习语金句更新了 %d 条" % c, "总书记重要讲话金句 + 申论运用", "xiyu")
-
-    # 议论文素材 / 概括句
-    c = db.execute("SELECT COUNT(*) FROM sucai_items WHERE date=?", (today,)).fetchone()[0]
-    if c:
-        _n(db, "sucai", today, "议论文素材更新了 %d 条" % c, "人物事例 / 具体事例 / 理论论据 / 衔接表达", "sucai")
-    c = db.execute("SELECT COUNT(*) FROM gaikuo_items WHERE date=?", (today,)).fetchone()[0]
-    if c:
-        _n(db, "gaikuo", today, "概括句积累更新了 %d 条" % c, "材料表述 → 规范概括句", "gaikuo")
-
-    # 范文推荐：每日更新一套新话题（含大作文 + 应用文小题）
-    ep = db.execute("SELECT topic FROM essay_papers WHERE date(created_at)=? ORDER BY id DESC LIMIT 1",
-                    (today,)).fetchone()
-    if ep:
-        _n(db, "essay", today, "范文更新了新话题：%s" % ep["topic"],
-           "大作文范文 + 应用文小题完整参考答案", "essays")
-
-    # 今日复习（遗忘曲线到期）
-    due = _review_due(db, uid(), today)
-    if due:
-        g = dict.fromkeys(RV_GROUPS, 0)
-        for it in due:
-            g[RV_GROUP.get(it["kind"], "wrongq")] += 1
-        _n(db, "review", today, "今天有 %d 条要复习" % len(due),
-           "词语句子 %d · 每日积累 %d · 错题 %d" % (g["word"], g["daily"], g["wrongq"]), "review")
-
-    # 今日学习计划
-    pl = db.execute("SELECT COUNT(*) n, SUM(done) d, SUM(minutes) m FROM plan_items "
-                    "WHERE user_id=? AND date=?", (uid(), today)).fetchone()
-    if pl and pl["n"]:
-        undone = pl["n"] - (pl["d"] or 0)
-        if undone:
-            _n(db, "plan", today, "今日计划还剩 %d 项" % undone,
-               "共 %d 项 · %d 分钟，已完成 %d 项" % (pl["n"], pl["m"] or 0, pl["d"] or 0), "tasks")
-    elif db.execute("SELECT 1 FROM plan_profile WHERE user_id=?", (uid(),)).fetchone():
-        _n(db, "plan", today, "今天还没有学习计划",
-           "让规划助手看着你的复习进度和错题排一份", "tasks")
-
-    # 每日任务未打卡
-    tpls = db.execute("SELECT COUNT(*) FROM task_templates WHERE user_id=? AND active=1", (uid(),)).fetchone()[0]
-    if tpls:
-        done = db.execute("SELECT COUNT(*) FROM task_done WHERE user_id=? AND date=?", (uid(), today)).fetchone()[0]
-        if done < tpls:
-            _n(db, "tasks", today, "今日任务还剩 %d 项" % (tpls - done),
-               "已完成 %d / %d，别断卡" % (done, tpls), "tasks")
-
-    # 题库新卷
-    q = db.execute("SELECT name FROM quiz_sets WHERE date(created_at)=? ORDER BY id DESC", (today,)).fetchall()
-    if q:
-        _n(db, "quiz", today, "题库新增 %d 套卷" % len(q), q[0]["name"], "quiz")
-
-    db.commit()
-
-
-@app.get("/api/notifications")
-def notifications_list():
-    db = get_db()
-    try:
-        _gen_notifications(db)
-    except Exception:              # 生成失败不能影响读消息
-        log.warning("生成通知失败，本次只返回已有消息", exc_info=True)
-    rows = db.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY read, id DESC LIMIT 60",
-                      (uid(),)).fetchall()
-    # 聊天消息另有专属角标（聊天入口红点），别再让消息铃铛重复计数
-    unread = db.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read=0 AND kind IS NOT 'chat'",
-                        (uid(),)).fetchone()[0]
-    return jsonify({"items": [dict(r) for r in rows], "unread": unread})
-
-
-@app.get("/api/notifications/unread")
-def notifications_unread():
-    """轻量角标：只数未读，不触发生成。聊天消息不计入（它有自己的红点）。"""
-    n = get_db().execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read=0 AND kind IS NOT 'chat'",
-                         (uid(),)).fetchone()[0]
-    return jsonify({"unread": n})
-
-
-@app.post("/api/notifications/<int:nid>/read")
-def notification_read(nid):
-    db = get_db()
-    db.execute("UPDATE notifications SET read=1 WHERE id=? AND user_id=?", (nid, uid()))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.post("/api/notifications/read_all")
-def notifications_read_all():
-    db = get_db()
-    db.execute("UPDATE notifications SET read=1 WHERE user_id=?", (uid(),))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.delete("/api/notifications")
-def notifications_clear():
-    db = get_db()
-    db.execute("DELETE FROM notifications WHERE user_id=? AND read=1", (uid(),))
-    db.commit()
-    return jsonify({"ok": True})
-
+# 已拆到 mods/notifications.py。
 
 # ---------------------------------------------------------------- 申论真题卷：上传 → 自动拆题
 # 已拆到 mods/shenlun.py。
@@ -2654,72 +2303,7 @@ def notifications_clear():
 # 已拆到 mods/gongwen.py。
 
 # ---------------------------------------------------------------- 手写识别（申论作答）
-# 本机直连 Google 不通、走本地代理可达；代理端口会变，做成可配 + 多端口兜底，记住能用的那个
-_HW_ITC = "zh-t-i0-handwrit"
-_hw_proxy_ok = None   # 上次跑通的代理，命中就先用它
-
-
-def _hw_proxies():
-    env = os.environ.get("GONGKAO_HW_PROXY", "").strip()
-    cfg = ""
-    try:
-        cfg = (json.load(open(CONFIG, encoding="utf-8")).get("hw_proxy") or "").strip()
-    except Exception:
-        log.debug("读 config.json 的 hw_proxy 失败", exc_info=True)
-    cand = [p for p in (_hw_proxy_ok, env, cfg) if p]
-    cand += ["http://127.0.0.1:7897", "http://127.0.0.1:7890",
-             "http://127.0.0.1:1080", "http://127.0.0.1:8080"]
-    seen, out = set(), []
-    for p in cand:
-        if p and p not in seen:
-            seen.add(p); out.append(p)
-    return out
-
-
-def _hw_recognize(ink, w, h):
-    """把画布笔迹交给 Google 手写识别，返回候选字列表。经本地代理出网。"""
-    global _hw_proxy_ok
-    payload = {"options": "enable_pre_space", "requests": [{
-        "writing_guide": {"writing_area_width": w, "writing_area_height": h},
-        "ink": ink, "language": "zh"}]}
-    data = json.dumps(payload).encode()
-    saved = {k: os.environ.pop(k) for k in ("NO_PROXY", "no_proxy") if k in os.environ}
-    try:
-        for proxy in _hw_proxies():
-            try:
-                opener = urllib.request.build_opener(
-                    urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-                req = urllib.request.Request(
-                    "https://inputtools.google.com/request?itc=%s&app=demopage" % _HW_ITC,
-                    data=data, headers={"Content-Type": "application/json"})
-                raw = opener.open(req, timeout=10).read().decode("utf-8", "ignore")
-                arr = json.loads(raw)
-                if arr and arr[0] == "SUCCESS":
-                    _hw_proxy_ok = proxy
-                    return arr[1][0][1] or []
-            except Exception:
-                continue
-        return None
-    finally:
-        os.environ.update(saved)
-
-
-@app.post("/api/handwrite")
-def handwrite():
-    d = request.get_json(silent=True) or {}
-    ink = d.get("ink") or []
-    if not ink:
-        return jsonify({"candidates": []})
-    try:
-        w = max(1, int(d.get("w") or 400))
-        h = max(1, int(d.get("h") or 400))
-    except Exception:
-        w = h = 400
-    cands = _hw_recognize(ink, w, h)
-    if cands is None:
-        return jsonify({"candidates": [], "error": "手写识别服务连不上，请稍后再试或直接键盘输入"}), 200
-    return jsonify({"candidates": cands[:12]})
-
+# 已拆到 mods/handwrite.py。
 
 # ---------------------------------------------------------------- 本地手写识别（Zinnia，离线瞬时）
 # 电脑端不出网、毫秒级；准度不如 Google/ML Kit，作为"快"的选项，拿不准可切云端兜准。
@@ -2991,184 +2575,7 @@ def static_files(fname):
 
 
 # ---------------------------------------------------------------- 成语/词语 API（按用户隔离）
-@app.get("/api/lookup")
-def api_lookup():
-    return jsonify(lookup(request.args.get("word", "")))
-
-
-@app.post("/api/lookup/ai")
-def api_lookup_ai():
-    """词典未收录时用 AI 解释，写入全局 ci_ai 缓存（此后 lookup 可直接命中）。"""
-    data = request.get_json(silent=True) or {}
-    word = (data.get("word") or "").strip()
-    if not word:
-        return jsonify({"error": "请输入词语"}), 400
-    db = get_db()
-    cached = db.execute("SELECT * FROM ci_ai WHERE word=?", (word,)).fetchone()
-    if cached and not data.get("force"):
-        ck = cached.keys()
-        return jsonify({"word": word, "pinyin": cached["pinyin"], "category": cached["category"],
-                        "explanation": cached["explanation"] or "",
-                        "derivation": (cached["derivation"] if "derivation" in ck else "") or "",
-                        "example": (cached["example"] if "example" in ck else "") or "",
-                        "found": True, "cached": True})
-    gen = _gen_ai_explanation(db, word, data.get("category") or "")
-    cat, py = gen["category"], gen["pinyin"]
-    exp, der, exa = gen["explanation"], gen["derivation"], gen["example"]
-    # 重新生成(force)时，同步刷新该用户已收录的同名词条（保留其笔记），
-    # 让「重新生成」对已收录条目真正生效，覆盖历史未规范化的旧解释。
-    if data.get("force"):
-        db.execute("UPDATE entries SET pinyin=?, category=?, explanation=?, derivation=?, example=? "
-                   "WHERE user_id=? AND word=?", (py, cat, exp, der, exa, uid(), word))
-        db.commit()
-    return jsonify({"word": word, "pinyin": py, "category": cat, "explanation": exp,
-                    "derivation": der, "example": exa, "found": True, "cached": False})
-
-
-@app.post("/api/entries")
-def api_add():
-    data = request.get_json(force=True, silent=True) or {}
-    word = (data.get("word") or "").strip()
-    if not word:
-        return jsonify({"error": "请输入成语或词语"}), 400
-    info = lookup(word)
-    for k in ("pinyin", "category", "explanation", "derivation", "example"):
-        if data.get(k) is not None and str(data.get(k)).strip() != "":
-            info[k] = data[k]
-    note = (data.get("note") or "").strip()
-    db = get_db()
-    cur = db.execute(
-        "INSERT INTO entries(user_id,word,pinyin,category,explanation,derivation,example,note,source) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
-        (uid(), word, info["pinyin"], info["category"], info["explanation"],
-         info["derivation"], info["example"], note, info["source"]))
-    db.commit()
-    row = db.execute("SELECT * FROM entries WHERE id=?", (cur.lastrowid,)).fetchone()
-    return jsonify(row_to_dict(row)), 201
-
-
-@app.get("/api/entries")
-def api_list():
-    db = get_db()
-    q = (request.args.get("q") or "").strip()
-    category = (request.args.get("category") or "").strip()
-    starred = request.args.get("starred")
-    try:
-        page = max(1, int(request.args.get("page", 1)))
-    except ValueError:
-        page = 1
-    try:
-        page_size = int(request.args.get("page_size", 5))
-    except ValueError:
-        page_size = 5
-    page_size = max(1, min(page_size, 100))
-
-    where = "WHERE user_id=?"
-    args = [uid()]
-    if q:
-        where += " AND (word LIKE ? OR pinyin LIKE ? OR explanation LIKE ? OR note LIKE ?)"
-        like = f"%{q}%"
-        args += [like, like, like, like]
-    if category in ("成语", "词语", "词组"):
-        where += " AND category=?"
-        args.append(category)
-    if starred == "1":
-        where += " AND starred=1"
-
-    total = db.execute(f"SELECT COUNT(*) c FROM entries {where}", args).fetchone()["c"]
-    pages = max(1, (total + page_size - 1) // page_size)
-    page = min(page, pages)
-    offset = (page - 1) * page_size
-    rows = db.execute(
-        f"SELECT * FROM entries {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-        args + [page_size, offset]).fetchall()
-    items = [row_to_dict(r) for r in rows]
-    stats = db.execute(
-        "SELECT COUNT(*) total, SUM(category='成语') idiom, SUM(category='词语') ci,"
-        " SUM(starred=1) starred FROM entries WHERE user_id=?", (uid(),)).fetchone()
-    return jsonify({
-        "items": items, "page": page, "page_size": page_size, "pages": pages, "total": total,
-        "stats": {"total": stats["total"] or 0, "idiom": stats["idiom"] or 0,
-                  "ci": stats["ci"] or 0, "starred": stats["starred"] or 0},
-    })
-
-
-@app.put("/api/entries/<int:eid>")
-def api_update(eid):
-    data = request.get_json(force=True, silent=True) or {}
-    db = get_db()
-    row = db.execute("SELECT * FROM entries WHERE id=? AND user_id=?", (eid, uid())).fetchone()
-    if not row:
-        return jsonify({"error": "not found"}), 404
-    fields = ["word", "pinyin", "category", "explanation", "derivation",
-              "example", "note", "starred"]
-    updates, args = [], []
-    for f in fields:
-        if f in data:
-            updates.append(f"{f}=?")
-            args.append(int(bool(data[f])) if f == "starred" else data[f])
-    if updates:
-        args += [eid, uid()]
-        db.execute(f"UPDATE entries SET {', '.join(updates)} WHERE id=? AND user_id=?", args)
-        db.commit()
-    row = db.execute("SELECT * FROM entries WHERE id=?", (eid,)).fetchone()
-    return jsonify(row_to_dict(row))
-
-
-@app.delete("/api/entries/<int:eid>")
-def api_delete(eid):
-    """从「成语词语积累」删词 → **同步取消常考那边的 ★**。
-       两边是同一份收藏，只删一边等于没删（下次打开常考还是实心星，再点一下又加回来）。"""
-    db = get_db()
-    r = db.execute("SELECT word FROM entries WHERE id=? AND user_id=?", (eid, uid())).fetchone()
-    db.execute("DELETE FROM entries WHERE id=? AND user_id=?", (eid, uid()))
-    unstarred = 0
-    if r:
-        cur = db.execute(
-            "DELETE FROM ck_stars WHERE user_id=? AND board IN ('成语','实词') AND title=?",
-            (uid(), r["word"]))
-        unstarred = cur.rowcount or 0
-    db.commit()
-    return jsonify({"ok": True, "unstarred": unstarred})
-
-
-@app.post("/api/entries/sync")
-def entries_sync():
-    """对账：把两边补齐（谁有谁没有都补上），并报告补了多少。
-       历史数据是两边各存各的，直接开双向同步会「有的对得上、有的对不上」，所以给个对账入口。"""
-    db = get_db()
-    ents = {r["word"] for r in db.execute(
-        "SELECT word FROM entries WHERE user_id=? AND category IN ('成语','词语')", (uid(),))}
-    stars = {r["title"]: r for r in db.execute(
-        "SELECT * FROM ck_stars WHERE user_id=? AND board IN ('成语','实词')", (uid(),))}
-    add_star, add_entry = 0, 0
-    # entries 里有、常考没标星 → 去常考里找到这个词，补上星
-    for w in ents - set(stars):
-        row = db.execute("SELECT id, board, title, content, note FROM changkao_items "
-                         "WHERE board IN ('成语','实词') AND title=?", (w,)).fetchone()
-        if row:
-            db.execute("INSERT OR REPLACE INTO ck_stars(user_id,board,item_id,title,content,note) "
-                       "VALUES(?,?,?,?,?,?)",
-                       (uid(), row["board"], row["id"], row["title"], row["content"], row["note"]))
-            add_star += 1
-    # 常考标了星、entries 里没有 → 补进成语词语积累
-    for w, r in stars.items():
-        if w in ents:
-            continue
-        cat = CK_TO_ENTRY.get(r["board"])
-        if not cat:
-            continue
-        info = lookup(w) or {}
-        db.execute(
-            "INSERT INTO entries(user_id,word,pinyin,category,explanation,derivation,example,note,source) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (uid(), w, info.get("pinyin") or "", cat,
-             info.get("explanation") or r["content"] or "", info.get("derivation") or "",
-             info.get("example") or "", r["note"] or "", "常考收藏"))
-        add_entry += 1
-    db.commit()
-    return jsonify({"add_star": add_star, "add_entry": add_entry})
-
+# 已拆到 mods/entries.py。
 
 # ---------------------------------------------------------------- PDF 导出
 def build_pdf(entries, opts):
