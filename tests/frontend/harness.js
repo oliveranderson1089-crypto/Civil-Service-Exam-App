@@ -24,6 +24,7 @@ const EXPORTS = [
   'checkSync', '_syncEditing', 'aiRunActions',
   'Ink', 'annCtx', 'annLocate', 'annPosOf', 'annRangeOf',
   'rvShow', 'rvSelect', 'RV_INTERVALS', 'RV_LNAME', 'rvQueue',
+  'mdToHtml', 'mdSafeHref',
 ];
 
 function boot(opts = {}) {

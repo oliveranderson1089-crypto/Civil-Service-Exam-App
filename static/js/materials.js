@@ -316,6 +316,19 @@ $('#rd-copy').onclick = async () => {
 };
 
 /* 轻量 Markdown → HTML（标题/加粗/斜体/代码/引用/列表/分割线/链接/表格） */
+/* 渲染的是 **AI 生成的内容**（新闻摘要 / 范文拆解 / 古诗文讲解 / AI 对话），
+   而新闻那一路的源头是爬虫抓的外站页面 —— 等于外部文本经 AI 转手流到了这里。
+   所以链接必须当成不可信的：
+   - href 只放行 http/https/相对路径/锚点，挡掉 javascript: data: vbscript:
+   - URL 里的引号要转义：E() 只处理 &<>，不管 " —— 漏掉的话
+     [x](https://a"onmouseover="alert(1)) 会闭合 href 再注入一个事件处理器（实测浏览器
+     真把它解析成了 onmouseover 属性）。 */
+const MD_SAFE_URL = /^(?:https?:\/\/|\/|#|mailto:)/i;
+function mdSafeHref(u) {
+  u = (u || '').trim();
+  if (!MD_SAFE_URL.test(u)) return '#';                 // 不认识的协议一律不放行
+  return u.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 function mdToHtml(src) {
   const E = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const inline = s => {
@@ -323,7 +336,8 @@ function mdToHtml(src) {
     s = s.replace(/`([^`]+)`/g, (m, c) => '<code>' + c + '</code>');
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
     s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
+                  (m, t, u) => '<a href="' + mdSafeHref(u) + '" target="_blank" rel="noopener">' + t + '</a>');
     return s;
   };
   const lines = src.replace(/\r\n/g, '\n').split('\n');

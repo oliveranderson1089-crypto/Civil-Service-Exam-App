@@ -39,6 +39,7 @@ Ink
 KB
 KB_COVERS
 MAT_COLORS
+MD_SAFE_URL
 ME
 MIME
 MK_BLOCK
@@ -445,6 +446,7 @@ matStrokes
 matSyncUI
 matTool
 matW
+mdSafeHref
 mdToHtml
 mkApply
 mkBlockOf
