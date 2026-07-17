@@ -8,10 +8,13 @@
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 
 from flask import g, session
+from pypinyin import Style
+from pypinyin import pinyin as _pinyin
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -142,3 +145,57 @@ def uname(db, u):
     """
     r = db.execute("SELECT username FROM users WHERE id=?", (u,)).fetchone()
     return (r["username"] if r else "") or ("用户%s" % u)
+
+# ---------------------------------------------------------------- 成语/词语工具
+# 查 ref_idiom / ref_ci 两张只读词典。零外部依赖、四个符号全被各模块用——
+# 是不折不扣的地基，原先散在 app.py 中间。
+CJK_RE = re.compile(r"^[一-鿿]+$")
+
+
+def to_pinyin(word):
+    try:
+        parts = _pinyin(word, style=Style.TONE, heteronym=False, errors="default")
+        return " ".join(p[0] for p in parts)
+    except Exception:
+        return ""
+
+
+def lookup(word):
+    word = (word or "").strip()
+    db = get_db()
+    info = {"word": word, "pinyin": "", "category": "词语", "explanation": "",
+            "derivation": "", "example": "", "source": "manual", "found": False}
+    if not word:
+        return info
+    row = db.execute("SELECT * FROM ref_idiom WHERE word=?", (word,)).fetchone()
+    if row:
+        info.update(pinyin=row["pinyin"] or to_pinyin(word), category="成语",
+                    explanation=row["explanation"] or "", derivation=row["derivation"] or "",
+                    example=row["example"] or "", source="idiom", found=True)
+        return info
+    row = db.execute("SELECT * FROM ref_ci WHERE word=?", (word,)).fetchone()
+    if row:
+        info.update(pinyin=to_pinyin(word), category="词语",
+                    explanation=row["explanation"] or "", source="ci", found=True)
+        return info
+    row = db.execute("SELECT * FROM ci_ai WHERE word=?", (word,)).fetchone()
+    if row:
+        rk = row.keys()
+        info.update(pinyin=row["pinyin"] or to_pinyin(word), category=row["category"] or info["category"],
+                    explanation=row["explanation"] or "",
+                    derivation=(row["derivation"] if "derivation" in rk else "") or "",
+                    example=(row["example"] if "example" in rk else "") or "",
+                    source="ai", found=True)
+        return info
+    info["pinyin"] = to_pinyin(word)
+    # 词典都查不到时按长度猜类别：≥4 字多为「词组」（如 生理功能），2-3 字按词语
+    if len(word) >= 4 and CJK_RE.match(word):
+        info["category"] = "词组"
+    return info
+
+
+def row_to_dict(row):
+    d = dict(row)
+    if "starred" in d:
+        d["starred"] = bool(d.get("starred"))
+    return d
