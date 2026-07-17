@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import sqlite3
+from datetime import datetime, timedelta
 
 from flask import g, session
 from pypinyin import Style
@@ -135,6 +136,45 @@ def bg_set(con, tid, **kw):
     con.execute("UPDATE bg_tasks SET %s, updated_at=datetime('now','localtime') WHERE id=?" % cols,
                 list(kw.values()) + [tid])
     con.commit()
+
+
+def users_count():
+    return get_db().execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+
+
+def is_admin():
+    return session.get("role") == "admin"
+
+
+def _bump_sync():
+    """组队/互监有变动时想让对端尽快刷新——版本指纹本身就含这些表（见 /api/sync），
+    这里留空即可，作为语义标记。"""
+    pass
+
+
+def _mark_study(db, u, date):
+    """记一个学习日（完成备考规划任务、或互监任务被确认）。一天一条，重复无副作用。"""
+    if u and date:
+        db.execute("INSERT OR IGNORE INTO study_days(user_id,date) VALUES(?,?)", (u, date))
+
+
+def _study_stats(db, u):
+    """连续学习天数（到今天或昨天为止未断）+ 累计学习天数。"""
+    days = {r[0] for r in db.execute("SELECT date FROM study_days WHERE user_id=?", (u,))}
+    total = len(days)
+    if not total:
+        return {"streak": 0, "total": 0}
+    today = datetime.now().date()
+    cur = today
+    if today.isoformat() not in days:            # 今天还没学，连胜看到昨天为止
+        cur = today - timedelta(days=1)
+        if cur.isoformat() not in days:
+            return {"streak": 0, "total": total}
+    streak = 0
+    while cur.isoformat() in days:
+        streak += 1
+        cur = cur - timedelta(days=1)
+    return {"streak": streak, "total": total}
 
 
 def uname(db, u):
