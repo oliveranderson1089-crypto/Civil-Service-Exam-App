@@ -10,6 +10,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import math
 import os
 import random
@@ -50,6 +51,16 @@ CONFIG = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 单文件最大 64MB
+
+# ---------------------------------------------------------------- 日志
+# 跑在 systemd 下，stderr 直接进 journald：journalctl --user -u gongkao -f
+# GONGKAO_LOG=DEBUG 可打开「可安全忽略」那一档（临时文件没删掉、可选依赖缺失之类）。
+logging.basicConfig(
+    level=os.environ.get("GONGKAO_LOG", "INFO").upper(),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%m-%d %H:%M:%S",
+)
+log = logging.getLogger("gongkao")
 
 # ---------------------------------------------------------------- 板块结构
 SECTIONS = [
@@ -96,7 +107,7 @@ def load_secret():
             with open(CONFIG, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            log.error("secret_key 写入 %s 失败：本次用的是临时密钥，进程一重启所有人都会被登出", CONFIG)
     return cfg
 
 
@@ -165,7 +176,7 @@ def _save_cfg():
         with open(CONFIG, "w", encoding="utf-8") as f:
             json.dump(CFG, f, ensure_ascii=False, indent=2)
     except Exception:
-        pass
+        log.exception("配置写入 %s 失败：本次改动只在内存里，重启即丢", CONFIG)
 
 
 def _ai_conf():
@@ -442,7 +453,7 @@ def _img_data_url(path, maxpx=1600):
     try:
         im = ImageOps.exif_transpose(im)
     except Exception:
-        pass
+        log.debug("EXIF 转向失败，按原图用", exc_info=True)
     if im.mode not in ("RGB", "L"):
         im = im.convert("RGB")
     w, h = im.size
@@ -1218,6 +1229,11 @@ def init_db():
     for col in ("example", "example_src", "confuse"):
         if col not in _cols(con, "changkao_items"):
             con.execute("ALTER TABLE changkao_items ADD COLUMN %s TEXT" % col)
+    # freq/source 原先只由 import_teacher.py 建，可 app.py 自己要查 freq（复习轮按考频排序）。
+    # 没导过讲义的新库 → /api/changkao/items、/api/review/today 全 500。schema 得在这儿自洽。
+    for col, decl in (("freq", "INTEGER DEFAULT 0"), ("source", "TEXT")):
+        if col not in _cols(con, "changkao_items"):
+            con.execute("ALTER TABLE changkao_items ADD COLUMN %s %s" % (col, decl))
     # 高频实词的词义：原来只有 content=常用搭配（履行→责任/职责/使命…），没有这个词本身是啥意思。
     # 加一列 meaning，由 build_ck_meaning.py 先查内置词典、查不到用 AI 补齐。
     if "meaning" not in _cols(con, "changkao_items"):
@@ -1261,6 +1277,9 @@ def init_db():
     # 每日时政：补「重点标注」列（在原文里划出考点，不用通读全文）
     if "marks" not in _cols(con, "news_items"):
         con.execute("ALTER TABLE news_items ADD COLUMN marks TEXT")
+    # board 同理原先只由 crawl_news.py 建，没跑过爬虫的新库进 /api/news 就 500
+    if "board" not in _cols(con, "news_items"):
+        con.execute("ALTER TABLE news_items ADD COLUMN board TEXT DEFAULT '国内'")
     # 古诗文考频排序
     if "freq" not in _cols(con, "classics"):
         con.execute("ALTER TABLE classics ADD COLUMN freq INTEGER DEFAULT 0")
@@ -1306,7 +1325,7 @@ def init_db():
                         "SELECT user_id, date(done_at) FROM shared_todo_done "
                         "WHERE user_id IS NOT NULL AND done_at IS NOT NULL")
     except Exception:
-        pass
+        log.exception("study_days 回填迁移失败：学习天数统计可能不全")
     # 老数据迁移：把已有的 todo_members 成员组成一个队，现有待办归到这个队
     try:
         if not con.execute("SELECT COUNT(*) FROM teams").fetchone()[0]:
@@ -1317,7 +1336,7 @@ def init_db():
                     con.execute("INSERT OR IGNORE INTO team_members(team_id,user_id) VALUES(?,?)", (tid, u))
                 con.execute("UPDATE shared_todos SET team_id=? WHERE team_id IS NULL", (tid,))
     except Exception:
-        pass
+        log.exception("teams 迁移失败：旧的组队数据可能没并过来")
     # 老数据迁移：shared_todos.done=1 → 记到完成人名下
     try:
         if not con.execute("SELECT COUNT(*) FROM shared_todo_done").fetchone()[0]:
@@ -1327,7 +1346,7 @@ def init_db():
                     con.execute("INSERT OR IGNORE INTO shared_todo_done(todo_id,user_id,username,done_at) "
                                 "VALUES(?,?,?,?)", (r[0], u[0], r[1], r[2]))
     except Exception:
-        pass
+        log.exception("shared_todo_done 迁移失败：互监完成记录可能没并过来")
     # notes 表补充字段：标签 / 附件 / 待办清单
     for col in ("tags", "attachments", "todos"):
         if col not in _cols(con, "notes"):
@@ -1490,7 +1509,7 @@ def ensure_pdf_font():
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
     except Exception:
-        pass
+        log.error("中文字体全部注册失败：导出的 PDF 会是乱码方框")
     PDF_FONT = "STSong-Light"
     _font_ready = True
     return PDF_FONT
@@ -1873,7 +1892,7 @@ def _remove_file(user_id, stored_name):
         if os.path.exists(base + ".pdf"):  # 缓存的转换结果
             os.remove(base + ".pdf")
     except Exception:
-        pass
+        log.debug("删文件失败（残留不影响功能）", exc_info=True)
 
 
 @app.post("/api/materials")
@@ -1917,7 +1936,7 @@ def material_boards():
             if b and b not in boards:
                 boards.append(b)
     except Exception:
-        pass
+        log.warning("用户 mat_boards 不是合法 JSON，自定义分类会丢", exc_info=True)
     return jsonify({"boards": boards})
 
 
@@ -2001,7 +2020,7 @@ def _ocr_image(path):
             import pillow_heif
             pillow_heif.register_heif_opener()
         except Exception:
-            pass
+            log.debug("pillow_heif 没装，HEIC/HEIF 图片会打不开", exc_info=True)
         im = Image.open(path)
         im.load()                              # 多帧 GIF/TIFF 只取第一帧
         im = ImageOps.exif_transpose(im)
@@ -2035,7 +2054,7 @@ def _ocr_image(path):
             try:
                 os.remove(proc)
             except Exception:
-                pass
+                log.debug("临时文件没删掉", exc_info=True)
 
 
 def _extract_text(path, ext):
@@ -2956,7 +2975,7 @@ def api_search():
             results.append({"type": "gaikuo", "id": r["id"], "title": r["topic"] or "概括句",
                             "board": "概括句积累", "snippet": _snippet(r["sentence"] or r["raw"] or "", q)})
     except Exception:
-        pass
+        log.exception("搜索的概括句分支出错：结果里会静默少这一类")
     # 我的成语词语收录
     for r in db.execute("SELECT id,word,category,explanation FROM entries "
                         "WHERE user_id=? AND (word LIKE ? OR explanation LIKE ? OR note LIKE ?) LIMIT 10",
@@ -3259,7 +3278,7 @@ def _ai_call_or_error(messages, **kw):
         try:
             detail = e.read().decode("utf-8", "ignore")[:300]
         except Exception:
-            pass
+            log.debug("读 HTTP 错误详情失败", exc_info=True)
         msg = "AI 服务返回错误 %d" % e.code
         if e.code == 401:
             msg = "API Key 无效或未授权，请在后台重新填写"
@@ -3397,10 +3416,10 @@ def api_ocr():
                 try:
                     os.remove(tmp)
                 except Exception:
-                    pass
+                    log.debug("临时文件没删掉", exc_info=True)
                 return jsonify({"text": vt.strip(), "engine": "vision"})
         except Exception:
-            pass
+            log.warning("vision OCR 失败，回退到本地 OCR", exc_info=True)
     # 预处理：摆正方向 / 灰度 / 放大 / 拉对比度 / 锐化 —— 显著提升拍照识别率
     proc = tmp
     try:
@@ -3429,13 +3448,13 @@ def api_ocr():
             try:
                 os.remove(p)
             except Exception:
-                pass
+                log.debug("临时文件没删掉", exc_info=True)
         return jsonify({"error": "识别失败：" + str(e)}), 500
     for p in {tmp, proc}:
         try:
             os.remove(p)
         except Exception:
-            pass
+            log.debug("临时文件没删掉", exc_info=True)
     # tesseract 中文常在汉字间插空格，去掉相邻汉字间的空白
     text = re.sub(r"(?<=[一-鿿，。！？；：、（）《》“”])[ \t]+(?=[一-鿿，。！？；：、（）《》“”])", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -4116,7 +4135,7 @@ def _spawn_fill_examples():
                     continue
             con.close()
         except Exception:
-            pass
+            log.exception("后台补例句任务异常退出")
         finally:
             _FILL_RUNNING = False
 
@@ -4414,7 +4433,7 @@ def _write_gen(db, mode, date):
         try:
             ai_used.add(int(i) - 1)
         except Exception:
-            pass
+            log.debug("used 里有非法序号，已跳过", exc_info=True)
     used = []
     for k, (sec, text) in enumerate(idx):
         fuzzy = sec.startswith("人物事例")          # 事例这一档没法精确匹配
@@ -4705,7 +4724,7 @@ def write_yy_batch():
             sp = json.loads(r[0] or "{}")
             have.add((sp.get("doctype"), sp.get("form") or "full"))
         except Exception:
-            pass
+            log.debug("daily_essays.spec 不是合法 JSON，已跳过", exc_info=True)
     todo = [(g["k"], f) for g in GW_DOCTYPES for f in ("outline", "full")
             if (g["k"], f) not in have]                   # 先出提纲再出范文：先看骨架，再看成品
     if not todo:
@@ -4726,8 +4745,8 @@ def write_yy_batch():
                         _, err = _gen_yingyong(con, {"doctype": dt, "form": form})
                     if not err:
                         ok += 1
-                except Exception:
-                    pass                      # 单篇失败不拖垮整批，再点一次会补上没写的
+                except Exception:             # 单篇失败不拖垮整批，再点一次会补上没写的
+                    log.warning("批量生成应用文：%s/%s 这篇失败", dt, form, exc_info=True)
             bad = len(todo) - ok
             _bg_set(con, tid, status="done", progress=len(todo),
                     message="写好 %d 篇%s" % (ok, "（%d 篇失败，可再点一次补）" % bad if bad else ""))
@@ -4806,8 +4825,8 @@ def write_backfill():
                         e, err = _write_gen(con, "daily", dt)
                     if not err:
                         ok += 1
-                except Exception:
-                    pass                      # 单天失败不拖垮整批，下次再点一次补
+                except Exception:             # 单天失败不拖垮整批，下次再点一次补
+                    log.warning("批量生成每日范文：%s 这天失败", dt, exc_info=True)
             bad = len(todo) - ok
             _bg_set(con, tid, status="done", progress=len(todo),
                     message="写好 %d 篇%s" % (ok, "（%d 天失败，可再点一次补）" % bad if bad else ""))
@@ -5355,7 +5374,7 @@ def classics_daily():
                            (apply_txt, common_txt, today))
                 db.commit()
             except Exception:
-                pass
+                log.exception("每日古诗文的 apply/common 落库失败")
     return jsonify({"id": row["classic_id"], "title": row["title"], "author": row["author"],
                     "dynasty": row["dynasty"], "category": row["category"],
                     "first_line": (row["content"] or "").split("\n")[0],
@@ -5887,8 +5906,8 @@ def _ask_questions(chunk, page_images=None):
                 rep = vision_chat(vprompt, imgs, prefer="pro", temperature=0.2,
                                   max_tokens=4000, timeout=200, json_mode=True)
                 return json.loads(rep).get("items", []) or []
-            except Exception:
-                pass   # 视觉失败 → 退回纯文字，别让整批崩掉
+            except Exception:   # 视觉失败 → 退回纯文字，别让整批崩掉
+                log.warning("docqa 视觉识别失败，退回纯文字出题", exc_info=True)
 
     prompt = (
         "下面是一份公考讲义/资料中连续几页的文字（OCR 或 PDF 抽取，可能有断行和错字）。\n"
@@ -6007,7 +6026,7 @@ def _docqa_run(tid, user_id, mid, orig_name, board):
                 try:
                     page_images[p] = _render_page(pdf, p, tmpdir)
                 except Exception:
-                    pass
+                    log.debug("第 %s 页渲染失败，这页不进 vision", p, exc_info=True)
 
         _bg_set(con, tid, progress=0, total=len(cand), message="AI 解题中…")
         found, done = [], 0
@@ -6070,9 +6089,9 @@ def _docqa_run(tid, user_id, mid, orig_name, board):
                 try:
                     os.remove(os.path.join(UPLOADS, str(user_id), row["stored_name"]))
                 except Exception:
-                    pass
+                    log.debug("删上传文件失败（残留不影响功能）", exc_info=True)
         except Exception:
-            pass
+            log.exception("docqa 后台任务异常退出")
     finally:
         _docqa_gate.release()
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -7599,7 +7618,7 @@ def plan_analyze():
                              "module": it.get("module", ""), "minutes": it.get("minutes", 0),
                              "done": it.get("done", 0)})
         except Exception:
-            pass
+            log.warning("plan_log.items_json 解析失败，这天不计入分析", exc_info=True)
     if not rows:
         return jsonify({"error": "还没有计划记录，先让规划助手排几天计划再来分析"}), 400
 
@@ -7762,8 +7781,8 @@ def notifications_list():
     db = get_db()
     try:
         _gen_notifications(db)
-    except Exception:
-        pass                       # 生成失败不能影响读消息
+    except Exception:              # 生成失败不能影响读消息
+        log.warning("生成通知失败，本次只返回已有消息", exc_info=True)
     rows = db.execute("SELECT * FROM notifications WHERE user_id=? ORDER BY read, id DESC LIMIT 60",
                       (uid(),)).fetchall()
     # 聊天消息另有专属角标（聊天入口红点），别再让消息铃铛重复计数
@@ -8462,7 +8481,7 @@ def find_records_list():
                          format_score=fm.get("score"), format_full=fm.get("full"),
                          doctype=fm.get("doctype"), format_grade=fm.get("grade"))
         except Exception:
-            pass
+            log.warning("find 记录的 grade JSON 解析失败，这条会少字段", exc_info=True)
         out.append(d)
     return jsonify({"items": out})
 
@@ -8504,7 +8523,7 @@ def find_upload():
         try:
             os.remove(tmp)
         except Exception:
-            pass
+            log.debug("临时文件没删掉", exc_info=True)
     text = (text or "").strip()
     if len(text) < 200:
         return jsonify({"error": "没能从文件里读到足够的文字（扫描件太糊或是纯图片）"}), 400
@@ -8557,7 +8576,7 @@ def shenlun_paper_upload():
         try:
             os.remove(tmp)
         except Exception:
-            pass
+            log.debug("临时文件没删掉", exc_info=True)
     text = (text or "").strip()
     if len(text) < 200:
         return jsonify({"error": "没能从文件里读到足够的文字（扫描件太糊或是纯图片）"}), 400
@@ -9090,7 +9109,7 @@ def changkao_confuse(cid):
         try:
             return jsonify(dict(json.loads(r["confuse"]), cached=True))
         except Exception:
-            pass
+            log.debug("confuse 缓存不是合法 JSON，重新生成", exc_info=True)
 
     word = r["title"]
     # 库里的候选（同板块、考频高的）—— 让 AI 优先从这里面挑，辨析完的词都在复习范围内
@@ -9397,7 +9416,7 @@ def _hw_proxies():
     try:
         cfg = (json.load(open(CONFIG, encoding="utf-8")).get("hw_proxy") or "").strip()
     except Exception:
-        pass
+        log.debug("读 config.json 的 hw_proxy 失败", exc_info=True)
     cand = [p for p in (_hw_proxy_ok, env, cfg) if p]
     cand += ["http://127.0.0.1:7897", "http://127.0.0.1:7890",
              "http://127.0.0.1:1080", "http://127.0.0.1:8080"]
@@ -9645,7 +9664,7 @@ def ai_extract_attachment():
         try:
             os.remove(tmp)
         except Exception:
-            pass
+            log.debug("临时文件没删掉", exc_info=True)
     text = (text or "").strip()
     if not text:
         return jsonify({"error": err or "没能从附件中提取到文字"}), 200
@@ -9862,7 +9881,7 @@ def review_limits_set():
             try:
                 cur[k] = max(0, min(500, int(d[k])))
             except Exception:
-                pass
+                log.debug("复习上限收到非法值，已忽略", exc_info=True)
     db = get_db()
     db.execute("UPDATE users SET rv_limits=? WHERE id=?",
                (json.dumps(cur, ensure_ascii=False), uid()))
@@ -9967,7 +9986,7 @@ def api_sync():
     try:
         parts.append(str(db.execute("SELECT COALESCE(MAX(created_at),'') FROM notes WHERE user_id=?", (u,)).fetchone()[0]))
     except Exception:
-        pass
+        log.debug("notes 时间戳取不到，同步指纹少一项", exc_info=True)
     return jsonify({"token": hashlib.md5("|".join(parts).encode()).hexdigest()})
 
 
@@ -10118,7 +10137,7 @@ def fanwen_annotate(mid):
         try:
             return jsonify({"notes": json.loads(r["annotations"]), "cached": True})
         except Exception:
-            pass
+            log.debug("annotations 缓存不是合法 JSON，重新生成", exc_info=True)
     paras = [p for p in (r["content"] or "").split("\n") if p.strip()]
     numbered = "\n".join("[%d] %s" % (i, p) for i, p in enumerate(paras))
     prompt = (
@@ -10140,7 +10159,7 @@ def fanwen_annotate(mid):
             if 0 <= i < len(paras) and note:
                 notes[str(i)] = note
     except Exception:
-        pass
+        log.warning("AI 返回的批注 JSON 解析失败，这次批注为空", exc_info=True)
     db = get_db()
     db.execute("UPDATE essay_models SET annotations=? WHERE id=?",
                (json.dumps(notes, ensure_ascii=False), mid))
@@ -10372,14 +10391,14 @@ def drive_del(fid):
                 try:
                     os.remove(os.path.join(_drive_dir(uid()), k["stored_name"]))
                 except Exception:
-                    pass
+                    log.debug("删网盘文件失败（残留不影响功能）", exc_info=True)
         db.execute("DELETE FROM drive_files WHERE owner_id=? AND (folder=? OR folder LIKE ?)",
                    (uid(), sub, sub + "/%"))
     elif r["stored_name"]:
         try:
             os.remove(os.path.join(_drive_dir(uid()), r["stored_name"]))
         except Exception:
-            pass
+            log.debug("删网盘文件失败（残留不影响功能）", exc_info=True)
     db.execute("DELETE FROM drive_files WHERE id=?", (fid,))
     db.commit()
     return jsonify({"ok": True})
@@ -10601,7 +10620,7 @@ def _notify_chat(user_id, payload):
         try:
             q.put_nowait(payload)
         except Exception:
-            pass
+            log.warning("聊天推送投递失败：这条消息对端收不到", exc_info=True)
 
 
 @app.get("/api/chat/stream")
@@ -10995,7 +11014,7 @@ def skin_set(kind):
         try:
             os.remove(os.path.join(d, old))
         except Exception:
-            pass
+            log.debug("删旧皮肤图失败（残留不影响功能）", exc_info=True)
     db.execute("UPDATE users SET %s=? WHERE id=?" % kind, (fn, uid()))
     db.commit()
     return jsonify({"url": "/skin/%d/%s" % (uid(), fn), "kind": kind})
@@ -11011,7 +11030,7 @@ def skin_del(kind):
         try:
             os.remove(os.path.join(SKIN_DIR, str(uid()), old))
         except Exception:
-            pass
+            log.debug("删旧皮肤图失败（残留不影响功能）", exc_info=True)
     db.execute("UPDATE users SET %s=NULL WHERE id=?" % kind, (uid(),))
     db.commit()
     return jsonify({"ok": True})
