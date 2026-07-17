@@ -11,7 +11,7 @@ from flask import Blueprint, jsonify, request
 from core import UPLOADS, get_db, log, uid
 from mods.annots import _ann_sentence, _ann_where
 from mods.files import INLINE_EXT, OFFICE_EXT, TEXT_EXT
-from mods.notes import _get_note, _jl, _note_dict
+from mods.notes import _jl
 
 bp = Blueprint("search", __name__)
 
@@ -36,14 +36,6 @@ def _block_text(b):
         for row in (data.get("rows") or []):
             t += " " + " ".join(str(c) for c in row)
     return t
-
-
-@bp.get("/api/notes/<int:nid>")
-def note_get(nid):
-    n = _get_note(nid)
-    if not n:
-        return jsonify({"error": "未找到"}), 404
-    return jsonify(_note_dict(n))
 
 
 @bp.get("/api/search")

@@ -273,3 +273,13 @@ def note_delete(nid):
     db.execute("DELETE FROM notes WHERE id=? AND user_id=?", (nid, uid()))
     db.commit()
     return jsonify({"ok": True})
+
+
+# 从「全文搜索」区段挪回来的：搜索结果点开看详情，可它用的 _get_note/_note_dict
+# 都在本模块，落在 search 里是历史遗留。
+@bp.get("/api/notes/<int:nid>")
+def note_get(nid):
+    n = _get_note(nid)
+    if not n:
+        return jsonify({"error": "未找到"}), 404
+    return jsonify(_note_dict(n))
