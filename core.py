@@ -23,6 +23,17 @@ STATIC = os.path.join(BASE, "static")
 UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
 CONFIG = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 
+# ---------------------------------------------------------------- 板块结构
+SECTIONS = [
+    {"key": "xingce", "name": "行测", "icon": "测", "desc": "行政职业能力测验",
+     "boards": ["常识判断", "资料分析", "判断推理", "数量关系", "政治理论", "言语理解与表达"]},
+    {"key": "shenlun", "name": "申论", "icon": "申", "desc": "申论写作",
+     "boards": ["应用文", "议论文"]},
+]
+ALL_BOARDS = {b for s in SECTIONS for b in s["boards"]}
+IDIOM_BOARD = "言语理解与表达"  # 带成语/词语工具的板块
+
+
 # ---------------------------------------------------------------- 日志
 # 跑在 systemd 下，stderr 直接进 journald：journalctl --user -u gongkao -f
 # GONGKAO_LOG=DEBUG 可打开「可安全忽略」那一档（临时文件没删掉、可选依赖缺失之类）。

@@ -6,20 +6,13 @@
 - 每个板块：资料库（上传图片/文档/网页，应用内直接查看，Office 自动转 PDF）
 - 多用户 + 密保问题找回密码 + 管理员后台
 """
-import base64
 import io
 import json
 import os
-import secrets
-import tempfile
-import threading
-import time
-import uuid
 from datetime import datetime
 
 from flask import (Flask, jsonify, redirect, request, session,
                    send_file, send_from_directory)
-from werkzeug.security import check_password_hash, generate_password_hash
 
 # ---- reportlab (PDF) ----
 from reportlab.lib.pagesizes import A4
@@ -29,14 +22,19 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
                                 TableStyle, HRFlowable)
 from reportlab.lib.styles import ParagraphStyle
 
+from mods.ai import _ai_call_or_error
 from mods.pdfkit import PDF_FONT, ensure_pdf_font
 from schema import init_db
-from core import (BASE, CFG, STATIC, UPLOADS, _truthy, close_db,
-                  current_user, get_db, log, uid, users_count)
+from core import (ALL_BOARDS, BASE, CFG, SECTIONS, STATIC, UPLOADS, _truthy,
+                  close_db, get_db, uid, users_count)
 from mods.classics_lookup import bp as classics_lookup_bp
 from mods.dailytest import bp as dailytest_bp
 from mods.docqa import bp as docqa_bp
 from mods.todos import bp as todos_bp
+from mods.attach import bp as attach_bp
+from mods.auth import bp as auth_bp
+from mods.me import bp as me_bp
+from mods.zinnia import bp as zinnia_bp
 from mods.bookmarks import bp as bookmarks_bp
 from mods.plan import bp as plan_bp
 from mods.team import bp as team_bp
@@ -61,8 +59,6 @@ from mods.skin import bp as skin_bp
 from mods.tasks import bp as tasks_bp
 from mods.theory import bp as theory_bp
 from mods.xiyu import bp as xiyu_bp
-from mods.ai import _ai_call_or_error, vision_configured, vision_ocr
-from mods.files import IMAGE_EXT, _extract_text, _ocr_image
 from mods.dist import bp as dist_bp
 from mods.drafts import bp as drafts_bp
 from mods.find import bp as find_bp
@@ -83,6 +79,13 @@ from mods.annots import bp as annots_bp
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 单文件最大 64MB
+app.secret_key = CFG["secret_key"]
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
+    SEND_FILE_MAX_AGE_DEFAULT=0,  # 静态文件不长期缓存，浏览器每次校验，避免旧样式
+)
 app.teardown_appcontext(close_db)
 app.register_blueprint(annots_bp)
 app.register_blueprint(admin_bp)
@@ -93,6 +96,10 @@ app.register_blueprint(lianjie_bp)
 app.register_blueprint(notifications_bp)
 app.register_blueprint(ocr_bp)
 app.register_blueprint(bookmarks_bp)
+app.register_blueprint(attach_bp)
+app.register_blueprint(auth_bp)
+app.register_blueprint(me_bp)
+app.register_blueprint(zinnia_bp)
 app.register_blueprint(classics_lookup_bp)
 app.register_blueprint(dailytest_bp)
 app.register_blueprint(docqa_bp)
@@ -129,86 +136,6 @@ app.register_blueprint(shenlun_bp)
 app.register_blueprint(sucai_bp)
 app.register_blueprint(news_bp)
 app.register_blueprint(social_bp)
-
-# ---------------------------------------------------------------- 板块结构
-SECTIONS = [
-    {"key": "xingce", "name": "行测", "icon": "测", "desc": "行政职业能力测验",
-     "boards": ["常识判断", "资料分析", "判断推理", "数量关系", "政治理论", "言语理解与表达"]},
-    {"key": "shenlun", "name": "申论", "icon": "申", "desc": "申论写作",
-     "boards": ["应用文", "议论文"]},
-]
-ALL_BOARDS = {b for s in SECTIONS for b in s["boards"]}
-IDIOM_BOARD = "言语理解与表达"  # 带成语/词语工具的板块
-
-# 密保问题选项
-SEC_QUESTIONS = [
-    "你的出生城市是？",
-    "你母亲的名字是？",
-    "你小学的名字是？",
-    "你最好朋友的名字是？",
-    "你最喜欢的一本书是？",
-    "你的幸运数字是？",
-]
-
-
-
-app.secret_key = CFG["secret_key"]
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
-    SEND_FILE_MAX_AGE_DEFAULT=0,  # 静态文件不长期缓存，浏览器每次校验，避免旧样式
-)
-
-_login_fails = {}  # username -> {count, locked_until}
-
-# ---------------------------------------------------------------- 图形验证码（防机器人）
-_captchas = {}  # cid -> {"code": 小写答案, "exp": 过期时间戳}
-_CAP_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # 去掉易混的 I O 0 1
-
-
-def _captcha_new():
-    """生成一个 4 位图形验证码，返回 (cid, dataURL)。答案存服务端，前端只拿图片。"""
-    import random
-    now = time.time()
-    for k in [k for k, v in _captchas.items() if v["exp"] < now]:   # 顺手清过期
-        _captchas.pop(k, None)
-    code = "".join(random.choice(_CAP_CHARS) for _ in range(4))
-    cid = secrets.token_urlsafe(12)
-    _captchas[cid] = {"code": code.lower(), "exp": now + 300}
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
-    W, H = 130, 44
-    img = Image.new("RGB", (W, H), (245, 248, 252))
-    d = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
-    except Exception:
-        font = ImageFont.load_default()
-    for i, ch in enumerate(code):
-        col = (random.randint(20, 90), random.randint(30, 90), random.randint(90, 160))
-        y = random.randint(2, 10)
-        ci = Image.new("RGBA", (30, 40), (0, 0, 0, 0))
-        cd = ImageDraw.Draw(ci)
-        cd.text((4, 2), ch, font=font, fill=col)
-        ci = ci.rotate(random.randint(-28, 28), expand=1, resample=Image.BICUBIC)
-        img.paste(ci, (10 + i * 28, y), ci)
-    for _ in range(4):                                # 干扰线
-        d.line([(random.randint(0, W), random.randint(0, H)) for _ in range(2)],
-               fill=(random.randint(120, 200),) * 3, width=1)
-    for _ in range(90):                               # 噪点
-        d.point((random.randint(0, W), random.randint(0, H)),
-                fill=(random.randint(120, 200),) * 3)
-    img = img.filter(ImageFilter.SMOOTH)
-    buf = io.BytesIO()
-    img.save(buf, "PNG")
-    return cid, "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-
-
-def _captcha_ok(cid, ans):
-    """一次性校验：对了就作废，防重放。"""
-    rec = _captchas.pop((cid or "").strip(), None)
-    return bool(rec and rec["exp"] >= time.time() and (ans or "").strip().lower() == rec["code"])
-
 
 # ---------------------------------------------------------------- AI 工具调用
 # 已拆到 mods/agent.py。
@@ -266,239 +193,10 @@ def guard():
 
 
 # ---------------------------------------------------------------- 注册/登录/找回
-@app.get("/register")
-def register_page():
-    return send_from_directory(STATIC, "register.html")
-
-
-@app.get("/api/captcha")
-def api_captcha():
-    cid, url = _captcha_new()
-    return jsonify({"id": cid, "image": url})
-
-
-@app.get("/api/register/status")
-def register_status():
-    # 首个用户（管理员）注册永远放行，且不需要邀请码
-    first = users_count() == 0
-    open_ = first or bool(CFG.get("registration_open", True))
-    return jsonify({"open": open_,
-                    "invite": (not first) and open_ and bool(CFG.get("invite_code"))})
-
-
-@app.post("/api/register")
-def api_register():
-    data = request.get_json(silent=True) or {}
-    if users_count() > 0 and not CFG.get("registration_open", True):
-        return jsonify({"error": "注册暂未开放，请联系管理员"}), 403
-    username = (data.get("username") or "").strip()
-    pw = data.get("password") or ""
-    sec_q = (data.get("sec_question") or "").strip()
-    sec_a = (data.get("sec_answer") or "").strip()
-    email = (data.get("email") or "").strip()
-    if not _captcha_ok(data.get("captcha_id"), data.get("captcha")):
-        return jsonify({"error": "验证码错误或已过期", "captcha": True}), 400
-    # 邀请码校验放在验证码之后：每试一次都要过一次验证码，无法脚本枚举
-    if users_count() > 0 and CFG.get("invite_code"):
-        if (data.get("invite_code") or "").strip() != CFG["invite_code"]:
-            return jsonify({"error": "邀请码错误，请向管理员索取", "invite": True}), 403
-    if len(username) < 2:
-        return jsonify({"error": "用户名至少 2 个字符"}), 400
-    if len(pw) < 6:
-        return jsonify({"error": "密码至少 6 位"}), 400
-    if not sec_q or len(sec_a) < 1:
-        return jsonify({"error": "请设置密保问题与答案"}), 400
-    db = get_db()
-    if db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
-        return jsonify({"error": "用户名已存在"}), 400
-    role = "admin" if users_count() == 0 else "user"  # 第一个用户=管理员
-    cur = db.execute(
-        "INSERT INTO users(username,password_hash,role,sec_question,sec_answer_hash,email) VALUES(?,?,?,?,?,?)",
-        (username, generate_password_hash(pw), role, sec_q,
-         generate_password_hash(sec_a.lower()), email))
-    db.commit()
-    session.permanent = True
-    session["user_id"] = cur.lastrowid
-    session["username"] = username
-    session["role"] = role
-    return jsonify({"ok": True, "role": role})
-
-
-@app.get("/login")
-def login_page():
-    if users_count() == 0:
-        return redirect("/register")
-    return send_from_directory(STATIC, "login.html")
-
-
-@app.post("/login")
-@app.post("/api/login")
-def login_submit():
-    data = request.get_json(silent=True) or request.form
-    username = (data.get("username") or "").strip()
-    pw = data.get("password") or ""
-    now = time.time()
-    rec = _login_fails.get(username)
-    if rec and rec.get("locked_until", 0) > now:
-        left = int((rec["locked_until"] - now) / 60) + 1
-        return jsonify({"error": f"登录失败次数过多，请 {left} 分钟后再试"}), 429
-    if not _captcha_ok(data.get("captcha_id"), data.get("captcha")):
-        return jsonify({"error": "验证码错误或已过期", "captcha": True}), 400
-    u = get_db().execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-    if u and check_password_hash(u["password_hash"], pw):
-        _login_fails.pop(username, None)
-        session.permanent = True
-        session["user_id"] = u["id"]
-        session["username"] = u["username"]
-        session["role"] = u["role"]
-        return jsonify({"ok": True, "role": u["role"]})
-    rec = _login_fails.setdefault(username, {"count": 0, "locked_until": 0})
-    rec["count"] += 1
-    if rec["count"] >= 8:
-        rec["locked_until"] = now + 600
-        rec["count"] = 0
-    return jsonify({"error": "用户名或密码错误"}), 401
-
-
-@app.post("/logout")
-@app.post("/api/logout")
-def logout():
-    session.clear()
-    return jsonify({"ok": True})
-
-
-@app.get("/forgot")
-def forgot_page():
-    if users_count() == 0:
-        return redirect("/register")
-    return send_from_directory(STATIC, "forgot.html")
-
-
-@app.post("/api/forgot/question")
-def api_forgot_question():
-    data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    u = get_db().execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-    if not u or not u["sec_question"]:
-        return jsonify({"error": "用户名不存在或未设置密保问题"}), 400
-    return jsonify({"ok": True, "question": u["sec_question"]})
-
-
-@app.post("/api/forgot/reset")
-def api_forgot_reset():
-    data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    answer = (data.get("answer") or "").strip().lower()
-    new_pw = data.get("password") or ""
-    db = get_db()
-    u = db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-    if not u or not u["sec_answer_hash"]:
-        return jsonify({"error": "用户名不存在或未设置密保"}), 400
-    if not check_password_hash(u["sec_answer_hash"], answer):
-        return jsonify({"error": "密保答案不正确"}), 400
-    if len(new_pw) < 6:
-        return jsonify({"error": "新密码至少 6 位"}), 400
-    db.execute("UPDATE users SET password_hash=? WHERE id=?",
-               (generate_password_hash(new_pw), u["id"]))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.get("/api/sec_questions")
-def api_sec_questions():
-    return jsonify({"questions": SEC_QUESTIONS})
-
+# 已拆到 mods/auth.py。
 
 # ---------------------------------------------------------------- 当前用户/板块
-@app.get("/api/me")
-def api_me():
-    u = current_user()
-    if not u:
-        return jsonify({"error": "未登录"}), 401
-    try:
-        home_order = json.loads(u["home_order"]) if u["home_order"] else None
-    except Exception:
-        home_order = None
-    try:
-        ui_orders = json.loads(u["ui_orders"]) if u["ui_orders"] else {}
-    except Exception:
-        ui_orders = {}
-    if home_order and "home" not in ui_orders:   # 兼容旧版存的首页顺序
-        ui_orders["home"] = home_order
-    return jsonify({"username": u["username"], "role": u["role"],
-                    "is_admin": u["role"] == "admin", "email": u["email"] or "",
-                    "home_order": home_order, "ui_orders": ui_orders})
-
-
-@app.post("/api/home_order")
-def api_home_order():
-    data = request.get_json(silent=True) or {}
-    order = data.get("order")
-    if (not isinstance(order, list) or len(order) > 50
-            or not all(isinstance(x, str) and 0 < len(x) <= 40 for x in order)):
-        return jsonify({"error": "无效顺序"}), 400
-    db = get_db()
-    db.execute("UPDATE users SET home_order=? WHERE id=?",
-               (json.dumps(order, ensure_ascii=False), uid()))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.post("/api/ui_order")
-def api_ui_order():
-    data = request.get_json(silent=True) or {}
-    key, order = data.get("key"), data.get("order")
-    if (not isinstance(key, str) or not 0 < len(key) <= 60
-            or not isinstance(order, list) or len(order) > 80
-            or not all(isinstance(x, str) and 0 < len(x) <= 80 for x in order)):
-        return jsonify({"error": "无效顺序"}), 400
-    db = get_db()
-    row = db.execute("SELECT ui_orders FROM users WHERE id=?", (uid(),)).fetchone()
-    try:
-        cur = json.loads(row["ui_orders"]) if row and row["ui_orders"] else {}
-    except Exception:
-        cur = {}
-    cur[key] = order
-    db.execute("UPDATE users SET ui_orders=? WHERE id=?",
-               (json.dumps(cur, ensure_ascii=False), uid()))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.get("/api/sections")
-def api_sections():
-    return jsonify({"sections": SECTIONS, "idiom_board": IDIOM_BOARD})
-
-
-@app.get("/api/account")
-def api_account_get():
-    u = current_user()
-    return jsonify({"username": u["username"], "email": u["email"] or "",
-                    "sec_question": u["sec_question"] or ""})
-
-
-@app.post("/api/account")
-def api_account_update():
-    data = request.get_json(silent=True) or {}
-    db = get_db()
-    u = current_user()
-    new_pw = data.get("new_password")
-    if new_pw:
-        if not check_password_hash(u["password_hash"], data.get("old_password") or ""):
-            return jsonify({"error": "原密码不正确"}), 400
-        if len(new_pw) < 6:
-            return jsonify({"error": "新密码至少 6 位"}), 400
-        db.execute("UPDATE users SET password_hash=? WHERE id=?",
-                   (generate_password_hash(new_pw), u["id"]))
-    if data.get("email") is not None:
-        db.execute("UPDATE users SET email=? WHERE id=?", (data["email"].strip(), u["id"]))
-    if data.get("sec_question") and data.get("sec_answer"):
-        db.execute("UPDATE users SET sec_question=?, sec_answer_hash=? WHERE id=?",
-                   (data["sec_question"].strip(),
-                    generate_password_hash(data["sec_answer"].strip().lower()), u["id"]))
-    db.commit()
-    return jsonify({"ok": True})
-
+# 已拆到 mods/me.py。
 
 # ---------------------------------------------------------------- 管理后台
 # 已拆到 mods/admin.py。
@@ -660,12 +358,6 @@ def gaikuo_list():
 # 从那儿 import 进来（依赖只朝一个方向：app.py → mods/* → core.py）。
 
 # ---------------------------------------------------------------- 常识积累（7板块）
-_CS_META = {}
-try:
-    with open(os.path.join(BASE, "changshi_meta.json"), encoding="utf-8") as _f:
-        _CS_META = json.load(_f)
-except Exception:
-    _CS_META = {"tiers": [], "boards": {}}
 
 
 # ---------------------------------------------------------------- 古诗文每日推荐
@@ -727,203 +419,13 @@ except Exception:
 # 已拆到 mods/handwrite.py。
 
 # ---------------------------------------------------------------- 本地手写识别（Zinnia，离线瞬时）
-# 电脑端不出网、毫秒级；准度不如 Google/ML Kit，作为"快"的选项，拿不准可切云端兜准。
-_ZINNIA = None
-_zinnia_lock = threading.Lock()
-_ZINNIA_MODEL = os.environ.get("GONGKAO_ZINNIA_MODEL",
-                               "/usr/share/tegaki/models/zinnia/handwriting-zh_CN.model")
-
-
-def _zinnia():
-    """懒加载 Zinnia 识别器（ctypes 直调 libzinnia）。装不上就返回 None，前端自动退云端。"""
-    global _ZINNIA
-    if _ZINNIA is not None:
-        return _ZINNIA or None
-    try:
-        import ctypes
-        z = ctypes.CDLL("libzinnia.so.0")
-        z.zinnia_recognizer_new.restype = ctypes.c_void_p
-        z.zinnia_recognizer_open.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-        z.zinnia_recognizer_open.restype = ctypes.c_int
-        z.zinnia_character_new.restype = ctypes.c_void_p
-        z.zinnia_character_clear.argtypes = [ctypes.c_void_p]
-        z.zinnia_character_set_width.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-        z.zinnia_character_set_height.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-        z.zinnia_character_add.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int]
-        z.zinnia_recognizer_classify.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
-        z.zinnia_recognizer_classify.restype = ctypes.c_void_p
-        z.zinnia_result_size.argtypes = [ctypes.c_void_p]
-        z.zinnia_result_size.restype = ctypes.c_size_t
-        z.zinnia_result_value.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-        z.zinnia_result_value.restype = ctypes.c_char_p
-        z.zinnia_result_destroy.argtypes = [ctypes.c_void_p]
-        z.zinnia_character_destroy.argtypes = [ctypes.c_void_p]
-        rec = z.zinnia_recognizer_new()
-        if not rec or not z.zinnia_recognizer_open(rec, _ZINNIA_MODEL.encode()):
-            _ZINNIA = False
-            return None
-        _ZINNIA = (z, rec)
-        return _ZINNIA
-    except Exception:
-        _ZINNIA = False
-        return None
-
-
-def _zinnia_norm(ink, side=256, pad_ratio=0.12):
-    """按字的外接框把笔迹居中归一化到一个正方形里——不管写在画布哪、多大，
-    喂给 Zinnia 的都是"框好、居中、统一大小"的字，识别率比拿画布尺寸归一化高很多。"""
-    xs_all, ys_all = [], []
-    for st in ink:
-        xs_all += list(st[0]) if len(st) > 0 else []
-        ys_all += list(st[1]) if len(st) > 1 else []
-    if not xs_all:
-        return [], side
-    minx, maxx = min(xs_all), max(xs_all)
-    miny, maxy = min(ys_all), max(ys_all)
-    bw, bh = max(1.0, maxx - minx), max(1.0, maxy - miny)
-    span = max(bw, bh)
-    pad = span * pad_ratio
-    scale = side / (span + 2 * pad)
-    ox = pad + (span - bw) / 2.0        # 居中：短边两侧补空
-    oy = pad + (span - bh) / 2.0
-    out = []
-    for st in ink:
-        xs = st[0] if len(st) > 0 else []
-        ys = st[1] if len(st) > 1 else []
-        pts = []
-        for i in range(min(len(xs), len(ys))):
-            nx = int((xs[i] - minx + ox) * scale)
-            ny = int((ys[i] - miny + oy) * scale)
-            pts.append((nx, ny))
-        out.append(pts)
-    return out, side
-
-
-def _zinnia_recognize(ink, w, h, n=12):
-    zz = _zinnia()
-    if not zz:
-        return None
-    z, rec = zz
-    strokes, side = _zinnia_norm(ink)      # 外接框居中归一化，跟画布大小无关
-    with _zinnia_lock:      # zinnia 识别器非线程安全，串行化
-        ch = z.zinnia_character_new()
-        z.zinnia_character_clear(ch)
-        z.zinnia_character_set_width(ch, side)
-        z.zinnia_character_set_height(ch, side)
-        for si, pts in enumerate(strokes):
-            for (x, y) in pts:
-                z.zinnia_character_add(ch, si, x, y)
-        res = z.zinnia_recognizer_classify(rec, ch, n)
-        out = []
-        if res:
-            for i in range(z.zinnia_result_size(res)):
-                v = z.zinnia_result_value(res, i)
-                if v:
-                    out.append(v.decode("utf-8", "ignore"))
-            z.zinnia_result_destroy(res)
-        z.zinnia_character_destroy(ch)
-        return out
-
-
-@app.post("/api/handwrite/local")
-def handwrite_local():
-    d = request.get_json(silent=True) or {}
-    ink = d.get("ink") or []
-    if not ink:
-        return jsonify({"candidates": []})
-    try:
-        w = max(1, int(d.get("w") or 300))
-        h = max(1, int(d.get("h") or 300))
-    except Exception:
-        w = h = 300
-    cands = _zinnia_recognize(ink, w, h)
-    if cands is None:
-        return jsonify({"candidates": [], "error": "本地手写引擎未就绪"}), 200
-    return jsonify({"candidates": cands[:12], "engine": "zinnia"})
-
+# 已拆到 mods/zinnia.py。
 
 # ---------------------------------------------------------------- 理论基础（马原/毛中特/习思想）
 # 已拆到 mods/theory.py。
 
 # ---------------------------------------------------------------- AI 附件文本提取（图片OCR/文件抽取）
-@app.post("/api/ai/extract")
-def ai_extract_attachment():
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return jsonify({"error": "没有文件"}), 400
-    ext = os.path.splitext(f.filename)[1].lower()
-    mime = (f.mimetype or "").lower()
-    # 拍照/粘贴的图片常常没有扩展名，按 MIME 兜底判断
-    is_img = mime.startswith("image/") or ext in IMAGE_EXT
-    if is_img and ext not in IMAGE_EXT:
-        ext = "." + (mime.split("/")[-1].split("+")[0] or "png")
-    tmp = os.path.join(tempfile.gettempdir(), "aiatt_" + uuid.uuid4().hex + ext)
-    f.save(tmp)
-    text, err = "", ""
-    try:
-        if is_img:
-            if vision_configured():          # 视觉模型：比 OCR 更能读懂图片（含手写、排版）
-                try:
-                    text = vision_ocr(tmp)
-                except Exception:
-                    text = ""
-            if not text.strip():
-                text = _ocr_image(tmp)       # 兜底
-            if not text.strip():
-                err = "图片里没识别出文字（可能是纯图形、字太小或太模糊，可放大后重拍）"
-        else:
-            text = _extract_text(tmp, ext) or ""
-            if not text.strip():
-                err = "这个格式（%s）暂时提取不出文字，可先转成 PDF 或截图上传" % (ext or "未知")
-    except Exception as e:
-        err = "解析失败：%s" % e
-    finally:
-        try:
-            os.remove(tmp)
-        except Exception:
-            log.debug("临时文件没删掉", exc_info=True)
-    text = (text or "").strip()
-    if not text:
-        return jsonify({"error": err or "没能从附件中提取到文字"}), 200
-    return jsonify({"text": text[:6000], "name": f.filename})
-
-
-@app.get("/api/changshi/boards")
-def changshi_boards():
-    db = get_db()
-    counts = {}
-    for r in db.execute("SELECT board, COUNT(*) c FROM changshi_items GROUP BY board"):
-        counts[r["board"]] = r["c"]
-    tiers = []
-    for t in _CS_META.get("tiers", []):
-        tiers.append({"name": t["name"], "boards": [
-            {"name": b, "count": counts.get(b, 0),
-             "topics": len(_CS_META["boards"].get(b, {}).get("topics", []))}
-            for b in t["boards"]]})
-    return jsonify({"tiers": tiers})
-
-
-@app.get("/api/changshi/board")
-def changshi_board():
-    board = (request.args.get("board") or "").strip()
-    topic = (request.args.get("topic") or "").strip()
-    meta = _CS_META.get("boards", {}).get(board)
-    if not meta:
-        return jsonify({"error": "板块无效"}), 404
-    db = get_db()
-    tcounts = {r["topic"]: r["c"] for r in db.execute(
-        "SELECT topic, COUNT(*) c FROM changshi_items WHERE board=? GROUP BY topic", (board,))}
-    topics = [{"name": t["name"], "tezheng": t.get("tezheng", ""), "silu": t.get("silu", ""),
-               "map": t.get("map", ""), "count": tcounts.get(t["name"], 0)}
-              for t in meta.get("topics", [])]
-    if not topic and topics:
-        topic = topics[0]["name"]
-    rows = db.execute("SELECT id,title,content,date,source FROM changshi_items "
-                      "WHERE board=? AND topic=? ORDER BY date DESC, id DESC LIMIT 300",
-                      (board, topic)).fetchall()
-    return jsonify({"board": board, "overview": meta.get("overview", ""), "daily": bool(meta.get("daily")),
-                    "topics": topics, "topic": topic, "items": [dict(r) for r in rows]})
-
+# 已拆到 mods/attach.py。
 
 # ---------------------------------------------------------------- 遗忘曲线复习（艾宾浩斯间隔）
 # 已拆到 mods/review.py。

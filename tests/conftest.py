@@ -24,6 +24,7 @@ os.environ["GONGKAO_CONFIG"] = str(_TMP / "config.json")
 sys.path.insert(0, str(BASE))
 import core  # noqa: E402  DB/路径常量拆模块后归了 core
 import app as appmod  # noqa: E402
+from mods import auth as authmod  # noqa: E402  图形验证码跟着登录走了
 
 # 保命闸：确认测试没连上生产库
 assert core.DB == str(_TMP / "test.db"), f"测试库指向了 {core.DB}，拒绝运行"
@@ -50,7 +51,7 @@ def client(flask_app):
 def pass_captcha(data):
     """塞一个已知验证码再取用——_captcha_ok 是一次性 pop，每次请求都要重塞。"""
     cid = "test-cid-%s" % time.time()
-    appmod._captchas[cid] = {"code": "abcd", "exp": time.time() + 300}
+    authmod._captchas[cid] = {"code": "abcd", "exp": time.time() + 300}
     data["captcha_id"] = cid
     data["captcha"] = "abcd"
     return data
