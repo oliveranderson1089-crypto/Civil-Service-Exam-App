@@ -93,21 +93,38 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif",
 
 
 # ---------------------------------------------------------------- 配置（仅密钥）
+def _write_cfg(cfg):
+    """原子写：先落同目录临时文件并 fsync，再 rename 顶替。
+
+    直接覆写的话，写到一半断电就留下半个 JSON——下次启动 secret_key 读不出来，
+    全员登出、配置被重置。rename 在同一文件系统上是原子的：要么旧的，要么新的。
+    """
+    tmp = CONFIG + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, CONFIG)
+
+
 def load_secret():
     cfg = {}
     if os.path.exists(CONFIG):
         try:
             with open(CONFIG, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-        except Exception:
-            cfg = {}
+        except Exception as e:
+            # 文件在却读不出来（损坏/权限），绝不能当成「还没有配置」往下走：那样会另生一把
+            # secret_key 把所有人登出，随后 _save_cfg() 覆盖掉它，ai_key/邀请码一起没。
+            raise SystemExit("配置 %s 读不出来：%s\n请先修好它、或备份后移走再启动——"
+                             "服务不会拿空配置顶替。" % (CONFIG, e))
     if not cfg.get("secret_key"):
         cfg["secret_key"] = secrets.token_hex(32)
         try:
-            with open(CONFIG, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=2)
-        except Exception:
-            log.error("secret_key 写入 %s 失败：本次用的是临时密钥，进程一重启所有人都会被登出", CONFIG)
+            _write_cfg(cfg)
+        except Exception as e:
+            raise SystemExit("secret_key 写不进 %s：%s\n带临时密钥跑的话每次重启都会把所有人"
+                             "登出，不如现在就停下来修。" % (CONFIG, e))
     return cfg
 
 
@@ -172,11 +189,12 @@ def _captcha_ok(cid, ans):
 
 # ---------------------------------------------------------------- AI（云端大模型，OpenAI 兼容）
 def _save_cfg():
-    try:
-        with open(CONFIG, "w", encoding="utf-8") as f:
-            json.dump(CFG, f, ensure_ascii=False, indent=2)
-    except Exception:
-        log.exception("配置写入 %s 失败：本次改动只在内存里，重启即丢", CONFIG)
+    """存不下就往上抛，让接口报 500。
+
+    别在这儿吞：调用方都是先改内存 CFG 再存盘、然后无条件回 ok:True——
+    吞掉的话页面显示「已保存」，本进程也确实生效，重启才发现改动没了。
+    """
+    _write_cfg(CFG)
 
 
 def _ai_conf():
