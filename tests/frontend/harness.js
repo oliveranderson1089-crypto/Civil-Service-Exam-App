@@ -54,6 +54,37 @@ function boot(opts = {}) {
     };
   };
 
+  /* ---- 记录 app.js 装了哪些事件（必须在 eval 之前挂钩子） ----
+     拆模块唯一该保证的事就是「行为一个字节都没变」。而 app.js 有 377 条顶层执行语句，
+     几乎全是绑事件 —— 它们是不是都还在、绑的顺序对不对，人眼盯不住。
+     这里把 addEventListener 和 .onX= 两种形式都拦下来，拆分前后各拍一张快照对比。 */
+  const bindings = [];
+  const describe = (t) => {
+    if (!t) return '?';
+    if (t === w) return 'window';
+    if (t === w.document) return 'document';
+    if (t.id) return '#' + t.id;
+    if (t.nodeName) return t.nodeName.toLowerCase() + (t.className ? '.' + String(t.className).split(/\s+/)[0] : '');
+    return String(t);
+  };
+  const origAdd = w.EventTarget.prototype.addEventListener;
+  w.EventTarget.prototype.addEventListener = function (type, fn, o) {
+    bindings.push(describe(this) + ' @' + type);
+    return origAdd.call(this, type, fn, o);
+  };
+  // .onclick = fn 这种不走 addEventListener，得单独拦 setter
+  for (const prop of ['onclick', 'onchange', 'oninput', 'onsubmit', 'onkeydown', 'onload', 'onerror', 'onpointerdown']) {
+    for (const proto of [w.HTMLElement.prototype, w.Element.prototype]) {
+      const d = Object.getOwnPropertyDescriptor(proto, prop);
+      if (!d || !d.set) continue;
+      Object.defineProperty(proto, prop, {
+        configurable: true, enumerable: d.enumerable, get: d.get,
+        set(fn) { bindings.push(describe(this) + ' .' + prop); return d.set.call(this, fn); },
+      });
+      break;
+    }
+  }
+
   // toast 是给用户看的提示，console 是后台失败留的痕 —— 两者测试都要能断言。
   const toasts = [];
   const logs = { warn: [], error: [], debug: [] };
@@ -79,7 +110,7 @@ function boot(opts = {}) {
   w.eval(js + tail);
 
   return {
-    window: w, dom, calls, toasts, logs,
+    window: w, dom, calls, toasts, logs, bindings,
     T: w.__T,
     run: (code) => w.__run(code),      // 在 app.js 自己的作用域里执行
 
