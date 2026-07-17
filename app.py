@@ -41,10 +41,21 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
 from reportlab.lib.styles import ParagraphStyle
 
 from core import (BASE, CFG, CJK_RE, CONFIG, DB, STATIC, UPLOADS, _cols,
-                  _save_cfg, bg_new, bg_set, close_db, current_user, get_db,
-                  log, lookup, row_to_dict, to_pinyin, uid, uname)
-from mods.ai import (_ai_call_or_error, _ai_conf, ai_configured,
-                     vision_chat, vision_configured, vision_ocr)
+                  bg_new, bg_set, close_db, current_user, get_db, log, lookup,
+                  row_to_dict, to_pinyin, uid, uname)
+from mods.admin import bp as admin_bp
+from mods.aichat import _user_stats
+from mods.aichat import bp as aichat_bp
+from mods.essays import bp as essays_bp
+from mods.hyper import bp as hyper_bp
+from mods.policydocs import bp as policydocs_bp
+from mods.quiz import bp as quiz_bp
+from mods.skin import bp as skin_bp
+from mods.tasks import bp as tasks_bp
+from mods.theory import bp as theory_bp
+from mods.xiyu import bp as xiyu_bp
+from mods.ai import (_ai_call_or_error, _ai_conf, vision_chat,
+                     vision_configured, vision_ocr)
 from mods.changkao import CK_TO_ENTRY
 from mods.files import (IMAGE_EXT, INLINE_EXT, OFFICE_EXT, TEXT_EXT,
                         _extract_text, _ocr_image, _ocr_image_page,
@@ -59,7 +70,6 @@ from mods.notes import bp as notes_bp
 from mods.wrongq import bp as wrongq_bp
 from mods.gongwen import bp as gongwen_bp
 from mods.materials import bp as materials_bp
-from mods.shenlun import _SL_META
 from mods.shenlun import bp as shenlun_bp
 from mods.sucai import bp as sucai_bp
 from mods.changkao import bp as changkao_bp
@@ -77,6 +87,16 @@ app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 单文件最大 64MB
 app.teardown_appcontext(close_db)
 app.register_blueprint(annots_bp)
+app.register_blueprint(admin_bp)
+app.register_blueprint(aichat_bp)
+app.register_blueprint(essays_bp)
+app.register_blueprint(hyper_bp)
+app.register_blueprint(policydocs_bp)
+app.register_blueprint(quiz_bp)
+app.register_blueprint(skin_bp)
+app.register_blueprint(tasks_bp)
+app.register_blueprint(theory_bp)
+app.register_blueprint(xiyu_bp)
 app.register_blueprint(changkao_bp)
 app.register_blueprint(classics_bp)
 app.register_blueprint(drill_bp)
@@ -1590,77 +1610,7 @@ def api_account_update():
 
 
 # ---------------------------------------------------------------- 管理后台
-@app.get("/admin")
-def admin_page():
-    return send_from_directory(STATIC, "admin.html")
-
-
-@app.get("/api/admin/users")
-def admin_users():
-    rows = get_db().execute(
-        "SELECT id,username,role,email,sec_question,created_at,"
-        "(SELECT COUNT(*) FROM entries e WHERE e.user_id=users.id) entry_cnt,"
-        "(SELECT COUNT(*) FROM materials m WHERE m.user_id=users.id) mat_cnt "
-        "FROM users ORDER BY id").fetchall()
-    return jsonify({"users": [dict(r) for r in rows]})
-
-
-@app.post("/api/admin/users/<int:user_id>/reset")
-def admin_reset_pw(user_id):
-    db = get_db()
-    if not db.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
-        return jsonify({"error": "用户不存在"}), 404
-    db.execute("UPDATE users SET password_hash=? WHERE id=?",
-               (generate_password_hash("123456"), user_id))
-    db.commit()
-    return jsonify({"ok": True, "password": "123456"})
-
-
-@app.post("/api/admin/users/<int:user_id>/role")
-def admin_set_role(user_id):
-    data = request.get_json(silent=True) or {}
-    role = "admin" if data.get("admin") else "user"
-    db = get_db()
-    if role == "user":  # 不能取消最后一个管理员
-        admins = db.execute("SELECT COUNT(*) c FROM users WHERE role='admin'").fetchone()["c"]
-        cur = db.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
-        if cur and cur["role"] == "admin" and admins <= 1:
-            return jsonify({"error": "至少保留一个管理员，请先把另一位用户设为管理员，再撤销当前管理员"}), 400
-    db.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
-    db.commit()
-    return jsonify({"ok": True, "role": role})
-
-
-@app.post("/api/admin/users/<int:user_id>/secq")
-def admin_set_secq(user_id):
-    data = request.get_json(silent=True) or {}
-    q = (data.get("question") or "").strip()
-    a = (data.get("answer") or "").strip()
-    if not q or not a:
-        return jsonify({"error": "请填写密保问题与答案"}), 400
-    db = get_db()
-    if not db.execute("SELECT 1 FROM users WHERE id=?", (user_id,)).fetchone():
-        return jsonify({"error": "用户不存在"}), 404
-    db.execute("UPDATE users SET sec_question=?, sec_answer_hash=? WHERE id=?",
-               (q, generate_password_hash(a.lower()), user_id))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.delete("/api/admin/users/<int:user_id>")
-def admin_delete_user(user_id):
-    if user_id == uid():
-        return jsonify({"error": "不能删除自己"}), 400
-    db = get_db()
-    # 删除其资料文件
-    for m in db.execute("SELECT stored_name FROM materials WHERE user_id=?", (user_id,)).fetchall():
-        _remove_file(user_id, m["stored_name"])
-    db.execute("DELETE FROM materials WHERE user_id=?", (user_id,))
-    db.execute("DELETE FROM entries WHERE user_id=?", (user_id,))
-    db.execute("DELETE FROM users WHERE id=?", (user_id,))
-    db.commit()
-    return jsonify({"ok": True})
-
+# 已拆到 mods/admin.py。
 
 # ---------------------------------------------------------------- 资料库
 # 已拆到 mods/materials.py。
@@ -2380,113 +2330,8 @@ def classics_export():
     return send_file(pdf, mimetype="application/pdf", as_attachment=True, download_name=fname)
 
 
-# ================================================================ AI 助手
-
-@app.get("/api/ai/status")
-def ai_status():
-    return jsonify({"configured": ai_configured(), "model": _ai_conf()["model"],
-                    "vision": vision_configured()})
-
-
-def _user_stats():
-    """汇总用户与本应用的数据，供 AI 助手回答“我收录了多少…/这个应用有多少…”。"""
-    db = get_db()
-    u = uid()
-    try:
-        # 全局库总量
-        cls = db.execute("SELECT category, COUNT(*) c FROM classics GROUP BY category ORDER BY c DESC").fetchall()
-        cls_lib = "、".join("%s%d" % (r["category"], r["c"]) for r in cls)
-        cls_total = sum(r["c"] for r in cls)
-        idi = db.execute("SELECT COUNT(*) FROM ref_idiom").fetchone()[0]
-        ci = db.execute("SELECT COUNT(*) FROM ref_ci").fetchone()[0]
-        pdict = db.execute("SELECT COUNT(*) FROM party_dict").fetchone()[0]
-        pdoc = db.execute("SELECT COUNT(*) FROM policy_docs").fetchone()[0]
-        # 用户个人
-        ent = db.execute("SELECT category, COUNT(*) c FROM entries WHERE user_id=? GROUP BY category", (u,)).fetchall()
-        ent_by = "、".join("%s%d" % (r["category"], r["c"]) for r in ent) or "无"
-        ent_total = sum(r["c"] for r in ent)
-        star_ent = db.execute("SELECT COUNT(*) FROM entries WHERE user_id=? AND starred=1", (u,)).fetchone()[0]
-        cstar = db.execute("SELECT c.category cat, COUNT(*) c FROM classic_stars s JOIN classics c ON c.id=s.classic_id "
-                           "WHERE s.user_id=? GROUP BY c.category", (u,)).fetchall()
-        cstar_by = "、".join("%s%d" % (r["cat"], r["c"]) for r in cstar) or "无"
-        cstar_total = sum(r["c"] for r in cstar)
-        wq = db.execute("SELECT COUNT(*) FROM wrong_questions WHERE user_id=?", (u,)).fetchone()[0]
-        notes = db.execute("SELECT COUNT(*) FROM notes WHERE user_id=?", (u,)).fetchone()[0]
-        docs = db.execute("SELECT COUNT(*) FROM kb_nodes WHERE user_id=? AND type='doc'", (u,)).fetchone()[0]
-        mats = db.execute("SELECT COUNT(*) FROM materials WHERE user_id=?", (u,)).fetchone()[0]
-    except Exception:
-        return ""
-    return "\n".join([
-        "【本应用的数据（用户若问“这个应用有多少…”，用这些数）】",
-        "· 古诗文库共 %d 首：%s。" % (cls_total, cls_lib),
-        "· 成语库 %d 条、词语库 %d 条；党建理论学习词典 %d 条；时政要文库 %d 篇。" % (idi, ci, pdict, pdoc),
-        "【当前用户个人的数据（用户若问“我收录/收藏了多少…”，用这些数）】",
-        "· 成语词语收录共 %d 条（%s），其中收藏 %d 条。" % (ent_total, ent_by, star_ent),
-        "· 收藏古诗文共 %d 首（%s）。" % (cstar_total, cstar_by),
-        "· 错题本 %d 道、小记 %d 条、知识库文档 %d 篇、资料库文件 %d 个。" % (wq, notes, docs, mats),
-        "注意：区分“本应用库总量”与“用户个人收录/收藏量”，按提问对象选用；数字以上面为准。",
-    ])
-
-
-@app.post("/api/ai/chat")
-def api_ai_chat():
-    data = request.get_json(silent=True) or {}
-    msgs = data.get("messages")
-    if not isinstance(msgs, list) or not msgs:
-        prompt = (data.get("prompt") or "").strip()
-        if not prompt:
-            return jsonify({"error": "请输入内容"}), 400
-        msgs = [{"role": "user", "content": prompt}]
-    sys = data.get("system") or "你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。"
-    stats = _user_stats()
-    if stats:
-        sys = sys + "\n\n" + stats
-    full = [{"role": "system", "content": sys}] + msgs
-    reply, err = _ai_call_or_error(full, temperature=data.get("temperature", 0.6),
-                                   max_tokens=data.get("max_tokens", 1600))
-    if err:
-        return err
-    return jsonify({"reply": reply})
-
-
-@app.get("/api/admin/ai")
-def admin_ai_get():
-    c = _ai_conf()
-    return jsonify({"base": c["base"], "model": c["model"], "has_key": bool(c["key"])})
-
-
-@app.post("/api/admin/ai")
-def admin_ai_set():
-    data = request.get_json(silent=True) or {}
-    if "base" in data:
-        CFG["ai_base"] = (data.get("base") or "").strip() or "https://api.deepseek.com"
-    if "model" in data:
-        CFG["ai_model"] = (data.get("model") or "").strip() or "deepseek-chat"
-    if data.get("clear_key"):
-        CFG["ai_key"] = ""
-    elif (data.get("key") or "").strip():
-        CFG["ai_key"] = data.get("key").strip()
-    _save_cfg()
-    return jsonify({"ok": True, "configured": ai_configured()})
-
-
-@app.get("/api/admin/registration")
-def admin_reg_get():
-    return jsonify({"open": bool(CFG.get("registration_open", True)),
-                    "invite_code": CFG.get("invite_code", "")})
-
-
-@app.post("/api/admin/registration")
-def admin_reg_set():
-    data = request.get_json(silent=True) or {}
-    if "open" in data:
-        CFG["registration_open"] = bool(data.get("open"))
-    if "invite_code" in data:
-        CFG["invite_code"] = (data.get("invite_code") or "").strip()[:32]
-    _save_cfg()
-    return jsonify({"ok": True, "open": bool(CFG.get("registration_open", True)),
-                    "invite_code": CFG.get("invite_code", "")})
-
+# ---------------------------------------------------------------- AI 助手
+# 已拆到 mods/aichat.py。
 
 # ================================================================ OCR 识图（tesseract）
 @app.post("/api/ocr")
@@ -2670,114 +2515,10 @@ def gaikuo_list():
 # 已拆到 mods/gongwen.py。
 
 # ---------------------------------------------------------------- 题库（四川省考卷面）
-@app.get("/api/quiz/sets")
-def quiz_sets():
-    db = get_db()
-    rows = db.execute(
-        "SELECT s.id, s.name, s.kind, s.created_at,"
-        "(SELECT COUNT(*) FROM quiz_questions q WHERE q.set_id=s.id) total,"
-        "(SELECT COUNT(*) FROM quiz_answers a JOIN quiz_questions q2 ON q2.id=a.qid "
-        " WHERE a.user_id=? AND q2.set_id=s.id) done,"
-        "(SELECT COUNT(*) FROM quiz_answers a JOIN quiz_questions q3 ON q3.id=a.qid "
-        " WHERE a.user_id=? AND q3.set_id=s.id AND a.correct=1) right_n "
-        "FROM quiz_sets s ORDER BY s.id DESC", (uid(), uid())).fetchall()
-    return jsonify({"items": [dict(r) for r in rows]})
-
-
-@app.get("/api/quiz/sets/<int:sid>")
-def quiz_set_detail(sid):
-    db = get_db()
-    s = db.execute("SELECT * FROM quiz_sets WHERE id=?", (sid,)).fetchone()
-    if not s:
-        return jsonify({"error": "未找到"}), 404
-    qs = db.execute("SELECT id,seq,module,qtype,material,question,options,answer,explanation "
-                    "FROM quiz_questions WHERE set_id=? ORDER BY seq", (sid,)).fetchall()
-    mine = {r["qid"]: dict(r) for r in db.execute(
-        "SELECT qid, choice, correct FROM quiz_answers WHERE user_id=? AND set_id=?", (uid(), sid))}
-    items = []
-    for q in qs:
-        d = dict(q)
-        try:
-            d["options"] = json.loads(d["options"] or "[]")
-        except Exception:
-            d["options"] = []
-        m = mine.get(q["id"])
-        d["my_choice"] = m["choice"] if m else ""
-        items.append(d)
-    return jsonify({"id": s["id"], "name": s["name"], "kind": s["kind"], "questions": items})
-
-
-@app.post("/api/quiz/answer")
-def quiz_answer():
-    data = request.get_json(silent=True) or {}
-    qid = int(data.get("qid") or 0)
-    choice = (data.get("choice") or "").strip()
-    db = get_db()
-    q = db.execute("SELECT * FROM quiz_questions WHERE id=?", (qid,)).fetchone()
-    if not q:
-        return jsonify({"error": "题目不存在"}), 404
-    correct = 1 if choice and choice == (q["answer"] or "") else 0
-    db.execute("INSERT OR REPLACE INTO quiz_answers(user_id,set_id,qid,choice,correct) VALUES(?,?,?,?,?)",
-               (uid(), q["set_id"], qid, choice, correct))
-    db.commit()
-    return jsonify({"correct": bool(correct), "answer": q["answer"], "explanation": q["explanation"] or ""})
-
+# 已拆到 mods/quiz.py。
 
 # ---------------------------------------------------------------- 习语金句 / 经典著作
-@app.get("/api/xiyu")
-def xiyu_list():
-    cat = (request.args.get("cat") or "").strip()
-    db = get_db()
-    where, args = "", []
-    if cat and cat != "全部":
-        where = "WHERE category=?"; args = [cat]
-    rows = db.execute("SELECT * FROM xiyu_items %s ORDER BY date DESC, id LIMIT 200" % where, args).fetchall()
-    counts = {r[0]: r[1] for r in db.execute("SELECT category, COUNT(*) FROM xiyu_items GROUP BY category")}
-    return jsonify({"items": [dict(r) for r in rows], "counts": counts})
-
-
-@app.get("/api/works")
-def works_list():
-    rows = get_db().execute(
-        "SELECT id, book, ord, title, length(content) chars,"
-        "(interpretation IS NOT NULL AND interpretation<>'') has_ai "
-        "FROM works ORDER BY book, ord").fetchall()
-    return jsonify({"items": [dict(r) for r in rows]})
-
-
-@app.get("/api/works/<int:wid>")
-def works_detail(wid):
-    r = get_db().execute("SELECT * FROM works WHERE id=?", (wid,)).fetchone()
-    if not r:
-        return jsonify({"error": "未找到"}), 404
-    return jsonify({"id": r["id"], "book": r["book"], "title": r["title"],
-                    "content": r["content"] or "", "interpretation": r["interpretation"] or ""})
-
-
-@app.post("/api/works/<int:wid>/ai")
-def works_ai(wid):
-    r = get_db().execute("SELECT * FROM works WHERE id=?", (wid,)).fetchone()
-    if not r:
-        return jsonify({"error": "未找到"}), 404
-    force = (request.get_json(silent=True) or {}).get("force")
-    if r["interpretation"] and not force:
-        return jsonify({"content": r["interpretation"], "cached": True})
-    excerpt = (r["content"] or "")[:8000]
-    prompt = (
-        "下面是《%s》中《%s》一文（可能为节选）。请面向公务员考试考生，用简体中文、Markdown 输出"
-        "「导读解读」，分节：\n## 一、写作背景\n## 二、核心观点（分条）\n"
-        "## 三、名句与经典表述（摘原文）\n## 四、公考如何运用（申论/面试引用角度）\n"
-        "要求准确、精炼、完整不截断。\n\n全文：\n%s") % (r["book"], r["title"], excerpt)
-    reply, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是理论功底扎实的公考辅导老师，解读准确精炼，用简体中文 Markdown。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=4000)
-    if err:
-        return err
-    db = get_db()
-    db.execute("UPDATE works SET interpretation=? WHERE id=?", (reply, wid))
-    db.commit()
-    return jsonify({"content": reply, "cached": False})
-
+# 已拆到 mods/xiyu.py。
 
 # ---------------------------------------------------------------- 全局 AI 会话中心
 @app.get("/api/aichat/home")
@@ -3240,124 +2981,13 @@ def _disband_team(db, team_id):
 
 
 # ---------------------------------------------------------------- 每日任务
-@app.get("/api/daily_tasks")
-def daily_tasks():
-    db = get_db()
-    today = datetime.now().strftime("%Y-%m-%d")
-    tpls = db.execute("SELECT * FROM task_templates WHERE user_id=? AND active=1 ORDER BY sort, id",
-                      (uid(),)).fetchall()
-    done = {r["tpl_id"] for r in db.execute(
-        "SELECT tpl_id FROM task_done WHERE user_id=? AND date=?", (uid(), today))}
-    items = [{"id": t["id"], "text": t["text"], "done": t["id"] in done} for t in tpls]
-    return jsonify({"date": today, "items": items, "done_n": len(done), "total": len(tpls)})
-
-
-@app.post("/api/daily_tasks/templates")
-def daily_task_add():
-    text = ((request.get_json(silent=True) or {}).get("text") or "").strip()
-    if not text:
-        return jsonify({"error": "请输入任务"}), 400
-    db = get_db()
-    cur = db.execute("INSERT INTO task_templates(user_id,text) VALUES(?,?)", (uid(), text[:120]))
-    db.commit()
-    return jsonify({"id": cur.lastrowid}), 201
-
-
-@app.delete("/api/daily_tasks/templates/<int:tid>")
-def daily_task_del(tid):
-    db = get_db()
-    db.execute("DELETE FROM task_templates WHERE id=? AND user_id=?", (tid, uid()))
-    db.execute("DELETE FROM task_done WHERE tpl_id=? AND user_id=?", (tid, uid()))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.post("/api/daily_tasks/<int:tid>/toggle")
-def daily_task_toggle(tid):
-    db = get_db()
-    today = datetime.now().strftime("%Y-%m-%d")
-    r = db.execute("SELECT 1 FROM task_done WHERE user_id=? AND tpl_id=? AND date=?",
-                   (uid(), tid, today)).fetchone()
-    if r:
-        db.execute("DELETE FROM task_done WHERE user_id=? AND tpl_id=? AND date=?", (uid(), tid, today))
-        on = False
-    else:
-        db.execute("INSERT OR IGNORE INTO task_done(user_id,tpl_id,date) VALUES(?,?,?)", (uid(), tid, today))
-        on = True
-    db.commit()
-    return jsonify({"done": on})
-
+# 已拆到 mods/tasks.py。
 
 # ---------------------------------------------------------------- 申论（四大题型讲义 + AI 逐点批改）
 # 已拆到 mods/shenlun.py。
 
 # ---------------------------------------------------------------- 范文推荐（仿真卷 + 全套参考答案）
-@app.get("/api/essays/topics")
-def essays_topics():
-    db = get_db()
-    rows = db.execute("SELECT p.id, p.topic, p.spec, p.title, p.words, "
-                      "(SELECT COUNT(*) FROM essays e WHERE e.paper_id=p.id) n "
-                      "FROM essay_papers p ORDER BY p.id").fetchall()
-    specs = _SL_META.get("specs", {})
-    return jsonify({"papers": [dict(r, spec_name=specs.get(r["spec"], {}).get("name", "")) for r in rows]})
-
-
-@app.get("/api/essays")
-def essays_list():
-    """kind=zuowen 只看大作文范文；kind=yingyong 看应用文/小题的完整题目+参考答案。"""
-    kind = (request.args.get("kind") or "").strip()
-    topic = (request.args.get("topic") or "").strip()
-    w, args = [], []
-    if kind == "zuowen":
-        w.append("e.qtype='zuowen'")
-    elif kind == "yingyong":
-        w.append("e.qtype<>'zuowen'")
-    if topic:
-        w.append("p.topic=?")
-        args.append(topic)
-    sql = ("SELECT e.id, e.seq, e.qtype, e.type_name, e.stem, e.full, e.word_min, e.word_max, "
-           "e.answer_words, e.outline, p.topic, p.title paper_title, p.id paper_id "
-           "FROM essays e JOIN essay_papers p ON p.id=e.paper_id "
-           + ("WHERE " + " AND ".join(w) if w else "") +
-           " ORDER BY p.id, e.seq")
-    rows = get_db().execute(sql, args).fetchall()
-    return jsonify({"items": [dict(r) for r in rows]})
-
-
-@app.get("/api/essays/<int:eid>")
-def essay_detail(eid):
-    db = get_db()
-    r = db.execute("SELECT e.*, p.topic, p.material, p.title paper_title, p.spec, p.words material_words "
-                   "FROM essays e JOIN essay_papers p ON p.id=e.paper_id WHERE e.id=?", (eid,)).fetchone()
-    if not r:
-        return jsonify({"error": "未找到"}), 404
-    d = dict(r)
-    d["spec_name"] = _SL_META.get("specs", {}).get(d["spec"], {}).get("name", "")
-    return jsonify(d)
-
-
-@app.post("/api/essays/paper/<int:pid>/practice")
-def essay_practice(pid):
-    """把这套仿真卷复制成一份「我的真题卷」，直接进入逐题作答 + AI 批改。"""
-    db = get_db()
-    p = db.execute("SELECT * FROM essay_papers WHERE id=?", (pid,)).fetchone()
-    if not p:
-        return jsonify({"error": "未找到"}), 404
-    old = db.execute("SELECT id FROM shenlun_papers WHERE user_id=? AND title=?",
-                     (uid(), p["title"])).fetchone()
-    if old:
-        return jsonify({"id": old["id"], "existed": True})
-    cur = db.execute("INSERT INTO shenlun_papers(user_id,title,material,source) VALUES(?,?,?,?)",
-                     (uid(), p["title"], p["material"], "范文推荐"))
-    npid = cur.lastrowid
-    for e in db.execute("SELECT * FROM essays WHERE paper_id=? ORDER BY seq", (pid,)):
-        db.execute("INSERT INTO shenlun_questions(paper_id,seq,qtype,type_name,stem,requirement,"
-                   "full,word_min,word_max) VALUES(?,?,?,?,?,'',?,?,?)",
-                   (npid, e["seq"], e["qtype"], e["type_name"], e["stem"],
-                    e["full"], e["word_min"], e["word_max"]))
-    db.commit()
-    return jsonify({"id": npid, "existed": False}), 201
-
+# 已拆到 mods/essays.py。
 
 # ---------------------------------------------------------------- 文档识题：抽出例题 → AI 解答 → 回填成副本
 # 有「（　）」「A．」「下列…正确的是」这类特征的页面才值得送去问 AI，省一大笔调用
@@ -4716,76 +4346,7 @@ def notifications_clear():
 # CK_TO_ENTRY 被复习那边用，从那儿 import 回来。
 
 # ---------------------------------------------------------------- 上位词积累
-@app.get("/api/hyper")
-def hyper_list():
-    q = (request.args.get("q") or "").strip()
-    db = get_db()
-    if q:
-        rows = db.execute("SELECT * FROM hyper_items WHERE hyper LIKE ? OR subs LIKE ? "
-                          "ORDER BY id DESC LIMIT 200", ("%" + q + "%", "%" + q + "%")).fetchall()
-    else:
-        rows = db.execute("SELECT * FROM hyper_items ORDER BY id DESC LIMIT 200").fetchall()
-    return jsonify({"items": [dict(r) for r in rows],
-                    "total": db.execute("SELECT COUNT(*) FROM hyper_items").fetchone()[0]})
-
-
-@app.get("/api/hyper/daily")
-def hyper_daily():
-    """每日推荐 3 组：按日期确定性轮换，全站一致。"""
-    db = get_db()
-    ids = [r[0] for r in db.execute("SELECT id FROM hyper_items ORDER BY id")]
-    if not ids:
-        return jsonify({"items": []})
-    start = (datetime.now().toordinal() * 3) % len(ids)
-    pick = [ids[(start + i) % len(ids)] for i in range(min(3, len(ids)))]
-    rows = db.execute("SELECT * FROM hyper_items WHERE id IN (%s)" %
-                      ",".join("?" * len(pick)), pick).fetchall()
-    return jsonify({"items": [dict(r) for r in rows]})
-
-
-@app.post("/api/hyper/ai")
-def hyper_ai():
-    """输入一个词/一组词 → AI 给出上位词、同类下位词、辨析与例句，并收录。"""
-    word = ((request.get_json(silent=True) or {}).get("word") or "").strip()
-    if not word:
-        return jsonify({"error": "请输入词语"}), 400
-    db = get_db()
-    hit = db.execute("SELECT * FROM hyper_items WHERE hyper=?", (word,)).fetchone()
-    if hit:
-        return jsonify(dict(hit, cached=True))
-    prompt = ("公考「逻辑填空」中，题干出现一个类别名词（上位词），空格要填该类别下的具体成员（下位词）。\n"
-              "示范：戏曲 → 京剧、越剧、黄梅戏、豫剧、昆曲；文房四宝 → 笔、墨、纸、砚。\n"
-              "注意 hyper 必须是可数的类别名词，subs 必须是具体事物名称，不能是形容词。\n\n"
-              "给定词语：%s\n请输出 JSON：\n"
-              '{"hyper":"它所属的类别名词（若它本身就是类别名词，则原样输出）",'
-              '"subs":"该类别下常见的具体成员，用顿号分隔，6~10个",'
-              '"note":"一句话说明题干出现这个类别词时答案该选什么（40字内）",'
-              '"example":"一个含空格的逻辑填空式例句，用____表示空（30~50字）"}\n只输出 JSON。' % word)
-    rep, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是公考言语理解老师，熟悉逻辑填空的上下文提示逻辑。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=400, json_mode=True)
-    if err:
-        return err
-    try:
-        d = json.loads(rep)
-    except Exception:
-        return jsonify({"error": "AI 返回格式异常"}), 502
-    hyper = (d.get("hyper") or word).strip()
-    db.execute("INSERT OR REPLACE INTO hyper_items(hyper,subs,note,example,source) VALUES(?,?,?,?,?)",
-               (hyper, (d.get("subs") or "").strip(), (d.get("note") or "").strip(),
-                (d.get("example") or "").strip(), "ai"))
-    db.commit()
-    r = db.execute("SELECT * FROM hyper_items WHERE hyper=?", (hyper,)).fetchone()
-    return jsonify(dict(r, cached=False))
-
-
-@app.delete("/api/hyper/<int:hid>")
-def hyper_del(hid):
-    db = get_db()
-    db.execute("DELETE FROM hyper_items WHERE id=?", (hid,))
-    db.commit()
-    return jsonify({"ok": True})
-
+# 已拆到 mods/hyper.py。
 
 # ---------------------------------------------------------------- 应用文上位词
 # 已拆到 mods/gongwen.py。
@@ -4975,44 +4536,7 @@ def handwrite_local():
 
 
 # ---------------------------------------------------------------- 理论基础（马原/毛中特/习思想）
-TH_BOARDS = [
-    {"name": "马克思主义基本原理", "short": "马原", "icon": "compass",
-     "desc": "唯物论 · 辩证法 · 认识论 · 唯物史观 · 政治经济学"},
-    {"name": "毛泽东思想", "short": "毛概", "icon": "flag",
-     "desc": "新民主主义革命 · 社会主义改造 · 活的灵魂"},
-    {"name": "中国特色社会主义理论体系", "short": "中特", "icon": "layers",
-     "desc": "邓小平理论 · 三个代表 · 科学发展观"},
-    {"name": "习近平新时代中国特色社会主义思想", "short": "习思想", "icon": "star",
-     "desc": "十个明确 · 十四个坚持 · 十三个方面成就"},
-]
-
-
-@app.get("/api/theory/boards")
-def theory_boards():
-    db = get_db()
-    counts = {r["board"]: r["c"] for r in
-              db.execute("SELECT board, COUNT(*) c FROM theory_items GROUP BY board")}
-    return jsonify({"boards": [dict(b, count=counts.get(b["name"], 0)) for b in TH_BOARDS]})
-
-
-@app.get("/api/theory/items")
-def theory_items():
-    board = (request.args.get("board") or "").strip()
-    if not board:
-        return jsonify({"error": "缺少板块"}), 400
-    rows = get_db().execute("SELECT id, topic, title, content FROM theory_items WHERE board=? "
-                            "ORDER BY id", (board,)).fetchall()
-    groups, order = {}, []
-    for r in rows:
-        t = r["topic"] or "其他"
-        if t not in groups:
-            groups[t] = []
-            order.append(t)
-        groups[t].append({"id": r["id"], "title": r["title"], "content": r["content"]})
-    meta = next((b for b in TH_BOARDS if b["name"] == board), {"name": board, "desc": ""})
-    return jsonify({"board": board, "desc": meta.get("desc", ""), "count": len(rows),
-                    "topics": [{"name": t, "items": groups[t]} for t in order]})
-
+# 已拆到 mods/theory.py。
 
 # ---------------------------------------------------------------- AI 附件文本提取（图片OCR/文件抽取）
 @app.post("/api/ai/extract")
@@ -5377,52 +4901,7 @@ def api_sync():
 
 
 # ---------------------------------------------------------------- 时政要文库（重要文件全文 + AI 政策解读）
-@app.get("/api/policydocs")
-def policydocs_list():
-    rows = get_db().execute(
-        "SELECT id,title,category,source_url,length(content) chars,"
-        "(interpretation IS NOT NULL AND interpretation<>'') has_ai "
-        "FROM policy_docs ORDER BY ord, id").fetchall()
-    return jsonify({"items": [dict(r) for r in rows]})
-
-
-@app.get("/api/policydocs/<int:did>")
-def policydocs_detail(did):
-    r = get_db().execute("SELECT * FROM policy_docs WHERE id=?", (did,)).fetchone()
-    if not r:
-        return jsonify({"error": "未找到"}), 404
-    return jsonify({"id": r["id"], "title": r["title"], "category": r["category"],
-                    "source_url": r["source_url"], "content": r["content"] or "",
-                    "interpretation": r["interpretation"] or ""})
-
-
-@app.post("/api/policydocs/<int:did>/ai")
-def policydocs_ai(did):
-    r = get_db().execute("SELECT * FROM policy_docs WHERE id=?", (did,)).fetchone()
-    if not r:
-        return jsonify({"error": "未找到"}), 404
-    force = (request.get_json(silent=True) or {}).get("force")
-    if r["interpretation"] and not force:
-        return jsonify({"content": r["interpretation"], "cached": True})
-    excerpt = (r["content"] or "")[:9000]
-    prompt = (
-        "下面是《%s》的全文（可能为节选）。请面向公务员考试考生，用简体中文、Markdown 输出该文件的"
-        "「政策解读」，分这几节：\n"
-        "## 一、文件地位与背景\n## 二、核心要点/主要内容（分条提炼）\n"
-        "## 三、公考高频考点与命题角度\n## 四、可直接引用的金句/关键表述\n"
-        "## 五、申论/面试答题如何运用\n"
-        "要求：准确、具体、条理清晰，紧扣原文，写完整不要截断。\n\n全文：\n%s"
-    ) % (r["title"], excerpt)
-    reply, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是资深公考时政辅导老师，解读权威文件准确、精炼、实用，用简体中文 Markdown，务必完整不截断。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=6000)
-    if err:
-        return err
-    db = get_db()
-    db.execute("UPDATE policy_docs SET interpretation=? WHERE id=?", (reply, did))
-    db.commit()
-    return jsonify({"content": reply, "cached": False})
-
+# 已拆到 mods/policydocs.py。
 
 # ---------------------------------------------------------------- 人民时评·申论范文
 # 已拆到 mods/fanwen.py（零反向依赖）。
@@ -5501,92 +4980,7 @@ def bm_del(bid):
 
 
 # ---------------------------------------------------------------- 外观：头像 / 壁纸
-SKIN_DIR = os.path.join(UPLOADS, "skin")
-SKIN_KINDS = {                     # 各自的最大边长与用途
-    "avatar": 320,                 # 左上角头像
-    "wall_app": 2000,              # 应用内壁纸（首页背景）
-    "wall_login": 2000,            # 登录/加载页壁纸
-}
-
-
-def _skin_urls(row):
-    """把库里存的文件名变成可访问的 URL；没设置就返回空。"""
-    out = {}
-    for k in SKIN_KINDS:
-        fn = (row[k] if row and k in row.keys() else None) or ""
-        out[k] = ("/skin/%d/%s" % (row["id"], fn)) if fn else ""
-    return out
-
-
-@app.get("/api/skin")
-def skin_get():
-    r = get_db().execute("SELECT id, avatar, wall_app, wall_login FROM users WHERE id=?", (uid(),)).fetchone()
-    return jsonify(_skin_urls(r))
-
-
-@app.post("/api/skin/<kind>")
-def skin_set(kind):
-    """上传头像 / 壁纸：统一压成 JPEG（头像保正方形），文件名随机，旧图删掉。"""
-    if kind not in SKIN_KINDS:
-        return jsonify({"error": "不支持的类型"}), 400
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return jsonify({"error": "请选择图片"}), 400
-    try:
-        from PIL import Image, ImageOps
-        im = Image.open(f.stream)
-        im = ImageOps.exif_transpose(im)           # 手机拍的照片会带旋转信息
-        im = im.convert("RGB")
-        side = SKIN_KINDS[kind]
-        if kind == "avatar":
-            im = ImageOps.fit(im, (side, side), Image.LANCZOS)   # 居中裁成正方形
-        else:
-            im.thumbnail((side, side), Image.LANCZOS)
-    except Exception:
-        return jsonify({"error": "这不是有效的图片"}), 400
-
-    d = os.path.join(SKIN_DIR, str(uid()))
-    os.makedirs(d, exist_ok=True)
-    db = get_db()
-    old = (db.execute("SELECT %s FROM users WHERE id=?" % kind, (uid(),)).fetchone() or [None])[0]
-    fn = "%s-%s.jpg" % (kind, secrets.token_urlsafe(10))         # 文件名不可猜 → 登录页可公开读
-    im.save(os.path.join(d, fn), "JPEG", quality=84, optimize=True)
-    if old:
-        try:
-            os.remove(os.path.join(d, old))
-        except Exception:
-            log.debug("删旧皮肤图失败（残留不影响功能）", exc_info=True)
-    db.execute("UPDATE users SET %s=? WHERE id=?" % kind, (fn, uid()))
-    db.commit()
-    return jsonify({"url": "/skin/%d/%s" % (uid(), fn), "kind": kind})
-
-
-@app.delete("/api/skin/<kind>")
-def skin_del(kind):
-    if kind not in SKIN_KINDS:
-        return jsonify({"error": "不支持的类型"}), 400
-    db = get_db()
-    old = (db.execute("SELECT %s FROM users WHERE id=?" % kind, (uid(),)).fetchone() or [None])[0]
-    if old:
-        try:
-            os.remove(os.path.join(SKIN_DIR, str(uid()), old))
-        except Exception:
-            log.debug("删旧皮肤图失败（残留不影响功能）", exc_info=True)
-    db.execute("UPDATE users SET %s=NULL WHERE id=?" % kind, (uid(),))
-    db.commit()
-    return jsonify({"ok": True})
-
-
-@app.get("/skin/<int:sid>/<path:fname>")
-def skin_file(sid, fname):
-    """公开可读（文件名随机不可猜）——登录页在没登录时也要显示壁纸。"""
-    if "/" in fname or ".." in fname:
-        return "", 404
-    p = os.path.join(SKIN_DIR, str(sid))
-    if not os.path.exists(os.path.join(p, fname)):
-        return "", 404
-    return send_from_directory(p, fname, max_age=2592000)
-
+# 已拆到 mods/skin.py。
 
 # ---------------------------------------------------------------- 草稿本（错题本里，平时打草稿）
 # 已拆到 mods/drafts.py。
