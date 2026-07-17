@@ -1,6 +1,6 @@
 // 网络优先：在线总是拿最新页面/样式/脚本，断网才用缓存兜底。
 // （避免旧的「缓存优先」导致更新后还显示旧样式）
-const CACHE = 'gongkao-v177';
+const CACHE = 'gongkao-v178';   // app.js 拆成 js/*.js 那次
 
 self.addEventListener('install', e => { self.skipWaiting(); });
 

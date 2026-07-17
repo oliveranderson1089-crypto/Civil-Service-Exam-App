@@ -10,7 +10,7 @@ import globals from "globals";
 
 export default [
   {
-    files: ["static/*.js"],
+    files: ["static/*.js", "static/js/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "script",          // 不是 ES module，就是全局脚本

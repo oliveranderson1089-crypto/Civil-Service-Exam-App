@@ -53,10 +53,15 @@ test('全局契约：挂到 window 上的符号（改这些 = 改跟安卓/桌�
 
 test('顶层符号：694 个，拆分后一个都不能丢', (t) => {
   const h = boot(); t.after(() => h.close());
-  const src = fs.readFileSync(path.join(__dirname, '../../static/app.js'), 'utf8');
+  // 从 index.html 里读真实的加载清单 —— app.js 已按区段拆成 js/*.js
+  const html = fs.readFileSync(path.join(__dirname, '../../static/index.html'), 'utf8');
+  const files = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map(m => m[1]);
+  const src = files.map(f => fs.readFileSync(path.join(__dirname, '../../static', f), 'utf8')).join('\n');
   const names = new Set();
   for (const m of src.matchAll(/^(?:async )?function ([\w$]+)\s*\(/gm)) names.add(m[1]);
-  for (const m of src.matchAll(/^(?:const|let|var) ([\w$]+)\s*=/gm)) names.add(m[1]);
+  // 一行可声明多个：let ME = null, SECTIONS = [], ALL_BOARDS = [];
+  for (const m of src.matchAll(/^(?:const|let|var)\s+(.+)$/gm))
+    for (const g of m[1].matchAll(/(?:^|,)\s*([A-Za-z_$][\w$]*)\s*=/g)) names.add(g[1]);
   assert.ok(names.size > 650, `只剩 ${names.size} 个顶层符号`);
   snapshot('top-symbols', [...names].sort());
 });
