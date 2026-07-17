@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DT_L, _dtLastMat, api, back, c,
+/* global $, DT_L, api, back, c,
    dtMaterial, esc, push, toast */
 
 /* ============= 专项练（行测六大板块）=============
@@ -134,7 +134,6 @@ function drRender() {
     : (it.options || []).map((o, j) => `<button class="dt-opt${chosen === DT_L[j] ? ' chosen' : ''}"
         data-dro="${DT_L[j]}">${esc(o)}</button>`).join('');
   const seq = isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : '';
-  _dtLastMat = '';                                    // 每题独立渲染材料，别被上一题的缓存吃掉
   // 测试模式要能翻回去改（考场就是这样），所以给上下题按钮；背题模式选完即判，不用
   const nav = drMode === 'exam' ? `<div class="dr-nav">
       <button class="btn" id="dr-prev" ${drIdx ? '' : 'disabled'}>← 上一题</button>
@@ -271,7 +270,6 @@ async function openDrillRec(rid) {
     $('#drd-head').innerHTML = `<div class="dr-prog">${esc(d.board)} · ${esc(d.qtype || '混合')}
       <span class="dr-tag lv">${esc(d.level)}</span></div>
       <div class="dr-clock">${d.correct}/${d.total} · ${acc}%</div>`;
-    _dtLastMat = '';
     $('#drd-body').innerHTML = d.items.map((it, i) => {
       const r = d.answers[i] || {};
       const isFig = !!(it.figs && it.figs.seq);
@@ -280,7 +278,7 @@ async function openDrillRec(rid) {
         ? it.figs.opts.map((svg, j) => `<button class="dt-opt dt-figo${cls(DT_L[j])}" disabled>
             <span class="dt-figl">${DT_L[j]}</span>${svg}</button>`).join('')
         : (it.options || []).map((o, j) => `<button class="dt-opt${cls(DT_L[j])}" disabled>${esc(o)}</button>`).join('');
-      return `<div class="dt-q">${dtMaterial(it.material, i)}
+      return `<div class="dt-q">${dtMaterial(it.material, i, i ? d.items[i - 1].material : null)}
         <div class="dt-qt">${r.correct ? '✅' : '❌'} ${i + 1}. ${esc(it.q)}</div>
         ${isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : ''}
         <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>

@@ -10,7 +10,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, PL_MOD_COLOR, _dtLastMat, api, appConfirm, dtMaterial,
+/* global $, PL_MOD_COLOR, api, appConfirm, dtMaterial,
    esc, lsGet, lsSet, push, toast */
 
 /* ---------------- 每日巩固测试（按当天学的内容 AI 出小测） ---------------- */
@@ -107,7 +107,6 @@ function dtScore() {
    切成两半、互相够着（那边用这边 13 个符号，这边反过来用那边的 renderDtest/
    openDtRecords，成了环）。并回来环就没了。 */
 function renderDtest() {
-  _dtLastMat = '';
   const qs = dtItems.map((it, i) => {
     const revealed = dtRevealedAt(i);
     const isFig = !!(it.figs && it.figs.opts);
@@ -130,7 +129,7 @@ function renderDtest() {
     const e = dtExp(i);
     const exp = revealed ? `<div class="dt-exp"><b>正确答案 ${esc(dtAns(i))}</b>${e.explain ? ' · ' + esc(e.explain) : ''}${e.source ? ` <span class="dt-src">${esc(e.source)}</span>` : ''}</div>` : '';
     const mod = it.module ? `<span class="dt-mod" style="background:${PL_MOD_COLOR[it.module] || '#6b7280'}">${esc(it.module)}</span>` : '';
-    const mat = dtMaterial(it.material, i);
+    const mat = dtMaterial(it.material, i, i ? dtItems[i - 1].material : null);
     const seq = isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : '';
     return `<div class="dt-q">${mat}<div class="dt-qt">${mod}${i + 1}. ${esc(it.q)}</div>${seq}
       <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>${exp}</div>`;

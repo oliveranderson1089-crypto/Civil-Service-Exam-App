@@ -78,17 +78,16 @@ function dtTable(m) {
   return `<table class="ch-tb"><thead><tr>${(m.headers || []).map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
     <tbody>${(m.rows || []).map(r => `<tr>${r.map((c, i) => `<td${i ? ' class="num"' : ''}>${esc(String(c))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
-/* ★ 契约：_dtLastMat 是「上一份材料」的指纹，用来把两题共用的材料折叠成一行提示。
-   它是跨模块的共享可变状态 —— dtest / drill / quiz 三家在开新一轮渲染前都必须自己
-   把它清空（各自 global 声明了它）。谁忘了清，新一轮的第一题就会显示「↑ 根据上面
-   这份材料作答」，而上面根本没有材料。drill.js:137 的注释「别被上一题的缓存吃掉」
-   就是踩过之后补的。改这块时把三个调用点一起看。 */
-let _dtLastMat = '';
-function dtMaterial(m, i) {
-  if (!m) { _dtLastMat = ''; return ''; }
-  const key = JSON.stringify(m);
-  if (key === _dtLastMat) return '<div class="dt-same">↑ 根据上面这份材料作答</div>';  // 两题共用一份材料，不重复渲染
-  _dtLastMat = key;
+/* 把两题共用的一份材料折叠成一行提示，不重复渲染整张表/图。
+   prev = 上一题的材料对象（列表渲染时传 arr[i-1].material，单题渲染不传）。
+   —— 原先这里靠一个模块级全局 _dtLastMat 记「上一份」，逼着 dtest/drill/quiz 三家
+   在开新一轮前各自记得清空它；谁忘了清，新一轮第一题就折叠成指向空气的「↑ 根据上面
+   这份材料作答」（drill.js 的注释「别被上一题的缓存吃掉」就是踩过之后补的）。改成
+   把「上一份」显式传进来后，去重只看相邻两题、不留跨渲染的状态，也就没得可忘。 */
+function dtMaterial(m, i, prev) {
+  if (!m) return '';
+  if (prev && JSON.stringify(prev) === JSON.stringify(m))
+    return '<div class="dt-same">↑ 根据上面这份材料作答</div>';  // 两题共用一份材料，不重复渲染
   const head = `<div class="dt-mt">${esc(m.title || '根据下列资料，回答问题')}${m.unit ? `<span>单位：${esc(m.unit)}</span>` : ''}</div>`;
   if (m.type === 'table') return `<div class="dt-mat">${head}${dtTable(m)}</div>`;
   // 图表另附「看数据表」，方便核对数字（也是无障碍要求：不能只靠图形）

@@ -86,7 +86,6 @@ _adDone
 _adResolve
 _dialog
 _docSaveFailed
-_dtLastMat
 _kbpResolve
 _lastUpdChk
 _lsWarned
