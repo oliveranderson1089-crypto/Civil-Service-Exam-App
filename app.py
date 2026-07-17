@@ -9812,7 +9812,7 @@ def _review_due(db, u, today):
         body = (r["content"] or "").strip()
         back = body + (("\n\n【例句】" + r["example"]) if r["example"] else "")
         # 正面给「人名/地名 + 首句」当回忆线索（素材开头就是主体），光给「为民·担当」这种主题回忆不起来
-        cue = re.split(r"[，,。；;、]", body, 1)[0][:22]
+        cue = re.split(r"[，,。；;、]", body, maxsplit=1)[0][:22]
         front = cue or (r["topic"] or "").strip() or (r["kind"] or "素材")
         front_sub = (r["kind"] or "素材") + ((" · " + r["topic"]) if r["topic"] else "")
         if r["kind"] == "衔接表达":          # 句式类：正面给用途，背面给句式本身
