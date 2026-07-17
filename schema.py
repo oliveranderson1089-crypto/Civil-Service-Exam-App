@@ -180,6 +180,15 @@ def init_db():
             cat TEXT, term TEXT, content TEXT, url TEXT, ord INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_pd_cat ON party_dict(cat);
+        -- 只读参考词典（chinese-xinhua）。数据由 build_db.py 从 idiom.json / ci.json 灌进来，
+        -- 但**表本身必须在这儿建**：core.lookup() 无条件查这两张表，而 build_db.py 是手工跑的
+        -- 构建脚本——没跑过它的新库，一查成语就 no such table: ref_idiom 直接崩。
+        -- 建成空表则优雅降级：lookup 查不到，返回 found=False，功能照常。
+        CREATE TABLE IF NOT EXISTS ref_idiom(
+            word TEXT PRIMARY KEY, pinyin TEXT, explanation TEXT,
+            derivation TEXT, example TEXT
+        );
+        CREATE TABLE IF NOT EXISTS ref_ci(word TEXT PRIMARY KEY, explanation TEXT);
         -- 词典未收录的词/成语：AI 解释后全局缓存，lookup 也会命中（生成一次全站可查）
         CREATE TABLE IF NOT EXISTS ci_ai(
             word TEXT PRIMARY KEY, pinyin TEXT, category TEXT, explanation TEXT,
