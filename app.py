@@ -157,13 +157,20 @@ def _is_public(path):
 
 
 # 外壳文件不缓存（让 Cloudflare 与浏览器都不要缓存，避免旧样式/旧脚本）
-_SHELL_NOSTORE = {"/", "/index.html", "/style.css", "/app.js", "/sw.js",
+_SHELL_NOSTORE = {"/", "/index.html", "/style.css", "/sw.js",
                   "/manifest.webmanifest", "/login", "/register", "/forgot", "/admin"}
+
+
+def _is_shell(path):
+    """前端脚本原先是一个 /app.js，现在拆成了 /js/*.js（15 个，还会增减）。
+    所以按前缀判断，别再逐个登记 —— 上次就是漏了这一步：拆完 15 个文件全都
+    只剩 no-cache，CDN 可以存副本，正是这行当初要防的事。"""
+    return path in _SHELL_NOSTORE or path.startswith("/js/")
 
 
 @app.after_request
 def _shell_no_store(resp):
-    if request.path in _SHELL_NOSTORE:
+    if _is_shell(request.path):
         resp.headers["Cache-Control"] = "no-store, must-revalidate"
         resp.headers.pop("Expires", None)
     return resp
