@@ -113,6 +113,27 @@ def uid():
     return session.get("user_id")
 
 
+def bg_new(db, kind, title, total=0):
+    """开一条后台任务记录，返回 id。前端靠 bg_tasks 轮询进度。
+
+    原先叫 _bg_new、躺在「文档识题」区段里，可 23 处调用横跨新闻视频/应用文/
+    成文/文档识题——它跟 get_db 一样是共用设施，不属于任何一个业务。
+    """
+    cur = db.execute("INSERT INTO bg_tasks(user_id,kind,title,total) VALUES(?,?,?,?)",
+                     (uid(), kind, title, total))
+    db.commit()
+    return cur.lastrowid
+
+
+def bg_set(con, tid, **kw):
+    if not kw:
+        return
+    cols = ", ".join("%s=?" % k for k in kw)
+    con.execute("UPDATE bg_tasks SET %s, updated_at=datetime('now','localtime') WHERE id=?" % cols,
+                list(kw.values()) + [tid])
+    con.commit()
+
+
 def uname(db, u):
     """查用户名。查不到说明是孤儿记录（用户已删而引用还在），给个带 id 的占位好排查。
 
