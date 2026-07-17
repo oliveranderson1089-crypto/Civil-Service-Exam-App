@@ -2986,7 +2986,7 @@ const FEATURES = [
   { name: '小记', desc: '随手记 · 标签归类', kw: '笔记记录', open: () => openNotes() },
   { name: '知识库', desc: '笔记本 · 文档 · 分组整理', kw: '文档笔记本', open: () => openKb() },
   { name: '资料库', desc: '图片/文档/网页 应用内查看', kw: '资料文件上传', open: () => openMaterials() },
-  { name: '基础知识点', desc: '各板块 基础知识+方法技巧', kw: '基础知识方法技巧', open: () => { const b = ALL_BOARDS[0] ? null : null; openSection(SECTIONS[0] && SECTIONS[0].key); toast('进入任意板块即可看「基础知识点」'); } },
+  { name: '基础知识点', desc: '各板块 基础知识+方法技巧', kw: '基础知识方法技巧', open: () => { openSection(SECTIONS[0] && SECTIONS[0].key); toast('进入任意板块即可看「基础知识点」'); } },
   { name: '账户', desc: '个人信息 · 改密码/邮箱/密保', kw: '账号设置密码退出登录', open: () => openAccount() },
 ];
 function renderSearch() {
@@ -3344,7 +3344,6 @@ async function loadVideos() {
       return;
     }
     box.innerHTML = d.items.map(v => {
-      const long = /^(0?[3-9]|[1-9]\d):/.test(v.duration || '');   // 超过 3 分钟的标一下
       // 封面用 <img referrerpolicy=no-referrer>，不用 CSS 背景图 ——
       // B 站图床（i*.hdslb.com）有防盗链：**带我们域名的 Referer 会 403**，不带 Referer 反而 200。
       // CSS background-image 没法去掉 Referer，只有 <img referrerpolicy> 能。央视/川观封面不受影响。
@@ -5450,7 +5449,7 @@ function plSyncUndo() { const u = $('#pl-undo'); if (u) u.hidden = !plDirty(); }
 
 async function plSave() {
   try {
-    const d = await api('/api/plan/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plReadForm()) });
+    await api('/api/plan/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(plReadForm()) });
     plEditing = false; plFormBase = null;
     toast('已保存');
     return true;
@@ -5907,14 +5906,14 @@ $('#tk-daily-add').onclick = async () => {
 };
 $('#tk-daily-in').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') $('#tk-daily-add').click(); });
 
-let tkMembers = [], tkMeId = 0, tkTeam = null;
+let tkMembers = [], tkMeId = 0;
 /* 先看组队状态：没组队 → 组队 UI；已组队 → 队头 + 互监清单 */
 async function loadShared() {
   $('#tk-team').innerHTML = '<p class="empty">加载中…</p>';
   $('#tk-board').classList.add('hidden');
   try {
     const t = await api('/api/team');
-    tkMeId = t.me_id; tkTeam = t.team;
+    tkMeId = t.me_id;
     if (!t.team) { renderTeamSetup(t); return; }
     renderTeamHeader(t);
     $('#tk-board').classList.remove('hidden');
@@ -6039,7 +6038,7 @@ $('#tk-shared-add').onclick = async () => {
 $('#tk-shared-in').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') $('#tk-shared-add').click(); });
 
 /* ================= 申论：真题卷 + 题型讲义 + AI 逐点批改 ================= */
-let slType = null, slQuestion = null, slPaper = null, slResult = null;
+let slType = null, slQuestion = null, slPaper = null;
 
 async function openShenlun() {
   push({ view: 'shenlun', title: '真题批改' });
@@ -6284,7 +6283,6 @@ $('#slg-go').onclick = async () => {
     const d = await api('/api/shenlun/grade', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
-    slResult = d;
     renderSlResult(d);
     loadSlHistory();
     if (d.next) showSlNext(d);
@@ -8875,7 +8873,6 @@ $('#acct-notifytest').onclick = () => {
    笔/荧光笔/橡皮 · 数位板压感 · 撤销重做 · 多页 · 方格/横线纸 · 存为图片 ·
    自动保存到本地（切题、刷新、关掉再开都还在）。 */
 /* 草稿纸随时可调用（悬浮球里点开），停靠位可拖：下/右/左/上/全屏 */
-const PAD_DOCKS = ['bottom', 'right', 'left', 'top', 'full'];
 const PAD_INK = '#1a2230';                              // 默认墨色（夜间自动转浅）
 const PAD_COLORS = [PAD_INK, '#1a6fb5', '#c0392b', '#1e8449', '#f0a500'];
 const PAD_BGICON = ['▢', '⊞', '☰'];                     // 空白 / 方格 / 横线
@@ -10090,7 +10087,6 @@ function avoidFab() {
 
 /* 草稿纸的停靠实例（手机默认下半屏，电脑默认下半屏；想要别的自己拖） */
 let padDk = null;
-function padDock_() { return padDk ? padDk.st.dock : 'bottom'; }
 
 function padOpen() {
   if (!padInited) padInit();
@@ -10829,7 +10825,7 @@ const MK_SKIP = MK_SKIP_BASE + ', mark';
 // 但**文本锚不能跳过 <mark>**：划重点会把重点句包进 <mark>，跳过的话锚句就从全文里消失、
 // 那一页的手写批注全变孤儿不画 —— 而用户圈的重点，恰恰就是 AI 划重点也会标的句子。
 const ANN_SKIP = MK_SKIP_BASE;
-let mkMarks = [], mkRoot = null;
+let mkMarks = [];
 
 function mkPageRoot() {                 // 当前页面的「正文」在哪
   const st = stack[stack.length - 1];
@@ -10923,7 +10919,7 @@ function mkClear() {
     p.removeChild(m);
     p.normalize();
   });
-  mkMarks = []; mkRoot = null;
+  mkMarks = [];
   $('#mk-bar').classList.add('hidden');
   $('#mk-list').classList.add('hidden');
   document.body.classList.remove('mk-open');
@@ -10991,7 +10987,7 @@ async function markPage(force) {
       body: JSON.stringify({ text: mkText(root), scope }),
     });
     mkClear();
-    mkRoot = root; mkMarks = d.marks || [];
+    mkMarks = d.marks || [];
     const n = mkApply(root, mkMarks);
     if (!n) { toast('这页的正文和 AI 挑的句子对不上，换个页面试试', true); return; }
     const c = document.getElementById('mk-card'); if (c) c.remove();
