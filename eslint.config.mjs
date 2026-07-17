@@ -17,6 +17,9 @@ export default [
       globals: {
         ...globals.browser,          // 官方清单，别手写——手写必漏（NodeFilter/addEventListener 就漏了）
         ...globals.serviceworker,
+        // app.js 的 `const Ink = {...}`（批注图层）正好撞上浏览器标准的 Ink API。
+        // 是有意遮蔽，不是失误——这里放行，免得 no-redeclare 一直叫。
+        Ink: "off",
 
         // 第三方
         Hls: "readonly",
@@ -53,11 +56,10 @@ export default [
         __padView: "writable",
         __bmView: "writable",
 
-        // app.js 内部跨段共用的（不是给壳的，是它自己的「导出」）
+        // 只用 `window.X = ...` 创建、文件里没有对应声明的——eslint 认不出来，得在这儿说明。
+        // （toast / checkUpdate / Ink 不在此列：它们有 function/const 定义，只是顺手也挂了 window。）
         Reader: "writable",
-        toast: "writable",
         fabClose: "writable",
-        checkUpdate: "writable",
         _selT: "writable",
         __t0: "writable",
       },
@@ -67,7 +69,8 @@ export default [
       // 这条对标 pyflakes 的 undefined name —— 全局脚本里最容易出的错
       "no-undef": "error",
       // 拼错变量名、删函数漏删调用，都会被这两条兜住
-      "no-unused-vars": ["warn", { args: "none", varsIgnorePattern: "^_" }],
+      "no-unused-vars": ["warn", { args: "none", varsIgnorePattern: "^_",
+                          caughtErrorsIgnorePattern: "^_" }],   // catch (_) 是本项目惯例
       "no-redeclare": "error",
       "no-dupe-keys": "error",
       "no-dupe-args": "error",
