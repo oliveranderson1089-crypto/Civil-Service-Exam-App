@@ -9358,16 +9358,71 @@ const Ink = {
     if (this.cur) this.drawStroke(this.ctx, this.cur, this.tfOf(this.cur));
     this.tellMissing(missText, missPage);
   },
-  // 同一批「显示不出来」只说一次，别每帧刷屏
+  // 同一批「显示不出来」只说一次，别每帧刷屏。工具栏上留个角标，点开能处理（光弹个 toast
+  // 等于只告诉你「丢了」却不给辙 —— 那和不吭声只差半步）。
   tellMissing(t, p) {
-    const k = t + ':' + p;
-    if ((t || p) && k !== this._toldMissing) {
+    const n = t + p, k = t + ':' + p;
+    const btn = $('#ink-orph');
+    if (btn) {
+      btn.classList.toggle('hidden', !n);
+      if (n) btn.textContent = '⚠ ' + n + ' 条贴不上';
+    }
+    if (n && k !== this._toldMissing) {
       const why = [];
       if (t) why.push(t + ' 条找不到原文（原文改过）');
       if (p) why.push(p + ' 条找不到对应的页（换过文件？）');
-      toast('有批注暂时显示不出来：' + why.join('；'), true);
+      toast('有批注暂时显示不出来：' + why.join('；') + '，点工具栏 ⚠ 处理', true);
     }
     this._toldMissing = k;
+  },
+  // 现在贴不上的那些笔（连同它们在 strokes 里的下标，删除/重挂要用）
+  missing() {
+    const out = [];
+    this.newFrame();
+    this.strokes.forEach((s, i) => { if (!this.tfOf(s)) out.push({ i, s }); });
+    return out;
+  },
+  /* 重新挂锚：让用户在页面上点一个新位置，把这一笔挪过去。
+     笔迹本身（那些点）是相对锚存的，所以换锚＝换参照物，形状不变、整体挪到新位置。 */
+  pickAnchor(idx) {
+    const s = this.strokes[idx];
+    if (!s) return;
+    this._reanchor = idx;
+    const q = (s.a && s.a.quote) ? s.a.quote : '这一笔';
+    const t = $('#ink-pick-t'), bar = $('#ink-pick');
+    if (t) t.textContent = '点一下「' + q.slice(0, 14) + '」现在该贴在哪';
+    if (bar) bar.classList.remove('hidden');
+    if (this.tool === 'scroll') { this.tool = 'pen'; this.syncUI(); }   // 浏览模式点不到画布
+  },
+  cancelPick() {
+    this._reanchor = null;
+    const bar = $('#ink-pick'); if (bar) bar.classList.add('hidden');
+  },
+  // 用户在新位置点了一下 → 换锚。返回 true 表示这一下已经被「重挂」吃掉，不该再画
+  takePick(e) {
+    if (this._reanchor == null) return false;
+    const idx = this._reanchor, s = this.strokes[idx];
+    this.cancelPick();
+    if (!s) return true;
+    const g = this.newFrame();
+    let a = this.pdfAnchorAt(e.clientX, e.clientY), ref = 0;
+    if (a) { s.a = a; s._ref = 0; }
+    else {
+      const hit = annAnchorAt(this.root, e.clientX, e.clientY);
+      if (!hit) { toast('这儿没有文字，挂不上 —— 换个有字的地方点', true); return true; }
+      s.a = hit.a;
+      ref = hit.rect.top - g.cr.top + g.sy;
+      s._ref = ref;
+    }
+    this.relayout(); this.paint(); this.save();
+    toast('挂好了');
+    return true;
+  },
+  dropStroke(idx) {
+    if (!this.strokes[idx]) return;
+    this.strokes.splice(idx, 1);
+    this._cleared = null;
+    this.relayout(); this.paint(); this.save();
   },
   down(e) {
     if (this.tool === 'scroll') return;                     // ✋ 浏览模式：不画，交给下面滚动
@@ -9375,6 +9430,7 @@ const Ink = {
     if (e.pointerType === 'touch' && this.sawPen) return;   // 用过笔就忽略手指 = 防手掌误触
     if (e.button > 0) return;
     e.preventDefault();
+    if (this.takePick(e)) return;                           // 正在给某一笔挑新位置：这一下是「挂哪」，不是画
     try { this.cv.setPointerCapture(e.pointerId); } catch (_) {}
     this.drawing = true;
     // 落笔时就定好这一笔钉在哪：PDF 钉到「第几页的页内某处」；文本钉到「那句话」；
@@ -9609,6 +9665,8 @@ const Ink = {
     if (this.cur && this.cur.pts && this.cur.pts.length) { this.strokes.push(this.cur); this._cleared = null; this.save(); }
     // 关之前把还压着的那次防抖传完：定时器留到关掉之后才到点，那时 key 可能已经指向别的页了
     if (this._saveT) { clearTimeout(this._saveT); this._saveT = 0; this.flush(this.key); }
+    this.cancelPick();                                   // 别把「正在挑位置」的状态留给下次
+    const osh = $('#ink-orph-sheet'); if (osh) osh.classList.add('hidden');
     $('#ink').classList.add('hidden');
     if (this.cv) this.cv.style.pointerEvents = 'auto';   // 别把「浏览模式」的透传状态留给下次
     this.unhook();
@@ -9653,6 +9711,8 @@ const Ink = {
     $('#ink-undo').onclick = () => this.undo();
     $('#ink-clear').onclick = () => this.clear();
     $('#ink-done').onclick = () => this.close();
+    const ob = $('#ink-orph'); if (ob) ob.onclick = () => inkOrphOpen();
+    const px = $('#ink-pick-x'); if (px) px.onclick = () => this.cancelPick();
   },
 };
 // 从工具球「✏️ 批注」进：给当前视图盖一层。PDF 查看器另有专门入口（跟随内部滚动）。
@@ -9684,6 +9744,48 @@ function inkHere() {
   // 文本锚推广到这些视图是第二期的事 —— 它们的正文容器（mkPageRoot）和滚动容器五花八门，
   // 得一个个核对，先让阅读模式这条路跑稳。
   Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''), null, null, null);
+}
+
+/* 「贴不上」的批注面板：笔迹还在，只是原文改过 / 换了文件，不知道该贴哪了。
+   给三条路：重新指个位置、删掉、或者先留着（关掉就是留着，数据一直在）。 */
+function inkOrphOpen() {
+  const sh = $('#ink-orph-sheet');
+  if (!sh) return;
+  const miss = Ink.missing();
+  if (!miss.length) { toast('现在没有贴不上的批注'); return; }
+  $('#orph-tip').textContent = '这些笔迹还在，但原文改过之后找不到落点了，所以暂时没画出来。'
+    + '可以重新指个位置，或者删掉；就这么关掉也行，数据不会丢。';
+  $('#orph-list').innerHTML = miss.map(({ i, s }) => {
+    const a = s.a || {};
+    const what = a.page != null
+      ? ('第 ' + a.page + ' 页' + (a.quote ? '：' + esc(a.quote) : '') )
+      : (a.quote ? esc(a.quote) : '（没记下原文）');
+    return `<div class="orph-item">
+      <div class="orph-q">${a.quote || a.page != null ? '原来贴在 <b>' + what + '</b>' : what}</div>
+      <div class="orph-acts">
+        <button class="pri" data-orph-pick="${i}">重新指个位置</button>
+        <button class="del" data-orph-del="${i}">删掉</button>
+      </div></div>`;
+  }).join('');
+  sh.classList.remove('hidden');
+}
+const inkOrphClose = () => { const sh = $('#ink-orph-sheet'); if (sh) sh.classList.add('hidden'); };
+// 这段是顶层代码：元素要是不在（比如 SW 给了旧的 index.html 配新的 app.js），
+// 直接 $(...).onclick 会抛，**整个 app.js 就加载不下去了** —— 崩的可不止批注。
+if ($('#ink-orph-sheet')) {
+  $('#orph-close').onclick = inkOrphClose;
+  $('#ink-orph-sheet').addEventListener('click', async (e) => {
+    if (e.target === e.currentTarget) { inkOrphClose(); return; }
+    const p = e.target.closest('[data-orph-pick]');
+    if (p) { inkOrphClose(); Ink.pickAnchor(+p.dataset.orphPick); return; }
+    const d = e.target.closest('[data-orph-del]');
+    if (d) {
+      if (!await appConfirm('删掉这一笔批注？删了就找不回来了。', { title: '批注', okText: '删掉', danger: true })) return;
+      Ink.dropStroke(+d.dataset.orphDel);
+      toast('已删掉');
+      if (Ink.missing().length) inkOrphOpen(); else inkOrphClose();
+    }
+  });
 }
 
 /* 一次性把旧批注重写成紧凑格式：笔迹一笔不动，体积降到约 1/3.7。

@@ -1575,7 +1575,20 @@
     <input type="range" id="ink-size" min="1" max="12" step="1" value="3" title="粗细">
     <button class="ink-t" id="ink-undo" title="撤销">↶</button>
     <button class="ink-t" id="ink-clear" title="全屏清除">🗑 清屏</button>
+    <button class="ink-t ink-orph hidden" id="ink-orph" title="有批注找不到原文了，点开处理"></button>
     <button class="ink-t ink-done" id="ink-done" title="收起批注（笔迹已保存）">✓ 完成</button>
+  </div>
+  <!-- 重新挂锚时的提示条：让用户在页面上点一个新位置 -->
+  <div id="ink-pick" class="ink-pick hidden"><span id="ink-pick-t"></span><button id="ink-pick-x">取消</button></div>
+</div>
+
+<!-- 找不到原文的批注（原文改过）：笔迹还在，只是不知道该贴哪 -->
+<div id="ink-orph-sheet" class="note-sheet hidden">
+  <div class="ns-panel">
+    <div class="ns-title">找不到原文的批注</div>
+    <p class="ns-tip" id="orph-tip"></p>
+    <div id="orph-list" class="orph-list"></div>
+    <button class="btn" id="orph-close">关闭</button>
   </div>
 </div>
 

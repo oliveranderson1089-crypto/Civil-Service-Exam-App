@@ -2339,6 +2339,24 @@ body.dk-rz-y,body.dk-rz-y *{cursor:ns-resize !important;user-select:none !import
 .ink-c{width:20px;height:20px;flex:none;border-radius:50%;cursor:pointer;border:2px solid transparent;}
 .ink-c.on{border-color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.5);}
 #ink-size{width:74px;accent-color:var(--blue);}
+/* 找不到原文的批注：工具栏上的角标 + 重新挂锚时的提示条 */
+.ink-t.ink-orph{width:auto;padding:0 11px;font-size:13px;background:#8a4b12;color:#ffd9a8;border-radius:18px;}
+.ink-pick{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:6001;pointer-events:auto;
+  display:flex;align-items:center;gap:12px;max-width:92vw;padding:9px 14px;border-radius:22px;
+  background:rgba(28,36,52,.96);color:#e8eef6;font-size:13.5px;box-shadow:0 8px 30px rgba(0,0,0,.4);}
+.ink-pick span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ink-pick button{flex:none;border:none;border-radius:14px;padding:4px 12px;background:#3d4a60;color:#dbe4f0;
+  font-size:12.5px;cursor:pointer;}
+.orph-list{display:flex;flex-direction:column;gap:10px;max-height:46vh;overflow-y:auto;margin-bottom:14px;}
+.orph-item{border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:var(--card);}
+.orph-q{font-size:13.5px;color:var(--text);line-height:1.6;margin-bottom:9px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.orph-q b{color:var(--blue);}
+.orph-acts{display:flex;gap:8px;}
+.orph-acts button{flex:1;border:1px solid var(--line);border-radius:9px;padding:7px 0;background:transparent;
+  color:var(--text);font-size:12.5px;cursor:pointer;}
+.orph-acts button.pri{background:var(--blue);color:#fff;border-color:transparent;}
+.orph-acts button.del{color:#c0392b;}
 .pad{z-index:70;background:var(--card);touch-action:none;}
 
 .pad-bar{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;
