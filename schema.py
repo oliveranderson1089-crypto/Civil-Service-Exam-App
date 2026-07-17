@@ -12,7 +12,7 @@ import json
 import os
 import sqlite3
 
-from core import CONFIG, DB, _cols, log
+from core import CONFIG, DB, log
 
 
 # 应用文上位词起步词库：把口语/具体写法归纳为公文规范上位提法
@@ -67,6 +67,10 @@ _GONGWEN_SEED = [
      "对策题/方案/意见", "提对策的“万能”保障维度，按“人财物、督宣制”展开。",
      "要加强组织领导，明确责任分工，建立常态化督导考核机制。"),
 ]
+
+
+def _cols(con, table):
+    return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def init_db():

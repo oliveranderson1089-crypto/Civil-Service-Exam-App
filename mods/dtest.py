@@ -1,7 +1,11 @@
-"""每日巩固测试 + 计划分析（原「专项练」区段的剩余部分）。
+"""巩固测试的历史记录 + 学习计划分析。
 
-已拆到 mods/drill.py。_dtest_to_wrongq 一并搬了过去——每日巩固测试也用它，
-从那儿 import 回来（依赖单向：app.py → mods/*）。
+**这是个杂物间，别照着它建新模块。** 它是拆分时按 app.py 的旧区段边界切出来的，
+而那个边界本身就是错的：
+- /api/dtest/records、/api/dtest/record/<id> —— 出题和批改在 mods/dailytest.py
+- /api/plan/history、/api/plan/analyze     —— 其余 11 个 plan 路由在 mods/plan.py
+
+真要动这两块功能时，顺手把它们并回 dailytest.py 和 plan.py，这个文件就该没了。
 """
 import json
 from datetime import datetime, timedelta

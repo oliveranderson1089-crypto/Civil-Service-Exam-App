@@ -5,11 +5,18 @@
 
 from flask import Blueprint, jsonify, request
 
-from core import get_db, lookup, row_to_dict, uid
+from core import get_db, lookup, uid
 from mods.agent import _gen_ai_explanation
 from mods.changkao import CK_TO_ENTRY
 
 bp = Blueprint("entries", __name__)
+
+
+def row_to_dict(row):
+    d = dict(row)
+    if "starred" in d:
+        d["starred"] = bool(d.get("starred"))
+    return d
 
 
 @bp.get("/api/lookup")

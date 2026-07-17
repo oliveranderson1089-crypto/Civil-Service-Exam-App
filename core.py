@@ -112,10 +112,6 @@ def close_db(exc):
         db.close()
 
 
-def _cols(con, table):
-    return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
 # ---------------------------------------------------------------- 当前用户
 def current_user():
     u = session.get("user_id")
@@ -151,16 +147,6 @@ def bg_set(con, tid, **kw):
 
 def users_count():
     return get_db().execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
-
-
-def is_admin():
-    return session.get("role") == "admin"
-
-
-def _bump_sync():
-    """组队/互监有变动时想让对端尽快刷新——版本指纹本身就含这些表（见 /api/sync），
-    这里留空即可，作为语义标记。"""
-    pass
 
 
 def _mark_study(db, u, date):
@@ -251,8 +237,3 @@ def lookup(word):
     return info
 
 
-def row_to_dict(row):
-    d = dict(row)
-    if "starred" in d:
-        d["starred"] = bool(d.get("starred"))
-    return d

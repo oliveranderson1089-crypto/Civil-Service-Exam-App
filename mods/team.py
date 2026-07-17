@@ -1,12 +1,16 @@
 """组队：互监搭档，邀请制。
 
+组队有变动时不用主动推给对端：/api/sync 的版本指纹本身就含 teams / team_members，
+对端下次轮询就会发现。（原先这儿有 6 处 _bump_sync() 调用，函数体是空的 pass，
+只作「语义标记」——信息留在这段话里就够了，不需要一个什么都不做的函数。）
+
 
 """
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from core import _bump_sync, _study_stats, get_db, uid, uname
+from core import _study_stats, get_db, uid, uname
 
 def _my_team(db, u=None):
     """当前用户所在的队 id（一人最多在一个队里）。"""
@@ -80,7 +84,6 @@ def team_request():
         return jsonify({"error": "已经有一条待处理的组队申请了"}), 400
     db.execute("INSERT INTO team_requests(from_uid,to_uid,kind) VALUES(?,?,'join')", (me, to))
     db.commit()
-    _bump_sync()
     return jsonify({"ok": True}), 201
 
 
@@ -111,14 +114,12 @@ def team_accept(rid):
                 db.execute("INSERT INTO shared_todos(text,created_by,source,src_uid,plan_date,team_id) "
                            "VALUES(?,?,'plan',?,?,?)", (txt[:200], uname(db, u), u, today, tid))
         db.commit()
-        _bump_sync()
         return jsonify({"ok": True, "team_id": tid})
     else:  # disband
         tid = r["team_id"]
         _disband_team(db, tid)
         db.execute("UPDATE team_requests SET status='accepted' WHERE id=?", (rid,))
         db.commit()
-        _bump_sync()
         return jsonify({"ok": True, "disbanded": True})
 
 
@@ -130,7 +131,6 @@ def team_reject(rid):
         return jsonify({"error": "申请不存在或无权处理"}), 404
     db.execute("UPDATE team_requests SET status='rejected' WHERE id=?", (rid,))
     db.commit()
-    _bump_sync()
     return jsonify({"ok": True})
 
 
@@ -157,7 +157,6 @@ def team_disband_request():
     if not partner:
         _disband_team(db, team)          # 队里只剩自己，直接散
         db.commit()
-        _bump_sync()
         return jsonify({"ok": True, "disbanded": True})
     if db.execute("SELECT 1 FROM team_requests WHERE kind='disband' AND status='pending' AND team_id=?",
                   (team,)).fetchone():
@@ -165,7 +164,6 @@ def team_disband_request():
     db.execute("INSERT INTO team_requests(from_uid,to_uid,kind,team_id) VALUES(?,?,'disband',?)",
                (me, partner, team))
     db.commit()
-    _bump_sync()
     return jsonify({"ok": True})
 
 

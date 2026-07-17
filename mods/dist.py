@@ -1,6 +1,8 @@
-"""分发：安卓 APK / 桌面 deb 下载 + 应用内更新检查。
+"""分发：安卓 APK / 桌面 deb 下载 + 两端的应用内更新检查。
 
 原先混在「草稿本」区段里——跟草稿本毫无关系，是区段边界漂出来的。
+安卓那半（_apk_meta + /api/app/version）一度留在 app.py，跟桌面那半分居两处，
+对称的 _apk_meta / _deb_meta 也隔着文件——现在归到一起。
 """
 import json
 import os
@@ -67,3 +69,28 @@ def download_deb():
         return "桌面版尚未构建", 404
     return send_file(deb, mimetype="application/vnd.debian.binary-package",
                      as_attachment=True, download_name="gongkao.deb")
+
+
+def _apk_meta():
+    """从 dist/apk.json 读当前发布的版本信息（构建脚本生成）。"""
+    p = os.path.join(BASE, "dist", "apk.json")
+    try:
+        with open(p, encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception:
+        return {}
+
+
+@bp.get("/api/app/version")
+def app_version():
+    """APP 启动时来问一次：有没有新版本。"""
+    apk = os.path.join(BASE, "dist", "gongkao.apk")
+    meta = _apk_meta()
+    return jsonify({
+        "version_code": int(meta.get("version_code") or 0),
+        "version_name": meta.get("version_name") or "",
+        "notes": meta.get("notes") or "",
+        "size": os.path.getsize(apk) if os.path.exists(apk) else 0,
+        "url": "/download/gongkao.apk",
+        "available": os.path.exists(apk),
+    })
