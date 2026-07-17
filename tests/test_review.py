@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from conftest import appmod
+from mods import review as rvmod   # 复习已拆到 mods/review.py
 
 TODAY = datetime.now().strftime("%Y-%m-%d")
 YESTERDAY = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -105,17 +106,17 @@ class TestStateMachine:
         eid = _mk_entries(1)[0]
         j = _done(auth_client, "entry", eid).get_json()
         assert j["stage"] == 1
-        assert j["interval"] == appmod.REVIEW_INTERVALS[1]      # 第一次「认识」→ 2 天后
+        assert j["interval"] == rvmod.REVIEW_INTERVALS[1]      # 第一次「认识」→ 2 天后
         assert j["next_due"] == (datetime.now() + timedelta(days=j["interval"])).strftime("%Y-%m-%d")
 
     def test_连续认识一轮轮往上走(self, auth_client):
         eid = _mk_entries(1)[0]
         seen = []
-        for _ in range(len(appmod.REVIEW_INTERVALS) + 3):
+        for _ in range(len(rvmod.REVIEW_INTERVALS) + 3):
             seen.append(_done(auth_client, "entry", eid).get_json()["interval"])
         # 间隔只增不减，且到顶后停在最大值，不越界
-        assert seen[:3] == appmod.REVIEW_INTERVALS[1:4]
-        assert seen[-1] == appmod.REVIEW_INTERVALS[-1]
+        assert seen[:3] == rvmod.REVIEW_INTERVALS[1:4]
+        assert seen[-1] == rvmod.REVIEW_INTERVALS[-1]
         assert all(b >= a for a, b in zip(seen, seen[1:])), f"间隔倒退了: {seen}"
 
     def test_忘记就打回重来今天再出现(self, auth_client):
@@ -141,7 +142,7 @@ class TestStateMachine:
 class TestKindWhitelist:
     """RV_GROUP 是唯一白名单。加新来源只改那一处——这组用例盯着别再漏。"""
 
-    @pytest.mark.parametrize("kind", sorted(appmod.RV_GROUP))
+    @pytest.mark.parametrize("kind", sorted(rvmod.RV_GROUP))
     def test_每种来源都提交得动(self, auth_client, kind):
         r = _done(auth_client, kind, 1)
         assert r.status_code == 200, (
