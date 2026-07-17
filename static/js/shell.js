@@ -86,7 +86,21 @@ async function init() {
     const d = await api('/api/sections');
     SECTIONS = d.sections; IDIOM_BOARD = d.idiom_board;
     ALL_BOARDS = SECTIONS.flatMap(s => s.boards);
-  } catch (e) { return; }
+  } catch (e) {
+    // 拉不到基础数据（掉线 / 后端异常）：别把用户丢在空白首页，给个能重试的提示。
+    // 未登录时 api() 已跳去 /login，不会走到这里。
+    // 直接撤掉启动页（不排动画计时器）、重试用一个跳回 / 的链接（不加事件绑定），保持零副作用。
+    try {
+      const sp = document.getElementById('splash'); if (sp) sp.remove();
+      const hc = $('#home-cards');
+      if (hc) {
+        hc.innerHTML = '<div style="text-align:center;padding:44px 20px;color:#8a94a6">'
+          + '<p style="margin-bottom:14px;font-size:15px">😥 加载失败，请检查网络后重试</p>'
+          + '<a href="/" class="btn primary" style="display:inline-block">重新加载</a></div>';
+      }
+    } catch (_) { /* init 是异步的，其失败续体可能在页面/测试环境已拆掉后才跑，此时 DOM 不在了，忽略即可 */ }
+    return;
+  }
   loadSkin();                      // 头像 / 壁纸（不 await，别拖慢首屏）
   $('#admin-btn').classList.toggle('hidden', !ME.is_admin);
   $('#home-cards').innerHTML =
@@ -167,7 +181,7 @@ function appPrompt(title, placeholder, val) {
 }
 async function refreshReviewBadge() {
   try {
-    const d = await api('/api/review/today');
+    const d = await api('/api/review/today?count=1');   // 角标只要 count，别拉回整份复习列表
     const b = $('#rev-badge');
     if (d.count > 0) { b.textContent = d.count > 99 ? '99+' : d.count; b.classList.remove('hidden'); }
     else b.classList.add('hidden');

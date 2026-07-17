@@ -23,11 +23,27 @@ async function loadDaily() {
       </div>`).join('') : '<p class="empty">还没有每日任务，下面加一条吧～</p>';
   } catch (e) { $('#tk-daily-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
+function tdSetDone(it, on) {
+  it.classList.toggle('done', on);
+  const c = it.querySelector('.tk-check'); if (c) c.textContent = on ? '✓' : '';
+}
+function tdRecalcProg() {
+  const items = [...$('#tk-daily-list').querySelectorAll('.tk-item')];
+  const done = items.filter(x => x.classList.contains('done')).length;
+  $('#tk-daily-prog').textContent = items.length
+    ? `今日进度 ${done} / ${items.length}${done === items.length ? ' 🎉 全部完成！' : ''}` : '';
+}
 $('#tk-daily-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-tddel]');
   if (del) { e.stopPropagation(); if (!(await appConfirm('删除这个每日任务？'))) return; try { await api('/api/daily_tasks/templates/' + del.dataset.tddel, { method: 'DELETE' }); loadDaily(); } catch (er) { toast(er.message, true); } return; }
   const it = e.target.closest('[data-td]'); if (!it) return;
-  try { await api('/api/daily_tasks/' + it.dataset.td + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadDaily(); } catch (er) { toast(er.message, true); }
+  // 乐观更新：立刻翻勾 + 更新进度，后台再发请求；失败翻回来。不整表重渲 → 不卡顿、不回顶
+  const was = it.classList.contains('done');
+  tdSetDone(it, !was); tdRecalcProg();
+  try {
+    const d = await api('/api/daily_tasks/' + it.dataset.td + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (typeof d.done === 'boolean' && d.done !== !was) { tdSetDone(it, d.done); tdRecalcProg(); }
+  } catch (er) { tdSetDone(it, was); tdRecalcProg(); toast(er.message, true); }
 });
 $('#tk-daily-add').onclick = async () => {
   const v = $('#tk-daily-in').value.trim(); if (!v) return;

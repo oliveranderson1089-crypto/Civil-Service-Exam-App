@@ -626,8 +626,10 @@ plItemsHtml
 plLeaveSetup
 plProfile
 plReadForm
+plRecalcProg
 plRoadOpen
 plSave
+plSetDone
 plSyncUndo
 plWriteForm
 playVideo
@@ -678,6 +680,7 @@ renderPolicyDoc
 renderQuiz
 renderRoadmap
 renderSearch
+renderSharedItem
 renderSkinPrev
 renderSlResult
 renderTeamHeader
@@ -687,6 +690,7 @@ renderWork
 renderWq
 renderWqDetail
 renderWrited
+replaceSharedItem
 runSearch
 rvAll
 rvAnswer
@@ -746,6 +750,9 @@ stack
 state
 stripHtml
 sysIsDark
+tdRecalcProg
+tdSetDone
+tkItemsById
 tkMeId
 tkMembers
 tkSwitch

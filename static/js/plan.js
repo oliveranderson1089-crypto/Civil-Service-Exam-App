@@ -271,9 +271,27 @@ $('#pl-list').addEventListener('click', async e => {
     return;
   }
   const it = e.target.closest('[data-pl]'); if (!it) return;
-  try { await api('/api/plan/' + it.dataset.pl + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadPlan(); }
-  catch (er) { toast(er.message, true); }
+  // 乐观更新：立刻翻勾 + 更新进度，后台再发请求；失败翻回来。不整页重渲 → 不卡顿、不回顶
+  const was = it.classList.contains('done');
+  plSetDone(it, !was); plRecalcProg();
+  try {
+    const d = await api('/api/plan/' + it.dataset.pl + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (typeof d.done === 'boolean' && d.done !== !was) { plSetDone(it, d.done); plRecalcProg(); }
+  } catch (er) { plSetDone(it, was); plRecalcProg(); toast(er.message, true); }
 });
+function plSetDone(it, on) {
+  it.classList.toggle('done', on);
+  const c = it.querySelector('.tk-check'); if (c) c.textContent = on ? '✓' : '';
+}
+function plRecalcProg() {
+  const items = [...$('#pl-list').querySelectorAll('.pl-item')];
+  if (!items.length) { $('#pl-prog').textContent = ''; return; }
+  const mins = x => parseInt((x.querySelector('.pl-min') || {}).textContent || '0', 10) || 0;
+  const done = items.filter(x => x.classList.contains('done'));
+  const mt = items.reduce((s, x) => s + mins(x), 0);
+  const md = done.reduce((s, x) => s + mins(x), 0);
+  $('#pl-prog').textContent = `今日进度 ${done.length} / ${items.length} · ${md} / ${mt} 分钟${done.length === items.length ? ' 🎉 全部完成！' : ''}`;
+}
 
 /* ---------------- 备考计划记录 + 进度分析 ---------------- */
 $('#pl-hist').onclick = () => openPlanLog();

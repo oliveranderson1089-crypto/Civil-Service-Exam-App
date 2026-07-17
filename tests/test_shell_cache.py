@@ -1,14 +1,13 @@
-"""外壳文件必须带 no-store。
+"""前端资源的缓存策略：绝不能让 CDN/浏览器把「旧版本」发给用户。
 
-这组是踩坑踩出来的：app.js 拆成 js/*.js 之后，_SHELL_NOSTORE 里还写着老的
-/app.js，15 个新文件一个都没登记 —— 全都只剩 no-cache，CDN 可以存副本，
-而这行当初就是为了「让 Cloudflare 与浏览器都不要缓存，避免旧脚本」加的。
+改版历史（都是踩坑踩出来的）：
+- 起初前端是一个 app.js，外壳一律 no-store。
+- 拆成 js/*.js 后一度漏登记，差点让 CDN 存旧脚本。
+- 现在 56 个 js 合并成 /js/app.bundle.js：带内容哈希版本号走 immutable 长缓存
+  （内容一变 URL 就变，天然发不出旧的）；仍能单独取的 js/css/sw 走 no-cache
+  （每次带 ETag 回源校验，也发不出旧的）；真·外壳页走 no-store。
 
-前端那 22 条 jsdom 测试一条都没拦住：它们测的是 app.js 的内部行为，
-而缓存头是 Flask 的 after_request 给的 —— 两边都没人管。
-
-所以这里从 index.html 里**读真实的 script 清单**去验，而不是自己抄一份：
-抄的那份迟早跟 index.html 走散，就又回到「漏登记」的老路。
+这里从 index.html 读真实脚本清单去验，别自己抄一份 —— 抄的迟早跟 index.html 走散。
 """
 import re
 
@@ -17,25 +16,41 @@ from conftest import BASE
 
 def _script_srcs():
     html = (BASE / "static/index.html").read_text(encoding="utf-8")
-    return re.findall(r'<script src="([^"]+)"></script>', html)
+    return re.findall(r'<script src="(js/[^"]+\.js)"></script>', html)
 
 
-class TestShellNoStore:
-    def test_index_html_里的每个脚本都带no_store(self, auth_client):
+class TestAssetCache:
+    def test_每个单独脚本都会回源校验不发旧版本(self, auth_client):
         srcs = _script_srcs()
-        assert srcs, "index.html 里一个 <script src> 都没有？"
+        assert srcs, "index.html 里一个 <script src=js/*.js> 都没有？"
         bad = []
         for s in srcs:
-            r = auth_client.get("/" + s.lstrip("/"))
+            r = auth_client.get("/" + s)
             cc = r.headers.get("Cache-Control", "")
-            if r.status_code != 200 or "no-store" not in cc:
+            if r.status_code != 200 or "no-cache" not in cc:
                 bad.append(f"{s} -> {r.status_code} {cc or '(无 Cache-Control)'}")
-        assert not bad, "这些前端脚本没有 no-store，CDN 可能发旧版本给用户：\n  " + "\n  ".join(bad)
+        assert not bad, "这些前端脚本没有 no-cache（回源校验），CDN 可能发旧版本：\n  " + "\n  ".join(bad)
 
-    def test_样式和外壳页也带no_store(self, auth_client):
-        for p in ("/", "/index.html", "/style.css", "/sw.js", "/manifest.webmanifest"):
-            r = auth_client.get(p)
-            assert "no-store" in r.headers.get("Cache-Control", ""), f"{p} 少了 no-store"
+    def test_合并bundle带版本号且走immutable长缓存(self, auth_client):
+        html = auth_client.get("/").get_data(as_text=True)
+        m = re.search(r'/js/app\.bundle\.js\?v=(\w+)', html)
+        assert m, "首页没有引用带版本号的 /js/app.bundle.js（打包没生效？）"
+        r = auth_client.get("/js/app.bundle.js")
+        cc = r.headers.get("Cache-Control", "")
+        assert r.status_code == 200
+        assert "immutable" in cc and "max-age" in cc, f"bundle 该走 immutable 长缓存，实际：{cc}"
+        assert r.headers.get("ETag"), "bundle 该带 ETag（内容哈希）"
+
+    def test_bundle条件请求返回304(self, auth_client):
+        etag = auth_client.get("/js/app.bundle.js").headers.get("ETag")
+        r = auth_client.get("/js/app.bundle.js", headers={"If-None-Match": etag})
+        assert r.status_code == 304, "同版本再请求该回 304，别重下一整份"
+
+    def test_外壳页no_store_可校验资源no_cache(self, auth_client):
+        for p in ("/", "/index.html"):
+            assert "no-store" in auth_client.get(p).headers.get("Cache-Control", ""), f"{p} 该 no-store"
+        for p in ("/style.css", "/sw.js", "/manifest.webmanifest"):
+            assert "no-cache" in auth_client.get(p).headers.get("Cache-Control", ""), f"{p} 该 no-cache"
 
     def test_上传的资料不该被no_store(self, auth_client):
         """no-store 是给外壳用的。资料/图片那些内容文件该让浏览器缓存，
@@ -44,11 +59,7 @@ class TestShellNoStore:
         assert r.status_code == 200
         assert "no-store" not in r.headers.get("Cache-Control", ""), "API 不该进 no-store 名单"
 
-    def test_新增前端文件时这条会红(self):
-        """守着「加了文件忘登记」——正是这次踩的坑。
-        _SHELL_NOSTORE 是按 /js/ 前缀放行的，所以只要脚本都放在 js/ 下就自动覆盖。"""
-        import app as appmod
-        for s in _script_srcs():
-            p = "/" + s.lstrip("/")
-            assert appmod._is_shell(p), (
-                f"{p} 不在外壳判断里 —— 它要么得挪进 js/，要么得进 _SHELL_NOSTORE")
+    def test_文本响应会gzip压缩(self, auth_client):
+        for p in ("/js/app.bundle.js", "/style.css"):
+            r = auth_client.get(p, headers={"Accept-Encoding": "gzip"})
+            assert r.headers.get("Content-Encoding") == "gzip", f"{p} 该被 gzip 压缩"

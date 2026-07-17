@@ -224,9 +224,13 @@ def review_today():
             continue
         used[g] += 1
         kept.append(it)
-    return jsonify({"today": today, "count": len(kept), "items": kept,
-                    "groups": used, "pool": pool, "limits": lim,
-                    "done_today": done_today})
+    resp = {"today": today, "count": len(kept),
+            "groups": used, "pool": pool, "limits": lim, "done_today": done_today}
+    # 首页角标只要 count（原先连整份 items 一起回，80KB 只为显示一个数字）。
+    # 带 ?count=1 就省掉那份大列表；复习页不带参，照常拿全量。
+    if not request.args.get("count"):
+        resp["items"] = kept
+    return jsonify(resp)
 
 
 @bp.post("/api/review/done")

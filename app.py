@@ -12,10 +12,12 @@
 
 加新功能 = 在 mods/ 下建一个文件（一个蓝图）+ 本文件两行 import/注册。
 """
+import gzip
 import os
 
 from flask import Flask, jsonify, redirect, request, send_from_directory, session
 
+import assets
 from mods.pdfkit import ensure_pdf_font
 from schema import init_db
 from core import CFG, STATIC, UPLOADS, close_db, users_count
@@ -156,23 +158,57 @@ def _is_public(path):
     return path in _PUBLIC_EXACT or path.startswith("/icon-") or path.startswith("/skin/")
 
 
-# 外壳文件不缓存（让 Cloudflare 与浏览器都不要缓存，避免旧样式/旧脚本）
-_SHELL_NOSTORE = {"/", "/index.html", "/style.css", "/sw.js",
-                  "/manifest.webmanifest", "/login", "/register", "/forgot", "/admin"}
-
-
-def _is_shell(path):
-    """前端脚本原先是一个 /app.js，现在拆成了 /js/*.js（15 个，还会增减）。
-    所以按前缀判断，别再逐个登记 —— 上次就是漏了这一步：拆完 15 个文件全都
-    只剩 no-cache，CDN 可以存副本，正是这行当初要防的事。"""
-    return path in _SHELL_NOSTORE or path.startswith("/js/")
+# ---------------------------------------------------------------- 缓存策略
+# 真·外壳（每次都要最新、体积也都很小）：绝不缓存。
+_NOSTORE = {"/", "/index.html", "/login", "/register", "/forgot", "/admin"}
+# 会变但可校验的资源：允许缓存，但每次带 ETag 回源校验（改了 200、没改 304）。
+# 比 no-store 省一整份下载，又绝不会发旧的 —— Cloudflare 也会照 no-cache 回源校验。
+# （/js/app.bundle.js 不在此列：它带内容哈希版本号，走 immutable 长缓存，见下方路由。）
+_REVALIDATE = {"/style.css", "/sw.js", "/manifest.webmanifest"}
 
 
 @app.after_request
-def _shell_no_store(resp):
-    if _is_shell(request.path):
+def _cache_policy(resp):
+    p = request.path
+    if "immutable" in resp.headers.get("Cache-Control", ""):
+        return resp                                   # bundle 自己设了长缓存，别覆盖
+    if p in _NOSTORE:
         resp.headers["Cache-Control"] = "no-store, must-revalidate"
         resp.headers.pop("Expires", None)
+    elif p in _REVALIDATE or (p.startswith("/js/") and p != "/js/app.bundle.js"):
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers.pop("Expires", None)
+    return resp
+
+
+# ---------------------------------------------------------------- gzip 压缩
+# waitress 不压，Cloudflare 也只在它那段压；直连（App / 桌面壳 / 内网）时就是裸传。
+# 这里在应用层压文本类响应：js bundle 636KB→190KB、style.css 200KB→46KB、
+# 大 JSON（如 /api/review/today 80KB）也一并受益。二进制（图片/PDF）与 Range 不碰。
+_GZIP_TYPES = {"text/html", "text/css", "application/javascript", "text/javascript",
+               "application/json", "image/svg+xml", "text/plain"}
+
+
+@app.after_request
+def _compress(resp):
+    if resp.headers.get("Content-Encoding"):
+        return resp                                   # 已压过（如 bundle 路由自己压的）
+    if resp.status_code != 200 or resp.headers.get("Content-Range"):
+        return resp                                   # 304 / 206(Range) / 报错 都别动
+    ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+    if ctype not in _GZIP_TYPES or "gzip" not in request.headers.get("Accept-Encoding", ""):
+        return resp
+    resp.direct_passthrough = False                   # 静态文件是流式的，先关掉才能读出来
+    data = resp.get_data()
+    if len(data) < 600:
+        return resp                                   # 太小压了不划算
+    gz = gzip.compress(data, 6)
+    if len(gz) >= len(data):
+        return resp
+    resp.set_data(gz)
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Content-Length"] = str(len(gz))
+    resp.headers.add("Vary", "Accept-Encoding")
     return resp
 
 
@@ -198,8 +234,39 @@ def guard():
     return None
 
 
+# 启动时预热打包：能拼就启用（首页发一个 bundle 标签），拼不了就退回逐个脚本。
+try:
+    assets.warm()
+    _BUNDLE_OK = True
+except Exception as _e:   # noqa: BLE001 —— 打包只是加速，出岔子也不能挡住应用启动
+    _BUNDLE_OK = False
+    print(" * [assets] 前端打包未启用，退回逐个脚本：", _e)
+
+
+@app.route("/js/app.bundle.js")
+def js_bundle():
+    """56 个 js 合成的一个 bundle：带内容哈希 ETag + gzip，走 immutable 长缓存。"""
+    js, js_gz, etag = assets.bundle()
+    if etag and etag in request.headers.get("If-None-Match", ""):
+        resp = app.response_class(status=304)
+    elif "gzip" in request.headers.get("Accept-Encoding", ""):
+        resp = app.response_class(js_gz, mimetype="application/javascript")
+        resp.headers["Content-Encoding"] = "gzip"
+    else:
+        resp = app.response_class(js, mimetype="application/javascript")
+    resp.headers["ETag"] = etag
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    resp.headers["Vary"] = "Accept-Encoding"
+    return resp
+
+
 @app.route("/")
 def index():
+    if _BUNDLE_OK:
+        try:
+            return app.response_class(assets.index_html(), mimetype="text/html")
+        except Exception:   # noqa: BLE001 —— 拼接万一出错，退回原始 index.html 照样能用
+            pass
     return send_from_directory(STATIC, "index.html")
 
 

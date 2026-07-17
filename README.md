@@ -989,6 +989,7 @@ systemctl --user restart gongkao-tunnel.service   # 重启隧道（网址不变�
 - **AI**：DeepSeek（OpenAI 兼容），JSON mode 用于结构化输出（批改、拆题、识题、常识生成等）。
   长文本的字数控制一律「生成 → 数字数 → 超/欠就带上一稿返工」，不指望提示词一次说准。
 - **前端**：原生 HTML/CSS/JS 单页应用 + PWA（Service Worker）；pdf.js 应用内预览；自带轻量 Markdown 渲染。
+  源码按职责拆成 56 个模块（`static/js/*.js`），**服务端启动时按 `index.html` 的顺序合成一个 `/js/app.bundle.js`**（见 `assets.py`）：首屏请求从 57 个收成 3 个、gzip 压缩（bundle 约 636KB→190KB、样式 200KB→46KB）、bundle 带内容哈希版本号走 `immutable` 长缓存（内容一变 URL 就变，天然不发旧版本）。拼接失败会自动退回逐个脚本，绝不挡应用启动。
 - **安卓**：WebView 壳 + 自定义 ContentProvider + JS 桥接（`window.GongkaoNative`）；Gradle 构建（AGP 8.5.2）。
 - **推送**：OpenClaw 微信机器人 + systemd timers。
 - **部署**：systemd 用户服务 + Cloudflare 命名隧道。
@@ -1034,6 +1035,14 @@ systemctl --user restart gongkao-tunnel.service   # 重启隧道（网址不变�
 **任何回车处理都必须先判断 `e.isComposing`**。用 fcitx 打中文时回车是「确认候选词」，
 若被当成「提交」，组字会被打断 —— 表现是**「只打得出英文字母、候选框弹不出来」**。
 代码里有 `composing(e)` 助手，新写的回车处理**必须用它**。
+
+### 6. 拆模块拆出来的首屏慢：56 个同步脚本 = 56 个阻塞请求
+
+前端从 15 个文件拆成 56 个后，`index.html` 排了 56 个同步 `<script>`，每个还 `no-store`（每次全量重下）、无 gzip。手机走代理/隧道时首屏迟迟出不来，6 秒兜底把启动页一撤 → **首页空白、悬浮球点不动**（悬浮球和 `init()` 都在第 39 个脚本 `sync.js` 里，没加载到就是死的）。后端接口实测全部 <8ms，慢**根本不在后端**。
+
+👉 修法（`app.py` + `assets.py`）：**源码保持 56 个模块不变**，服务端合成一个 bundle；文本响应 gzip；bundle 带版本号走 `immutable` 长缓存，css/js/sw 走 `no-cache`（带 ETag 回源校验，不发旧的），只有外壳页才 `no-store`。首屏 **57→3 个请求、836KB→约 240KB**。
+
+同源的两条经验：**打勾这类操作别整表重渲**——规划/每日/互监三处改成「点击即翻勾、后台发请求、失败再回滚」的乐观更新（互监只重画点的那一行），去掉了原先的「跳加载 + 回到顶部」。**角标别拉整份数据**——首页复习角标只要一个数字，`/api/review/today?count=1` 把 80KB 砍到 254B。
 
 ---
 

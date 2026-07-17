@@ -9,8 +9,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, composing, esc, toast */
-let tkMembers = [], tkMeId = 0;
+/* global $, ME, api, appConfirm, composing, esc, toast */
+let tkMembers = [], tkMeId = 0, tkItemsById = {};
 /* 先看组队状态：没组队 → 组队 UI；已组队 → 队头 + 互监清单 */
 async function loadShared() {
   $('#tk-team').innerHTML = '<p class="empty">加载中…</p>';
@@ -98,26 +98,40 @@ async function loadSharedBoard() {
       ? `<span class="tk-hd-text">待办</span><span class="tk-hd-ms">` + tkMembers.map(m =>
         `<span class="tk-hd-m ${m.id === d.me_id ? 'me' : ''}" title="${esc(m.name)}">${m.id === d.me_id ? '我' : esc(initials(m.name))}</span>`).join('') + `</span>`
       : '';
-    $('#tk-shared-list').innerHTML = d.items.length ? d.items.map(it => {
-      const ids = it.done_ids || [];
-      const byMap = it.done_by_map || {};
-      const boxes = tkMembers.map(m => {
-        const on = ids.includes(m.id), mine = m.id === d.me_id;
-        const tip = on ? `${m.name}（由 ${byMap[m.id] || '?'} 确认）`
-          : (mine ? '自己不能勾自己，等搭档来确认' : `确认 ${m.name} 已完成`);
-        return `<button class="tk-box ${on ? 'on' : ''} ${mine ? 'mine' : ''}"
-          data-tsbox="${it.id}" data-tsuser="${m.id}" title="${esc(tip)}">${on ? '✓' : (mine ? '🔒' : '')}</button>`;
-      }).join('');
-      const who = tkMembers.filter(m => ids.includes(m.id))
-        .map(m => `${shortName(m.name)}（${shortName(byMap[m.id] || '?')} 确认）`);
-      const all = tkMembers.length && tkMembers.every(m => ids.includes(m.id));
-      return `<div class="tk-item tk-multi ${all ? 'done' : ''}" data-ts="${it.id}">
-        <span class="tk-text">${it.is_plan ? '<i class="ts-plan">📅 规划</i> ' : ''}${esc(it.text)}<span class="tk-who">${it.is_plan ? '来自 ' + esc(shortName(it.created_by)) + ' 的今日计划' : '发起 ' + esc(shortName(it.created_by))}${all ? ' · 🎉 双方都已确认' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
-        <span class="tk-boxes">${boxes}</span>
-        ${it.is_plan ? '' : `<button class="tk-del" data-tsdel="${it.id}">🗑</button>`}
-      </div>`;
-    }).join('') : '<p class="empty">还没有共享待办，加一条大家一起监督～</p>';
+    tkItemsById = {};
+    $('#tk-shared-list').innerHTML = d.items.length
+      ? d.items.map(it => { tkItemsById[it.id] = it; return renderSharedItem(it); }).join('')
+      : '<p class="empty">还没有共享待办，加一条大家一起监督～</p>';
   } catch (e) { $('#tk-shared-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+// 渲染单条互监待办（打勾走乐观更新时，只重画这一条 → 不跳「加载中」、不回顶）
+function renderSharedItem(it) {
+  const ids = it.done_ids || [];
+  const byMap = it.done_by_map || {};
+  const boxes = tkMembers.map(m => {
+    const on = ids.includes(m.id), mine = m.id === tkMeId;
+    const tip = on ? `${m.name}（由 ${byMap[m.id] || '?'} 确认）`
+      : (mine ? '自己不能勾自己，等搭档来确认' : `确认 ${m.name} 已完成`);
+    return `<button class="tk-box ${on ? 'on' : ''} ${mine ? 'mine' : ''}"
+      data-tsbox="${it.id}" data-tsuser="${m.id}" title="${esc(tip)}">${on ? '✓' : (mine ? '🔒' : '')}</button>`;
+  }).join('');
+  const who = tkMembers.filter(m => ids.includes(m.id))
+    .map(m => `${shortName(m.name)}（${shortName(byMap[m.id] || '?')} 确认）`);
+  const all = tkMembers.length && tkMembers.every(m => ids.includes(m.id));
+  return `<div class="tk-item tk-multi ${all ? 'done' : ''}" data-ts="${it.id}">
+    <span class="tk-text">${it.is_plan ? '<i class="ts-plan">📅 规划</i> ' : ''}${esc(it.text)}<span class="tk-who">${it.is_plan ? '来自 ' + esc(shortName(it.created_by)) + ' 的今日计划' : '发起 ' + esc(shortName(it.created_by))}${all ? ' · 🎉 双方都已确认' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
+    <span class="tk-boxes">${boxes}</span>
+    ${it.is_plan ? '' : `<button class="tk-del" data-tsdel="${it.id}">🗑</button>`}
+  </div>`;
+}
+// 就地替换某一条（保持滚动位置：只换这一个节点，别整表重排）
+function replaceSharedItem(tid) {
+  const it = tkItemsById[tid];
+  const old = $('#tk-shared-list').querySelector('.tk-item[data-ts="' + tid + '"]');
+  if (!it || !old) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = renderSharedItem(it);
+  old.replaceWith(tmp.firstElementChild);
 }
 function shortName(n) { n = n || ''; n = n.split('@')[0]; return n.length > 6 ? n.slice(0, 5) + '…' : n; }
 // 表头列宽只有一个勾选框那么宽，用 2 个字符当列名（完整名在 title 与成员面板里）
@@ -126,14 +140,32 @@ $('#tk-shared-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-tsdel]');
   if (del) { e.stopPropagation(); if (!(await appConfirm('删除这条共享待办？'))) return; try { await api('/api/shared_todos/' + del.dataset.tsdel, { method: 'DELETE' }); loadSharedBoard(); } catch (er) { toast(er.message, true); } return; }
   const box = e.target.closest('[data-tsbox]'); if (!box) return;
-  if (+box.dataset.tsuser === tkMeId) { toast('自己不能给自己打勾，等搭档来确认 🤝', true); return; }
+  const tid = box.dataset.tsbox, who = +box.dataset.tsuser;
+  if (who === tkMeId) { toast('自己不能给自己打勾，等搭档来确认 🤝', true); return; }
+  const it = tkItemsById[tid]; if (!it) return;
+  const ids = it.done_ids || (it.done_ids = []);
+  const snapIds = ids.slice(), snapBy = Object.assign({}, it.done_by_map);
+  const myName = (ME && ME.username) || '我';
+  // 乐观更新：立刻翻勾并只重画这一条，后台再发请求；失败/被拒就翻回来
+  if (ids.includes(who)) it.done_ids = ids.filter(x => x !== who);
+  else { it.done_ids = ids.concat(who); (it.done_by_map = it.done_by_map || {})[who] = myName; }
+  replaceSharedItem(tid);
   try {
-    await api('/api/shared_todos/' + box.dataset.tsbox + '/toggle', {
+    const d = await api('/api/shared_todos/' + tid + '/toggle', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: +box.dataset.tsuser })
+      body: JSON.stringify({ user_id: who })
     });
-    loadSharedBoard();
-  } catch (er) { toast(er.message, true); }
+    if (Array.isArray(d.done_ids)) {                 // 以服务器为准对齐这一条
+      it.done_ids = d.done_ids;
+      if (d.done && d.user_id === who) (it.done_by_map = it.done_by_map || {})[who] = myName;
+      else if (!d.done) { it.done_by_map = it.done_by_map || {}; delete it.done_by_map[who]; }
+      replaceSharedItem(tid);
+    }
+  } catch (er) {
+    it.done_ids = snapIds; it.done_by_map = snapBy;
+    replaceSharedItem(tid);
+    toast(er.message, true);
+  }
 });
 $('#tk-shared-add').onclick = async () => {
   const v = $('#tk-shared-in').value.trim(); if (!v) return;

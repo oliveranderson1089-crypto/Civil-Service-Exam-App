@@ -19,15 +19,24 @@ window.Reader = {
   native() { return !!(window.GongkaoNative && window.GongkaoNative.ttsSpeak); },
   rate() { return READ_RATES[this.rateIdx]; },
   split(text) {
-    // 按句切分（细粒度：切语速时从当前句继续，不用重头）；超长句再按逗号拆
+    // 按句切分（细粒度：切语速时从当前句继续，不用重头）；超长句再按逗号拆。
+    // 用「捕获组切分 + 把标点拼回前一段」保留标点，避开正则「后行断言」——
+    // iOS 16.4 以前的 Safari 不支持后行断言，含它的脚本会整份解析报错。
     const t = (text || '').replace(/\s+/g, ' ').trim();
-    const sents = t.split(/(?<=[。！？；.!?;\n])/);
+    const splitKeep = (str, re) => {
+      const out = [];
+      str.split(re).forEach((part, i) => {
+        if (i % 2 === 0) out.push(part);
+        else if (out.length) out[out.length - 1] += part;   // 标点拼回前一段
+      });
+      return out;
+    };
     const segs = [];
-    for (let s of sents) {
+    for (let s of splitKeep(t, /([。！？；.!?;\n]+)/)) {
       s = s.trim(); if (!s) continue;
       if (s.length <= 120) { segs.push(s); continue; }
       let cur = '';
-      for (const p of s.split(/(?<=[，,、])/)) {
+      for (const p of splitKeep(s, /([，,、]+)/)) {
         if ((cur + p).length > 120) { if (cur.trim()) segs.push(cur.trim()); cur = p; }
         else cur += p;
       }
