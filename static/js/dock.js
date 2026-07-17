@@ -97,10 +97,14 @@ function createDock(el, key, defDock, onChange) {
     document.body.classList.add(dockVert(st.dock) ? 'dk-rz-x' : 'dk-rz-y');
     grip.classList.add('on');
     const mv = (ev) => {
-      st.sizes[st.dock] = st.dock === 'bottom' ? innerHeight - ev.clientY
+      const raw = st.dock === 'bottom' ? innerHeight - ev.clientY
         : st.dock === 'top' ? ev.clientY
           : st.dock === 'right' ? innerWidth - ev.clientX
             : ev.clientX;
+      // 0 是「没拖过 / 双击复位了」的哨兵（见 size()），拖动不能撞上它：
+      // 一路拖到屏幕边缘时 raw 正好是 0，会被 size() 当成「用默认值」→ 面板从
+      // 最小值猛地弹回半屏，松手还把这个尺寸存了下来。夹到 1，让 size() 去收敛到 min。
+      st.sizes[st.dock] = Math.max(1, raw);
       apply(false);
     };
     const up = () => {
