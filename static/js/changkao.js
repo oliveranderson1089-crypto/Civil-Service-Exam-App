@@ -21,7 +21,8 @@ async function loadCkBoards() {
   try {
     const d = await api('/api/changkao/boards');
     let nStar = 0;
-    try { nStar = (await api('/api/changkao/stars')).total; } catch (_) {}
+    try { nStar = (await api('/api/changkao/stars')).total; }
+    catch (e) { console.debug('[常考] 收藏数取不到，按 0 显示：%s', (e && e.message) || e); }
     $('#ck-boards').innerHTML = '<div class="home-cards cs-cards" data-dragsort="ckb">' + d.boards.map(b => `
       <div class="home-card ck-card" data-ckb="${esc(b.key)}">
         <div class="hc-logo hc-ck">${IC[b.icon] || IC.bulb}</div>

@@ -495,7 +495,7 @@ const Ink = {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target: key, items }),
       });
-      try { lsDel('ink:' + key); } catch (_) {}   // 传上去了，本地那份就不留了
+      lsDel('ink:' + key);   // 传上去了，本地那份就不留了
     } catch (_) {}                        // 离线/失败：本地暂存还在，下次进这一页再补
   },
   _stashed(key) {

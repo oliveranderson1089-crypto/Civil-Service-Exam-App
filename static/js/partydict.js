@@ -20,7 +20,7 @@ async function openPartyDict() {
     const chips = [`<button class="pd-chip on" data-cat="全部">全部 ${d.total}</button>`]
       .concat(d.cats.map(c => `<button class="pd-chip" data-cat="${esc(c.cat)}">${esc(c.cat)} ${c.count}</button>`));
     $('#pd-cats').innerHTML = chips.join('');
-  } catch (e) {}
+  } catch (e) { console.debug('[党建词典] 分类加载失败：%s', (e && e.message) || e); }
   loadPartyDict();
 }
 async function loadPartyDict() {

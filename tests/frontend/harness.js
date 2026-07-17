@@ -21,7 +21,7 @@ const EXPORTS = [
   'lsSet', 'lsGet', 'lsDel', '_lsWarned',
   'SYNC_REFRESH', 'saveDoc', 'matSave', 'matLoad', 'matStrokes', 'matKey',
   'wrSwitch', 'api', 'esc', 'fmtSize', 'fmtTime', 'composing',
-  'checkSync', '_syncEditing',
+  'checkSync', '_syncEditing', 'aiRunActions',
 ];
 
 function boot(opts = {}) {

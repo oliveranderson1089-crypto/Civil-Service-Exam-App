@@ -26,7 +26,7 @@ function createDock(el, key, defDock, onChange) {
     const min = dockVert(d) ? 280 : 190;
     return Math.round(Math.min(max, Math.max(min, v)));
   };
-  const save = () => { try { lsSet(key, JSON.stringify({ d: st.dock, sizes: st.sizes })); } catch (_) {} };
+  const save = () => { lsSet(key, JSON.stringify({ d: st.dock, sizes: st.sizes })); };
   (function load() {
     try {
       const d = JSON.parse(lsGet(key) || 'null');
@@ -139,7 +139,7 @@ function fabClamp() {
   if (Math.abs(x - r.left) < .5 && Math.abs(y - r.top) < .5) return;
   fab.style.left = x + 'px'; fab.style.top = y + 'px';
   fab.style.right = 'auto'; fab.style.bottom = 'auto';
-  try { lsSet('aifab', JSON.stringify({ x, y })); } catch (_) {}
+  lsSet('aifab', JSON.stringify({ x, y }));
 }
 addEventListener('resize', fabClamp);
 addEventListener('load', () => requestAnimationFrame(fabClamp));
@@ -181,7 +181,7 @@ function avoidFab() {
     y = Math.min(Math.max(4, y), innerHeight - f.height - 4);
     fab.style.left = x + 'px'; fab.style.top = y + 'px';
     fab.style.right = 'auto'; fab.style.bottom = 'auto';
-    try { lsSet('aifab', JSON.stringify({ x, y })); } catch (_) {}
+    lsSet('aifab', JSON.stringify({ x, y }));
   }
 }
 

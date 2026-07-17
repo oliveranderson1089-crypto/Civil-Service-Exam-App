@@ -253,7 +253,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     dragging = false;
     if (moved) {
       const r = fab.getBoundingClientRect();
-      try { lsSet('aifab', JSON.stringify({ x: r.left, y: r.top })); } catch (_) {}
+      lsSet('aifab', JSON.stringify({ x: r.left, y: r.top }));
       dirs(); e.preventDefault(); e.stopPropagation();
     } else toggle();
   });

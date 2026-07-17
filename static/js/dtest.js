@@ -61,7 +61,7 @@ function bindBar() {
     if (m === 'study') {
       // 背题模式要用到答案；若当前这套没带答案（从测试模式来的），重新拉同一套带答案的
       if (dtItems[0] && dtItems[0].answer === undefined) {
-        try { const d = await api('/api/dtest'); if ((d.items || []).length === dtItems.length) dtItems = d.items; } catch (_) {}
+        try { const d = await api('/api/dtest'); if ((d.items || []).length === dtItems.length) dtItems = d.items; } catch (e) { console.debug('[巩固测试] 取题失败，保留当前题目：%s', (e && e.message) || e); }
       }
       dtRevealed = {}; Object.keys(dtChosen).forEach(i => dtRevealed[i] = true);  // 已答的直接揭晓
     } else {

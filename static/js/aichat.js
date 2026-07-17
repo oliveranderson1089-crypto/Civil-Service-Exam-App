@@ -184,8 +184,15 @@ function aiRunActions(actions) {
     if (a.type === 'navigate' && a.fn && typeof window[a.fn] === 'function') {
       // 打开功能页前先收起 AI 面板（不然盖在上面看不到）
       $('#ai-panel').classList.add('hidden'); if (window.applyPush) applyPush(); if (window.avoidFab) avoidFab();
-      try { window[a.fn](); } catch (_) {}
-      toast('已为你打开「' + (a.label || '') + '」');
+      // 原先是 try{...}catch(_){} 然后无条件 toast「已为你打开」—— 函数一抛异常，
+      // 用户就收到「已为你打开」却什么也没发生。说打开了就得真打开。
+      try {
+        window[a.fn]();
+        toast('已为你打开「' + (a.label || '') + '」');
+      } catch (e) {
+        console.error('[AI] 打开「%s」失败：', a.label || a.fn, e);
+        toast('打开「' + (a.label || '') + '」没成功', true);
+      }
     } else if (a.type === 'refresh' && a.what === 'notes') {
       if (v === 'notes' && typeof loadFeed === 'function') loadFeed();   // 正看着小记就刷新
     } else if (a.type === 'refresh' && a.what === 'entries') {
