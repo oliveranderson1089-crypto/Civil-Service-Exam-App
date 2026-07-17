@@ -59,8 +59,8 @@ function lsSet(key, val) {
     return false;
   }
 }
-function lsGet(key, dflt) {
-  try {
+function lsGet(key, dflt = null) {   // 默认给 null 而不是 undefined：与原生 getItem 等价
+  try {                               // （+null 是 0、+undefined 是 NaN，差一点就不等价了）
     const v = localStorage.getItem(key);
     return v === null ? dflt : v;
   } catch (e) {                       // 隐私模式/禁用 cookie 时 localStorage 本身会抛
@@ -353,7 +353,11 @@ async function saveCardOrder(grid) {
   UI_ORDERS[key] = order;
   try {
     await api('/api/ui_order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, order }) });
-  } catch (_) {}
+  } catch (e) {
+    // 拖完就走的动作：存不上的话下次进来顺序还是旧的，不说一声用户会以为是 bug
+    console.warn('[首页] 卡片顺序保存失败：%s', (e && e.message) || e);
+    toast('顺序没保存上：' + ((e && e.message) || '网络异常'), true);
+  }
 }
 (function initCardDrag() {
   let grid = null, card = null, ghost = null, timer = null, sx = 0, sy = 0, dragging = false, isTouch = false;
@@ -1106,7 +1110,7 @@ function makeFloat(el, key, handle) {
   };
   el.restore = () => {                        // 打开时调：恢复上次的位置和大小
     let v = null;
-    try { v = JSON.parse(localStorage.getItem(K) || 'null'); } catch (_) {}
+    try { v = JSON.parse(lsGet(K) || 'null'); } catch (_) {}
     if (!v) return;                           // 没拖过 → 用 CSS 里的默认位置和大小
     el.style.width = Math.max(280, v.w) + 'px';
     el.style.height = Math.max(220, v.h) + 'px';
@@ -1296,7 +1300,11 @@ async function saveMatBoards() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ boards: matCustomBoards }),
     });
-  } catch (_) {}
+  } catch (e) {
+    // 分类是用户手建/手删的，存不上就得说 —— 否则刷新一下白建了
+    console.warn('[资料库] 自定义分类保存失败：%s', (e && e.message) || e);
+    toast('分类没保存上：' + ((e && e.message) || '网络异常'), true);
+  }
 }
 /* 长按/右键自定义分类 → 删掉它（里面的资料会回到「全部」，不会丢） */
 $('#mat-filter').addEventListener('contextmenu', async e => {
@@ -2261,10 +2269,23 @@ function markDirty() {
   clearTimeout(docSaveTimer); docSaveTimer = setTimeout(saveDoc, 900);
   clearTimeout(docHistTimer); docHistTimer = setTimeout(pushHistory, 700);
 }
+let _docSaveFailed = false;
 async function saveDoc() {
   if (!DOC) return;
   const title = $('#doc-title').textContent.trim() || '无标题文档';
-  try { await api('/api/kb/nodes/' + DOC.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content: DOC.blocks }) }); } catch (e) { }
+  try {
+    await api('/api/kb/nodes/' + DOC.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content: DOC.blocks }) });
+    if (_docSaveFailed) { _docSaveFailed = false; toast('已重新保存'); }   // 网回来了，让人安心
+  } catch (e) {
+    // 这是**自动**保存（改完 900ms 触发），原先是空 catch：网一断，用户接着往下写，
+    // 全程以为存着，其实一个字都没上去。项目里手动保存都会 toast(err.message, true)，
+    // 自动保存更该说 —— 只是不能每 900ms 弹一次，所以只在「由成功转为失败」时说一次。
+    console.warn('[文档] 自动保存失败：%s', (e && e.message) || e);
+    if (!_docSaveFailed) {
+      _docSaveFailed = true;
+      toast('保存失败：' + ((e && e.message) || '网络异常') + '（内容还在，请检查网络）', true);
+    }
+  }
 }
 function pushHistory() {
   if (!DOC) return;
@@ -2800,7 +2821,7 @@ function makeInputResizable(bar, ta, key) {
   if (!bar || !ta || bar.querySelector('.input-grip')) return;
   const MIN = 74;
   const maxH = () => Math.round(window.innerHeight * 0.5);   // 最高半屏
-  const base = () => Math.max(MIN, Math.min(maxH(), parseInt(localStorage.getItem(key) || '', 10) || MIN));
+  const base = () => Math.max(MIN, Math.min(maxH(), parseInt(lsGet(key) || '', 10) || MIN));
   ta._grow = () => { ta.style.height = 'auto'; ta.style.height = Math.max(base(), Math.min(maxH(), ta.scrollHeight)) + 'px'; };
   ta.addEventListener('input', ta._grow);
   const grip = document.createElement('div');
@@ -4009,10 +4030,10 @@ $('#gw-list').addEventListener('click', async e => {
 
 /* ============= 手写输入板（申论作答：数位板/手指 → Google 手写识别 → 填答案框） ============= */
 const hwEl = {}; let hwTarget = null, hwStrokes = [], hwCur = null, hwT0 = 0, hwDrawing = false, hwTimer = null;
-let hwAuto = localStorage.getItem('hwAuto') !== '0';   // 自动上屏首选字（默认开），连续写更快
+let hwAuto = lsGet('hwAuto') !== '0';   // 自动上屏首选字（默认开），连续写更快
 let hwCommitted = null;                                 // 刚自动上屏的字，可点别的候选替换
-let hwFs = localStorage.getItem('hwFs') === '1';        // 全屏透明手写：看得到后面正在填入的答案
-let hwEngine = localStorage.getItem('hwEng') || 'cloud';  // 默认云端 Google(准)；'local'=端上ML Kit/本地Zinnia(快)
+let hwFs = lsGet('hwFs') === '1';        // 全屏透明手写：看得到后面正在填入的答案
+let hwEngine = lsGet('hwEng') || 'cloud';  // 默认云端 Google(准)；'local'=端上ML Kit/本地Zinnia(快)
 function hwInit() {
   ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done', 'auto', 'fs', 'eng']
     .forEach(k => hwEl[k] = $('#hw-' + k));
@@ -5567,8 +5588,8 @@ $('#dt-open').onclick = () => openDtest();
 function openDtest() { push({ view: 'dtest', title: '巩固测试' }); loadDtest(); }
 let dtItems = [], dtChosen = {}, dtRevealed = {}, dtSubmitted = false, dtResults = null;
 // 背题模式 study：做一题立刻显示答案；测试模式 test：答案不下发，交卷才服务端判分
-let dtMode = localStorage.getItem('dtMode') === 'test' ? 'test' : 'study';
-let dtCount = (+localStorage.getItem('dtCount') === 15) ? 15 : 10;   // 题量 10 / 15
+let dtMode = lsGet('dtMode') === 'test' ? 'test' : 'study';
+let dtCount = (+lsGet('dtCount') === 15) ? 15 : 10;   // 题量 10 / 15
 const DT_L = ['A', 'B', 'C', 'D', 'E', 'F'];
 function dtIsTest() { return dtMode === 'test'; }
 function dtRevealedAt(i) { return dtIsTest() ? dtSubmitted : !!dtRevealed[i]; }
@@ -7618,7 +7639,10 @@ function updateChatBadge(n) {
   if (n > 0) { b.textContent = n > 99 ? '99+' : n; b.classList.remove('hidden'); } else b.classList.add('hidden');
 }
 // 首页/切换时刷未读角标（轮询，和现有 sync 同频）
-async function refreshChatBadge() { try { const d = await api('/api/chat/unread'); updateChatBadge(d.unread); } catch (_) {} }
+async function refreshChatBadge() {
+  try { updateChatBadge((await api('/api/chat/unread')).unread); }
+  catch (e) { console.debug('[聊天] 未读角标刷新失败：%s', (e && e.message) || e); }   // 15 秒后自己会再试
+}
 
 /* 秒推：SSE 长连接。服务器一「叮」，正在聊的立刻拉新消息、其它地方更新角标。
    发消息还是普通 POST；这条连接只负责收「你有新消息」的信号。EventSource 断了会自动重连。 */
@@ -7748,11 +7772,11 @@ const TTS_VOICES = [
 ];
 const ttsHas = (id) => (window.__ttsEngines || []).includes(id);
 const ttsEng = () => {
-  const v = localStorage.getItem('ttsEngine');
+  const v = lsGet('ttsEngine');
   if (v && ttsHas(v)) return v;
   return (TTS_ENGS.find(e => ttsHas(e.id)) || {}).id || 'piper';
 };
-const ttsVoice = () => localStorage.getItem('ttsVoice') || TTS_VOICES[0].id;
+const ttsVoice = () => lsGet('ttsVoice') || TTS_VOICES[0].id;
 const deskSay = (text, rate, id) =>
   deskMsg({ a: 'tts', text, rate, id, engine: ttsEng(), voice: ttsVoice() });
 const deskStop = () => { if (deskTTS()) deskMsg({ a: 'tts_stop' }); };
@@ -8073,7 +8097,17 @@ async function checkSync() {
         if (SYNC_REFRESH[v]) SYNC_REFRESH[v]();
       }
     }
-  } catch (_) {} finally { _syncBusy = false; }
+  } catch (e) {
+    // 网络抖一下很正常，下次轮询自然补上 —— 那种静默就好。
+    // 但这里同时也会吞掉 SYNC_REFRESH[v]() 里的**代码错误**：loadWrite 那个
+    // ReferenceError 就是被这一行藏了整整一个版本（见 9edf460），期间写作页的
+    // 自动同步一直是坏的、毫无迹象。所以两者要分开对待。
+    if (e instanceof ReferenceError || e instanceof TypeError) {
+      console.error('[同步] 刷新处理器有 bug（不是网络问题）：', e);
+    } else {
+      console.debug('[同步] 本次跳过：%s', (e && e.message) || e);
+    }
+  } finally { _syncBusy = false; }
 }
 setInterval(checkSync, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkSync(); });
@@ -8207,7 +8241,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   const fab = $('#fab'), main = $('#fab-btn');
   if (!fab || !main) return;
   try {
-    const p = JSON.parse(localStorage.getItem('aifab') || 'null');
+    const p = JSON.parse(lsGet('aifab') || 'null');
     if (p) { fab.style.left = p.x + 'px'; fab.style.top = p.y + 'px'; fab.style.right = 'auto'; fab.style.bottom = 'auto'; }
   } catch (_) {}
   requestAnimationFrame(fabClamp);          // 上次记的位置可能落在这个窗口外面，先夹回来
@@ -8365,7 +8399,7 @@ function sysIsDark() {
   return !!(_themeMedia && _themeMedia.matches);
 }
 function applyTheme() {
-  const mode = localStorage.getItem('theme') || 'auto';
+  const mode = lsGet('theme') || 'auto';
   const dark = mode === 'dark' || (mode === 'auto' && sysIsDark());
   document.body.classList.toggle('dark', dark);
   document.querySelectorAll('.theme-opt').forEach(b => b.classList.toggle('on', b.dataset.theme === mode));
@@ -8439,7 +8473,7 @@ async function checkApkUpdate(manual) {
     return;
   }
   const key = 'apk' + d.version_code;
-  if (!manual && localStorage.getItem('skipUpdate') === key) return;
+  if (!manual && lsGet('skipUpdate') === key) return;
   updModal({
     title: '发现新版本', ver: 'v' + (d.version_name || d.version_code),
     notes: d.notes || '修复问题、优化体验。', size: pkgSize(d.size),
@@ -8459,7 +8493,7 @@ async function checkDesktopUpdate(manual) {
   // ① 桌面壳本身有新版 → 必须重新下载安装包
   if (d.deb_available && d.deb_code > cur) {
     const key = 'deb' + d.deb_code;
-    if (!manual && localStorage.getItem('skipUpdate') === key) return;
+    if (!manual && lsGet('skipUpdate') === key) return;
     updModal({
       title: '发现桌面版新版本', ver: 'v' + (d.deb_name || d.deb_code),
       notes: (d.deb_notes || '优化体验。') + '\n这次改动涉及桌面客户端本身，需要重新下载安装包更新。',
@@ -8477,7 +8511,7 @@ async function checkDesktopUpdate(manual) {
   // ② 只有网页内容更新 → 不用重下，刷新就是新版
   if (SW_AT_START && d.sw && d.sw !== SW_AT_START) {
     const key = 'sw' + d.sw;
-    if (!manual && localStorage.getItem('skipUpdate') === key) return;
+    if (!manual && lsGet('skipUpdate') === key) return;
     updModal({
       title: '有新内容更新', ver: '',
       notes: '界面/功能已更新，不需要重新下载客户端。点「刷新更新」立即用上新版。',
@@ -8602,7 +8636,8 @@ function setNtfDot(n) {
   dot.classList.toggle('hidden', !n);
 }
 async function refreshNtfDot() {
-  try { setNtfDot((await api('/api/notifications/unread')).unread); } catch (_) {}
+  try { setNtfDot((await api('/api/notifications/unread')).unread); }
+  catch (e) { console.debug('[消息] 红点刷新失败：%s', (e && e.message) || e); }        // 下次轮询会补
 }
 /* 启动时生成一次当天的消息并点亮角标；之后每次回首页只数未读 */
 setTimeout(() => { api('/api/notifications').then(d => setNtfDot(d.unread)).catch(() => {}); }, 1200);
@@ -9034,7 +9069,7 @@ function padSave() {
 }
 function padLoad() {
   try {
-    const d = JSON.parse(localStorage.getItem(padKey()) || 'null');
+    const d = JSON.parse(lsGet(padKey()) || 'null');
     if (d && d.pages && d.pages.length) padSetData(d);
   } catch (_) {}
 }
@@ -9587,7 +9622,7 @@ const Ink = {
   _stash() {
     try {
       if (this.strokes.length) localStorage.setItem('ink:' + this.key, JSON.stringify(this.pack(this.strokes)));
-      else localStorage.removeItem('ink:' + this.key);
+      else lsDel('ink:' + this.key);
       this._warned = false;
     } catch (_) {
       // 存不下就得说话：以前这里是空 catch，笔迹默默丢了，用户完全看不出发生过什么
@@ -9609,11 +9644,11 @@ const Ink = {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target: key, items }),
       });
-      try { localStorage.removeItem('ink:' + key); } catch (_) {}   // 传上去了，本地那份就不留了
+      try { lsDel('ink:' + key); } catch (_) {}   // 传上去了，本地那份就不留了
     } catch (_) {}                        // 离线/失败：本地暂存还在，下次进这一页再补
   },
   _stashed(key) {
-    try { return JSON.parse(localStorage.getItem('ink:' + key) || 'null') || []; } catch (_) { return []; }
+    try { return JSON.parse(lsGet('ink:' + key) || 'null') || []; } catch (_) { return []; }
   },
   async load() {
     const key = this.key;
@@ -9831,14 +9866,14 @@ if ($('#ink-orph-sheet')) {
    setItem 会一直抛 QuotaExceededError，新批注根本存不进去 —— 「批注保留不住」就是这么来的。 */
 function inkMigrate() {
   try {
-    if (localStorage.getItem('inkFmt') === '2') return;
+    if (lsGet('inkFmt') === '2') return;
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (k && k.indexOf('ink:') === 0) keys.push(k);      // 先收齐再改，边遍历边写会乱序
     }
     for (const k of keys) {
-      const old = localStorage.getItem(k);
+      const old = lsGet(k);
       let d = null;
       try { d = JSON.parse(old || 'null'); } catch (_) { continue; }
       if (!d || !d.length || !d[0].pts) continue;          // 空的、或已经是新格式
@@ -9897,7 +9932,7 @@ function createDock(el, key, defDock, onChange) {
   const save = () => { try { lsSet(key, JSON.stringify({ d: st.dock, sizes: st.sizes })); } catch (_) {} };
   (function load() {
     try {
-      const d = JSON.parse(localStorage.getItem(key) || 'null');
+      const d = JSON.parse(lsGet(key) || 'null');
       if (!d) return;
       if (DOCK_NAME[d.d]) { st.dock = d.d; st.prev = d.d === 'full' ? defDock : d.d; }
       if (d.sizes) Object.assign(st.sizes, d.sizes);
@@ -10161,7 +10196,7 @@ window.__padTheme = () => { if (padInited && !$('#pad').classList.contains('hidd
    壁纸铺在 body 上（fixed，不跟着滚），上面盖一层可调浓度的蒙版保证正文看得清。
    登录页在没登录时读不到接口，所以把壁纸 URL 缓存进 localStorage，login.html 自己取。 */
 let SKIN = { avatar: '', wall_app: '', wall_login: '' };
-const skinDim = () => Math.min(90, Math.max(0, parseInt(localStorage.getItem('skinDim') || '55', 10)));
+const skinDim = () => Math.min(90, Math.max(0, parseInt(lsGet('skinDim') || '55', 10)));
 
 function applySkin() {
   // 头像出现在两处：左上角的 logo 和账户页顶部的大圆。
@@ -10322,7 +10357,7 @@ function matSave() {
 function matLoad(key) {
   matKey = key; matStrokes = [];
   try {
-    const d = JSON.parse(localStorage.getItem(key) || 'null');
+    const d = JSON.parse(lsGet(key) || 'null');
     if (d) matStrokes = d.map(s => ({ tool: s.t, color: s.c, pts: (s.p || []).map(q => ({ x: q[0], y: q[1] })) }));
   } catch (_) {}
 }
