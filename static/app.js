@@ -8009,7 +8009,7 @@ const SYNC_REFRESH = {
   planlog: () => loadPlanLog(),
   partydict: () => loadPartyDict(),
   sucai: () => loadSucai(),
-  write: () => loadWrite(),
+  write: () => wrSwitch(wrTab),        // 原先调 loadWrite()，可它在 0134dfe 那次被误删了（只剩这处引用）
   review: () => { if ($('#rv-card-wrap').classList.contains('hidden')) loadReview(); },  // 复习进行中不打断会话
   tasks: () => { const a = document.querySelector('#view-tasks .tk-tab.active'); if (a && a.dataset.tkt === 'shared') loadShared(); },
   csboard: () => loadCsBoard(),

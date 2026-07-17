@@ -28,3 +28,4 @@ uploads/
 data/classics.json
 android/app/build/
 desktop/build/
+node_modules/
