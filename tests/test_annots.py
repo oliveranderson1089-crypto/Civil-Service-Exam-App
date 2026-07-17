@@ -11,6 +11,7 @@ import sqlite3
 import pytest
 
 from conftest import appmod, pass_captcha
+from mods import annots as annmod   # 批注已拆到 mods/annots.py，常量和 get_db 都在那儿
 
 TARGET = "mat:/api/materials/1/view"
 ANCHOR = {"quote": "依法治国", "prefix": "坚持", "suffix": "，建设法治政府。", "start": 12}
@@ -150,7 +151,7 @@ class TestReplace:
 
         # sqlite3.Connection 是 C 类型、属性改不动，从 get_db 这层套一个壳：
         # DELETE 照样走到真连接（正是要模拟的「删完才炸」），executemany 抛。
-        real_get_db = appmod.get_db
+        real_get_db = annmod.get_db
 
         class BoomDB:
             def __init__(self, real):
@@ -162,7 +163,7 @@ class TestReplace:
             def executemany(self, *a, **k):
                 raise sqlite3.OperationalError("disk I/O error")
 
-        monkeypatch.setattr(appmod, "get_db", lambda: BoomDB(real_get_db()))
+        monkeypatch.setattr(annmod, "get_db", lambda: BoomDB(real_get_db()))
         with pytest.raises(sqlite3.OperationalError):
             auth_client.post("/api/annots/replace", json={
                 "target": TARGET,
@@ -178,13 +179,13 @@ class TestLimits:
     """超限要明说，不能默默截断——静默截断就是下一个「批注消失」。"""
 
     def test_单条太大要拒绝(self, auth_client):
-        r = _mk(auth_client, data={"d": "x" * (appmod._ANN_MAX + 10)})
+        r = _mk(auth_client, data={"d": "x" * (annmod._ANN_MAX + 10)})
         assert r.status_code == 400
         assert _list(auth_client) == []
 
     def test_整页太大要拒绝且不落库(self, auth_client):
         each = "y" * 100_000
-        n = appmod._ANN_TOTAL_MAX // 100_000 + 2
+        n = annmod._ANN_TOTAL_MAX // 100_000 + 2
         r = auth_client.post("/api/annots/replace", json={
             "target": TARGET,
             "items": [{"kind": "ink", "anchor_type": "pdf",
@@ -198,7 +199,7 @@ class TestLimits:
         auth_client.post("/api/annots/replace", json={
             "target": TARGET,
             "items": [{"kind": "ink", "anchor_type": "pdf", "anchor": {},
-                       "data": {"d": "z" * (appmod._ANN_MAX + 10)}}]})
+                       "data": {"d": "z" * (annmod._ANN_MAX + 10)}}]})
         items = _list(auth_client)
         assert len(items) == 1 and items[0]["id"] == aid, "非法 replace 把旧批注删了"
 
