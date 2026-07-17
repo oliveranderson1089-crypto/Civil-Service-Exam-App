@@ -10,6 +10,7 @@ import textwrap
 
 import pytest
 
+import core                      # 配置已搬进 core.py，要 patch 在那儿才有效
 from conftest import BASE, appmod
 
 
@@ -56,19 +57,19 @@ class TestBoot:
 
 class TestSaveCfg:
     def test_存不下要抛出来而不是假装成功(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(appmod, "CONFIG", str(tmp_path / "没有这个目录" / "config.json"))
+        monkeypatch.setattr(core, "CONFIG", str(tmp_path / "没有这个目录" / "config.json"))
         with pytest.raises(Exception):
-            appmod._save_cfg()
+            core._save_cfg()
 
     def test_原子写不会留下半个文件(self, tmp_path, monkeypatch):
         """json.dump 写到一半炸掉时，原文件必须原样还在。"""
         cfg = tmp_path / "config.json"
         cfg.write_text('{"secret_key": "good"}', encoding="utf-8")
-        monkeypatch.setattr(appmod, "CONFIG", str(cfg))
+        monkeypatch.setattr(core, "CONFIG", str(cfg))
 
         def boom(*a, **k):
             raise IOError("磁盘满了")
-        monkeypatch.setattr(appmod.json, "dump", boom)
+        monkeypatch.setattr(core.json, "dump", boom)
         with pytest.raises(IOError):
-            appmod._save_cfg()
+            core._save_cfg()
         assert json.loads(cfg.read_text(encoding="utf-8"))["secret_key"] == "good"
