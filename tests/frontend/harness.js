@@ -25,6 +25,7 @@ const EXPORTS = [
   'Ink', 'annCtx', 'annLocate', 'annPosOf', 'annRangeOf',
   'rvShow', 'rvSelect', 'RV_INTERVALS', 'RV_LNAME', 'rvQueue',
   'mdToHtml', 'mdSafeHref',
+  'feedCard', 'addTagsFrom', 'draft', 'boardOptions',
 ];
 
 function boot(opts = {}) {
@@ -120,6 +121,12 @@ function boot(opts = {}) {
     window: w, dom, calls, toasts, logs, bindings,
     T: w.__T,
     run: (code) => w.__run(code),      // 在 app.js 自己的作用域里执行
+
+    /* 把 jsdom 那边的值搬回本 realm。
+       jsdom 里造的数组/对象，原型是它自己那套 Object/Array —— assert.deepStrictEqual
+       会以「结构相同但原型不是同一引用」失败，报出来的两边看着一模一样，很费解。
+       断言结构时一律先过这个（踩过两次了：aichat 的 toast、notes 的 draft.tags）。 */
+    plain: (code) => JSON.parse(JSON.stringify(w.__run(code))),
 
     /* 把 localStorage 变成「满的」。
        只能改 Storage.prototype —— jsdom 的 Storage 实例上覆盖不了 setItem
