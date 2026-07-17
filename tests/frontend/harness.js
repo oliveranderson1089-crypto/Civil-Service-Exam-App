@@ -23,6 +23,7 @@ const EXPORTS = [
   'wrSwitch', 'api', 'esc', 'fmtSize', 'fmtTime', 'composing',
   'checkSync', '_syncEditing', 'aiRunActions',
   'Ink', 'annCtx', 'annLocate', 'annPosOf', 'annRangeOf',
+  'rvShow', 'rvSelect', 'RV_INTERVALS', 'RV_LNAME', 'rvQueue',
 ];
 
 function boot(opts = {}) {

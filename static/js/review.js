@@ -13,11 +13,14 @@
 /* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
 const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文' };
 const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e' };
+// 跟 mods/review.py 的 REVIEW_INTERVALS 是同一张表。这儿必须留一份副本：
+// 「认识 → N 天后」是点之前就要显示的预告，那时还没调接口、拿不到后端算的 interval。
+// 两份手抄迟早走散（后端注释里记着同样的教训：白名单抄了第二份，结果加新来源时漏改一处），
+// 所以 tests/frontend/review.test.js 有一条专门盯着它俩一致。
 const RV_INTERVALS = [1, 2, 4, 7, 15, 30, 60];
 let rvQueue = [], rvTotal = 0, rvDoneN = 0;
 /* 词语句子 / 每日积累 / 批注 / 错题 各背各的，不混成一副牌 */
 let rvAll = [], rvGroup = 'word', rvDoneToday = {};
-const RV_GROUP_NAME = { word: '词语句子', daily: '每日积累', annot: '批注', wrongq: '错题' };
 /* 每日复习量：一天能背多少因人而异。堆太多就不想背了 —— 超出上限的**不会丢**，
    只是今天不出现（到期时间不变，明天照样在）。0 = 不限。 */
 const RV_LNAME = { word: '词语句子', daily: '每日积累', annot: '批注', wrongq: '错题' };
@@ -92,7 +95,7 @@ function rvSelect(group) {
     const done = rvDoneToday[group] || 0;
     const lim = (rvLim || {})[group] || 0;
     $('#rv-empty').innerHTML = done > 0
-      ? `<p class="empty">✅ 「${RV_GROUP_NAME[group] || ''}」今日已完成 <b>${done}</b> 条${lim ? '（每日量 ' + lim + '）' : ''}，明天见～<br><span style="font-size:13px;color:var(--muted)">想多背可到「每日复习量」调高上限。</span></p>`
+      ? `<p class="empty">✅ 「${RV_LNAME[group] || ''}」今日已完成 <b>${done}</b> 条${lim ? '（每日量 ' + lim + '）' : ''}，明天见～<br><span style="font-size:13px;color:var(--muted)">想多背可到「每日复习量」调高上限。</span></p>`
       : '<p class="empty">🎉 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p>';
     $('#rv-empty').classList.remove('hidden');
     return;
