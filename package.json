@@ -1,0 +1,15 @@
+{
+  "name": "gongkao-app-frontend",
+  "private": true,
+  "description": "公考助手前端的工具链：eslint 静态检查 + jsdom 行为测试。后端不用它（后端是 Flask + .venv）。",
+  "scripts": {
+    "lint": "eslint static/app.js static/sw.js",
+    "test": "node --test \"tests/frontend/*.test.js\"",
+    "check": "npm run lint && npm run test"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.0",
+    "globals": "^16.5.0",
+    "jsdom": "^28.0.0"
+  }
+}
