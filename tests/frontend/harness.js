@@ -26,6 +26,7 @@ const EXPORTS = [
   'rvShow', 'rvSelect', 'RV_INTERVALS', 'RV_LNAME', 'rvQueue',
   'mdToHtml', 'mdSafeHref',
   'feedCard', 'addTagsFrom', 'draft', 'boardOptions',
+  'slWords', 'slCountWords', 'slSetupAnswer',
 ];
 
 function boot(opts = {}) {
