@@ -10,7 +10,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from core import UPLOADS, get_db, uid
 from mods.files import (INLINE_EXT, OFFICE_EXT, TEXT_EXT, _extract_text,
-                        _office_to_pdf, _remove_file, _user_dir)
+                        _no_script, _office_to_pdf, _remove_file, _user_dir)
 
 bp = Blueprint("notes", __name__)
 
@@ -162,7 +162,7 @@ def note_img(nid, idx):
     path = os.path.join(UPLOADS, str(uid()), imgs[idx])
     if not os.path.exists(path):
         return "文件丢失", 404
-    return send_file(path, as_attachment=False)
+    return _no_script(send_file(path, as_attachment=False))
 
 
 @bp.get("/api/notes/<int:nid>/file/<int:idx>")
@@ -182,7 +182,7 @@ def note_file(nid, idx):
     if not dl and ext in OFFICE_EXT:
         pdf = _office_to_pdf(path)
         if pdf:
-            return send_file(pdf, mimetype="application/pdf", as_attachment=False)
+            return _no_script(send_file(pdf, mimetype="application/pdf", as_attachment=False))
     if not dl and ext in (".html", ".htm"):
         with open(path, "rb") as fp:
             return Response(fp.read(), mimetype="text/html; charset=utf-8")
@@ -190,7 +190,7 @@ def note_file(nid, idx):
         with open(path, "rb") as fp:
             return Response(fp.read(), mimetype="text/plain; charset=utf-8")
     if not dl and ext in INLINE_EXT:
-        return send_file(path, as_attachment=False, download_name=a.get("name"))
+        return _no_script(send_file(path, as_attachment=False, download_name=a.get("name")))
     return send_file(path, as_attachment=True, download_name=a.get("name") or a["file"])
 
 

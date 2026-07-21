@@ -9,8 +9,8 @@ import uuid
 from flask import Blueprint, jsonify, request, send_file
 
 from core import UPLOADS, get_db, uid
-from mods.files import (INLINE_EXT, OFFICE_EXT, _extract_text, _office_to_pdf,
-                        _remove_file, _user_dir)
+from mods.files import (INLINE_EXT, OFFICE_EXT, _extract_text, _no_script,
+                        _office_to_pdf, _remove_file, _user_dir)
 from mods.notes import _jl
 
 bp = Blueprint("kb", __name__)
@@ -274,7 +274,7 @@ def kb_asset(stored):
     if not dl and ext in OFFICE_EXT:
         pdf = _office_to_pdf(path)
         if pdf:
-            return send_file(pdf, mimetype="application/pdf", as_attachment=False)
+            return _no_script(send_file(pdf, mimetype="application/pdf", as_attachment=False))
     if not dl and (ext in KB_IMG_EXT or ext in INLINE_EXT):
-        return send_file(path, as_attachment=False)
+        return _no_script(send_file(path, as_attachment=False))
     return send_file(path, as_attachment=True)

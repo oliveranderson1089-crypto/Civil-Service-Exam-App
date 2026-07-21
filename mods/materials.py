@@ -15,7 +15,8 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from core import UPLOADS, get_db, log, uid
 from mods.files import (INLINE_EXT, OFFICE_EXT, TEXT_EXT, _cacheable,
-                        _extract_text, _office_to_pdf, _remove_file, _user_dir)
+                        _extract_text, _no_script, _office_to_pdf, _remove_file,
+                        _user_dir)
 
 bp = Blueprint("materials", __name__)
 
@@ -171,7 +172,7 @@ def material_view(mid):
         pdf = _office_to_pdf(path)
         if not pdf:
             return "文档转换失败，请下载查看", 500
-        return _cacheable(send_file(_linearized(pdf), mimetype="application/pdf", as_attachment=False))
+        return _cacheable(_no_script(send_file(_linearized(pdf), mimetype="application/pdf", as_attachment=False)))
     if ext in (".html", ".htm"):
         with open(path, "rb") as fp:
             html_txt = fp.read().decode("utf-8", "ignore")
@@ -180,10 +181,10 @@ def material_view(mid):
         with open(path, "rb") as fp:
             return Response(fp.read(), mimetype="text/plain; charset=utf-8")
     if ext == ".pdf":
-        return _cacheable(send_file(_linearized(path), mimetype="application/pdf",
-                                    as_attachment=False, download_name=m["orig_name"]))
+        return _cacheable(_no_script(send_file(_linearized(path), mimetype="application/pdf",
+                                               as_attachment=False, download_name=m["orig_name"])))
     # 图片等：浏览器内联打开
-    return _cacheable(send_file(path, as_attachment=False, download_name=m["orig_name"]))
+    return _cacheable(_no_script(send_file(path, as_attachment=False, download_name=m["orig_name"])))
 
 
 # ---- 幻灯片播放（PPT/PDF 逐页出图） ----

@@ -11,7 +11,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from core import UPLOADS, get_db, uid
 from mods.ai import _ai_call_or_error
-from mods.files import _remove_file, _user_dir
+from mods.files import _no_script, _remove_file, _user_dir
 
 bp = Blueprint("wrongq", __name__)
 
@@ -200,4 +200,4 @@ def wq_image(wid):
     p = os.path.join(UPLOADS, str(uid()), r["image"])
     if not os.path.exists(p):
         return "文件丢失", 404
-    return send_file(p, as_attachment=False)
+    return _no_script(send_file(p, as_attachment=False))

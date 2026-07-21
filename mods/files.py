@@ -230,3 +230,21 @@ def _cacheable(resp, days=30):
     resp.headers["Cache-Control"] = "private, max-age=%d" % (days * 86400)
     resp.headers.pop("Expires", None)
     return resp
+
+
+def _no_script(resp):
+    """内联返回用户上传的文件时，挡住里面可能夹带的脚本。
+
+    资料库 / 小记 / 知识库 / 错题图 / 云盘 / 聊天文件都收**任意格式**，其中 .html
+    和 .svg 是能带 <script> 的。`as_attachment=False` 意味着浏览器会**当页面打开**
+    它 —— 那段脚本就跑在本站源上，读得到登录 cookie、调得动任何接口。聊天文件尤其
+    要紧：那是**别人**发过来的东西。
+
+    CSP `sandbox`（不给 allow-scripts）把这类响应关进独立源的沙箱，脚本执行不了、
+    也拿不到本站的 cookie 和 storage；`nosniff` 再拦住浏览器把内容猜成 HTML 再执行。
+    图片 / PDF / 音视频在沙箱里照常渲染，pdf.js 是用 XHR 取字节的、更不受影响，
+    所以预览功能一个都不受损。
+    """
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Content-Security-Policy"] = "sandbox"
+    return resp

@@ -17,7 +17,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from core import CFG, UPLOADS, get_db, log, uid, uname
 from mods.files import (IMAGE_EXT, INLINE_EXT, OFFICE_EXT, _cacheable,
-                        _extract_text, _office_to_pdf)
+                        _extract_text, _no_script, _office_to_pdf)
 
 bp = Blueprint("social", __name__)
 
@@ -286,16 +286,6 @@ def drive_download(fid):
                      mimetype=r["mime"] or "application/octet-stream")
 
 
-def _no_script(resp):
-    """云盘什么格式都收，包括 .html / .svg —— 直接内联返回，等于让别人上传的脚本跑在
-    本站源上（读得到登录 cookie、调得动接口）。CSP sandbox 把这类文件关进独立源的沙箱
-    （不给 allow-scripts 就执行不了脚本），nosniff 拦住浏览器把内容猜成 HTML 再执行。
-    图片 / PDF / 音视频在沙箱里照常渲染，所以不影响预览。"""
-    resp.headers["X-Content-Type-Options"] = "nosniff"
-    resp.headers["Content-Security-Policy"] = "sandbox"
-    return resp
-
-
 @bp.get("/api/drive/<int:fid>/view")
 def drive_view(fid):
     """内联预览。和 /download 只差一个 as_attachment，但对图片/PDF/视频来说，
@@ -320,9 +310,9 @@ def drive_view(fid):
     elif not _viewable(ext):
         return jsonify({"error": "这个格式不支持预览"}), 415
     # conditional=True 才会响应 Range 请求 —— 没有它，视频只能从头播，拖不动进度条
-    resp = send_file(path, as_attachment=False, download_name=r["name"],
-                     mimetype=mime or None, conditional=True)
-    return _cacheable(_no_script(resp))
+    return _cacheable(_no_script(send_file(
+        path, as_attachment=False, download_name=r["name"],
+        mimetype=mime or None, conditional=True)))
 
 
 @bp.patch("/api/drive/<int:fid>")
@@ -560,9 +550,11 @@ def chat_file(fid):
         if not party:
             return "无权访问", 403
     inline = request.args.get("inline") == "1"
-    return send_file(os.path.join(_drive_dir(owner), r["stored_name"]),
+    resp = send_file(os.path.join(_drive_dir(owner), r["stored_name"]),
                      as_attachment=not inline, download_name=r["name"],
                      mimetype=r["mime"] or "application/octet-stream")
+    # 聊天文件是**别人**发过来的，内联打开时更要挡住里面夹带的脚本
+    return _no_script(resp) if inline else resp
 
 
 @bp.get("/api/chat/unread")
