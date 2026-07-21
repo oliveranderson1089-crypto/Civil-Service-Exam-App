@@ -75,17 +75,43 @@ def _find_sents(material):
     return out
 
 
+def _lcs_len(a, b):
+    """最长公共子串长度（近似匹配用）。句子都不长，O(n*m) 足够。"""
+    if not a or not b:
+        return 0
+    prev = [0] * (len(b) + 1)
+    best = 0
+    for ca in a:
+        cur = [0] * (len(b) + 1)
+        for j, cb in enumerate(b, 1):
+            if ca == cb:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
+
+
 def _find_locate(sents, evidence):
-    """采分点的原文依据 → 落到哪几句上。整句包含、或句子被依据包含，都算。"""
+    """采分点的原文依据 → 落到哪几句上。先精确（整句包含/被包含），
+    对不齐再兜底：找与依据重合度最高的那句（AI 的依据偶尔略有出入/是跨句概括）。"""
     ev = re.sub(r"\s", "", evidence)
-    hit = []
+    if not ev:
+        return []
+    hit = [i for i, s in enumerate(sents)
+           if (t := re.sub(r"\s", "", s["t"])) and (t in ev or ev in t)]
+    if hit:
+        return hit
+    # 兜底：逐句取最长公共子串，够长（≥12 字或该句一半）就认它 —— 近似原文也能锚到原句
+    best_i, best_ov = -1, 0
     for i, s in enumerate(sents):
         t = re.sub(r"\s", "", s["t"])
-        if not t:
+        if len(t) < 10:
             continue
-        if t in ev or ev in t:
-            hit.append(i)
-    return hit
+        ov = _lcs_len(ev, t)
+        if ov > best_ov and ov >= min(12, len(t) // 2):
+            best_ov, best_i = ov, i
+    return [best_i] if best_i >= 0 else []
 
 
 def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requirement=""):
@@ -94,25 +120,39 @@ def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requi
     pts_full = full or dfull
     if qtype == "guanche":                          # 贯彻执行：格式另占约 1/4，采分点只分内容那部分
         pts_full = pts_full - max(2, round(pts_full * 0.25))
+    # 采分点个数按分值定，贴近真题阅卷（约每 2~3 分一个点，按要点/关键词给分）
+    n_lo = max(4, round(pts_full / 3.0))
+    n_hi = min(10, max(n_lo + 2, round(pts_full / 2.0)))
     prompt = (
-        "下面是一道申论**%s**的给定资料和题干。请像阅卷组一样，把**采分点**标出来。\n\n"
+        "下面是一道申论**%s**的给定资料和题干。请**像真题阅卷组制定标准答案（评分细则）一样**，"
+        "把这道题的**采分点**逐条标出来。\n\n"
         "【题干】%s\n\n【给定资料】\n%s\n\n"
-        "【要求】\n"
-        "1. 一个采分点 = 一个独立的得分要点。%d 分（内容部分）一般 5~8 个点。\n"
-        "2. 每个点给：\n"
-        "   · point：概括后的要点表述（12~30 字，这是**答案里该写的话**，不是原文）\n"
-        "   · evidence：这个点在材料里的依据，**从材料里逐字复制**（一句或连续两句，"
-        "一字不差，含标点）—— 对不上原文的点我会直接丢掉\n"
-        "   · score：分值（所有点加起来 = %d 分）\n"
-        "3. **材料里有干扰信息**（背景铺垫、无关细节、重复表述），不要把它们标成采分点。\n"
-        "4. 同一个意思在材料里出现两次的，**只标一个点**，evidence 取最完整的那处。\n\n"
+        "【怎么标（对齐真题评分标准）】\n"
+        "1. 一个采分点 = 一个**独立的得分要点**。本题内容部分 %d 分，标 **%d~%d 个**采分点"
+        "（真题一般每 2~3 分一个点、按要点/关键词给分）。**宁全勿漏**：材料里凡是能得分的要点都要标出来，"
+        "别怕多。\n"
+        "2. **要点要具体、能拆就拆**：一个采分点只讲一件事；不同的做法／表现／原因／影响／意义要**分开**标，"
+        "不要并成「加强管理」「提升水平」这种空泛的大点（空话不给分）。\n"
+        "3. 每个点给：\n"
+        "   · point：概括后的要点表述（10~28 字，标准答案里该写的话，动宾结构、点到关键词，**不是照抄原文**）\n"
+        "   · evidence：这个点在材料里的依据，必须是从材料里**原封不动复制**的连续一句（或相邻两句）原文，"
+        "**一个字都不能改、不能自己概括、不能把不相邻的句子拼接**。若这个要点是跨多句总结出来的，"
+        "就挑**最能支撑它的那一句原文**照抄。\n"
+        "     ——【正例】point「推广太阳能路灯等绿色照明」，evidence 照抄原句「近年来，H市积极推广太阳能路灯"
+        "这一绿色照明方案」；【反例】evidence 写成「H市推广了绿色照明」← 这是概括，会被判对不上原文而丢掉。\n"
+        "   · score：该点分值（一般 1~3 分，所有点相加正好 = %d 分）\n"
+        "4. **材料里有干扰信息**（背景铺垫、无关细节、反面例子、同义重复），不要标成采分点。\n"
+        "5. 同一个意思在材料里出现两次的，**只标一个点**，evidence 取最完整的那处。\n"
+        "6. 按题型抓要点：归纳概括抓「做法/措施/表现/成效」；综合分析抓「是什么—为什么—怎么办各层的要点」；"
+        "提出对策抓「问题及其对应的对策」；贯彻执行抓「正文该写进去的内容要点」。\n\n"
         '只输出 JSON：{"points":[{"point":"","evidence":"","score":0}]}'
-        % (name, stem, material[:8000], pts_full, pts_full))
+        % (name, stem, material[:8000], pts_full, n_lo, n_hi, pts_full))
     rep, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是申论阅卷组组长。采分点的依据必须逐字来自材料，"
+        [{"role": "system", "content": "你是申论阅卷组组长，负责制定这道题的标准答案与评分细则。"
+                                       "采分点要齐全（宁全勿漏、按要点给分），依据必须逐字来自材料，"
                                        "绝不改写、不编造。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
-        temperature=0.3, max_tokens=2500, timeout=300, json_mode=True)
+        temperature=0.3, max_tokens=3200, timeout=300, json_mode=True)
     if err:
         return None, err
     try:
@@ -121,21 +161,30 @@ def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requi
         return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
 
     sents = _find_sents(material)
-    flat = re.sub(r"\s", "", material)
     points = []
+    seen = set()
     for p in got:
         ev = (p.get("evidence") or "").strip()
         pt = (p.get("point") or "").strip()
         if not ev or not pt:
             continue
-        if re.sub(r"\s", "", ev) not in flat:      # 对不上原文的直接丢（宁可少，不能错）
-            continue
-        hit = _find_locate(sents, ev)
+        hit = _find_locate(sents, ev)              # 能锚到材料某句就留（含近似兜底），锚不到才丢
         if not hit:
             continue
-        points.append({"point": pt, "evidence": ev, "score": float(p.get("score") or 0), "sents": hit})
+        key = tuple(hit)
+        if key in seen:                            # 同一句已被别的点占了（同义重复）→ 只留一个
+            continue
+        seen.add(key)
+        # 依据统一取「命中的材料原句」，保证「找漏」里「就在这句」引用的是真原文（而非 AI 的转述）
+        ev_text = "".join(sents[i]["t"] for i in hit) or ev
+        points.append({"point": pt, "evidence": ev_text,
+                       "score": float(p.get("score") or 0), "sents": hit})
     if len(points) < 3:
         return None, (jsonify({"error": "AI 标出的采分点太少或对不上原文，请重试"}), 502)
+    # 分值按满分重新配比，保证一道题所有采分点相加正好 = 满分（AI 给的分常不配平）
+    tot = sum(p["score"] for p in points) or len(points)
+    for p in points:
+        p["score"] = round(p["score"] / tot * pts_full, 1) if tot else round(pts_full / len(points), 1)
 
     cur = db.execute(
         "INSERT INTO find_papers(user_id,qtype,type_name,stem,requirement,full,word_min,word_max,"
@@ -605,10 +654,64 @@ def find_record(rid):
                     "grade": _loads(r["grade"], {})})
 
 
+# 上传的一份真题里有「给定资料1/2/3…」多则，而一道小题通常只对应其中某一则。
+# 所以按编号把合并的给定资料切成多则，每道题只拿它题干里引用的那一则去标采分点
+# （对齐真题「一题一则」，采分点更准、不被别则串味）。
+_CN_NUM_F = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+             "七": 7, "八": 8, "九": 9, "十": 10}
+# 分则标记：行首「1.」这类阿拉伯编号，或「材料一/给定资料2」这类标题
+_MAT_SEG_NUM = re.compile(r"^[ \t]*(\d{1,2})\s*[.．、]\s*(?=\S)", re.M)
+_MAT_SEG_CN = re.compile(r"^[ \t]*(?:给定)?材\s*料\s*([一二三四五六七八九十\d]{1,3})\s*[.．、:：]?\s*", re.M)
+# 题干里的「给定资料N / 材料N」引用
+_Q_MAT_REF = re.compile(r"(?:给定)?[资材]\s*料\s*([一二三四五六七八九十\d]{1,3})")
+
+
+def _cn2i(s):
+    s = (s or "").strip()
+    return int(s) if s.isdigit() else _CN_NUM_F.get(s, 0)
+
+
+def _split_materials(material):
+    """把一份合并的给定资料按开头编号切成 {序号: 该则正文}。
+    只保留从 1 起、连续递增的编号（过滤材料内部误命中的列表项/年份）。切不出多则就返回 {}。"""
+    for pat in (_MAT_SEG_NUM, _MAT_SEG_CN):
+        marks = [(m.start(), m.end(), _cn2i(m.group(1))) for m in pat.finditer(material)]
+        seq, kept = 1, []
+        for st, en, num in marks:
+            if num == seq:                  # 只接从 1 开始一路连续的编号
+                kept.append((st, en))
+                seq += 1
+        if len(kept) >= 2:
+            out = {}
+            for i, (st, en) in enumerate(kept):
+                end = kept[i + 1][0] if i + 1 < len(kept) else len(material)
+                out[i + 1] = material[en:end].strip()   # 去掉编号本身，留正文
+            return out
+    return {}
+
+
+def _q_scoped_material(qbody, mats, full_material):
+    """一道题该用哪一则材料：读题干里引用的「给定资料N」，只喂那一则。
+    引用多则就拼那几则；没写明或对不上就退回整份（如自拟题目的大作文式题干）。"""
+    if not mats:
+        return full_material
+    refs = []
+    for m in _Q_MAT_REF.finditer(qbody):
+        n = _cn2i(m.group(1))
+        if n in mats and n not in refs:
+            refs.append(n)
+    if not refs:
+        return full_material
+    if len(refs) == 1:
+        return mats[refs[0]]
+    return "\n\n".join(mats[n] for n in refs)
+
+
 @bp.post("/api/find/upload")
 def find_upload():
     """上传真题文档 → 拆出材料和小题 → 留归纳概括/综合分析/提出对策/贯彻执行，各标一套采分点（大作文跳过）。
-       抽文本、拆题、判题型全部复用真题批改那条管线（_split_paper / _classify_questions）。"""
+       抽文本、拆题、判题型全部复用真题批改那条管线（_split_paper / _classify_questions）。
+       给定资料按编号切成多则，每道题只用它题干引用的那一则标采分点（一题一则）。"""
     f = request.files.get("file")
     if not f or not f.filename:
         return jsonify({"error": "请选择文件"}), 400
@@ -634,6 +737,7 @@ def find_upload():
     if not qs:
         return jsonify({"error": "没识别出题目。请确认文件里有「作答要求」部分"}), 400
     cls = _classify_questions(qs)
+    mats = _split_materials(material)             # 按编号切成 {1:…, 2:…, …}；切不出就 {}
 
     db = get_db()
     made, skipped = [], []
@@ -646,7 +750,8 @@ def find_upload():
         lo, hi = _sl_word_range(q["body"])
         m = _SL_SCORE.search(q["body"])
         full = int(m.group(1)) if m else int(c.get("full") or FIND_TYPES[key][1])
-        pid, err = _find_build(db, uid(), key, q["body"][:1200], material, full,
+        qmat = _q_scoped_material(q["body"], mats, material)   # 一题一则：只用题干引用的那一则
+        pid, err = _find_build(db, uid(), key, q["body"][:1200], qmat, full,
                                lo or int(c.get("word_min") or 0), hi or int(c.get("word_max") or 0),
                                "真题 · " + os.path.splitext(f.filename)[0][:40])
         if not err:
