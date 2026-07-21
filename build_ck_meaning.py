@@ -17,7 +17,8 @@ import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import app as A  # noqa: E402
+from core import DB  # noqa: E402
+from mods.ai import _ai_call_or_error  # noqa: E402
 
 
 def dict_meaning(db, word):
@@ -44,7 +45,7 @@ def ai_meanings(words):
         "面向公务员考试考生，准确、精炼，不要例句、不要搭配、不要拼音。\n"
         "词语：%s\n\n"
         '只输出 JSON：{"r":[{"w":"词","m":"释义"}]}' % lst)
-    rep, err = A._ai_call_or_error(
+    rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是词典编辑，给词写简明释义。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
         temperature=0.2, max_tokens=2000, timeout=120, json_mode=True)
@@ -68,7 +69,7 @@ def main():
     ap.add_argument("--board", default="实词", help="给哪个板块补（默认实词）")
     a = ap.parse_args()
 
-    db = sqlite3.connect(A.DB, timeout=60)
+    db = sqlite3.connect(DB, timeout=60)
     db.row_factory = sqlite3.Row
     rows = db.execute("SELECT id, title, meaning FROM changkao_items WHERE board=? ORDER BY id",
                       (a.board,)).fetchall()

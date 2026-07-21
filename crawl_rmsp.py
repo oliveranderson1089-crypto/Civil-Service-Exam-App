@@ -26,7 +26,7 @@ import time
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import app as A  # noqa: E402
+from core import DB  # noqa: E402
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/120.0.0.0 Safari/537.36")
@@ -151,7 +151,7 @@ def main():
     ap.add_argument("--back", type=int, default=0, help="从今天往前补几天（首次铺量用）")
     a = ap.parse_args()
 
-    db = sqlite3.connect(A.DB, timeout=60)
+    db = sqlite3.connect(DB, timeout=60)
     db.row_factory = sqlite3.Row
 
     days = []

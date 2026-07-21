@@ -14,19 +14,22 @@ import sqlite3
 import sys
 import time
 
-import app as A
+from app import app
+from core import DB
+from mods.write import _write_gen
+from mods.sucai import _sucai_import
 
 
 def _con():
-    con = sqlite3.connect(A.DB, timeout=60)
+    con = sqlite3.connect(DB, timeout=60)
     con.row_factory = sqlite3.Row
     return con
 
 
 def gen(con, mode, date):
     t0 = time.time()
-    with A.app.app_context():
-        e, err = A._write_gen(con, mode, date)
+    with app.app_context():
+        e, err = _write_gen(con, mode, date)
     if err:
         body = err[0].get_json() if hasattr(err[0], "get_json") else {}
         print("  ✗ %s %s：%s" % (mode, date, body.get("error", err)))
@@ -59,8 +62,8 @@ def main():
         gen(con, "daily", a.daily or time.strftime("%Y-%m-%d"))
 
     if a.backfill:
-        with A.app.app_context():
-            A._sucai_import(con)
+        with app.app_context():
+            _sucai_import(con)
         todo = [r[0] for r in con.execute(
             "SELECT DISTINCT s.date FROM sucai_items s WHERE NOT EXISTS("
             "SELECT 1 FROM daily_essays e WHERE e.mode='daily' AND e.date=s.date) "

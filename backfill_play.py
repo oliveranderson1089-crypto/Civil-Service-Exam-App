@@ -11,10 +11,10 @@ import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import app as A            # noqa: E402
+from core import DB        # noqa: E402
 import crawl_video as C    # noqa: E402
 
-db = sqlite3.connect(A.DB, timeout=60)
+db = sqlite3.connect(DB, timeout=60)
 db.row_factory = sqlite3.Row
 rows = db.execute("SELECT id,kind,guid,url,title FROM video_items "
                   "WHERE (play IS NULL OR play='') AND kind IN ('cctv','sc')").fetchall()

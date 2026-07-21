@@ -40,7 +40,9 @@ import time
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import app as A  # noqa: E402
+from core import DB  # noqa: E402
+from mods.ai import _ai_call_or_error  # noqa: E402
+from mods.news import VIDEO_BOARDS, cctv_play  # noqa: E402
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/120.0.0.0 Safari/537.36")
@@ -350,7 +352,7 @@ def bili_boards(cands):
         "· 娱乐、体育赛事花边、生活趣闻这类**对公考没用**的，board 填「无」\n\n"
         "%s\n\n"
         '只输出 JSON：{"r":[{"i":序号,"board":"国内|国际|四川|备考|无"}]}' % "\n".join(lines))
-    rep, err = A._ai_call_or_error(
+    rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你给公考备考视频分类。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
         temperature=0.1, max_tokens=1200, timeout=120, json_mode=True)
@@ -368,7 +370,7 @@ def bili_boards(cands):
         except Exception:
             continue
         b = (r.get("board") or "").strip()
-        if 0 <= k < len(cands) and b in A.VIDEO_BOARDS:
+        if 0 <= k < len(cands) and b in VIDEO_BOARDS:
             cands[k]["board"] = b
             out.append(cands[k])
     print("  · B 站 %d 条 → 归类后留下 %d 条" % (len(cands), len(out)))
@@ -424,7 +426,7 @@ def ai_pick(db, board, cands):
     role = ("你是公考申论/面试老师，在帮学生挑课。只挑真正讲到点子上的，宁缺毋滥。严格输出 JSON。"
             if board == "备考" else
             "你是公考时政老师。只挑真正对考试有用的，宁缺毋滥。严格输出 JSON。")
-    rep, err = A._ai_call_or_error(
+    rep, err = _ai_call_or_error(
         [{"role": "system", "content": role},
          {"role": "user", "content": prompt}],
         temperature=0.3, max_tokens=1500, timeout=180, json_mode=True)
@@ -458,7 +460,7 @@ def main():
     ap.add_argument("--days", type=int, default=2, help="只要最近几天的")
     a = ap.parse_args()
 
-    db = sqlite3.connect(A.DB, timeout=60)
+    db = sqlite3.connect(DB, timeout=60)
     db.row_factory = sqlite3.Row
     # 已经收过的：**在送去 AI 之前**就剔掉。
     # 新闻每天都是新的，本来也撞不上；但**备考的窗口有三周**，不剔的话同样那几条会天天
@@ -496,7 +498,7 @@ def main():
     today = time.strftime("%Y-%m-%d")
     n_new = 0
     try:
-        for board in A.VIDEO_BOARDS:      # 板块只在 app.py 定义一份，别抄第二遍
+        for board in VIDEO_BOARDS:      # 板块只在 app.py 定义一份，别抄第二遍
             sub = [c for c in cands if c["board"] == board]
             if not sub:
                 continue
@@ -555,7 +557,7 @@ def resolve_play(ch, c):
         for attempt in range(3):
             time.sleep(1.5 if attempt == 0 else 4.0)
             try:
-                return A.cctv_play(c["guid"])
+                return cctv_play(c["guid"])
             except Exception as e:
                 err = str(e)[:40]
         print("      ⚠ 取央视流失败（点播放时会退回浏览器）：%s" % err)
