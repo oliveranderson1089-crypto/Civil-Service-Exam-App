@@ -197,15 +197,21 @@ def main():
     # 那是另一件事，没做完之前放开只会让人对着半截材料做题。
     # **图够用才放行**。一道图形推理要么有「题干图 + 四个选项图」，要么有一张画全的大图；
     # 只挂到一两张零星小图的，多半是漏提了，放出去就是让人对着半截题干瞪眼。
-    freed = con.execute(
-        "UPDATE real_questions SET needs_asset=0 WHERE needs_asset=1 AND module='判断推理' "
-        "AND id IN (SELECT qid FROM real_figs GROUP BY qid HAVING COUNT(*)>=?)",
-        (_MIN_FIGS,)).rowcount
-    freed += con.execute(
-        "UPDATE real_questions SET needs_asset=0 WHERE needs_asset=1 AND module='判断推理' "
-        "AND id IN (SELECT qid FROM real_figs WHERE big=1)").rowcount
+    # **双向**：图够了就放，图不够就锁回去。只会解封的话，早先按别的标准误放的题
+    # 会被 dedup 的「原样搬运」永久固化下来。这个模块的标志位归本脚本负全责。
+    ok_cond = ("(id IN (SELECT qid FROM real_figs GROUP BY qid HAVING COUNT(*)>=%d) "
+               " OR id IN (SELECT qid FROM real_figs WHERE big=1))" % _MIN_FIGS)
+    freed = con.execute("UPDATE real_questions SET needs_asset=0 "
+                        "WHERE needs_asset=1 AND module='判断推理' AND " + ok_cond).rowcount
+    relocked = con.execute(
+        "UPDATE real_questions SET needs_asset=1 WHERE needs_asset=0 AND module='判断推理' "
+        # 只管「本来就需要图」的那些：纯文字的判断推理题（定义判断/类比）不该被锁
+        "AND (stem LIKE '%问号处%' OR stem LIKE '%图形%' OR stem LIKE '%下图%' "
+        "     OR stem LIKE '%左图%' OR stem LIKE '%纸盒%' OR stem LIKE '%立体%' "
+        "     OR stem LIKE '%正方体%' OR stem LIKE '%折叠%' OR stem LIKE '%展开图%') "
+        "AND NOT " + ok_cond).rowcount
     con.commit()
-    print("解除 needs_asset：判断推理 %d 道（现在能出了）" % freed)
+    print("解除 needs_asset：判断推理 %d 道；锁回（图不全）：%d 道" % (freed, relocked))
     left = con.execute("SELECT COUNT(*) FROM real_questions WHERE needs_asset=1 "
                        "AND module='判断推理'").fetchone()[0]
     print("判断推理仍缺图的还有 %d 道（多半来自 PDF 版，要整页渲染才行）" % left)

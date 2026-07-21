@@ -61,6 +61,9 @@ _MAT_HEAD = re.compile(
     r"|^[\s　]*(?:以下|下列|下面)(?:资料|材料)[^\n]{0,12}$")
 _MAT_HEAD_WEAK = re.compile(r"^[\s　]*[图表]\s*\d+[\s　]")
 _MIN_MAT = 20          # 太短的不算材料（多半是个孤零零的小标题）
+# 材料正文到这个长度就认为「自成一体」，没有表格图也能做题（文字型资料分析）。
+# 300 字是看着分布定的：<300 字的基本是图表型材料的那句「注：…」，数还在图里。
+_SELF_CONTAINED = 300
 
 
 def find_path(stored):
@@ -208,13 +211,29 @@ def main():
           % (n_mat, n_q, len(seen_sha)))
     if a.plan:
         return
-    # 材料**正文和表格图都到位**才放行：只有正文没有表，数还是在图里、题照样做不了
-    freed = con.execute(
-        "UPDATE real_questions SET needs_asset=0 WHERE needs_asset=1 AND module='资料分析' "
-        "AND material IS NOT NULL AND material<>'' "
-        "AND id IN (SELECT qid FROM real_figs)").rowcount
+    # 这个闸**双向生效**：该放的放、该锁的锁回去。
+    # 只会解封的话，早先在别的规则下误放的题会一直留着 —— dedup 现在把上一轮的判定
+    # 原样搬运（正是为了别抹掉资产脚本的产出），于是那个错误判定也就永久固化了
+    # （实测有 118 道资料分析解封了却根本没有材料）。
+    # 「资产够不够」这套标准归本脚本管，那它就得对这个模块的标志位负全责。
+    # 资料分析有两种材料，闸要都认，否则会把一大批好题误锁：
+    #   图表型 —— 数在表里，正文往往只有一句「注：…」，所以必须有图；
+    #   文字型 —— 一整段带数字的叙述，自成一体，没有图也能做（实测 82 道是这种，
+    #             随手抽一条：「2020年1—2月…累计实现投资1078.6亿元，同比增长1.8%…」）。
+    # 所以：**有图，或者材料正文够长**。只认前者会把文字型材料全判成资产不全。
+    # ⚠️ 一律用 COALESCE，别写 `material IS NOT NULL AND …`：
+    #    material 为 NULL 时 `NOT (NULL AND x)` 在 SQL 三值逻辑里求值成 **NULL 而不是 TRUE**，
+    #    锁回那条 UPDATE 就匹配不到这些行 —— 实测漏了 88 道「解封了却没有材料」的题。
+    ok_cond = ("(LENGTH(COALESCE(material,'')) >= %d "
+               " OR (COALESCE(material,'')<>'' AND id IN (SELECT qid FROM real_figs)))"
+               % _SELF_CONTAINED)
+    freed = con.execute("UPDATE real_questions SET needs_asset=0 "
+                        "WHERE needs_asset=1 AND module='资料分析' AND " + ok_cond).rowcount
+    relocked = con.execute("UPDATE real_questions SET needs_asset=1 "
+                           "WHERE needs_asset=0 AND module='资料分析' AND NOT (%s)"
+                           % ok_cond).rowcount
     con.commit()
-    print("解除 needs_asset：资料分析 %d 道（现在能出了）" % freed)
+    print("解除 needs_asset：资料分析 %d 道；锁回（资产不全）：%d 道" % (freed, relocked))
     left = con.execute("SELECT COUNT(*) FROM real_questions WHERE needs_asset=1 "
                        "AND module='资料分析'").fetchone()[0]
     print("资料分析仍缺材料的还有 %d 道" % left)
