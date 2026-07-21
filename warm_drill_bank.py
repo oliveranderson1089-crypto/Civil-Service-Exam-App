@@ -93,12 +93,13 @@ def main():
                 break
             have = usable(con, b, t, lv)
             filled += s["ok"]
-            print("  [%d/%d] %s·%s/%s 第 %d 轮 +%d → %d/%d（重复 %d、存疑 %d、不合格 %d）"
+            print("  [%d/%d] %s·%s/%s 第 %d 轮 +%d → %d/%d（重复 %d、存疑 %d、不合格 %d、"
+                  "体量不像真题 %d）"
                   % (i, len(short), b, t, lv, rounds, s["ok"], have, a.target,
-                     s["dup"], s["flaw"], s["bad"]))
+                     s["dup"], s["flaw"], s["bad"], s.get("style", 0)))
             if s["ok"] == 0:
                 # 一道都没进 —— 但原因不同，处置也不同，别混为一谈
-                if s["dup"] >= max(1, s["dup"] + s["flaw"] + s["bad"]) * 0.8:
+                if s["dup"] >= max(1, s["dup"] + s["flaw"] + s["bad"] + s.get("style", 0)) * 0.8:
                     print("       ↑ 几乎全是重复题：模型收敛到那几道经典题了。"
                           "已把已有题干喂进提示词避重，再来一轮试试")
                     continue          # 值得再试：下一轮的避重清单更长了

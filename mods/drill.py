@@ -287,9 +287,20 @@ def _bank_material(db, board, qtype, n=14):
 
 # 各 AI 题型的出题要点 —— 不写清楚，AI 出的题型会跑偏（比如把「判断意图」出成「概括主旨」）
 _AI_SPEC = {
-    "语境分析": "选词填空，一个空。**空缺处的意思必须由上下文钉死**（转折/并列/递进/解释的呼应关系），"
-                "四个选项都是近义词，只有一个符合语境。",
-    "词语辨析": "选词填空，一个空。四个选项是**近义词**，靠**词义轻重 / 搭配对象 / 感情色彩**区分。",
+    # ⚠️ 下面这两条的空数是**数过真题才定的**，别凭印象改回「一个空」：
+    #    词语辨析 379 道真题里，两空 64%、三空 29%，一空只占 6%（题干中位数 134 字）；
+    #    语境分析 257 道里一空 56%、两空 35%。原先两条都写着「一个空」，
+    #    于是 AI 出的全是 30 字题干配单个词的一空题 —— 和真题差着一个量级，
+    #    练它不解决考场上的问题（考场上你面对的是两三个空互相牵制）。
+    "语境分析": "选词填空。**一半是一个空、一半是两个空**（两空的话四个选项写成"
+                "「词A 词B」用空格分开）。**空缺处的意思必须由上下文钉死**"
+                "（转折/并列/递进/解释的呼应关系），四个选项都是近义词，只有一个全都符合语境。"
+                "文段要写足 100 字上下，把呼应关系铺出来。",
+    "词语辨析": "选词填空，**必须是两个空或三个空**（真题里九成以上都是，一空的几乎不考）。"
+                "每个选项写成「词A 词B」或「词A 词B 词C」，用空格分开。"
+                "靠**词义轻重 / 搭配对象 / 感情色彩**区分，而且**要让多个空互相牵制**："
+                "单看某一个空可能有两个词都行，合起来只有一组全对 —— 这才是真题的考法。"
+                "文段写足 130 字上下。",
     "查找细节": "片段阅读（150~250 字），问「符合/不符合原文的是」。错项要用**绝对化、偷换概念、"
                 "无中生有**这三种典型手法造。",
     "概括主旨": "片段阅读（150~250 字），问「这段文字主要说明了什么」。文段里要有明确的中心句"
@@ -366,6 +377,74 @@ def _bank_avoid(db, board, qtype, n=25):
     return [re.sub(r"\s+", "", (r["q"] or ""))[:40] for r in rows if r["q"]]
 
 
+# ---- 以真题为基准出题 --------------------------------------------------------
+# AI 题跑偏的根子不在提示词写得不够细，而在**它没见过真题长什么样**。
+# 光靠 _AI_SPEC 那种抽象规则（「干扰项要贴着常见错法」），模型只会照字面理解；
+# 直接把同题型的真题摆给它看，出来的题风格立刻就近了 —— 这是最省事也最有效的一招。
+#
+# 只取「答案靠得住」的真题（原卷带答案，或 AI 出解析且过了双模型核验）。
+_REAL_OK = ("rq.needs_asset=0 AND (rq.has_answer=1 OR re.agree=1) "
+            "AND COALESCE(NULLIF(rq.qtype,''), re.qtype, '')=?")
+
+
+def _real_examples(db, qtype, n=3):
+    """抽 n 道同题型真题当范例。近年的优先 —— 出题风格是会变的。"""
+    try:
+        rows = db.execute(
+            "SELECT rq.stem, rq.options, rq.answer, re.answer AS ai_answer "
+            "FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
+            "WHERE " + _REAL_OK + " AND LENGTH(rq.stem) BETWEEN 20 AND 600 "
+            "ORDER BY rq.year_max DESC, RANDOM() LIMIT ?", (qtype, n * 4)).fetchall()
+    except sqlite3.Error:
+        return []                       # 真题库还没导入（新库），照老路子出题
+    out, seen = [], set()
+    for r in rows:
+        if r["stem"][:20] in seen:
+            continue
+        seen.add(r["stem"][:20])
+        out.append({"q": r["stem"], "options": json.loads(r["options"]),
+                    "answer": r["answer"] or r["ai_answer"] or ""})
+        if len(out) >= n:
+            break
+    return out
+
+
+def _real_style(db, qtype):
+    """真题在这个题型上的体量：题干多长、单个选项多长。用来卡住跑偏的生成结果。
+
+    为什么要卡：模型很容易把选词填空写成一段两百字的小作文，或者把片段阅读
+    压成一句话 —— 内容看着没错，但**一眼就不像真题**，练它没有意义。
+    取 10%~90% 分位而不是极值，免得被个别超长题带跑。
+    """
+    try:
+        rows = db.execute(
+            "SELECT rq.stem, rq.options FROM real_questions rq "
+            "LEFT JOIN real_explains re ON re.qid=rq.id WHERE " + _REAL_OK,
+            (qtype,)).fetchall()
+    except sqlite3.Error:
+        return None
+    if len(rows) < 12:                  # 样本太少，分位数不可信，不卡
+        return None
+    stems = sorted(len(r["stem"]) for r in rows)
+    opts = sorted(len(o) for r in rows for o in json.loads(r["options"]))
+    def pct(a, p):
+        return a[min(len(a) - 1, int(len(a) * p))]
+    return {"stem": (pct(stems, .1), pct(stems, .9)),
+            "opt": (pct(opts, .1), pct(opts, .9))}
+
+
+def _style_ok(style, q, opts):
+    """生成的题在不在真题的体量区间里。上下都留一倍余量 —— 是拦离谱的，不是拦风格差异。"""
+    if not style:
+        return True
+    lo, hi = style["stem"]
+    if not (lo * 0.4 <= len(q) <= hi * 2.0 + 40):
+        return False
+    olo, ohi = style["opt"]
+    avg = sum(len(o) for o in opts) / 4.0
+    return olo * 0.3 <= avg <= ohi * 2.5 + 20
+
+
 def _bank_fill(db, board, qtype, level, want=8):
     """题库不够了就补一批。返回 {"ok":可用, "dup":撞已有题, "bad":格式不合格, "flaw":没过核验}。
 
@@ -374,8 +453,10 @@ def _bank_fill(db, board, qtype, level, want=8):
 
     **每个题型的出题要点不一样**（见 _AI_SPEC）——不写清楚，AI 会把「判断意图」出成「概括主旨」。
     """
-    stat = {"ok": 0, "dup": 0, "bad": 0, "flaw": 0}
+    stat = {"ok": 0, "dup": 0, "bad": 0, "flaw": 0, "style": 0}
     mat = _bank_material(db, board, qtype)
+    examples = _real_examples(db, qtype)
+    style = _real_style(db, qtype)
     tip = DRILL_TIP.get(qtype, "")
     spec = _AI_SPEC.get(qtype, "")
     extra = ""
@@ -418,6 +499,28 @@ def _bank_fill(db, board, qtype, level, want=8):
         % (want, board, qtype, spec or "按这个题型的常规考法出",
            _LV_PROMPT.get(level, ""), qtype)) + extra
 
+    # ★ 以真题为基准：把同题型的真题原样摆出来，让它照着这个路子出。
+    #   比在提示词里描述「要像真题」有效得多 —— 风格是看会的，不是讲会的。
+    if style:
+        # 把真题的体量**当成硬指标写进去**，不能只在事后拦：
+        # 实测 AI 写的选词填空题干只有真题的三分之一（真题 87~166 字、含完整语境），
+        # 光靠护栏拦的话这个题型永远填不满，得先告诉它该写多长。
+        prompt += ("\n\n【篇幅按真题来】题干 **%d~%d 字**（这是这个题型真题的实际长度），"
+                   "每个选项 %d~%d 字。写太短就不像真题了 —— "
+                   "选词填空要把上下文的呼应关系写足，片段阅读要给完整的文段。"
+                   % (style["stem"][0], style["stem"][1], style["opt"][0], style["opt"][1]))
+    if examples:
+        prompt += ("\n\n【下面是这个题型的**真题**，照着这个路子出新题】\n"
+                   + "\n\n".join(
+                       "· 真题%d\n%s\n%s\n（答案 %s）"
+                       % (i, e["q"],
+                          "\n".join("%s. %s" % ("ABCD"[j], o) for j, o in enumerate(e["options"])),
+                          e["answer"])
+                       for i, e in enumerate(examples, 1))
+                   + "\n\n**要学的是**：题干的体量和文风、设问的措辞、干扰项是怎么造的"
+                     "（改主体/改范围/改时间/贴着常见错法）。"
+                     "**不要照抄**上面这几道，要出**新的**题，考点也换掉。")
+
     # 避重：不告诉它已经出过什么，它就会一直出那几道经典题，全撞指纹被跳过
     avoid = _bank_avoid(db, board, qtype)
     if avoid:
@@ -453,6 +556,10 @@ def _bank_fill(db, board, qtype, level, want=8):
         body = [re.sub(r"^[A-D][.、．)]\s*", "", str(o)).strip() for o in opts]
         if len(set(body)) != 4 or not all(body):
             stat["bad"] += 1
+            continue
+        # 风格护栏：体量离真题太远的直接不要（把选词填空写成小作文那种）
+        if not _style_ok(style, q, body):
+            stat["style"] += 1
             continue
         ready.append((it, q, ans, ["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)]))
     if not ready:
@@ -528,8 +635,9 @@ def _bank_warm(board, qtype, level, want=12):
             con.row_factory = sqlite3.Row
             con.execute("PRAGMA journal_mode=WAL")
             s = _bank_fill(con, board, qtype, level, want=want)
-            log.info("题库补充 %s·%s/%s：+%d 可用（重复 %d、存疑 %d、格式不合格 %d）",
-                     board, qtype, level, s["ok"], s["dup"], s["flaw"], s["bad"])
+            log.info("题库补充 %s·%s/%s：+%d 可用（重复 %d、存疑 %d、格式不合格 %d、"
+                     "体量不像真题 %d）",
+                     board, qtype, level, s["ok"], s["dup"], s["flaw"], s["bad"], s["style"])
         except Exception as e:
             log.warning("题库补充失败 %s·%s/%s：%s", board, qtype, level, e)
         finally:
