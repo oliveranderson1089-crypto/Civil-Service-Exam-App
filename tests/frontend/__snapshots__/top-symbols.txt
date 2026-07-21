@@ -274,9 +274,17 @@ dtScore
 dtSubmit
 dtSubmitted
 dtTable
+dvBatchBar
 dvFolder
 dvIcon
+dvPickFolder
 dvProg
+dvQuery
+dvRename
+dvRow
+dvSearchT
+dvSel
+dvSort
 dvUpload
 dvUploadOne
 dvView

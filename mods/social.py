@@ -16,6 +16,8 @@ import uuid
 from flask import Blueprint, Response, jsonify, request, send_file
 
 from core import CFG, UPLOADS, get_db, log, uid, uname
+from mods.files import (IMAGE_EXT, INLINE_EXT, OFFICE_EXT, _cacheable,
+                        _extract_text, _office_to_pdf)
 
 bp = Blueprint("social", __name__)
 
@@ -151,9 +153,20 @@ def _relax_body_limit():
         request.max_content_length = DRIVE_MAX + 16 * 1024 * 1024   # 留 multipart 边框的余量
 
 
+# 浏览器自带播放器能直接放的（.mov/.flac 看运气，给了总比不给强）
+MEDIA_EXT = {".mp4", ".webm", ".ogv", ".ogg", ".mov", ".m4v",
+             ".mp3", ".wav", ".m4a", ".aac", ".flac", ".opus"}
+
+
+def _viewable(ext):
+    ext = (ext or "").lower()
+    return ext in INLINE_EXT or ext in OFFICE_EXT or ext in IMAGE_EXT or ext in MEDIA_EXT
+
+
 def _drive_row(r):
     d = dict(r)
     d["is_dir"] = bool(d.get("is_dir"))
+    d["viewable"] = (not d["is_dir"]) and _viewable(d.get("ext"))
     return d
 
 
@@ -182,15 +195,37 @@ def _ensure_folder_path(db, owner, path):
     return parent
 
 
+# 排序白名单：直接拼进 SQL，所以只认这几个键，不能拿请求参数当列名用
+_DRIVE_SORT = {"new": "id DESC", "old": "id ASC", "name": "name COLLATE NOCASE ASC",
+               "big": "size DESC", "small": "size ASC"}
+
+
 @bp.get("/api/drive")
 def drive_list():
+    """列目录；带 q 时改成**全盘按文件名搜**（搜索时不分目录，结果里带 folder 让人知道在哪）。"""
     folder = (request.args.get("folder") or "").strip().strip("/")
+    q = (request.args.get("q") or "").strip()
+    order = _DRIVE_SORT.get(request.args.get("sort") or "new", _DRIVE_SORT["new"])
     db = get_db()
-    rows = db.execute(
-        "SELECT id, folder, name, ext, mime, size, is_dir, source, created_at FROM drive_files "
-        "WHERE owner_id=? AND folder=? ORDER BY is_dir DESC, id DESC", (uid(), folder)).fetchall()
-    return jsonify({"folder": folder, "items": [_drive_row(r) for r in rows],
+    cols = ("SELECT id, folder, name, ext, mime, size, is_dir, source, created_at "
+            "FROM drive_files WHERE owner_id=? ")
+    if q:
+        rows = db.execute(cols + "AND name LIKE ? ESCAPE '\\' ORDER BY is_dir DESC, " + order + " LIMIT 300",
+                          (uid(), "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")).fetchall()
+    else:
+        rows = db.execute(cols + "AND folder=? ORDER BY is_dir DESC, " + order,
+                          (uid(), folder)).fetchall()
+    return jsonify({"folder": folder, "q": q, "items": [_drive_row(r) for r in rows],
                     "used": _drive_used(db, uid()), "quota": DRIVE_QUOTA, "max_file": DRIVE_MAX})
+
+
+@bp.get("/api/drive/folders")
+def drive_folders():
+    """所有文件夹的路径清单，供「移动到…」的目录选择器用。"""
+    rows = get_db().execute(
+        "SELECT folder, name FROM drive_files WHERE owner_id=? AND is_dir=1", (uid(),)).fetchall()
+    paths = sorted((r["folder"] + "/" + r["name"]) if r["folder"] else r["name"] for r in rows)
+    return jsonify({"folders": paths})
 
 
 @bp.post("/api/drive")
@@ -249,6 +284,83 @@ def drive_download(fid):
     return send_file(os.path.join(_drive_dir(uid()), r["stored_name"]),
                      as_attachment=True, download_name=r["name"],
                      mimetype=r["mime"] or "application/octet-stream")
+
+
+def _no_script(resp):
+    """云盘什么格式都收，包括 .html / .svg —— 直接内联返回，等于让别人上传的脚本跑在
+    本站源上（读得到登录 cookie、调得动接口）。CSP sandbox 把这类文件关进独立源的沙箱
+    （不给 allow-scripts 就执行不了脚本），nosniff 拦住浏览器把内容猜成 HTML 再执行。
+    图片 / PDF / 音视频在沙箱里照常渲染，所以不影响预览。"""
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Content-Security-Policy"] = "sandbox"
+    return resp
+
+
+@bp.get("/api/drive/<int:fid>/view")
+def drive_view(fid):
+    """内联预览。和 /download 只差一个 as_attachment，但对图片/PDF/视频来说，
+    这一个参数决定了是「在页面里直接看」还是「下载下来自己找程序打开」。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0",
+                   (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "文件不存在"}), 404
+    path = os.path.join(_drive_dir(uid()), r["stored_name"] or "")
+    if not os.path.exists(path):
+        return jsonify({"error": "文件丢失"}), 404
+    ext = (r["ext"] or "").lower()
+    if request.args.get("text") == "1":         # 阅读模式取纯文字
+        return jsonify({"text": _extract_text(path, ext) or ""})
+    mime = r["mime"] or ""
+    if ext in OFFICE_EXT:                       # Office 浏览器打不开，转 PDF 再给（结果有缓存）
+        pdf = _office_to_pdf(path)
+        if not pdf:
+            return jsonify({"error": "这个格式转不了，下载后再看"}), 415
+        path, mime = pdf, "application/pdf"
+    elif not _viewable(ext):
+        return jsonify({"error": "这个格式不支持预览"}), 415
+    # conditional=True 才会响应 Range 请求 —— 没有它，视频只能从头播，拖不动进度条
+    resp = send_file(path, as_attachment=False, download_name=r["name"],
+                     mimetype=mime or None, conditional=True)
+    return _cacheable(_no_script(resp))
+
+
+@bp.patch("/api/drive/<int:fid>")
+def drive_patch(fid):
+    """重命名 / 移动。
+
+    文件夹在这套设计里只是一个 folder 字符串，没有父子外键 —— 所以动一个目录，
+    必须把它所有子孙的 folder 前缀一起改；漏了就留下一堆指向旧路径的记录，
+    它们既不在旧目录（旧目录没了）也不在新目录，等于凭空消失。
+    """
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=?", (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "不存在"}), 404
+    name = (data.get("name") if data.get("name") is not None else r["name"]) or ""
+    name = name.strip().strip("/")[:120]
+    folder = data.get("folder")
+    folder = r["folder"] if folder is None else folder.strip().strip("/")
+    if not name or "/" in name:
+        return jsonify({"error": "名字不合法"}), 400
+    old = (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"]
+    new = (folder + "/" + name) if folder else name
+    if r["is_dir"] and (folder == old or folder.startswith(old + "/")):
+        return jsonify({"error": "不能把文件夹移到它自己里面"}), 400
+    if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND id<>?",
+                  (uid(), folder, name, fid)).fetchone():
+        return jsonify({"error": "目标位置已有同名的"}), 400
+    if folder and folder != r["folder"]:
+        _ensure_folder_path(db, uid(), folder)
+    db.execute("UPDATE drive_files SET name=?, folder=? WHERE id=?", (name, folder, fid))
+    if r["is_dir"] and new != old:
+        for k in db.execute("SELECT id, folder FROM drive_files WHERE owner_id=? AND "
+                            "(folder=? OR folder LIKE ?)", (uid(), old, old + "/%")).fetchall():
+            db.execute("UPDATE drive_files SET folder=? WHERE id=?",
+                       (new + k["folder"][len(old):], k["id"]))
+    db.commit()
+    return jsonify({"ok": True, "name": name, "folder": folder})
 
 
 @bp.delete("/api/drive/<int:fid>")

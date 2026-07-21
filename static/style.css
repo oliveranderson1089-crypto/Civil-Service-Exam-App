@@ -3166,6 +3166,17 @@ body.mobile-ui .cr-peer{display:none;}      /* 移动端用全局顶栏显示对
 .dv-act:hover,.dv-del:hover{color:var(--blue);}
 .dv-del:hover{color:#c0392b;}
 body.dark .dv-item{background:#141b29;}
+/* 搜索 / 排序 / 多选批量 */
+.dv-search{border:1px solid var(--line);border-radius:16px;padding:4px 12px;font-size:13px;
+  background:#fff;color:inherit;min-width:130px;max-width:200px;}
+.dv-sort{border:1px solid var(--line);border-radius:16px;padding:4px 8px;font-size:13px;
+  background:#fff;color:inherit;}
+body.dark .dv-search,body.dark .dv-sort{background:#141b29;}
+.dv-pick{flex:none;width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
+.dv-can{cursor:pointer;}
+.dv-can:hover{color:var(--blue);text-decoration:underline;}
+.dv-batch{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:6px 12px;
+  border-radius:10px;background:rgba(74,163,223,.12);font-size:13px;}
 /* 上传进度条 */
 .dv-prog{display:flex;align-items:center;gap:10px;margin:-4px 0 12px;}
 .dv-prog-track{flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden;}

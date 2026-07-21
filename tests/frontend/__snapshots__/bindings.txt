@@ -319,6 +319,11 @@ document @click
 document @click
 #dv-crumb @click
 #dv-list @click
+#dv-search @input
+#dv-sort @change
+#dv-bcancel .onclick
+#dv-bdel .onclick
+#dv-move .onclick
 #dv-upfile @change
 #dv-upfolder @change
 #view-drive @dragover

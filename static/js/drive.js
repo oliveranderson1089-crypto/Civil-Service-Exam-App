@@ -8,7 +8,7 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, KB, api, appConfirm, appPrompt, esc,
-   push, toast */
+   openViewerUrl, push, toast */
 
 /* ================= 云盘 ================= */
 let dvFolder = '';
@@ -23,36 +23,84 @@ function fSize(n) {
   if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
   return (n / 1073741824).toFixed(1) + ' GB';   // 配额是 GB 量级，别显示成「2048.0 MB」
 }
-function openDrive() { dvFolder = ''; push({ view: 'drive', title: '云盘' }); loadDrive(); }
+let dvQuery = '', dvSort = 'new';
+const dvSel = new Set();          // 多选中的 id（每次重新列目录都清空，见 loadDrive）
+
+function openDrive() { dvFolder = ''; dvQuery = ''; $('#dv-search').value = ''; push({ view: 'drive', title: '云盘' }); loadDrive(); }
+
+function dvRow(it) {
+  const pick = `<input type="checkbox" class="dv-pick" data-dvpick="${it.id}">`;
+  const ren = `<button class="dv-act" data-dvren="${it.id}" title="重命名">✏️</button>`;
+  const del = `<button class="dv-del" data-dvdel="${it.id}" title="删除">🗑</button>`;
+  if (it.is_dir) {
+    // 搜索结果里的文件夹，路径要用它自己的 folder 拼，不能用当前目录
+    const path = (it.folder ? it.folder + '/' : '') + it.name;
+    return `<div class="dv-item dv-dir">${pick}
+      <span class="dv-ic" data-dvopen="${esc(path)}">📁</span>
+      <span class="dv-name" data-dvopen="${esc(path)}">${esc(it.name)}</span>${ren}${del}</div>`;
+  }
+  const where = (dvQuery && it.folder) ? ' · 📁 ' + esc(it.folder) : '';
+  const name = it.viewable
+    ? `<span class="dv-name dv-can" data-dvview="${it.id}" data-ext="${esc(it.ext || '')}">${esc(it.name)}</span>`
+    : `<span class="dv-name">${esc(it.name)}</span>`;
+  return `<div class="dv-item">${pick}<span class="dv-ic">${dvIcon(it.ext)}</span>${name}
+    <span class="dv-meta">${fSize(it.size)}${it.source === 'chat' ? ' · 聊天' : ''}${where}</span>
+    ${ren}<button class="dv-act" data-dvsend="${it.id}" title="发给好友">📤</button>
+    <a class="dv-act" href="/api/drive/${it.id}/download" title="下载">⬇</a>${del}</div>`;
+}
+
 async function loadDrive() {
   $('#dv-list').innerHTML = '<p class="empty">加载中…</p>';
+  // 换目录/换搜索词后，选中的可能已经不在眼前了 —— 留着会让批量操作误伤看不见的东西
+  dvSel.clear(); dvBatchBar();
   try {
-    const d = await api('/api/drive?folder=' + encodeURIComponent(dvFolder));
+    const qs = new URLSearchParams({ folder: dvFolder, sort: dvSort });
+    if (dvQuery) qs.set('q', dvQuery);
+    const d = await api('/api/drive?' + qs.toString());
     $('#dv-used').textContent = '已用 ' + fSize(d.used) + (d.quota ? ' / ' + fSize(d.quota) : '');
-    // 面包屑
-    const parts = dvFolder ? dvFolder.split('/') : [];
-    let acc = '';
-    $('#dv-crumb').innerHTML = `<a data-dvcd="">☁️ 云盘</a>` + parts.map(p => {
-      acc = acc ? acc + '/' + p : p; return ` / <a data-dvcd="${esc(acc)}">${esc(p)}</a>`;
-    }).join('');
-    if (!d.items.length) { $('#dv-list').innerHTML = '<p class="empty">这个文件夹是空的。把文件或整个文件夹拖进来，也可以用右上角的上传按钮。</p>'; return; }
-    $('#dv-list').innerHTML = d.items.map(it => it.is_dir
-      ? `<div class="dv-item dv-dir" data-dvopen="${esc((dvFolder ? dvFolder + '/' : '') + it.name)}">
-           <span class="dv-ic">📁</span><span class="dv-name">${esc(it.name)}</span>
-           <button class="dv-del" data-dvdel="${it.id}" title="删除">🗑</button></div>`
-      : `<div class="dv-item">
-           <span class="dv-ic">${dvIcon(it.ext)}</span>
-           <span class="dv-name">${esc(it.name)}</span>
-           <span class="dv-meta">${fSize(it.size)}${it.source === 'chat' ? ' · 聊天' : ''}</span>
-           <button class="dv-act" data-dvsend="${it.id}" title="发给好友">📤</button>
-           <a class="dv-act" href="/api/drive/${it.id}/download" title="下载">⬇</a>
-           <button class="dv-del" data-dvdel="${it.id}" title="删除">🗑</button></div>`).join('');
+    // 面包屑（搜索时改成显示搜索状态，点「云盘」退回浏览）
+    if (dvQuery) {
+      $('#dv-crumb').innerHTML = `<a data-dvcd="">☁️ 云盘</a> / 🔍 搜「${esc(dvQuery)}」`;
+    } else {
+      const parts = dvFolder ? dvFolder.split('/') : [];
+      let acc = '';
+      $('#dv-crumb').innerHTML = `<a data-dvcd="">☁️ 云盘</a>` + parts.map(p => {
+        acc = acc ? acc + '/' + p : p; return ` / <a data-dvcd="${esc(acc)}">${esc(p)}</a>`;
+      }).join('');
+    }
+    if (!d.items.length) {
+      $('#dv-list').innerHTML = '<p class="empty">' + (dvQuery
+        ? '没搜到「' + esc(dvQuery) + '」。'
+        : '这个文件夹是空的。把文件或整个文件夹拖进来，也可以用右上角的上传按钮。') + '</p>';
+      return;
+    }
+    $('#dv-list').innerHTML = d.items.map(dvRow).join('');
   } catch (e) { $('#dv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
-$('#dv-crumb').addEventListener('click', e => { const a = e.target.closest('[data-dvcd]'); if (a) { dvFolder = a.dataset.dvcd; loadDrive(); } });
+
+$('#dv-crumb').addEventListener('click', e => {
+  const a = e.target.closest('[data-dvcd]');
+  if (a) { dvFolder = a.dataset.dvcd; dvQuery = ''; $('#dv-search').value = ''; loadDrive(); }
+});
 $('#dv-list').addEventListener('click', async e => {
+  const pick = e.target.closest('[data-dvpick]');
+  if (pick) {
+    const id = +pick.dataset.dvpick;
+    if (pick.checked) dvSel.add(id); else dvSel.delete(id);
+    dvBatchBar();
+    return;
+  }
   const dir = e.target.closest('[data-dvopen]');
-  if (dir && !e.target.closest('[data-dvdel]')) { dvFolder = dir.dataset.dvopen; loadDrive(); return; }
+  if (dir) { dvFolder = dir.dataset.dvopen; dvQuery = ''; $('#dv-search').value = ''; loadDrive(); return; }
+  const view = e.target.closest('[data-dvview]');
+  if (view) {                      // 预览走资料库那套查看器：md/txt 阅读模式、pdf/office 走 pdf.js
+    const id = view.dataset.dvview;
+    openViewerUrl('/api/drive/' + id + '/view', view.textContent, view.dataset.ext,
+                  '/api/drive/' + id + '/download', '/api/drive/' + id + '/view?text=1');
+    return;
+  }
+  const ren = e.target.closest('[data-dvren]');
+  if (ren) { dvRename(+ren.dataset.dvren, ren.closest('.dv-item').querySelector('.dv-name').textContent); return; }
   const del = e.target.closest('[data-dvdel]');
   if (del) {
     if (!(await appConfirm('删除这个？（文件夹会连里面一起删）'))) return;
@@ -62,6 +110,76 @@ $('#dv-list').addEventListener('click', async e => {
   const send = e.target.closest('[data-dvsend]');
   if (send) driveSend(+send.dataset.dvsend);
 });
+
+/* ---- 搜索 / 排序 ---- */
+let dvSearchT = null;
+$('#dv-search').addEventListener('input', e => {
+  clearTimeout(dvSearchT);
+  const v = e.target.value.trim();
+  dvSearchT = setTimeout(() => { dvQuery = v; loadDrive(); }, 300);   // 打字防抖，别每个字母打一次接口
+});
+$('#dv-sort').addEventListener('change', e => { dvSort = e.target.value; loadDrive(); });
+
+/* ---- 重命名 / 移动 / 批量 ---- */
+async function dvRename(id, cur) {
+  const name = await appPrompt('重命名', '', cur || '');
+  if (!name || !name.trim() || name.trim() === cur) return;
+  try {
+    await api('/api/drive/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ name: name.trim() }) });
+    loadDrive();
+  } catch (err) { toast(err.message, true); }
+}
+
+function dvBatchBar() {
+  $('#dv-batch').classList.toggle('hidden', !dvSel.size);
+  $('#dv-batch-n').textContent = '已选 ' + dvSel.size + ' 项';
+}
+$('#dv-bcancel').onclick = () => { dvSel.clear(); dvBatchBar(); document.querySelectorAll('.dv-pick').forEach(c => { c.checked = false; }); };
+$('#dv-bdel').onclick = async () => {
+  if (!dvSel.size) return;
+  if (!(await appConfirm('删除选中的 ' + dvSel.size + ' 项？（文件夹会连里面一起删）'))) return;
+  let fail = 0;
+  for (const id of [...dvSel]) {
+    try { await api('/api/drive/' + id, { method: 'DELETE' }); } catch (_) { fail++; }
+  }
+  toast(fail ? '删除完成，' + fail + ' 项失败' : '已删除', fail > 0);
+  loadDrive();
+};
+$('#dv-move').onclick = async () => {
+  if (!dvSel.size) return;
+  const dest = await dvPickFolder();
+  if (dest === null) return;
+  let ok = 0, fail = 0;
+  for (const id of [...dvSel]) {
+    try {
+      await api('/api/drive/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ folder: dest }) });
+      ok++;
+    } catch (err) { fail++; toast(err.message, true); }
+  }
+  toast(fail ? '移动 ' + ok + ' 项，失败 ' + fail + ' 项' : '已移动 ' + ok + ' 项', fail > 0 && !ok);
+  loadDrive();
+};
+
+// 选目标文件夹（复用发好友那个底部面板的样式）
+async function dvPickFolder() {
+  let folders = [];
+  try { folders = (await api('/api/drive/folders')).folders || []; } catch (_) { /* 至少还能选根目录 */ }
+  return new Promise(res => {
+    const el = $('#mat-share-sheet');
+    el.innerHTML = `<div class="ns-mask" data-sheet-close></div><div class="ns-panel">
+      <div class="ns-handle"></div><div class="ns-title">移动到哪个文件夹</div>
+      <div class="ms-list"><button class="ms-frow" data-dvto="">☁️ 云盘（根目录）</button>
+      ${folders.map(f => `<button class="ms-frow" data-dvto="${esc(f)}">📁 ${esc(f)}</button>`).join('')}</div>
+      <div class="ms-acts"><button class="btn" id="dvto-cancel">取消</button></div></div>`;
+    el.classList.remove('hidden');
+    const done = v => { el.classList.add('hidden'); res(v); };
+    el.querySelector('.ns-mask').onclick = () => done(null);
+    $('#dvto-cancel').onclick = () => done(null);
+    el.querySelectorAll('[data-dvto]').forEach(b => { b.onclick = () => done(b.dataset.dvto); });
+  });
+}
 /* ---- 上传 ----
    三条入口（选文件 / 选整个文件夹 / 拖进来）都汇成同一种东西喂给 dvUpload：
    [{file, folder}]，folder 是**相对当前目录**的子路径（'' = 直接放当前目录）。

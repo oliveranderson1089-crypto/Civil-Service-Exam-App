@@ -593,9 +593,23 @@
     <div class="dv-bar">
       <div class="dv-crumb" id="dv-crumb"></div>
       <span class="dv-used" id="dv-used"></span>
+      <input type="search" id="dv-search" class="dv-search" placeholder="搜全盘文件名…">
+      <select id="dv-sort" class="dv-sort" title="排序">
+        <option value="new">最新在前</option>
+        <option value="old">最早在前</option>
+        <option value="name">按名称</option>
+        <option value="big">从大到小</option>
+        <option value="small">从小到大</option>
+      </select>
       <button class="btn tiny" id="dv-newfolder">＋ 文件夹</button>
       <label class="btn tiny">⬆ 传文件夹<input type="file" id="dv-upfolder" webkitdirectory directory multiple hidden></label>
       <label class="btn tiny primary">⬆ 上传<input type="file" id="dv-upfile" multiple hidden></label>
+    </div>
+    <div id="dv-batch" class="dv-batch hidden">
+      <span id="dv-batch-n"></span>
+      <button class="btn tiny" id="dv-move">移动到…</button>
+      <button class="btn tiny" id="dv-bdel">删除</button>
+      <button class="btn tiny" id="dv-bcancel">取消</button>
     </div>
     <div id="dv-prog" class="dv-prog hidden">
       <div class="dv-prog-track"><i id="dv-prog-bar"></i></div><span id="dv-prog-txt"></span>

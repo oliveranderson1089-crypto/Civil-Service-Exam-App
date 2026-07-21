@@ -85,6 +85,138 @@ def test_云盘的请求体上限高于全局而别的接口不变(flask_app):
             "非收文件的接口不该被放宽"
 
 
+def _mk(client, name, folder="", data=b"x"):
+    """传一个文件，返回它的 id。"""
+    r = _up(client, name, folder, data)
+    assert r.status_code == 201, r.get_data(as_text=True)[:200]
+    return r.get_json()["id"]
+
+
+# ---- 预览 ----
+
+def test_预览是内联返回而不是下载(auth_client):
+    fid = _mk(auth_client, "读我.txt", folder="预览", data="正文内容".encode())
+    r = auth_client.get("/api/drive/%d/view" % fid)
+    assert r.status_code == 200
+    # download 那条是 attachment；预览这条必须 inline，否则点开就变成下载
+    assert "attachment" not in (r.headers.get("Content-Disposition") or "")
+
+
+def test_预览给上传的HTML关进沙箱(auth_client):
+    """云盘什么都收，.html 内联返回时必须挡住脚本 —— 否则等于在本站源上执行别人的代码。"""
+    fid = _mk(auth_client, "坏.html", folder="预览", data=b"<script>alert(1)</script>")
+    r = auth_client.get("/api/drive/%d/view" % fid)
+    assert r.status_code == 200
+    assert "sandbox" in (r.headers.get("Content-Security-Policy") or ""), "缺 CSP sandbox"
+    assert r.headers.get("X-Content-Type-Options") == "nosniff"
+
+
+def test_预览不支持的格式返回415而不是硬塞给浏览器(auth_client):
+    fid = _mk(auth_client, "装.exe", folder="预览")
+    r = auth_client.get("/api/drive/%d/view" % fid)
+    assert r.status_code == 415
+
+
+def test_预览取纯文字供阅读模式用(auth_client):
+    fid = _mk(auth_client, "文.txt", folder="预览", data="给定资料一".encode())
+    d = auth_client.get("/api/drive/%d/view?text=1" % fid).get_json()
+    assert "给定资料一" in d["text"]
+
+
+def test_列目录标出哪些能预览(auth_client):
+    _mk(auth_client, "图.png", folder="可预览")
+    _mk(auth_client, "包.apk", folder="可预览")
+    items = {i["name"]: i["viewable"] for i in _ls(auth_client, "可预览")["items"]}
+    assert items["图.png"] is True
+    assert items["包.apk"] is False
+
+
+# ---- 重命名 / 移动 ----
+
+def test_重命名文件(auth_client):
+    fid = _mk(auth_client, "旧名.txt", folder="改名")
+    r = auth_client.patch("/api/drive/%d" % fid, json={"name": "新名.txt"})
+    assert r.status_code == 200
+    assert [i["name"] for i in _ls(auth_client, "改名")["items"]] == ["新名.txt"]
+
+
+def test_移动文件到别的目录(auth_client):
+    fid = _mk(auth_client, "搬.txt", folder="甲")
+    assert auth_client.patch("/api/drive/%d" % fid, json={"folder": "乙/丙"}).status_code == 200
+    assert [i["name"] for i in _ls(auth_client, "甲")["items"]] == []
+    assert [i["name"] for i in _ls(auth_client, "乙/丙")["items"]] == ["搬.txt"]
+
+
+def test_重命名文件夹时子孙跟着走(auth_client):
+    """最容易静默丢数据的一条：folder 只是字符串，改了父目录名而不改子孙前缀，
+    子孙就既不在旧目录也不在新目录 —— 文件还在库里，但界面上凭空消失。"""
+    _mk(auth_client, "深.txt", folder="老名/子/孙")
+    top = [i for i in _ls(auth_client)["items"] if i["name"] == "老名"][0]
+    assert auth_client.patch("/api/drive/%d" % top["id"], json={"name": "新名"}).status_code == 200
+    assert [i["name"] for i in _ls(auth_client, "新名/子/孙")["items"]] == ["深.txt"]
+    assert _ls(auth_client, "老名/子/孙")["items"] == [], "旧路径下还留着东西"
+
+
+def test_移动文件夹时子孙跟着走(auth_client):
+    _mk(auth_client, "里.txt", folder="待搬/内层")
+    top = [i for i in _ls(auth_client)["items"] if i["name"] == "待搬"][0]
+    assert auth_client.patch("/api/drive/%d" % top["id"], json={"folder": "归档"}).status_code == 200
+    assert [i["name"] for i in _ls(auth_client, "归档/待搬/内层")["items"]] == ["里.txt"]
+
+
+def test_不能把文件夹移进它自己里面(auth_client):
+    _mk(auth_client, "x.txt", folder="自套/下层")
+    top = [i for i in _ls(auth_client)["items"] if i["name"] == "自套"][0]
+    r = auth_client.patch("/api/drive/%d" % top["id"], json={"folder": "自套/下层"})
+    assert r.status_code == 400, "移进自己会把整棵子树挂到自己底下，列表里直接消失"
+
+
+def test_同名冲突会被拦下(auth_client):
+    _mk(auth_client, "占位.txt", folder="撞名")
+    fid = _mk(auth_client, "另一个.txt", folder="撞名")
+    r = auth_client.patch("/api/drive/%d" % fid, json={"name": "占位.txt"})
+    assert r.status_code == 400 and "同名" in r.get_json()["error"]
+
+
+# ---- 搜索 / 排序 / 目录清单 ----
+
+def test_搜索是全盘找不分目录(auth_client):
+    _mk(auth_client, "唯一关键词甲.txt", folder="搜/深处")
+    d = auth_client.get("/api/drive", query_string={"q": "唯一关键词甲"}).get_json()
+    assert [i["name"] for i in d["items"]] == ["唯一关键词甲.txt"]
+    assert d["items"][0]["folder"] == "搜/深处", "搜索结果要带 folder，否则不知道文件在哪"
+
+
+def test_搜索里的下划线百分号当普通字符(auth_client):
+    # LIKE 的通配符没转义的话，搜 "a_c" 会连 abc 一起搜出来
+    _mk(auth_client, "a_c.txt", folder="转义")
+    _mk(auth_client, "abc.txt", folder="转义")
+    names = [i["name"] for i in auth_client.get(
+        "/api/drive", query_string={"q": "a_c"}).get_json()["items"]]
+    assert names == ["a_c.txt"], names
+
+
+def test_排序按名字和大小(auth_client):
+    _mk(auth_client, "b.bin", folder="排序", data=b"x" * 30)
+    _mk(auth_client, "a.bin", folder="排序", data=b"x" * 10)
+    by_name = auth_client.get("/api/drive", query_string={"folder": "排序", "sort": "name"}).get_json()
+    assert [i["name"] for i in by_name["items"]] == ["a.bin", "b.bin"]
+    by_big = auth_client.get("/api/drive", query_string={"folder": "排序", "sort": "big"}).get_json()
+    assert [i["name"] for i in by_big["items"]] == ["b.bin", "a.bin"]
+
+
+def test_乱传的sort值退回默认而不是拼进SQL(auth_client):
+    r = auth_client.get("/api/drive", query_string={"sort": "id; DROP TABLE drive_files--"})
+    assert r.status_code == 200
+    assert auth_client.get("/api/drive").status_code == 200, "表还在"
+
+
+def test_目录清单给移动用(auth_client):
+    _mk(auth_client, "t.txt", folder="清单甲/清单乙")
+    folders = auth_client.get("/api/drive/folders").get_json()["folders"]
+    assert "清单甲" in folders and "清单甲/清单乙" in folders
+
+
 def test_文件名里的路径会被剥掉(auth_client):
     # 客户端可能把相对路径塞进 filename，落库只留基名，免得下载名带出路径
     r = _up(auth_client, "../../etc/passwd")

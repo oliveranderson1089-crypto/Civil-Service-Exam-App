@@ -125,6 +125,37 @@ test('dvUpload：根目录下上传，目标就是相对路径本身（不带前
   assert.deepStrictEqual(sent, ['照片/2024'], '根目录下不该拼出 "/照片/2024"');
 });
 
+/* 列表行渲染。搜索是全盘的，结果里的东西不在当前目录 —— 路径若还按当前目录拼，
+   点进去就是个不存在的地方（空文件夹），而且不报错。 */
+test('dvRow：搜索结果里的文件夹，路径按它自己的 folder 拼，不是当前目录', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dvFolder = "我正站着的目录"; dvQuery = "找"');
+  const html = h.run('dvRow')({ id: 7, is_dir: true, name: '孙', folder: '甲/乙' });
+  assert.match(html, /data-dvopen="甲\/乙\/孙"/);
+  assert.ok(!html.includes('我正站着的目录'), '用当前目录拼路径了，点进去会是空的');
+});
+
+test('dvRow：搜索时把文件所在目录显示出来', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dvQuery = "找"');
+  const html = h.run('dvRow')({ id: 1, is_dir: false, name: 'a.txt', ext: '.txt', size: 1, folder: '深/处' });
+  assert.match(html, /深\/处/, '搜出来不说在哪个目录，等于搜了也找不着');
+});
+
+test('dvRow：只有能预览的文件才挂预览钩子', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const yes = h.run('dvRow')({ id: 1, is_dir: false, name: 'a.png', ext: '.png', size: 1, viewable: true });
+  const no = h.run('dvRow')({ id: 2, is_dir: false, name: 'b.apk', ext: '.apk', size: 1, viewable: false });
+  assert.match(yes, /data-dvview="1"/);
+  assert.ok(!/data-dvview/.test(no), '不能预览的也挂了钩子，点下去只会拿到 415');
+});
+
+test('dvRow：文件名里的 HTML 当文字，不进 DOM', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const html = h.run('dvRow')({ id: 1, is_dir: false, name: '<img onerror=x>.txt', ext: '.txt', size: 1 });
+  assert.ok(!html.includes('<img'), '文件名没转义，上传个带标签的名字就能注入');
+});
+
 test('dvUpload：单个文件失败不拖垮其余的，并如实报失败数', async (t) => {
   const h = boot(); t.after(() => h.close());
   h.window.XMLHttpRequest = function () {
