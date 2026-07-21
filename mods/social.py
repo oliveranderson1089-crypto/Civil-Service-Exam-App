@@ -254,7 +254,8 @@ def _ensure_folder_path(db, owner, path):
         if not seg:
             continue
         if not db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? "
-                          "AND is_dir=1", (owner, parent, seg)).fetchone():
+                          "AND is_dir=1 AND deleted_at IS NULL",
+                          (owner, parent, seg)).fetchone():
             db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) "
                        "VALUES(?,?,?,1,'drive')", (owner, parent, seg))
         parent = (parent + "/" + seg) if parent else seg
@@ -274,7 +275,7 @@ def drive_list():
     order = _DRIVE_SORT.get(request.args.get("sort") or "new", _DRIVE_SORT["new"])
     db = get_db()
     cols = ("SELECT id, folder, name, ext, mime, size, is_dir, source, created_at "
-            "FROM drive_files WHERE owner_id=? ")
+            "FROM drive_files WHERE owner_id=? AND deleted_at IS NULL ")
     if q:
         rows = db.execute(cols + "AND name LIKE ? ESCAPE '\\' ORDER BY is_dir DESC, " + order + " LIMIT 300",
                           (uid(), "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")).fetchall()
@@ -289,7 +290,8 @@ def drive_list():
 def drive_folders():
     """所有文件夹的路径清单，供「移动到…」的目录选择器用。"""
     rows = get_db().execute(
-        "SELECT folder, name FROM drive_files WHERE owner_id=? AND is_dir=1", (uid(),)).fetchall()
+        "SELECT folder, name FROM drive_files WHERE owner_id=? AND is_dir=1 "
+        "AND deleted_at IS NULL", (uid(),)).fetchall()
     paths = sorted((r["folder"] + "/" + r["name"]) if r["folder"] else r["name"] for r in rows)
     return jsonify({"folders": paths})
 
@@ -458,8 +460,8 @@ def drive_mkdir():
         return jsonify({"error": "文件夹名不合法"}), 400
     path = (parent + "/" + name) if parent else name
     db = get_db()
-    if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND is_dir=1",
-                  (uid(), parent, name)).fetchone():
+    if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND is_dir=1 "
+                  "AND deleted_at IS NULL", (uid(), parent, name)).fetchone():
         return jsonify({"error": "已有同名文件夹"}), 400
     db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) VALUES(?,?,?,1,'drive')",
                (uid(), parent, name))
@@ -470,8 +472,8 @@ def drive_mkdir():
 @bp.get("/api/drive/<int:fid>/download")
 def drive_download(fid):
     db = get_db()
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0",
-                   (fid, uid())).fetchone()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
     if not r:
         return "文件不存在", 404
     return send_file(os.path.join(_drive_dir(uid()), r["stored_name"]),
@@ -484,8 +486,8 @@ def drive_view(fid):
     """内联预览。和 /download 只差一个 as_attachment，但对图片/PDF/视频来说，
     这一个参数决定了是「在页面里直接看」还是「下载下来自己找程序打开」。"""
     db = get_db()
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0",
-                   (fid, uid())).fetchone()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
     if not r:
         return jsonify({"error": "文件不存在"}), 404
     path = os.path.join(_drive_dir(uid()), r["stored_name"] or "")
@@ -518,7 +520,8 @@ def drive_patch(fid):
     """
     data = request.get_json(silent=True) or {}
     db = get_db()
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=?", (fid, uid())).fetchone()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND deleted_at IS NULL",
+                   (fid, uid())).fetchone()
     if not r:
         return jsonify({"error": "不存在"}), 404
     name = (data.get("name") if data.get("name") is not None else r["name"]) or ""
@@ -531,8 +534,8 @@ def drive_patch(fid):
     new = (folder + "/" + name) if folder else name
     if r["is_dir"] and (folder == old or folder.startswith(old + "/")):
         return jsonify({"error": "不能把文件夹移到它自己里面"}), 400
-    if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND id<>?",
-                  (uid(), folder, name, fid)).fetchone():
+    if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND id<>? "
+                  "AND deleted_at IS NULL", (uid(), folder, name, fid)).fetchone():
         return jsonify({"error": "目标位置已有同名的"}), 400
     if folder and folder != r["folder"]:
         _ensure_folder_path(db, uid(), folder)
@@ -552,24 +555,110 @@ def drive_del(fid):
     r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=?", (fid, uid())).fetchone()
     if not r:
         return jsonify({"error": "不存在"}), 404
-    # 先把行删干净，再回头收磁盘 —— _drop_blob 数的是「还剩几行在引用」，
-    # 顺序反了的话，正在删的这一行会把自己算成引用者，文件就永远删不掉。
-    blobs = []
+    # 软删：只打个时间戳，磁盘上的东西一个字节不动，还能后悔。
+    # 整批共用一个 batch 号 —— 恢复文件夹时靠它认出「哪些是跟着这次一起删的」。
+    # 别拿 deleted_at 当批次认：它只精确到秒，同一秒里删两次就会串批，表现是
+    # 「恢复一个文件夹，把早先单独删掉的东西也一并捞了回来」。
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    batch = uuid.uuid4().hex
     if r["is_dir"]:
-        # 删文件夹：连里面的一起删（folder 前缀匹配）
         sub = r["name"] if not r["folder"] else (r["folder"] + "/" + r["name"])
-        blobs = [k["stored_name"] for k in db.execute(
-            "SELECT stored_name FROM drive_files WHERE owner_id=? AND (folder=? OR folder LIKE ?)",
-            (uid(), sub, sub + "/%")).fetchall() if k["stored_name"]]
-        db.execute("DELETE FROM drive_files WHERE owner_id=? AND (folder=? OR folder LIKE ?)",
-                   (uid(), sub, sub + "/%"))
-    elif r["stored_name"]:
-        blobs = [r["stored_name"]]
-    db.execute("DELETE FROM drive_files WHERE id=?", (fid,))
-    for stored in set(blobs):
-        _drop_blob(db, uid(), stored)
+        db.execute("UPDATE drive_files SET deleted_at=?, del_batch=? WHERE owner_id=? AND "
+                   "(folder=? OR folder LIKE ?) AND deleted_at IS NULL",
+                   (ts, batch, uid(), sub, sub + "/%"))
+    db.execute("UPDATE drive_files SET deleted_at=?, del_batch=? WHERE id=?", (ts, batch, fid))
+    db.commit()
+    return jsonify({"ok": True, "trashed": True})
+
+
+# ---- 回收站 ----
+TRASH_DAYS = int(CFG.get("drive_trash_days", 30))
+
+
+def _kids_of(db, owner, r):
+    """一个文件夹在这次删除批次里带走的所有子孙（靠 del_batch 认，不靠时间戳）。"""
+    sub = r["name"] if not r["folder"] else (r["folder"] + "/" + r["name"])
+    return db.execute("SELECT id, stored_name FROM drive_files WHERE owner_id=? AND "
+                      "(folder=? OR folder LIKE ?) AND del_batch=? AND del_batch IS NOT NULL",
+                      (owner, sub, sub + "/%", r["del_batch"])).fetchall()
+
+
+def _purge(db, owner, rows):
+    """从库里和磁盘上真正抹掉。磁盘那步走 _drop_blob，共用同一份内容的别误伤。"""
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return
+    blobs = {r["stored_name"] for r in rows if r["stored_name"]}
+    db.execute("DELETE FROM drive_files WHERE id IN (%s)" % ",".join("?" * len(ids)), ids)
+    for b in blobs:
+        _drop_blob(db, owner, b)
+
+
+def _purge_expired(db, owner):
+    cutoff = time.strftime("%Y-%m-%d %H:%M:%S",
+                           time.localtime(time.time() - TRASH_DAYS * 86400))
+    rows = db.execute("SELECT id, stored_name FROM drive_files WHERE owner_id=? AND "
+                      "deleted_at IS NOT NULL AND deleted_at < ?", (owner, cutoff)).fetchall()
+    if rows:
+        _purge(db, owner, rows)
+        db.commit()
+
+
+@bp.get("/api/drive/trash")
+def drive_trash():
+    db = get_db()
+    _purge_expired(db, uid())          # 顺手把过期的清了，不额外挂定时器
+    rows = db.execute(
+        "SELECT id, folder, name, ext, mime, size, is_dir, source, created_at, deleted_at "
+        "FROM drive_files WHERE owner_id=? AND deleted_at IS NOT NULL "
+        "ORDER BY deleted_at DESC, id DESC LIMIT 500", (uid(),)).fetchall()
+    held = db.execute(
+        "SELECT COALESCE(SUM(size),0) FROM ("
+        "  SELECT DISTINCT stored_name, size FROM drive_files"
+        "  WHERE owner_id=? AND is_dir=0 AND deleted_at IS NOT NULL"
+        "    AND stored_name IS NOT NULL AND stored_name<>'')", (uid(),)).fetchone()[0]
+    return jsonify({"items": [_drive_row(r) for r in rows], "days": TRASH_DAYS, "held": held})
+
+
+@bp.post("/api/drive/trash/<int:fid>/restore")
+def trash_restore(fid):
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND deleted_at IS NOT NULL",
+                   (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "回收站里没有它"}), 404
+    # 原来所在的目录可能也被删了 —— 补回来，否则恢复出来的东西列表里根本看不见
+    _ensure_folder_path(db, uid(), r["folder"])
+    if r["is_dir"]:
+        for k in _kids_of(db, uid(), r):
+            db.execute("UPDATE drive_files SET deleted_at=NULL, del_batch=NULL WHERE id=?", (k["id"],))
+    db.execute("UPDATE drive_files SET deleted_at=NULL, del_batch=NULL WHERE id=?", (fid,))
+    db.commit()
+    return jsonify({"ok": True, "folder": r["folder"]})
+
+
+@bp.delete("/api/drive/trash/<int:fid>")
+def trash_purge_one(fid):
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND deleted_at IS NOT NULL",
+                   (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "回收站里没有它"}), 404
+    rows = list(_kids_of(db, uid(), r)) if r["is_dir"] else []
+    rows.append(r)
+    _purge(db, uid(), rows)
     db.commit()
     return jsonify({"ok": True})
+
+
+@bp.post("/api/drive/trash/empty")
+def trash_empty():
+    db = get_db()
+    rows = db.execute("SELECT id, stored_name FROM drive_files WHERE owner_id=? AND "
+                      "deleted_at IS NOT NULL", (uid(),)).fetchall()
+    _purge(db, uid(), rows)
+    db.commit()
+    return jsonify({"ok": True, "n": len(rows)})
 
 
 @bp.post("/api/drive/<int:fid>/send")
@@ -577,8 +666,8 @@ def drive_send(fid):
     """把云盘里的一个文件发给某个好友（走聊天）。"""
     to = int((request.get_json(silent=True) or {}).get("to") or 0)
     db = get_db()
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0",
-                   (fid, uid())).fetchone()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
     if not r:
         return jsonify({"error": "文件不存在"}), 404
     if not _are_friends(db, uid(), to):

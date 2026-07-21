@@ -45,21 +45,33 @@ def test_内容不同不会被误判成同一份(auth_client):
     assert a["stored_name"] != b["stored_name"]
 
 
+def _wipe(client, fid):
+    """彻底删掉：删除只是进回收站（软删），要再清一次才真从磁盘上抹掉。"""
+    assert client.delete("/api/drive/%d" % fid).status_code == 200
+    assert client.delete("/api/drive/trash/%d" % fid).status_code == 200
+
+
 def test_删掉共用同一份内容的一行不会带走另一行的文件(auth_client):
-    """去重最危险的副作用。删 a 之后 b 必须还打得开。"""
+    """去重最危险的副作用。彻底清掉 b 之后，a 必须还打得开。"""
     a = _up(auth_client, "留下.bin", "共用", "共用的内容".encode())
     b = _up(auth_client, "删掉.bin", "共用", "共用的内容".encode())
     assert a["stored_name"] == b["stored_name"]
-    assert auth_client.delete("/api/drive/%d" % b["id"]).status_code == 200
+    _wipe(auth_client, b["id"])
     assert os.path.exists(_blob_path(a)), "另一行的磁盘文件被带走了"
     assert auth_client.get("/api/drive/%d/download" % a["id"]).status_code == 200
 
 
-def test_最后一行删掉后磁盘文件才真的删(auth_client):
+def test_进回收站时磁盘文件先留着(auth_client):
+    a = _up(auth_client, "先留着.bin", "软删", "还能后悔".encode())
+    auth_client.delete("/api/drive/%d" % a["id"])
+    assert os.path.exists(_blob_path(a)), "软删就把文件删了，回收站里的东西恢复不出来"
+
+
+def test_最后一行彻底清掉后磁盘文件才真的删(auth_client):
     a = _up(auth_client, "独一份.bin", "独占", "只有我用这份内容".encode())
     p = _blob_path(a)
     assert os.path.exists(p)
-    auth_client.delete("/api/drive/%d" % a["id"])
+    _wipe(auth_client, a["id"])
     assert not os.path.exists(p), "没人引用了还留着，磁盘会越用越多"
 
 

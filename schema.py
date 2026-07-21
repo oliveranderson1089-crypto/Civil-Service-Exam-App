@@ -741,6 +741,16 @@ def init_db():
     if "sha256" not in _cols(con, "drive_files"):
         con.execute("ALTER TABLE drive_files ADD COLUMN sha256 TEXT")
     con.execute("CREATE INDEX IF NOT EXISTS idx_drive_hash ON drive_files(owner_id, sha256)")
+    # 回收站：删除只打这个时间戳（软删），过 N 天或手动清空才真从磁盘上抹掉。
+    # 所以**凡是列文件的地方都要带 deleted_at IS NULL**，漏一处回收站里的东西就漏回列表里。
+    if "deleted_at" not in _cols(con, "drive_files"):
+        con.execute("ALTER TABLE drive_files ADD COLUMN deleted_at TEXT")
+    # 每次删除给一个批次号：恢复文件夹时只捞「跟它一起删的那批」。
+    # 别拿 deleted_at 当批次认 —— 它只精确到秒，同一秒里删两次就会串批，
+    # 表现是「恢复一个文件夹，把早先单独删掉的东西也一并捞了回来」。
+    if "del_batch" not in _cols(con, "drive_files"):
+        con.execute("ALTER TABLE drive_files ADD COLUMN del_batch TEXT")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_drive_del ON drive_files(owner_id, deleted_at)")
     # 外观定制：头像 / 应用内壁纸 / 登录页壁纸（存文件名，图片放 uploads/skin/<uid>/）
     for col in ("avatar", "wall_app", "wall_login"):
         if col not in _cols(con, "users"):

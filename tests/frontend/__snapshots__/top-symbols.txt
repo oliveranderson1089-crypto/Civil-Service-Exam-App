@@ -280,6 +280,7 @@ dtTable
 dvBatchBar
 dvFolder
 dvIcon
+dvInTrash
 dvPickFolder
 dvProg
 dvQuery
@@ -289,6 +290,7 @@ dvSearchT
 dvSel
 dvSha256
 dvSort
+dvTrashRow
 dvUpload
 dvUploadChunked
 dvUploadOne
@@ -454,6 +456,7 @@ loadSkin
 loadSlHistory
 loadSlPapers
 loadSucai
+loadTrash
 loadVideos
 loadWqBoards
 loadWrCompose

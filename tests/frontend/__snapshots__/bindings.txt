@@ -317,6 +317,7 @@ document @click
 #fw-list @click
 #fw-wrap @click
 document @click
+#dv-trash .onclick
 #dv-crumb @click
 #dv-list @click
 #dv-search @input

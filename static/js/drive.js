@@ -49,7 +49,43 @@ function dvRow(it) {
     <a class="dv-act" href="/api/drive/${it.id}/download" title="下载">⬇</a>${del}</div>`;
 }
 
+/* ---- 回收站 ----
+   删除改成了软删，所以「删掉」和「真没了」是两件事。这个视图就是那两件事之间的地方。 */
+let dvInTrash = false;
+
+function dvTrashRow(it) {
+  return `<div class="dv-item">
+    <span class="dv-ic">${it.is_dir ? '📁' : dvIcon(it.ext)}</span>
+    <span class="dv-name">${esc(it.name)}</span>
+    <span class="dv-meta">${it.is_dir ? '文件夹' : fSize(it.size)} · 删于 ${esc((it.deleted_at || '').slice(5, 16))}${it.folder ? ' · 原在 📁 ' + esc(it.folder) : ''}</span>
+    <button class="dv-act" data-dvrestore="${it.id}" title="恢复">↩︎ 恢复</button>
+    <button class="dv-del" data-dvpurge="${it.id}" title="彻底删除">🗑</button></div>`;
+}
+
+async function loadTrash() {
+  $('#dv-list').innerHTML = '<p class="empty">加载中…</p>';
+  dvSel.clear(); dvBatchBar();
+  try {
+    const d = await api('/api/drive/trash');
+    $('#dv-crumb').innerHTML = `<a data-dvcd="">☁️ 云盘</a> / 🗑 回收站`;
+    // 回收站里的东西还占着配额 —— 不说清楚，用户会奇怪「删了怎么没腾出空间」
+    $('#dv-used').textContent = d.held
+      ? '回收站占用 ' + fSize(d.held) + '（' + d.days + ' 天后自动清空）'
+      : '回收站是空的';
+    $('#dv-list').innerHTML = d.items.length
+      ? d.items.map(dvTrashRow).join('')
+      : '<p class="empty">回收站是空的。删掉的东西会先放这儿 ' + d.days + ' 天，可以反悔。</p>';
+  } catch (e) { $('#dv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+}
+
+$('#dv-trash').onclick = () => {
+  dvInTrash = !dvInTrash;
+  $('#dv-trash').classList.toggle('primary', dvInTrash);
+  if (dvInTrash) { loadTrash(); } else { dvFolder = ''; dvQuery = ''; $('#dv-search').value = ''; loadDrive(); }
+};
+
 async function loadDrive() {
+  if (dvInTrash) return loadTrash();
   $('#dv-list').innerHTML = '<p class="empty">加载中…</p>';
   // 换目录/换搜索词后，选中的可能已经不在眼前了 —— 留着会让批量操作误伤看不见的东西
   dvSel.clear(); dvBatchBar();
@@ -83,6 +119,19 @@ $('#dv-crumb').addEventListener('click', e => {
   if (a) { dvFolder = a.dataset.dvcd; dvQuery = ''; $('#dv-search').value = ''; loadDrive(); }
 });
 $('#dv-list').addEventListener('click', async e => {
+  const back = e.target.closest('[data-dvrestore]');
+  if (back) {
+    try { await api('/api/drive/trash/' + back.dataset.dvrestore + '/restore', { method: 'POST' }); toast('已恢复'); loadTrash(); }
+    catch (err) { toast(err.message, true); }
+    return;
+  }
+  const purge = e.target.closest('[data-dvpurge]');
+  if (purge) {
+    if (!(await appConfirm('彻底删除？这一步之后就找不回来了。'))) return;
+    try { await api('/api/drive/trash/' + purge.dataset.dvpurge, { method: 'DELETE' }); loadTrash(); }
+    catch (err) { toast(err.message, true); }
+    return;
+  }
   const pick = e.target.closest('[data-dvpick]');
   if (pick) {
     const id = +pick.dataset.dvpick;
