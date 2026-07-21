@@ -93,6 +93,23 @@ class TestParseAnswers:
             ans, synth = R.parse_answers(text)
             assert ans.get(seq, ("",))[0] == want, text[:24]
 
+    def test_答案速览表(self):
+        """卷首那块「题号区间 + 连续字母」的总表 —— 一页顶全卷，最可靠的一种。
+
+        括号写法很随意（【】[] {}），扫描件 OCR 还会把 [ 认成 {，所以两边都要放宽。
+        """
+        t = ("【1-5】ACDAD [6-10] BCCCA    [11-15] BBBDB    { 16-20] BCDCB\n"
+             "[21-25] DDCAC [26-30] BBADC")
+        ans, synth = R.parse_answers(t)
+        assert len(ans) == 30
+        assert [ans[i][0] for i in range(1, 11)] == list("ACDADBCCCA")
+        # 表里的题号是原卷明写的，**不是合成的** —— 判错会让调用方弃用整卷答案
+        assert synth is False
+
+    def test_速览表字母数对不上区间就整段不要(self):
+        """OCR 把字母认漏一个，硬填会让整段答案错位，宁可不要。"""
+        assert R.parse_answers("【1-5】ACD")[0] == {}
+
     def test_题号丢了的要自报合成(self):
         """第 ⑤ 种：题号在转档时丢了，只剩光秃秃的「解析」当分隔。
 

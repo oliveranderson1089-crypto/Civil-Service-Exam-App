@@ -357,6 +357,16 @@ _ANS_BRACKET = re.compile(r"第[【\[]?(\d{1,3})[】\]]?题[\s\S]{0,20}?"
 # ③④：先按「N、解析」切段，再从段里把答案字母抠出来
 _ANS_SEG = re.compile(r"^[\s　]*(\d{1,3})[\s　]*[、.．][\s　]*解析", re.M)
 _ANS_BARE = re.compile(r"^[\s　]*解析[\s　]*$", re.M)      # ⑤ 题号丢了，只剩分隔用的「解析」
+# ⑦ 第1 题 / 第 12 题 —— 独占一行的题头。扫描件 OCR 出来的基本都是这种
+#    （原卷是「第【1】题」，tesseract 认不出方括号，出来就是「第1 题」）
+_ANS_NOBR = re.compile(r"^[\s　]*第[\s　]*(\d{1,3})[\s　]*题[\s　]*$", re.M)
+# ⑧ **答案速览表**：卷首常有一块「题号区间 + 连续字母」的总表，
+#      【1-5】ACDAD  [6-10] BCCCA  [11-15] BBBDB …
+#    20 行就是 100 道题的答案，比逐题去抠可靠得多、也快得多（一页顶全卷）。
+#    左右括号写得很随意（【】[] {} ()），OCR 还会把 [ 认成 {，所以两边都放宽。
+_ANS_TABLE = re.compile(
+    r"[【\[{(（][\s　]*(\d{1,3})[\s　]*[-–—~－][\s　]*(\d{1,3})[\s　]*[】\]}）)][\s　]*"
+    r"([A-D][A-D\s　]{1,30})")
 # ⑥ 1.A【解析】…… —— 答案字母紧跟题号，连「【答案】」都不写（2000/2001 国考的 PDF）
 _ANS_TIGHT = re.compile(r"^[\s　]*(\d{1,3})[\s　]*[、.．][\s　]*([A-D])[\s　]*(?=【解析】|解析)", re.M)
 _ANS_TAIL = re.compile(r"(?:因此[，,]?\s*选择|故正确答案(?:为|是)|故本题选|所以本题选|"
@@ -416,15 +426,15 @@ def parse_answers(text):
 
     h = list(_ANS_INLINE.finditer(text))
     if h:
-        cands.append(_seg_answers(text, h, lambda m, b: m.group(2)))
+        cands.append((_seg_answers(text, h, lambda m, b: m.group(2)), False))
 
     h = list(_ANS_BRACKET.finditer(text))
     if h:
-        cands.append(_seg_answers(text, h, lambda m, b: m.group(2)))
+        cands.append((_seg_answers(text, h, lambda m, b: m.group(2)), False))
 
     h = list(_ANS_TIGHT.finditer(text))
     if h:
-        cands.append(_seg_answers(text, h, lambda m, b: m.group(2)))
+        cands.append((_seg_answers(text, h, lambda m, b: m.group(2)), False))
 
     # 答案字母藏在解析末尾的「因此，选择 C 选项」里。取**最后一个**：
     # 解析中途会引用别的选项（「A 项错误」），只有收尾那句才是结论。
@@ -434,12 +444,17 @@ def parse_answers(text):
 
     h = list(_ANS_SEG.finditer(text))
     if h:
-        cands.append(_seg_answers(text, h, tail))
+        cands.append((_seg_answers(text, h, tail), False))
+
+    # ⑦「第N题」独占一行：题头里的答案字母往往被 OCR 糊掉（【B】→【8B]了】），
+    #    但正文结尾那句「故正确答案为 B」是干净的，靠它抠。
+    h = list(_ANS_NOBR.finditer(text))
+    if h:
+        cands.append((_seg_answers(text, h, tail), False))
 
     # ⑤ 题号在转档时丢了，只剩一行一个光秃秃的「解析」当分隔（2025 国考那三份）。
     #    只能**按出现顺序**编号 —— 所以调用方必须拿题目卷的题数核一下，
     #    对不上就别用，否则整卷答案会错位一格，比没有答案还糟。
-    bare_i = len(cands)
     h = list(_ANS_BARE.finditer(text))
     if len(h) > 20:
         seq = {}
@@ -449,12 +464,28 @@ def parse_answers(text):
             letter = tail(m, body)
             if letter:
                 seq[i] = (letter, _clean_explain(body))
-        cands.append(seq)
+        cands.append((seq, True))   # ← 唯一一种题号是我们自己编的
+
+    # ⑧ 答案速览表。放在最后加入候选，但它常常一举拿下整卷 —— 后面按条数挑最多的那个，
+    #    所以只要表在，它自然会赢。
+    tbl = {}
+    for m in _ANS_TABLE.finditer(text):
+        lo, hi = int(m.group(1)), int(m.group(2))
+        letters = re.sub(r"[\s　]", "", m.group(3))[:hi - lo + 1]
+        # 区间长度和字母个数必须严丝合缝 —— 对不上说明 OCR 把字母认漏或认多了，
+        # 这时候硬填会让整段答案错位，宁可整段不要
+        if hi >= lo and len(letters) == hi - lo + 1:
+            for i, a in enumerate(letters):
+                tbl[lo + i] = (a, "")
+    if len(tbl) >= 10:
+        cands.append((tbl, False))   # 表里的题号是原卷明写的，不是编的
 
     if not cands:
         return {}, False
-    best = max(range(len(cands)), key=lambda i: len(cands[i]))
-    return cands[best], best >= bare_i
+    # 每个候选自带「题号是不是我们编的」这个标记，**不要靠它在列表里的下标去推**：
+    # 原先用 `best >= bare_i` 推，而速览表恰好落在裸「解析」那一档没添加时的同一个下标上，
+    # 于是最可靠的一种排版被判成了合成序号 —— 调用方那道错位闸会直接弃用整卷答案。
+    return max(cands, key=lambda c: len(c[0]))
 
 
 # ---------------------------------------------------------------- 卷子的身份

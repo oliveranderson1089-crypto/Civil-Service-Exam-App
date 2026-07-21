@@ -35,6 +35,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
+import realbank as R                                       # noqa: E402
+
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
 CFG = json.load(open(os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json")),
@@ -42,7 +44,8 @@ CFG = json.load(open(os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config
 V_BASE = (CFG.get("vision_base") or "").rstrip("/")
 V_KEY = CFG.get("vision_key") or ""
 V_MODEL = CFG.get("vision_model") or "glm-4.6v"
-DPI = 160          # 再高识别率没明显提升，图却大一倍、传得慢
+DPI = 160          # 视觉模型用：再高识别率没明显提升，图却大一倍、传得慢
+LOW_YIELD = 20     # tesseract 抠出的答案少于这个数，才值得花钱上视觉模型
 
 # ⚠️ OCR 结果**必须存在独立表里、按云盘文件 id 挂**，不能挂在 real_papers 上：
 #    那张表会被 ingest_real.py 整表重建（改卷别判定、改判重规则都得重跑），
@@ -124,6 +127,47 @@ def ocr_page(png, tries=3):
     return {}
 
 
+# tesseract 是本机装的、免费、还快 —— 同一份 37 页的卷子它 228 秒跑完，
+# 视觉模型要 28 分钟。而答案卷是**高对比度印刷体**，正是 tesseract 的强项。
+# 所以顺序是：先用它，抠不出足够的答案再上视觉模型兜底。
+TESS_DPI = 300          # 300 比 160 明显准，本地跑不心疼
+
+
+def tess_answers(pdf, tmp, first=0, last=0):
+    """tesseract 识别 → {题号: 答案}。抠不出来返回空，调用方去上视觉模型。
+
+    first/last 限定页码：很多卷子**卷首就有答案速览表**（20 行 = 100 道题的答案），
+    先只读前两页，够了就不用把三四十页全渲一遍 —— 快十几倍。
+    """
+    base = os.path.join(tmp, "t")
+    cmd = ["pdftoppm", "-png", "-r", str(TESS_DPI)]
+    if first and last:
+        cmd += ["-f", str(first), "-l", str(last)]
+    try:
+        subprocess.run(cmd + [pdf, base], capture_output=True, timeout=900)
+    except Exception:
+        return {}
+    pngs = sorted(f for f in os.listdir(tmp) if f.startswith("t") and f.endswith(".png"))
+    if not pngs:
+        return {}
+    txt = []
+    for f in pngs:
+        try:
+            o = subprocess.run(["tesseract", os.path.join(tmp, f), "stdout",
+                                "-l", "chi_sim+eng", "--psm", "6"],
+                               capture_output=True, timeout=180)
+            txt.append(o.stdout.decode("utf-8", "ignore"))
+        except Exception:
+            pass
+    for f in pngs:                      # 识别完就删，一份卷子几十张 300dpi 大图很占地方
+        try:
+            os.remove(os.path.join(tmp, f))
+        except OSError:
+            pass
+    ans, synth = R.parse_answers("\n".join(txt))
+    return {} if synth else {k: v[0] for k, v in ans.items()}
+
+
 def pages_of(pdf, tmp):
     try:
         subprocess.run(["pdftoppm", "-png", "-r", str(DPI), pdf, os.path.join(tmp, "p")],
@@ -138,7 +182,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--plan", action="store_true")
     ap.add_argument("--limit", type=int, help="只跑前 N 份")
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=4, help="视觉模型的并发（tesseract 不用）")
+    ap.add_argument("--tess-only", action="store_true",
+                    help="只用本机 tesseract，一分钱不花（识别不出的卷子就先放着）")
     a = ap.parse_args()
     if not V_KEY:
         raise SystemExit("config.json 里没有 vision_key（OCR 要视觉模型，DeepSeek 读不了图）")
@@ -167,23 +213,31 @@ def main():
             continue
         tmp = tempfile.mkdtemp(prefix="ocr-")
         try:
-            pngs = pages_of(path, tmp)
-            if not pngs:
-                continue
-            got = {}
-            with ThreadPoolExecutor(max_workers=a.workers) as pool:
-                for f in as_completed({pool.submit(ocr_page, p): p for p in pngs}):
-                    got.update(f.result() or {})
+            # ① 先扫前两页找**答案速览表**：很多卷子卷首就有，一页顶全卷
+            got, how = tess_answers(path, tmp, 1, 2), "tesseract表"
+            # ② 没有速览表才整卷识别（仍然是免费的 tesseract）
+            if len(got) < LOW_YIELD:
+                got, how = tess_answers(path, tmp), "tesseract"
+            # ③ 还是太少才上视觉模型 —— 有的扫描件糊到 tesseract 认不动
+            if len(got) < LOW_YIELD and not a.tess_only:
+                pngs = pages_of(path, tmp)
+                if pngs:
+                    vis = {}
+                    with ThreadPoolExecutor(max_workers=a.workers) as pool:
+                        for f in as_completed({pool.submit(ocr_page, q): q for q in pngs}):
+                            vis.update(f.result() or {})
+                    if len(vis) > len(got):
+                        got, how = vis, V_MODEL
             # 状态沿用既有的 ok/empty，不新造 'ocr' —— report() 的人工复核清单只认
             # ('answers_bad','failed','empty','thin')，新值会让 OCR 只识出三五条的
             # 那种明显失败的卷子在报告里彻底隐身
             con.execute(
                 "INSERT OR REPLACE INTO real_ocr(file_id,name,n_item,ans_json,model) "
                 "VALUES(?,?,?,?,?)",
-                (r["file_id"], r["name"], len(got), json.dumps(got), V_MODEL))
+                (r["file_id"], r["name"], len(got), json.dumps(got), how))
             con.commit()
-            print("  [%d/%d] %-44s %3d 页 → %3d 条答案  （已跑 %.1f 分钟）"
-                  % (n, len(rows), r["name"][:44], len(pngs), len(got), (time.time() - t0) / 60))
+            print("  [%d/%d] %-40s %3d 条答案 by %s （已跑 %.1f 分钟）"
+                  % (n, len(rows), r["name"][:40], len(got), how, (time.time() - t0) / 60))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
