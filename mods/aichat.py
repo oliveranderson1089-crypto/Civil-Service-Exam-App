@@ -4,7 +4,7 @@
 """
 from flask import Blueprint, jsonify, request
 
-from core import CFG, _save_cfg, get_db, uid
+from core import CFG, _save_cfg, _study_stats, get_db, uid
 from mods.ai import _ai_call_or_error, _ai_conf, ai_configured, vision_configured
 
 bp = Blueprint("aichat", __name__)
@@ -17,43 +17,22 @@ def ai_status():
 
 
 def _user_stats():
-    """汇总用户与本应用的数据，供 AI 助手回答“我收录了多少…/这个应用有多少…”。"""
+    """给 AI 一句用户概况钩子。细节别堆在 prompt 里——精确数字/明细交给查询工具：
+    个人明细走 get_user_overview / 各 list_*，本应用库总量走 get_library_stats。"""
     db = get_db()
     u = uid()
+    if not u:
+        return ""
     try:
-        # 全局库总量
-        cls = db.execute("SELECT category, COUNT(*) c FROM classics GROUP BY category ORDER BY c DESC").fetchall()
-        cls_lib = "、".join("%s%d" % (r["category"], r["c"]) for r in cls)
-        cls_total = sum(r["c"] for r in cls)
-        idi = db.execute("SELECT COUNT(*) FROM ref_idiom").fetchone()[0]
-        ci = db.execute("SELECT COUNT(*) FROM ref_ci").fetchone()[0]
-        pdict = db.execute("SELECT COUNT(*) FROM party_dict").fetchone()[0]
-        pdoc = db.execute("SELECT COUNT(*) FROM policy_docs").fetchone()[0]
-        # 用户个人
-        ent = db.execute("SELECT category, COUNT(*) c FROM entries WHERE user_id=? GROUP BY category", (u,)).fetchall()
-        ent_by = "、".join("%s%d" % (r["category"], r["c"]) for r in ent) or "无"
-        ent_total = sum(r["c"] for r in ent)
-        star_ent = db.execute("SELECT COUNT(*) FROM entries WHERE user_id=? AND starred=1", (u,)).fetchone()[0]
-        cstar = db.execute("SELECT c.category cat, COUNT(*) c FROM classic_stars s JOIN classics c ON c.id=s.classic_id "
-                           "WHERE s.user_id=? GROUP BY c.category", (u,)).fetchall()
-        cstar_by = "、".join("%s%d" % (r["cat"], r["c"]) for r in cstar) or "无"
-        cstar_total = sum(r["c"] for r in cstar)
         wq = db.execute("SELECT COUNT(*) FROM wrong_questions WHERE user_id=?", (u,)).fetchone()[0]
+        ent = db.execute("SELECT COUNT(*) FROM entries WHERE user_id=?", (u,)).fetchone()[0]
         notes = db.execute("SELECT COUNT(*) FROM notes WHERE user_id=?", (u,)).fetchone()[0]
-        docs = db.execute("SELECT COUNT(*) FROM kb_nodes WHERE user_id=? AND type='doc'", (u,)).fetchone()[0]
-        mats = db.execute("SELECT COUNT(*) FROM materials WHERE user_id=?", (u,)).fetchone()[0]
+        streak = _study_stats(db, u)["streak"]
     except Exception:
         return ""
-    return "\n".join([
-        "【本应用的数据（用户若问“这个应用有多少…”，用这些数）】",
-        "· 古诗文库共 %d 首：%s。" % (cls_total, cls_lib),
-        "· 成语库 %d 条、词语库 %d 条；党建理论学习词典 %d 条；时政要文库 %d 篇。" % (idi, ci, pdict, pdoc),
-        "【当前用户个人的数据（用户若问“我收录/收藏了多少…”，用这些数）】",
-        "· 成语词语收录共 %d 条（%s），其中收藏 %d 条。" % (ent_total, ent_by, star_ent),
-        "· 收藏古诗文共 %d 首（%s）。" % (cstar_total, cstar_by),
-        "· 错题本 %d 道、小记 %d 条、知识库文档 %d 篇、资料库文件 %d 个。" % (wq, notes, docs, mats),
-        "注意：区分“本应用库总量”与“用户个人收录/收藏量”，按提问对象选用；数字以上面为准。",
-    ])
+    return ("【用户概况（只给你估个规模，别拿这里的约数硬答；要准确数字或明细，必须调查询工具：个人数据用 "
+            "get_user_overview / list_*，本应用库总量用 get_library_stats）】"
+            "错题 %d 道 · 收录 %d 条 · 小记 %d 条 · 连续学习 %d 天。" % (wq, ent, notes, streak))
 
 
 @bp.post("/api/ai/chat")

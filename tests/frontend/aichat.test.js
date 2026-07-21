@@ -47,3 +47,29 @@ test('空动作列表不炸', (t) => {
   h.run('aiRunActions(null)');
   assert.strictEqual(h.toasts.length, 0);
 });
+
+test('工具面板「打开功能」镜像首页卡片，点击像点首页图标一样跳转', (t) => {
+  const h = boot(); t.after(() => h.close());
+  // 造两张首页卡片：一个板块(section)、一个固定功能
+  h.run(`document.querySelector('#home-cards').innerHTML =
+    '<div class="home-card" data-go="sec:xingce"><div class="hc-logo">测</div><div class="hc-name">行测</div></div>' +
+    '<div class="home-card" data-go="wrongq"><div class="hc-logo"></div><div class="hc-name">错题本</div></div>';`);
+  // 打开功能这一组是直接读首页卡片得来的（日后加新卡片自动出现，无需改这里）
+  const items = h.plain('aiHomeNavItems()');
+  assert.deepStrictEqual(items.map(x => x.label), ['行测', '错题本'], '应镜像首页卡片、保持顺序');
+  assert.deepStrictEqual(items.map(x => x.go), ['sec:xingce', 'wrongq']);
+  assert.strictEqual(items[0].ic, '测', 'section 用其 CJK 图标');
+  assert.strictEqual(items[1].ic, '📓', '固定项用 HOME_IC 映射');
+
+  // 渲染后「打开功能」在最前，含这两项
+  h.run('renderAiTools("")');
+  const html = h.run("document.querySelector('#ai-tool-list').innerHTML");
+  assert.match(html, /打开功能/);
+  assert.match(html, /行测/);
+
+  // 点「行测」应走 navHomeCard → openSection('xingce')（stub 掉观察，避免真渲染依赖 SECTIONS）
+  h.run('window.__nav = null; openSection = (k) => { window.__nav = k; };');
+  h.run(`aiToolRun({ go: 'sec:xingce', label: '行测' })`);
+  assert.strictEqual(h.window.__nav, 'xingce', '点打开功能项应像点首页图标一样跳转到对应板块');
+  assert.strictEqual(h.toasts[h.toasts.length - 1].msg, '已打开「行测」');
+});

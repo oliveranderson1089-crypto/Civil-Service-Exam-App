@@ -9,8 +9,8 @@
  */
 /* global $, IS_MOBILE, aiBack, api, appConfirm, appPrompt,
    applyPush, avoidFab, back, c, composing, createDock,
-   esc, loadEntries, loadFeed, loadWrongq, lsGet, lsSet,
-   mdToHtml, openAiChatMenu, push, stack, toast */
+   esc, loadClassics, loadDaily, loadEntries, loadFeed, loadPlan,
+   loadWrongq, lsGet, lsSet, mdToHtml, navHomeCard, openAiChatMenu, push, stack, toast */
 
 /* ================= AI 助手 ================= */
 /* ---- 全局 AI 会话中心（仿 Claude：新对话 / 项目 / 最近） ---- */
@@ -141,6 +141,85 @@ async function aiHandleAttach(file) {
 $('#ai-attfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
 $('#ai-camfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
 
+// ===== AI 工具面板：把 AI 能调的工具做成可点的快捷入口，既能一键让 AI 做、也能直接打开 =====
+// go=打开首页某功能（复用 navHomeCard，跟点首页图标一样跳转，含往下的二三级）；
+// ask=一键发预设问题让 AI 调工具作答；input=先弹输入框收集内容，再让 AI 记进去。带 sub:'AI' 的走大模型。
+// 「打开功能」组不写死：直接读首页卡片，天然镜像首页（含用户拖拽排序），日后加新功能自动出现。
+const HOME_IC = { changkao: '⭐', notes: '🗒️', kb: '📚', wrongq: '📓', materials: '📁',
+  quiz: '📝', tasks: '✅', drive: '☁️', chat: '💬', review: '🔁', idiom: '📖' };
+function aiHomeNavItems() {
+  return [...document.querySelectorAll('#home-cards .home-card[data-go]')].map(c => {
+    const go = c.dataset.go;
+    let ic = HOME_IC[go] || '📂';
+    if (go.startsWith('sec:')) { const t = ((c.querySelector('.hc-logo') || {}).textContent || '').trim(); if (t) ic = t; }
+    return { go, ic, label: ((c.querySelector('.hc-name') || {}).textContent || '').trim() };
+  }).filter(x => x.label);
+}
+const AI_TOOL_GROUPS = [
+  { name: '问我的数据', items: [
+    { ic: '📊', label: '我的数据总览', sub: 'AI', ask: '帮我看看我的数据总览' },
+    { ic: '🔁', label: '今天要复习什么', sub: 'AI', ask: '我今天有哪些要复习的？' },
+    { ic: '🗓️', label: '今天的备考计划', sub: 'AI', ask: '我今天的备考计划是什么？' },
+    { ic: '✅', label: '今天还有什么任务', sub: 'AI', ask: '我今天有哪些任务还没做？' },
+    { ic: '📈', label: '我的进度和坚持天数', sub: 'AI', ask: '看看我的备考进度和连续学习天数' },
+    { ic: '🎯', label: '我的刷题正确率/成绩', sub: 'AI', ask: '我的刷题正确率和最近测验成绩怎么样？' },
+    { ic: '🏛️', label: '本应用有多少资源', sub: 'AI', ask: '这个应用的题库、古诗文库、常识库各有多少？' },
+  ] },
+  { name: '快捷记录', items: [
+    { ic: '➕', label: '收录一个词', sub: 'AI', input: '输入要收录的成语/词语', ask: v => `帮我把「${v}」收录到成语词语积累` },
+    { ic: '📝', label: '记一条小记', sub: 'AI', input: '要记的内容', ask: v => `帮我在小记里记一条：${v}` },
+    { ic: '📅', label: '加一个每日任务', sub: 'AI', input: '每日任务内容，如「刷20道判断推理」', ask: v => `帮我加个每日任务：${v}` },
+    { ic: '🔍', label: '查词释义', sub: 'AI', input: '要查释义的词', ask: v => `「${v}」是什么意思？` },
+  ] },
+];
+
+let _aiToolG = [];   // 当前渲染用的分组（打开功能是动态的，点击时按这份索引，避免错位）
+function renderAiTools(kw) {
+  kw = (kw || '').trim().toLowerCase();
+  _aiToolG = [{ name: '打开功能', items: aiHomeNavItems() }, ...AI_TOOL_GROUPS];
+  let html = '';
+  _aiToolG.forEach((g, gi) => {
+    const rows = g.items.map((it, ii) => ({ it, ii })).filter(({ it }) => !kw || it.label.toLowerCase().includes(kw));
+    if (!rows.length) return;
+    html += `<div class="ai-tool-group">${g.name}</div>` + rows.map(({ it, ii }) =>
+      `<button class="ai-tool-item" data-g="${gi}" data-i="${ii}"><span class="tl-ic">${it.ic}</span>` +
+      `<span class="tl-tx">${esc(it.label)}</span>${it.sub ? `<span class="tl-sub">${it.sub}</span>` : ''}</button>`).join('');
+  });
+  $('#ai-tool-list').innerHTML = html || '<div class="ai-tool-empty">没有匹配的工具</div>';
+}
+
+function aiToolRun(it) {
+  $('#ai-toolsheet').classList.add('hidden');
+  if (it.go) {                       // 打开首页某功能：跟点首页图标一样跳转（含往下的二三级），先收起 AI 面板
+    $('#ai-panel').classList.add('hidden');
+    if (window.applyPush) applyPush();
+    if (window.avoidFab) avoidFab();
+    try { navHomeCard(it.go); toast('已打开「' + it.label + '」'); }
+    catch (e) { console.error('[AI工具] 打开失败', it.go, e); toast('打开「' + it.label + '」没成功', true); }
+    return;
+  }
+  if (it.input) {                    // 快捷记录：先问用户要内容，再让 AI 记
+    appPrompt(it.input).then(v => { v = (v || '').trim(); if (v) aiToolSend(it.ask(v)); });
+    return;
+  }
+  aiToolSend(it.ask);                // 快捷提问：把预设问题一键发给 AI
+}
+
+function aiToolSend(text) { $('#ai-text').value = text; aiGrow(); aiSend(); }
+
+$('#ai-tools').onclick = () => {
+  renderAiTools(''); $('#ai-tool-filter').value = '';
+  $('#ai-toolsheet').classList.remove('hidden');
+  if (!IS_MOBILE) setTimeout(() => $('#ai-tool-filter').focus(), 60);   // 手机端不自动聚焦，免得弹键盘遮列表
+};
+$('#ai-tool-filter').addEventListener('input', e => renderAiTools(e.target.value));
+$('#ai-toolsheet').addEventListener('click', e => {
+  if (e.target.closest('[data-sheet-close]') || e.target.id === 'ai-toolsheet') { $('#ai-toolsheet').classList.add('hidden'); return; }
+  const b = e.target.closest('.ai-tool-item'); if (!b) return;
+  const it = (_aiToolG[+b.dataset.g] || { items: [] }).items[+b.dataset.i];
+  if (it) aiToolRun(it);
+});
+
 async function aiSend() {
   const t = $('#ai-text').value.trim();
   if ((!t && !aiAtts.length) || aiBusy) return;
@@ -193,16 +272,36 @@ function aiRunActions(actions) {
         console.error('[AI] 打开「%s」失败：', a.label || a.fn, e);
         toast('打开「' + (a.label || '') + '」没成功', true);
       }
-    } else if (a.type === 'refresh' && a.what === 'notes') {
-      if (v === 'notes' && typeof loadFeed === 'function') loadFeed();   // 正看着小记就刷新
-    } else if (a.type === 'refresh' && a.what === 'entries') {
-      if (v === 'idiom' && typeof loadEntries === 'function') loadEntries();
-      toast('已收录到「成语词语积累」');
-    } else if (a.type === 'refresh' && a.what === 'wrongq') {
-      if (v === 'wrongq' && typeof loadWrongq === 'function') loadWrongq();
-      toast('已加入错题本 📓');
+    } else if (a.type === 'refresh') {
+      // 用户正看着对应视图才刷新（省得白重绘）。tasks/plan 同属「任务清单」view=tasks 的两个页签。
+      if (a.what === 'entries' && v === 'idiom' && typeof loadEntries === 'function') loadEntries();
+      else if (a.what === 'notes' && v === 'notes' && typeof loadFeed === 'function') loadFeed();
+      else if (a.what === 'wrongq' && v === 'wrongq' && typeof loadWrongq === 'function') loadWrongq();
+      else if (a.what === 'tasks' && v === 'tasks' && typeof loadDaily === 'function') loadDaily();
+      else if (a.what === 'plan' && v === 'tasks' && typeof loadPlan === 'function') loadPlan();
+      else if (a.what === 'classics' && v === 'classics' && typeof loadClassics === 'function') loadClassics();
+      // 文案由后端按实际动作给（收录/收藏/删除各不同），不再前端硬编码 —— 否则删词也会弹「已收录」
+      if (a.toast) toast(a.toast);
+    } else if (a.type === 'confirm') {
+      aiConfirm(a);   // AI 要删东西：弹确认框，用户点确认后才真删
     }
   }
+}
+
+// AI 请求删除 → 弹美化确认框；点确认才调后端带 _confirmed 真删，结果补进对话并刷新
+async function aiConfirm(a) {
+  const w = a.args && a.args.word;
+  const msg = w ? `删除「${w}」？此操作不可撤销。` : '确认删除这条内容？此操作不可撤销。';
+  if (!(await appConfirm(msg))) return;   // 取消：什么都不做，AI 那句「确定吗」留在对话里
+  try {
+    const d = await api('/api/aichat/chats/' + aiChatId + '/confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool: a.tool, args: a.args || {} }),
+    });
+    aiMsgs.push({ role: 'assistant', content: d.reply || '已删除。' });
+    renderAI();
+    aiRunActions(d.actions);   // 跑它带回的 refresh（刷新对应列表）
+  } catch (e) { toast(e.message || '删除失败', true); }
 }
 // 手机端不用拖高（_grow 未装），走回原来的自动增高（最高 120）；桌面端交给拖高逻辑
 function aiGrow() { const t = $('#ai-text'); if (!t) return; if (t._grow) { t._grow(); return; } t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }

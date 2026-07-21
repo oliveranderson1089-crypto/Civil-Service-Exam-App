@@ -1444,6 +1444,7 @@
     <div id="ai-atts" class="ai-atts"></div>
     <div class="ai-input" id="ai-input">
       <div class="input-tools">
+        <button type="button" id="ai-tools" class="ai-attbtn" title="工具：点一下让 AI 做，或直接打开功能">🧰</button>
         <button id="ai-attach" class="ai-attbtn" title="上传图片/文件">📎</button>
         <button type="button" class="ai-attbtn hw-open-btn" data-hw="ai-text" title="手写输入（写完自动转文字）">✍️</button>
         <button type="button" class="ai-attbtn hidden" id="ai-shot" title="截图（可用手写笔圈选）">📷</button>
@@ -1468,6 +1469,17 @@
       <button data-aiatt="image">🖼️ 选图片</button>
       <button data-aiatt="file">📄 选文件（PDF/Word/文本）</button>
     </div>
+  </div>
+</div>
+
+<!-- AI 工具面板：可搜索、分组的快捷工具（点一下让 AI 做，或直接打开功能页） -->
+<div id="ai-toolsheet" class="note-sheet hidden" style="z-index:130;">
+  <div class="ns-mask" data-sheet-close></div>
+  <div class="ns-panel">
+    <div class="ns-handle"></div>
+    <div class="ns-title">工具 · 点一下让 AI 做，或直接打开</div>
+    <input id="ai-tool-filter" class="ai-tool-filter" placeholder="搜索工具…" autocomplete="off">
+    <div id="ai-tool-list" class="ai-tool-list acm-list"></div>
   </div>
 </div>
 

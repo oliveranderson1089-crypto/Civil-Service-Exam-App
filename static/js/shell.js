@@ -20,8 +20,8 @@
    stack, state, toast, toggleNoteSearch */
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'videos', 'fanwen', 'fanwend', 'drive', 'chat'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', videos: '每日新闻视频' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'fanwen', 'fanwend', 'drive', 'chat'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', findwrong: '错题记录', videos: '每日新闻视频' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -188,10 +188,9 @@ async function refreshReviewBadge() {
     $('#rev-desc').textContent = d.count > 0 ? `今天有 ${d.count} 条要复习` : '今日复习完成，棒！';
   } catch (_) { /* 角标拉不到就不显示，下次进来会重试 */ }
 }
-$('#home-cards').addEventListener('click', e => {
-  if (hcDragSuppress) return;   // 刚拖拽完的抬手不算点击
-  const c = e.target.closest('[data-go]'); if (!c) return;
-  const g = c.dataset.go;
+// 首页某张卡片的跳转（按 data-go）。抽成独立函数：首页点击、AI 工具面板都复用它，
+// 这样「打开功能」跟点首页图标行为完全一致，日后加新卡片两边一起生效。
+function navHomeCard(g) {
   if (g.startsWith('sec:')) openSection(g.slice(4));
   else if (g === 'notes') openNotes();
   else if (g === 'kb') openKb();
@@ -204,6 +203,11 @@ $('#home-cards').addEventListener('click', e => {
   else if (g === 'changkao') openChangkao();
   else if (g === 'drive') openDrive();
   else if (g === 'chat') openChat();
+}
+$('#home-cards').addEventListener('click', e => {
+  if (hcDragSuppress) return;   // 刚拖拽完的抬手不算点击
+  const c = e.target.closest('[data-go]'); if (!c) return;
+  navHomeCard(c.dataset.go);
 });
 
 /* ---------------- 卡片拖拽排序（通用）：电脑按住拖动，手机长按 0.4 秒再拖 ----------------
