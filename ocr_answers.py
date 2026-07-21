@@ -140,11 +140,14 @@ def ocr_page(png, tries=3):
 # 所以顺序是：先用它，抠不出足够的答案再上视觉模型兜底。
 
 
-def tess_answers(pdf, tmp, first=0, last=0):
-    """tesseract 识别 → {题号: 答案}。抠不出来返回空，调用方去上视觉模型。
+def tess_answers(pdf, tmp, first=0, last=0, deadline=0):
+    """tesseract 识别 → ({题号: 答案}, 题号是否按顺序编的)。抠不出来返回空。
 
     first/last 限定页码：很多卷子**卷首就有答案速览表**（20 行 = 100 道题的答案），
     先只读前两页，够了就不用把三四十页全渲一遍 —— 快十几倍。
+
+    deadline 是这份卷子的截止时刻：到点就把已识别的页交出去，别让一份怪卷
+    （几百页、或者页面大得离谱）把整轮拖死。
     """
     base = os.path.join(tmp, "t")
     cmd = ["pdftoppm", "-png", "-scale-to-x", str(PX_W), "-scale-to-y", "-1"]
@@ -153,12 +156,14 @@ def tess_answers(pdf, tmp, first=0, last=0):
     try:
         subprocess.run(cmd + [pdf, base], capture_output=True, timeout=900)
     except Exception:
-        return {}
+        return {}, False
     pngs = sorted(f for f in os.listdir(tmp) if f.startswith("t") and f.endswith(".png"))
     if not pngs:
-        return {}
+        return {}, False
     txt = []
     for f in pngs:
+        if deadline and time.time() > deadline and txt:
+            break          # 超时就用已识别的这些页，聊胜于无
         try:
             o = subprocess.run(["tesseract", os.path.join(tmp, f), "stdout",
                                 "-l", "chi_sim+eng", "--psm", "6"],
@@ -228,11 +233,12 @@ def main():
         tmp = tempfile.mkdtemp(prefix="ocr-")
         try:
             # ① 先扫前两页找**答案速览表**：很多卷子卷首就有，一页顶全卷
-            got, synth = tess_answers(path, tmp, 1, 2)
+            dl = time.time() + PAPER_TIMEOUT
+            got, synth = tess_answers(path, tmp, 1, 2, dl)
             how = "tesseract表"
             # ② 没有速览表才整卷识别（仍然是免费的 tesseract）
             if len(got) < LOW_YIELD:
-                got, synth = tess_answers(path, tmp)
+                got, synth = tess_answers(path, tmp, deadline=dl)
                 how = "tesseract"
             # ③ 还是太少才上视觉模型 —— 有的扫描件糊到 tesseract 认不动
             if len(got) < LOW_YIELD and not a.tess_only:
