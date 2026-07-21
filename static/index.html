@@ -1723,12 +1723,15 @@
     <div class="hw-canvas-wrap">
       <canvas id="hw-canvas" class="hw-canvas"></canvas>
     </div>
+    <div id="hw-puncbar" class="hw-puncbar hidden"></div>
     <div class="hw-ctrl">
       <button id="hw-undo" class="hw-btn">↶ 撤笔</button>
       <button id="hw-clear" class="hw-btn">清空</button>
+      <button id="hw-punc" class="hw-btn">，。标点</button>
       <button id="hw-space" class="hw-btn">空格</button>
       <button id="hw-nl" class="hw-btn">换行</button>
       <button id="hw-back" class="hw-btn">⌫ 删字</button>
+      <button id="hw-pan" class="hw-btn" title="滑动：让画布看穿，可滚动后面参考的内容">✋ 滑动</button>
       <button id="hw-done" class="hw-btn hw-done">完成</button>
     </div>
     <div class="hw-preview">已输入 <b id="hw-count">0</b> 字 · 写完点候选字即填入</div>
@@ -1801,5 +1804,6 @@
 <script src="js/bookmarks.js"></script>
 <script src="js/desktop.js"></script>
 <script src="js/marks.js"></script>
+<script src="js/shortcuts.js"></script>
 </body>
 </html>

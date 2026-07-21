@@ -218,16 +218,13 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     fab.classList.toggle('dir-dn', r.top <= innerHeight * .22);
   }
   window.fabClose = () => fab.classList.remove('open');
-  // 按「实际可见的按钮数」把它们均匀铺在四分之一圆弧上（截图在手机端隐藏，个数会变；
-  // 固定 CSS 弧位就会留空/重叠）。半径随个数增大，保证不叠。
+  // 竖排菜单：按「实际可见的按钮数」把胶囊一条条往上/下码（截图在手机端隐藏，个数会变）。
+  // 只算纵向偏移，横向贴哪一侧由 CSS 的 dir-l/dir-r 决定；加工具只是多码一条，不会挤。
   function layoutFab() {
     const acts = [...fab.querySelectorAll('.fab-act')].filter(b => !b.hidden);
-    const n = acts.length;
-    const R = 70 + Math.max(0, n - 3) * 16;       // 3个→70，每多一个半径+16，避免挤在一起
+    const step = 50;                              // 每条胶囊 42px 高 + 8px 间距
     acts.forEach((b, i) => {
-      const a = n === 1 ? Math.PI / 4 : (Math.PI / 2) * (i / (n - 1));   // 0..90° 均分
-      b.style.setProperty('--fx', Math.round(Math.cos(a) * R) + 'px');
-      b.style.setProperty('--fy', Math.round(Math.sin(a) * R) + 'px');
+      b.style.setProperty('--fy', ((i + 1) * step) + 'px');
     });
   }
   function toggle() { dirs(); layoutFab(); fab.classList.toggle('open'); }

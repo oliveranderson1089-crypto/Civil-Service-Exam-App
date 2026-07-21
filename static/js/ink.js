@@ -667,8 +667,21 @@ function inkHere() {
   // 其它视图：暂时仍是 pixel 锚（按视口坐标，画在哪个屏幕位置就留在哪）。
   // 文本锚推广到这些视图是第二期的事 —— 它们的正文容器（mkPageRoot）和滚动容器五花八门，
   // 得一个个核对，先让阅读模式这条路跑稳。
-  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : ''), null, null, null);
+  Ink.open('view:' + (st.view || 'home') + (st.id ? ':' + st.id : '') + inkTabSuffix(), null, null, null);
 }
+// 同一个 view 里还分 tab（如成文详情的 全文/提纲/素材）：把当前 tab 也编进 key，
+// 否则各 tab 共用一份笔迹，在提纲上画的批注会串到全文（需求四）。
+function inkTabSuffix() {
+  const tabs = $('#wd-tabs');
+  if (tabs && tabs.offsetParent !== null) {          // wd-tabs 正显示 → 在成文详情页
+    const act = tabs.querySelector('.tk-tab.active');
+    if (act && act.dataset.wd) return ':tab-' + act.dataset.wd;
+  }
+  return '';
+}
+// 页内换 tab 时调用：批注层开着才重开——存好当前 tab 的笔迹、载入新 tab 的。
+// 旧笔迹在每次抬笔时已 _stash 到本地，open() 换 key 不会丢。
+function inkRekey() { if (Ink.on) inkHere(); }
 
 /* 「贴不上」的批注面板：笔迹还在，只是原文改过 / 换了文件，不知道该贴哪了。
    给三条路：重新指个位置、删掉、或者先留着（关掉就是留着，数据一直在）。 */

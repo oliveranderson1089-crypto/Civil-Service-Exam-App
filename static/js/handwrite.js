@@ -17,9 +17,10 @@ let hwCommitted = null;                                 // 刚自动上屏的字
 let hwFs = lsGet('hwFs') === '1';        // 全屏透明手写：看得到后面正在填入的答案
 let hwEngine = lsGet('hwEng') || 'cloud';  // 默认云端 Google(准)；'local'=端上ML Kit/本地Zinnia(快)
 function hwInit() {
-  ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done', 'auto', 'fs', 'eng']
+  ['modal', 'canvas', 'cands', 'count', 'close', 'undo', 'clear', 'space', 'nl', 'back', 'done', 'auto', 'fs', 'eng', 'punc', 'pan']
     .forEach(k => hwEl[k] = $('#hw-' + k));
   hwEl.engWrap = $('#hw-eng-wrap');
+  hwEl.puncbar = $('#hw-puncbar');
   const cv = hwEl.canvas, ctx = cv.getContext('2d');
   // 「已写完的笔画」画在离屏层上；每帧只把离屏层贴回来 + 画正在写的这一笔。
   // 原来每次 pointermove 都要重画田字格和全部笔画，写多几笔就明显拖影——草稿本没这个问题就是因为分了层。
@@ -110,10 +111,24 @@ function hwInit() {
   hwEl.nl.onclick = () => hwInsert('\n');
   hwEl.back.onclick = () => {
     if (!hwTarget) return;
-    hwTarget.value = hwTarget.value.slice(0, -1);
+    // 从光标处删：有选区删选区，无选区删光标前一个字（原来一律删末尾，定位到别处也删不掉那里）
+    const v = hwTarget.value;
+    let s = hwTarget.selectionStart, e = hwTarget.selectionEnd;
+    if (s == null || e == null) s = e = v.length;   // 拿不到光标就退回删末尾
+    if (s !== e) { hwTarget.value = v.slice(0, s) + v.slice(e); hwTarget.selectionStart = hwTarget.selectionEnd = s; }
+    else if (s > 0) { hwTarget.value = v.slice(0, s - 1) + v.slice(s); hwTarget.selectionStart = hwTarget.selectionEnd = s - 1; }
     hwCommitted = null; hwFireInput();
   };
   hwEl.done.onclick = hwClose;
+  // 标点：手写识别标点不准，给一排常用标点直接点填
+  const HW_PUNCS = ['，', '。', '、', '；', '：', '？', '！', '“', '”', '‘', '’', '（', '）', '《', '》', '…', '—', '·', '【', '】'];
+  if (hwEl.punc && hwEl.puncbar) {
+    hwEl.puncbar.innerHTML = HW_PUNCS.map(p => `<button type="button" class="hw-punc-c" data-p="${p}">${p}</button>`).join('');
+    hwEl.punc.onclick = () => { const hidden = hwEl.puncbar.classList.toggle('hidden'); hwEl.punc.classList.toggle('on', !hidden); };
+    hwEl.puncbar.onclick = (ev) => { const b = ev.target.closest('[data-p]'); if (b) hwInsert(b.dataset.p); };
+  }
+  // ✋ 滑动：让画布“看穿”，可滚动后面正在参考的内容；再点一下恢复手写（全屏透明时最有用）
+  if (hwEl.pan) hwEl.pan.onclick = () => { const on = hwEl.modal.classList.toggle('hw-pan-on'); hwEl.pan.classList.toggle('on', on); };
   hwEl.auto.checked = hwAuto;
   hwEl.auto.onchange = () => { hwAuto = hwEl.auto.checked; lsSet('hwAuto', hwAuto ? '1' : '0'); };
   if (hwEl.fs) hwEl.fs.onclick = () => { hwFs = !hwFs; lsSet('hwFs', hwFs ? '1' : '0'); hwApplyFs(); };
@@ -223,6 +238,7 @@ function openHandwrite(targetId) {
   hwTarget = document.getElementById(targetId);
   if (!hwTarget) return;
   hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
+  hwResetTools();
   try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }  // 仅"更快"模式才预下载端上模型
   hwEl.modal.classList.remove('hidden');
   hwApplyFs();
@@ -231,7 +247,14 @@ function openHandwrite(targetId) {
 function hwClose() {
   hwEl.modal.classList.add('hidden');
   clearTimeout(hwTimer); hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
+  hwResetTools();
   hwTarget && hwTarget.focus();
+}
+function hwResetTools() {   // 收起标点条、退出滑动模式，避免上次残留
+  hwEl.modal && hwEl.modal.classList.remove('hw-pan-on');
+  if (hwEl.pan) hwEl.pan.classList.remove('on');
+  if (hwEl.puncbar) hwEl.puncbar.classList.add('hidden');
+  if (hwEl.punc) hwEl.punc.classList.remove('on');
 }
 document.addEventListener('click', e => {
   const o = e.target.closest('[data-hw]');

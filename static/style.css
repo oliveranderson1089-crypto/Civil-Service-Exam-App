@@ -2131,7 +2131,19 @@ body.dark .hw-cand.filled{background:#0f2a20 !important;border-color:#12b886 !im
   border-radius:9px;font-size:13.5px;cursor:pointer;color:#33415c;}
 .hw-btn:active{background:#f0f3f7;}
 .hw-btn.hw-done{background:#1a6fb5;color:#fff;border-color:#1a6fb5;font-weight:600;}
+.hw-btn.on{background:#1a6fb5;color:#fff;border-color:#1a6fb5;}
 .hw-preview{font-size:12px;color:#8a93a3;text-align:center;margin-top:9px;}
+/* 标点快填条 */
+.hw-puncbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px;}
+.hw-puncbar.hidden{display:none;}
+.hw-punc-c{flex:none;min-width:38px;height:38px;border:1.5px solid #e6e9ef;background:#fff;
+  border-radius:9px;font-size:18px;line-height:1;cursor:pointer;color:#33415c;}
+.hw-punc-c:active{background:#f0f3f7;}
+/* ✋ 滑动模式：画布让开，事件透传到下面 → 能滚动后面参考的内容 */
+.hw-modal.hw-pan-on .hw-canvas-wrap,.hw-modal.hw-pan-on .hw-canvas{pointer-events:none;}
+.hw-fs .hw-puncbar{background:rgba(255,255,255,.9);border-radius:12px;padding:6px;margin:0 0 6px;}
+body.dark .hw-fs .hw-puncbar{background:rgba(18,23,31,.9) !important;}
+body.dark .hw-punc-c{background:#161b24 !important;border-color:#2a3345 !important;color:#e2e7ef !important;}
 body.dark .hw-sheet{background:#12171f !important;}
 body.dark .hw-title{color:#e6ebf2 !important;}
 body.dark .hw-canvas-wrap{background:#0e131b !important;border-color:#242c39 !important;}
@@ -2465,33 +2477,25 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
   box-shadow:0 5px 16px rgba(90,92,192,.45);transition:transform .22s;display:grid;place-items:center;}
 .fab-main:active{transform:scale(.94);}
 .fab.open .fab-main{transform:rotate(135deg);}
-.fab-act{position:absolute;left:3px;top:3px;width:44px;height:44px;border-radius:50%;border:none;
-  cursor:pointer;display:grid;place-items:center;font-size:17px;font-weight:800;color:#fff;
+/* 展开菜单：竖排「图标 + 标签」胶囊，一列到底、标签常显，加工具只是往下多一条，
+   不再挤在四分之一弧上（需求三）。向上/向下由 --sy 决定，水平贴着球那一侧。 */
+.fab-act{position:absolute;left:3px;top:3px;height:42px;min-width:44px;border-radius:21px;border:none;
+  cursor:pointer;display:flex;align-items:center;gap:8px;padding:0 15px 0 12px;
+  font-size:18px;font-weight:800;color:#fff;white-space:nowrap;
   background:linear-gradient(135deg,#5b8def,#2c8fd6);box-shadow:0 4px 14px rgba(30,80,160,.4);
   opacity:0;transform:scale(.4);pointer-events:none;transition:transform .22s cubic-bezier(.2,1.4,.4,1),opacity .18s;}
 #fab-pad{background:linear-gradient(135deg,#f0a500,#e07b39);box-shadow:0 4px 14px rgba(224,123,57,.42);}
+#fab-shot{background:linear-gradient(135deg,#38bdf8,#0ea5e9);box-shadow:0 4px 14px rgba(14,165,233,.4);}
+#fab-ink{background:linear-gradient(135deg,#a78bfa,#7c5cff);box-shadow:0 4px 14px rgba(124,92,255,.4);}
+.fab-act i{font-style:normal;font-size:13px;font-weight:600;letter-spacing:.5px;}
+.fab-act[hidden]{display:none!important;}   /* hidden 属性要能真隐藏 → 手机端不显示截图 */
 .fab.open .fab-act{opacity:1;pointer-events:auto;}
-.fab-act[hidden]{display:none!important;}   /* hidden 属性要能真隐藏（display:grid 会盖掉它）→ 手机端不显示截图 */
-/* 扇出：每个工具声明自己的偏移量（--fx/--fy），正负号由球所在的象限翻转，
-   所以加工具只要再给一组变量，不用写 4 条象限规则。 */
-/* 5 个工具排成四分之一圆弧（原来只给了 3 个位置，新加的批注/截图没位置就叠在中间看不见）*/
-#fab-ai   {--fx:100px; --fy:0px;}
-#fab-shot {--fx:92px;  --fy:38px;}
-#fab-note {--fx:71px;  --fy:71px;}
-#fab-pad  {--fx:38px;  --fy:92px;}
-#fab-ink  {--fx:0px;   --fy:100px;}
-.fab.open.dir-r .fab-act{--sx:1;}
-.fab.open.dir-l .fab-act{--sx:-1;}
 .fab.open.dir-dn .fab-act{--sy:1;}
 .fab.open.dir-up .fab-act{--sy:-1;}
-.fab.open .fab-act{transform:translate(calc(var(--fx,0px) * var(--sx,1)), calc(var(--fy,0px) * var(--sy,1)));}
-.fab-act i{position:absolute;font-style:normal;font-size:11px;font-weight:600;white-space:nowrap;
-  background:rgba(20,30,50,.82);color:#fff;padding:2px 7px;border-radius:20px;
-  top:50%;transform:translateY(-50%);opacity:0;transition:opacity .18s;}
-.fab.open .fab-act i{opacity:1;}
-/* 标签统一按方向摆（球在右半屏 → 标签在按钮左侧；在左半屏 → 右侧）*/
-.fab.dir-l .fab-act i{right:52px;}
-.fab.dir-r .fab-act i{left:52px;}
+.fab.open .fab-act{transform:translateY(calc(var(--fy,0px) * var(--sy,1)));}
+/* 球在右半屏 → 胶囊贴右、向左伸，图标挨着球；在左半屏 → 贴左、向右伸 */
+.fab.dir-l .fab-act{left:auto;right:3px;flex-direction:row-reverse;padding:0 12px 0 15px;}
+.fab.dir-r .fab-act{left:3px;right:auto;}
 body.pad-full .fab{display:none;}      /* 草稿纸全屏书写时，悬浮球让路（用纸上的 ✕ 关） */
 /* 草稿纸被拖窄（如右半屏再拖小）时，工具栏自动紧凑，别挤成三行吃掉书写区 */
 .pad.narrow .pad-bar{gap:5px 6px;padding:3px 7px 6px;}
@@ -2937,8 +2941,6 @@ body.dark .dr-tag.lv{background:#3a2416;color:#e8905e;}
 
 /* 随手记（悬浮球）：浮在当前页面上，可拖可缩放，写完就走 */
 #fab-note{background:linear-gradient(135deg,#38b48b,#1e8449);box-shadow:0 4px 14px rgba(30,132,73,.42);}
-.fab.dir-l #fab-note i{right:52px;}
-.fab.dir-r #fab-note i{left:52px;}
 .qnote{position:fixed;right:20px;bottom:96px;z-index:4300;
   width:min(390px,calc(100vw - 32px));height:auto;min-width:300px;min-height:240px;
   display:flex;flex-direction:column;
