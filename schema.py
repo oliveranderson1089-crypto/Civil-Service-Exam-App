@@ -736,6 +736,11 @@ def init_db():
     # 资料库的自定义分类（原来只存在前端内存里，从已有资料反推 → 新建了但还没传东西的分类，重启就没了）
     if "mat_boards" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN mat_boards TEXT")
+    # 云盘按内容去重：同一个人传同一份内容（同 sha256）只在磁盘上留一份，多行共用一个
+    # stored_name。**所以删文件必须先数还有没有别的行在引用它**，见 _drop_blob。
+    if "sha256" not in _cols(con, "drive_files"):
+        con.execute("ALTER TABLE drive_files ADD COLUMN sha256 TEXT")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_drive_hash ON drive_files(owner_id, sha256)")
     # 外观定制：头像 / 应用内壁纸 / 登录页壁纸（存文件名，图片放 uploads/skin/<uid>/）
     for col in ("avatar", "wall_app", "wall_login"):
         if col not in _cols(con, "users"):

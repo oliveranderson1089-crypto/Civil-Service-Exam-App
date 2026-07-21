@@ -16,6 +16,9 @@ DESKTOP_VER
 DOC
 DOCK_NAME
 DT_L
+DV_CHUNK
+DV_CHUNK_MIN
+DV_HASH_MAX
 DV_PARALLEL
 EXT_ICON
 FEATURES
@@ -284,9 +287,12 @@ dvRename
 dvRow
 dvSearchT
 dvSel
+dvSha256
 dvSort
 dvUpload
+dvUploadChunked
 dvUploadOne
+dvUploadWhole
 dvView
 dvWalkEntry
 editNote

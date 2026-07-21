@@ -186,8 +186,59 @@ async function dvPickFolder() {
    中间那些目录不用前端一层层发请求去建，后端 _ensure_folder_path 会照着这个
    相对路径把缺的补出来。 */
 const DV_PARALLEL = 3;      // 并发数：再多就是把上行带宽切碎，总时间反而更长
+const DV_CHUNK = 4 * 1024 * 1024;        // 分片大小，远小于 Cloudflare 隧道那 100MB 硬上限
+const DV_CHUNK_MIN = 8 * 1024 * 1024;    // 超过这么大才值得切片（小文件切了反而更慢）
+const DV_HASH_MAX = 64 * 1024 * 1024;    // 秒传要把整个文件读进内存算哈希，太大的就别算了
 
-function dvUploadOne(file, folder, onProg) {
+/* 算 sha256 给「秒传」用。拿不到就返回 null，调用方照常传 ——
+   crypto.subtle 只在安全上下文（https / localhost）里有，局域网用 http 访问时是 undefined，
+   那种情况下秒传直接不可用，但不能因此连传都传不了。 */
+async function dvSha256(file) {
+  if (!window.crypto || !crypto.subtle || file.size > DV_HASH_MAX) return null;
+  try {
+    const buf = await file.arrayBuffer();
+    const h = await crypto.subtle.digest('SHA-256', buf);
+    return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (_) { return null; }
+}
+
+/* 分片上传：走隧道时请求体有 100MB 硬上限，单请求再放宽也没用，只能切块分多次送。
+   顺带能续传 —— init 会告诉你已经收到哪些块，跳过它们接着传就行。 */
+async function dvUploadChunked(file, folder, onProg) {
+  const init = await api('/api/drive/chunk/init', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: file.name, folder, size: file.size, mime: file.type || '' }) });
+  const id = init.upload_id;
+  const had = new Set(init.received || []);
+  const n = Math.ceil(file.size / DV_CHUNK);
+  for (let i = 0; i < n; i++) {
+    const end = Math.min(file.size, (i + 1) * DV_CHUNK);
+    if (!had.has(i)) {
+      await api('/api/drive/chunk/' + id + '/' + i,
+                { method: 'POST', body: file.slice(i * DV_CHUNK, end) });
+    }
+    onProg(end);
+  }
+  return api('/api/drive/chunk/' + id + '/done', { method: 'POST' });
+}
+
+async function dvUploadOne(file, folder, onProg) {
+  // 先问一句「这份内容你有没有」：换个目录再放一份、换台设备重传，都是常事
+  const hash = await dvSha256(file);
+  if (hash) {
+    try {
+      const d = await api('/api/drive/instant', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sha256: hash, name: file.name, folder }) });
+      if (d && d.hit) { onProg(file.size); return d; }
+    } catch (_) { /* 秒传没成就老老实实传 */ }
+  }
+  return file.size > DV_CHUNK_MIN
+    ? dvUploadChunked(file, folder, onProg)
+    : dvUploadWhole(file, folder, onProg);
+}
+
+function dvUploadWhole(file, folder, onProg) {
   // 用 XHR 而不是 api()：只有 XHR 能报上传进度，fetch 的请求体没有 progress 事件
   return new Promise((resolve, reject) => {
     const fd = new FormData();

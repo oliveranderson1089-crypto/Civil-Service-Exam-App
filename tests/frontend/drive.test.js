@@ -156,6 +156,87 @@ test('dvRow：文件名里的 HTML 当文字，不进 DOM', (t) => {
   assert.ok(!html.includes('<img'), '文件名没转义，上传个带标签的名字就能注入');
 });
 
+/* 秒传与分片。两条都容易「看着传成功了、其实内容不对」，所以盯的是发出去的请求序列。 */
+// window.crypto 在 jsdom 里是只读 getter，只能 defineProperty 覆盖
+function setCrypto(h, value) {
+  Object.defineProperty(h.window, 'crypto', { configurable: true, value });
+}
+function stubFetch(h, calls, resp) {
+  h.window.fetch = async (url, o) => {
+    const u = String(url);
+    calls.push(u);
+    return { status: 201, ok: true, headers: { get: () => 'application/json' },
+             json: async () => (resp(u, o) || {}) };
+  };
+}
+
+test('dvUploadOne：秒传命中后就不再传内容了', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  setCrypto(h, { subtle: { digest: async () => new ArrayBuffer(32) } });
+  const calls = [];
+  stubFetch(h, calls, u => (u.includes('/instant') ? { hit: true, id: 9 } : {}));
+  await h.run('dvUploadOne')(new h.window.File(['abc'], 'a.txt'), '', () => {});
+  assert.ok(calls.some(u => u.includes('/api/drive/instant')), '压根没问秒传');
+  assert.ok(!calls.some(u => u.includes('/chunk/')), '秒传命中了还走了分片');
+});
+
+test('dvUploadOne：秒传没命中就照常传', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  setCrypto(h, { subtle: { digest: async () => new ArrayBuffer(32) } });
+  const calls = [];
+  stubFetch(h, calls, () => ({ hit: false }));
+  let sent = 0;
+  h.window.XMLHttpRequest = function () {
+    this.upload = {}; this.open = () => {};
+    this.send = () => { sent++; this.status = 201; this.responseText = '{}';
+                        setTimeout(() => this.onload(), 0); };
+  };
+  await h.run('dvUploadOne')(new h.window.File(['abc'], 'a.txt'), '', () => {});
+  assert.strictEqual(sent, 1, '秒传没命中，就得老老实实把内容传上去');
+});
+
+test('dvSha256：拿不到 crypto.subtle 时返回 null（http 访问下要能退回正常上传）', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  setCrypto(h, undefined);             // 局域网 http 访问时就是这样
+  const got = await h.run('dvSha256')(new h.window.File(['abc'], 'a.txt'));
+  assert.strictEqual(got, null, '这里不返回 null 的话，非 https 下会连传都传不了');
+});
+
+test('dvUploadChunked：按 4MB 切块，跑完再 done', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  const calls = [];
+  stubFetch(h, calls, u => (u.includes('/chunk/init')
+    ? { upload_id: 'a'.repeat(32), received: [] } : {}));
+  const big = new h.window.File([new Uint8Array(9 * 1024 * 1024)], 'big.bin');
+  await h.run('dvUploadChunked')(big, '照片', () => {});
+  const puts = calls.filter(u => /\/chunk\/a+\/\d+$/.test(u));
+  assert.strictEqual(puts.length, 3, '9MB 该切成 3 块（4+4+1），实际 ' + puts.length);
+  assert.ok(calls[calls.length - 1].endsWith('/done'), '最后没调 done，文件不会入库');
+});
+
+test('dvUploadChunked：续传时跳过已经收到的块', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  const calls = [];
+  stubFetch(h, calls, u => (u.includes('/chunk/init')
+    ? { upload_id: 'b'.repeat(32), received: [0] } : {}));
+  const big = new h.window.File([new Uint8Array(9 * 1024 * 1024)], 'big.bin');
+  await h.run('dvUploadChunked')(big, '', () => {});
+  const puts = calls.filter(u => /\/chunk\/b+\/\d+$/.test(u));
+  assert.deepStrictEqual(puts.map(u => u.split('/').pop()), ['1', '2'],
+    '第 0 块服务端已经有了，不该再传一遍');
+});
+
+test('dvUploadChunked：进度报到文件总大小，不会停在半截', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  stubFetch(h, [], u => (u.includes('/chunk/init')
+    ? { upload_id: 'c'.repeat(32), received: [] } : {}));
+  const size = 9 * 1024 * 1024;
+  const big = new h.window.File([new Uint8Array(size)], 'big.bin');
+  let last = 0;
+  await h.run('dvUploadChunked')(big, '', n => { last = n; });
+  assert.strictEqual(last, size, '最后一块只有 1MB，进度不能按整块算超或算少');
+});
+
 test('dvUpload：单个文件失败不拖垮其余的，并如实报失败数', async (t) => {
   const h = boot(); t.after(() => h.close());
   h.window.XMLHttpRequest = function () {

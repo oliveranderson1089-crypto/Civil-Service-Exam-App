@@ -7,8 +7,11 @@ chat 的文件又能存回网盘、两者都要先是好友。硬拆成三个文
 _notify_chat 的 SSE 只是「即时亮一下」的加速通道：消息本身已经落
 chat_msgs、通知已进 notifications，推送丢了浏览器重连就能拉回。
 """
+import hashlib
 import json
 import os
+import re
+import shutil
 import threading
 import time
 import uuid
@@ -171,8 +174,71 @@ def _drive_row(r):
 
 
 def _drive_used(db, owner):
-    return db.execute("SELECT COALESCE(SUM(size),0) FROM drive_files WHERE owner_id=?",
-                      (owner,)).fetchone()[0]
+    """按**去重后**的实际占用算：同一份内容传两次只在磁盘上存一份，不该收两份的钱。"""
+    return db.execute(
+        "SELECT COALESCE(SUM(size),0) FROM ("
+        "  SELECT DISTINCT stored_name, size FROM drive_files"
+        "  WHERE owner_id=? AND is_dir=0 AND stored_name IS NOT NULL AND stored_name<>'')",
+        (owner,)).fetchone()[0]
+
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fp:
+        for blk in iter(lambda: fp.read(1024 * 1024), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def _drop_blob(db, owner, stored_name):
+    """删磁盘文件，但**只在没有别的行还引用它的时候**。
+
+    去重让多行共用一个 stored_name。要是照旧无条件 os.remove，删掉其中一行就会把
+    另一行的文件也带走 —— 另一行还在列表里好好显示着，点开却是 404。
+    调用前请先把要删的行从库里删掉，这里数的是「剩下还有几行在用」。
+    """
+    if not stored_name:
+        return
+    if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND stored_name=? LIMIT 1",
+                  (owner, stored_name)).fetchone():
+        return                                   # 还有人在用，留着
+    try:
+        os.remove(os.path.join(_drive_dir(owner), stored_name))
+    except Exception:
+        log.debug("删网盘文件失败（残留不影响功能）", exc_info=True)
+
+
+def _finish_upload(db, folder, name, tmp, mime):
+    """临时文件 → 正式入库。去重、配额、补目录都收在这里，单发上传和分片上传共用一条路。
+
+    返回 (row, None) 或 (None, (json响应, 状态码))。
+    """
+    size = os.path.getsize(tmp)
+    digest = _sha256_file(tmp)
+    dup = db.execute("SELECT stored_name FROM drive_files WHERE owner_id=? AND sha256=? "
+                     "AND stored_name IS NOT NULL AND stored_name<>'' LIMIT 1",
+                     (uid(), digest)).fetchone()
+    if dup and not os.path.exists(os.path.join(_drive_dir(uid()), dup["stored_name"])):
+        dup = None                               # 库里有记录但磁盘上没了，当没命中
+    # 命中去重就不占新磁盘，配额自然也不该再扣一次
+    if not dup and _drive_used(db, uid()) + size > DRIVE_QUOTA:
+        os.remove(tmp)
+        return None, (jsonify({"error": "云盘空间不足（配额 %d MB）"
+                               % (DRIVE_QUOTA // (1024 * 1024))}), 400)
+    ext = os.path.splitext(name)[1].lower()
+    if dup:
+        os.remove(tmp)
+        stored = dup["stored_name"]
+    else:
+        stored = uuid.uuid4().hex + ext
+        os.replace(tmp, os.path.join(_drive_dir(uid()), stored))
+    folder = _ensure_folder_path(db, uid(), folder)
+    cur = db.execute(
+        "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source,sha256) "
+        "VALUES(?,?,?,?,?,?,?,0,'drive',?)",
+        (uid(), folder, name, stored, ext, mime or "", size, digest))
+    db.commit()
+    return db.execute("SELECT * FROM drive_files WHERE id=?", (cur.lastrowid,)).fetchone(), None
 
 
 def _ensure_folder_path(db, owner, path):
@@ -240,20 +306,147 @@ def drive_upload():
     if size > DRIVE_MAX:
         return jsonify({"error": "文件超过 %d MB" % (DRIVE_MAX // (1024 * 1024))}), 400
     db = get_db()
+    name = os.path.basename((f.filename or "").replace("\\", "/")) or "未命名"
+    # 先落到临时名：要先算出 sha256 才知道这份内容是不是已经有了
+    tmp = os.path.join(_drive_dir(uid()), ".tmp_" + uuid.uuid4().hex)
+    f.save(tmp)
+    row, err = _finish_upload(db, folder, name, tmp, f.mimetype)
+    if err:
+        return err
+    return jsonify(_drive_row(row)), 201
+
+
+@bp.post("/api/drive/instant")
+def drive_instant():
+    """秒传：前端先报 sha256，服务端已经有这份内容就直接建条记录，一个字节都不用传。
+
+    重复上传同一份资料（换个目录再放一份、或换台设备重传）是最常见的情况，
+    这条能把它从「传 200MB」变成「一次 JSON 往返」。
+    """
+    data = request.get_json(silent=True) or {}
+    digest = (data.get("sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return jsonify({"error": "sha256 不合法"}), 400
+    name = os.path.basename((data.get("name") or "").replace("\\", "/")) or "未命名"
+    folder = (data.get("folder") or "").strip().strip("/")
+    db = get_db()
+    old = db.execute("SELECT * FROM drive_files WHERE owner_id=? AND sha256=? AND is_dir=0 "
+                     "AND stored_name IS NOT NULL AND stored_name<>'' LIMIT 1",
+                     (uid(), digest)).fetchone()
+    if not old or not os.path.exists(os.path.join(_drive_dir(uid()), old["stored_name"])):
+        return jsonify({"hit": False})
+    folder = _ensure_folder_path(db, uid(), folder)
+    cur = db.execute(
+        "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source,sha256) "
+        "VALUES(?,?,?,?,?,?,?,0,'drive',?)",
+        (uid(), folder, name, old["stored_name"], os.path.splitext(name)[1].lower(),
+         old["mime"], old["size"], digest))
+    db.commit()
+    row = db.execute("SELECT * FROM drive_files WHERE id=?", (cur.lastrowid,)).fetchone()
+    return jsonify(dict(_drive_row(row), hit=True)), 201
+
+
+# ---- 分片上传 ----
+# 走 Cloudflare 隧道时请求体有 100MB 硬上限（免费版），单请求再怎么放宽
+# max_content_length 都没用 —— 只能切成小块分多次请求送。顺带换来断点续传。
+_HEX32 = re.compile(r"^[0-9a-f]{32}$")
+CHUNK_TTL = 24 * 3600            # 没传完的会话留一天，之后当垃圾清掉
+
+
+def _chunk_dir(owner, upload_id):
+    """会话目录。upload_id 只认 32 位十六进制 —— 它来自 URL，不校验就能拿 ../ 跳出去。"""
+    if not _HEX32.match(upload_id or ""):
+        return None
+    return os.path.join(_drive_dir(owner), ".chunks", upload_id)
+
+
+def _sweep_chunks(owner):
+    root = os.path.join(_drive_dir(owner), ".chunks")
+    if not os.path.isdir(root):
+        return
+    now = time.time()
+    for d in os.listdir(root):
+        p = os.path.join(root, d)
+        try:
+            if now - os.path.getmtime(p) > CHUNK_TTL:
+                shutil.rmtree(p, ignore_errors=True)
+        except Exception:
+            log.debug("清理分片残留失败", exc_info=True)
+
+
+@bp.post("/api/drive/chunk/init")
+def chunk_init():
+    data = request.get_json(silent=True) or {}
+    size = int(data.get("size") or 0)
+    name = os.path.basename((data.get("name") or "").replace("\\", "/")) or "未命名"
+    folder = (data.get("folder") or "").strip().strip("/")
+    if size <= 0 or size > DRIVE_MAX:
+        return jsonify({"error": "文件超过 %d MB" % (DRIVE_MAX // (1024 * 1024))}), 400
+    db = get_db()
     if _drive_used(db, uid()) + size > DRIVE_QUOTA:
         return jsonify({"error": "云盘空间不足（配额 %d MB）" % (DRIVE_QUOTA // (1024 * 1024))}), 400
-    # 传文件夹时前端把相对目录一并传上来，这里逐级补出中间目录
-    folder = _ensure_folder_path(db, uid(), folder)
-    name = os.path.basename((f.filename or "").replace("\\", "/")) or "未命名"
-    ext = os.path.splitext(name)[1].lower()
-    stored = uuid.uuid4().hex + ext
-    f.save(os.path.join(_drive_dir(uid()), stored))
-    cur = db.execute(
-        "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
-        "VALUES(?,?,?,?,?,?,?,0,'drive')",
-        (uid(), folder, name, stored, ext, f.mimetype or "", size))
-    db.commit()
-    return jsonify(_drive_row(db.execute("SELECT * FROM drive_files WHERE id=?", (cur.lastrowid,)).fetchone())), 201
+    _sweep_chunks(uid())
+    upload_id = uuid.uuid4().hex
+    d = _chunk_dir(uid(), upload_id)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as fp:
+        json.dump({"name": name, "folder": folder, "size": size,
+                   "mime": data.get("mime") or ""}, fp, ensure_ascii=False)
+    return jsonify({"upload_id": upload_id, "received": []}), 201
+
+
+@bp.get("/api/drive/chunk/<upload_id>")
+def chunk_status(upload_id):
+    """已经收到哪些块 —— 断点续传靠它，传一半断了重开时接着传。"""
+    d = _chunk_dir(uid(), upload_id)
+    if not d or not os.path.isdir(d):
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"received": sorted(int(x) for x in os.listdir(d) if x.isdigit())})
+
+
+@bp.post("/api/drive/chunk/<upload_id>/<int:idx>")
+def chunk_put(upload_id, idx):
+    d = _chunk_dir(uid(), upload_id)
+    if not d or not os.path.isdir(d):
+        return jsonify({"error": "会话不存在"}), 404
+    if idx < 0 or idx > 100000:
+        return jsonify({"error": "块号不合法"}), 400
+    blob = request.files.get("chunk")
+    with open(os.path.join(d, str(idx)), "wb") as fp:
+        fp.write(blob.read() if blob else request.get_data())
+    return jsonify({"ok": True, "index": idx})
+
+
+@bp.post("/api/drive/chunk/<upload_id>/done")
+def chunk_done(upload_id):
+    d = _chunk_dir(uid(), upload_id)
+    if not d or not os.path.isdir(d):
+        return jsonify({"error": "会话不存在"}), 404
+    try:
+        with open(os.path.join(d, "meta.json"), encoding="utf-8") as fp:
+            meta = json.load(fp)
+    except Exception:
+        shutil.rmtree(d, ignore_errors=True)
+        return jsonify({"error": "会话已损坏，请重传"}), 400
+    parts = sorted(int(x) for x in os.listdir(d) if x.isdigit())
+    if parts != list(range(len(parts))) or not parts:
+        missing = [i for i in range(max(parts) + 1 if parts else 0) if i not in set(parts)]
+        return jsonify({"error": "分片不连续，缺第 %s 块" % (missing[:5] or "?")}), 400
+    tmp = os.path.join(_drive_dir(uid()), ".tmp_" + uuid.uuid4().hex)
+    with open(tmp, "wb") as out:
+        for i in parts:
+            with open(os.path.join(d, str(i)), "rb") as fp:
+                shutil.copyfileobj(fp, out)
+    # 拼完对一下大小：少一块、或某块只传了一半，这里能当场发现，不会把半个文件入库
+    if os.path.getsize(tmp) != meta.get("size"):
+        os.remove(tmp)
+        return jsonify({"error": "拼出来的大小和说好的对不上，请重传"}), 400
+    row, err = _finish_upload(get_db(), meta.get("folder") or "", meta.get("name") or "未命名",
+                              tmp, meta.get("mime") or "")
+    shutil.rmtree(d, ignore_errors=True)
+    if err:
+        return err
+    return jsonify(_drive_row(row)), 201
 
 
 @bp.post("/api/drive/folder")
@@ -359,25 +552,22 @@ def drive_del(fid):
     r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=?", (fid, uid())).fetchone()
     if not r:
         return jsonify({"error": "不存在"}), 404
+    # 先把行删干净，再回头收磁盘 —— _drop_blob 数的是「还剩几行在引用」，
+    # 顺序反了的话，正在删的这一行会把自己算成引用者，文件就永远删不掉。
+    blobs = []
     if r["is_dir"]:
         # 删文件夹：连里面的一起删（folder 前缀匹配）
         sub = r["name"] if not r["folder"] else (r["folder"] + "/" + r["name"])
-        kids = db.execute("SELECT stored_name FROM drive_files WHERE owner_id=? AND "
-                          "(folder=? OR folder LIKE ?)", (uid(), sub, sub + "/%")).fetchall()
-        for k in kids:
-            if k["stored_name"]:
-                try:
-                    os.remove(os.path.join(_drive_dir(uid()), k["stored_name"]))
-                except Exception:
-                    log.debug("删网盘文件失败（残留不影响功能）", exc_info=True)
+        blobs = [k["stored_name"] for k in db.execute(
+            "SELECT stored_name FROM drive_files WHERE owner_id=? AND (folder=? OR folder LIKE ?)",
+            (uid(), sub, sub + "/%")).fetchall() if k["stored_name"]]
         db.execute("DELETE FROM drive_files WHERE owner_id=? AND (folder=? OR folder LIKE ?)",
                    (uid(), sub, sub + "/%"))
     elif r["stored_name"]:
-        try:
-            os.remove(os.path.join(_drive_dir(uid()), r["stored_name"]))
-        except Exception:
-            log.debug("删网盘文件失败（残留不影响功能）", exc_info=True)
+        blobs = [r["stored_name"]]
     db.execute("DELETE FROM drive_files WHERE id=?", (fid,))
+    for stored in set(blobs):
+        _drop_blob(db, uid(), stored)
     db.commit()
     return jsonify({"ok": True})
 
@@ -408,7 +598,6 @@ def _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size):
     """收到的文件也放进收件人云盘的「聊天文件」文件夹里，方便他保存/转存。"""
     dst = uuid.uuid4().hex + (ext or "")
     try:
-        import shutil
         shutil.copyfile(os.path.join(src_dir, stored_name), os.path.join(_drive_dir(to), dst))
     except Exception:
         return None
