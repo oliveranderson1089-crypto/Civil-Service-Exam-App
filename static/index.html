@@ -801,7 +801,7 @@
       <button class="tk-tab" data-wk="yywrite">✍️ 自选成文</button>
     </div>
     <div id="wr-daily" class="wr-pane">
-      <div class="pd-intro">按<b>素材更新的日期</b>成文：当天的人物事例 / 理论论据 / 衔接表达全用上，
+      <div class="pd-intro" id="wr-daily-intro">按<b>素材更新的日期</b>成文：当天的人物事例 / 理论论据 / 衔接表达全用上，
         政治理论和常考提法按当天话题现捞。素材背了不会用等于没背。</div>
       <div class="wr-bar">
         <button class="btn primary" id="wr-backfill">⚡ 一键补齐往期</button>
@@ -810,7 +810,7 @@
       <div id="wr-days" class="sl-hist"></div>
     </div>
     <div id="wr-compose" class="wr-pane hidden">
-      <div class="pd-intro">不限日期，<b>AI 自己选题</b>——跨全部素材库挑真正用得上的，
+      <div class="pd-intro" id="wr-compose-intro">不限日期，<b>AI 自己选题</b>——跨全部素材库挑真正用得上的，
         每天一篇范文。选题要是省考真考的方向，不选空泛口号。</div>
       <div class="wr-bar"><button class="btn primary" id="wr-gen-cp">✍️ 写今天这篇</button></div>
       <div id="wr-cplist" class="sl-hist"></div>
@@ -842,6 +842,13 @@
             <input id="yy-role" type="text" placeholder="如：社区居委会工作人员"></div>
           <div class="gw-row"><label>写给谁看</label>
             <input id="yy-aud" type="text" placeholder="如：全体社区居民"></div>
+        </div>
+        <div class="gw-row"><label>题位 · 字数</label>
+          <div class="gw-chips" id="yy-pos" title="同一文种放在第二题和第四题，要求字数差很多——按题位定字数（上限统一 ≤500 字）">
+            <button class="chip" data-yyp="small">小题位 · 约200~320字</button>
+            <button class="chip active" data-yyp="medium">中题位 · 约280~420字</button>
+            <button class="chip" data-yyp="large">大题位 · 约360~500字</button>
+          </div>
         </div>
         <div class="gw-row"><label>要哪种</label>
           <div class="gw-chips" id="yy-forms">

@@ -1492,6 +1492,18 @@ body.dark .yy-pill.out{background:#16261f;border-color:#2c5544;}
 .wd-note{margin:10px 0 0;padding:8px 11px;border-radius:9px;background:#fff8e6;color:#8a5a00;
   font-size:12.8px;line-height:1.6;}
 .wd-body p{text-indent:2em;line-height:2;margin:0 0 12px;font-size:15px;}
+/* 综合应用能力：题干（给定材料 + 作答要求）块，和参考范文区分开 */
+.wd-timu{margin:0 0 16px;padding:12px 14px;border-radius:10px;background:#f4f7fb;border:1px solid #e3ebf4;}
+.wd-timu-t{font-size:12.8px;font-weight:700;color:#1a6fb5;margin:10px 0 4px;}
+.wd-timu-t:first-child{margin-top:0;}
+.wd-timu-b p{text-indent:2em;line-height:1.9;margin:0 0 8px;font-size:14px;color:#37414f;}
+/* 应用文范文：称谓顶格、落款机关 + 日期右对齐（比照真题格式）*/
+.wd-body .wd-gw-call{text-indent:0;margin:0 0 10px;}
+.wd-body .wd-gw-sign{text-align:right;text-indent:0;margin:0;line-height:2;}
+.wd-body :not(.wd-gw-sign)+.wd-gw-sign{margin-top:16px;}
+body.dark .wd-timu{background:#111826;border-color:#26324a;}
+body.dark .wd-timu-t{color:#7fb0ff;}
+body.dark .wd-timu-b p{color:#c2cbd8;}
 .wd-ug{margin-bottom:14px;}
 .wd-ug-t{font-size:12.5px;font-weight:700;color:#1a6fb5;margin-bottom:6px;}
 .wd-ui{padding:8px 11px;border-left:3px solid #cfe0f2;background:#f7fafd;border-radius:0 8px 8px 0;

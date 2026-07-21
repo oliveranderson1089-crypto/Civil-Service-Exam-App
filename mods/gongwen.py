@@ -8,7 +8,7 @@ import re
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -82,6 +82,28 @@ GW_DOCTYPES = [
 GW_CATS = ["宣传演讲类", "总结说明类", "方案建议类", "观点主张类"]
 GW_MAP = {d["k"]: d for d in GW_DOCTYPES}
 
+# ---- 应用文成文的字数：上限统一 ≤500 字，下限按「文种 + 题位」灵活定 ----
+# 真题里同一题材，放在第二题和第四题，要求字数差很多——用「题位档」建模这件事：
+#   越靠后的题（分值越大）字数要求越大。三档对应小题位/中题位/大题位。
+MAX_YY_WORDS = 500
+POS_BANDS = {
+    "small": (200, 320),    # 靠前的小题位（如第一、二题）
+    "medium": (280, 420),   # 中间题位（如第三题）
+    "large": (360, 500),    # 靠后的大题位（如第四题·贯彻执行主力题）
+}
+POS_LABEL = {"small": "小题位（如第一二题）", "medium": "中题位（如第三题）", "large": "大题位（如第四题）"}
+# 有的文种天生就短，放在大题位也不该硬撑到 500 —— 给它们各自的自然上限
+GW_CAP = {"短评": 380, "编者按": 380, "简报": 420, "新闻稿": 450, "案例介绍": 450,
+          "宣传稿": 460, "公开信": 470, "倡议书": 470, "建议书": 480}
+
+
+def _word_band(doctype, pos):
+    """按题位档取字数区间，再用文种自然上限和 500 硬顶收一下。返回 (下限, 上限)。"""
+    lo, hi = POS_BANDS.get(pos, POS_BANDS["medium"])
+    hi = min(hi, GW_CAP.get(doctype, MAX_YY_WORDS), MAX_YY_WORDS)
+    lo = max(150, min(lo, hi - 60))     # 保证下限 < 上限、且留出至少 60 字区间
+    return lo, hi
+
 
 @bp.get("/api/write/gwspec")
 def write_gwspec():
@@ -96,8 +118,11 @@ def write_gwspec():
     return jsonify({"doctypes": GW_DOCTYPES, "cats": GW_CATS, "scenes": scenes[:12]})
 
 
-def _gen_yingyong(db, spec):
+def _gen_yingyong(db, spec, mode="yingyong", date=None):
     """form='full' 出完整范文；form='outline' 出**提纲纲要**。
+
+    mode/date：默认 'yingyong'（文种大全/自选成文，按时间戳存、可多篇）；
+    传 'yingyong-daily' + 某天 → 每日成文（一天一篇、按日期存，可覆盖重写）。
 
     提纲纲要**本身不是文种**，是一种呈现方式（框架式、要点式），任何文种都能套。
     所以它和范文共用一套「文种 + 场景 + 身份」，只是产出从「成篇的文章」换成「骨架 + 要点」。
@@ -111,7 +136,9 @@ def _gen_yingyong(db, spec):
     scene = (spec.get("scene") or "").strip() or demo["scene"]
     role = (spec.get("role") or "").strip() or demo["role"]
     audience = (spec.get("audience") or "").strip() or demo["audience"]
-    desc, fmt, wmin, wmax = g["d"], g["fmt"], g["min"], g["max"]
+    desc, fmt = g["d"], g["fmt"]
+    pos = spec.get("pos") if spec.get("pos") in POS_BANDS else "medium"   # 自选/文种大全默认中题位；每日成文会按天传档
+    wmin, wmax = _word_band(doctype, pos)
 
     # 公文规范表述按「结构部件」归好类了（开头·缘由 / 主体·举措 / 结尾·号召…），正好是骨架
     gw = [dict(r) for r in db.execute(
@@ -151,12 +178,23 @@ def _gen_yingyong(db, spec):
         req = (
             "【硬要求】\n"
             "1. **格式必须对**：该有标题就有标题、该有称谓就有称谓、该有落款就有落款。"
-            "落款单位用「××」代替（不要编真单位名）。\n"
+            "落款单位用「××」代替（不要编真单位名）。"
+            "**落款和日期各自单独成行、放在全文最后**（倒数第二行是署名机关、最后一行是日期，"
+            "形如「××市××局」换行「2025年4月1日」），不要和正文混在一起。\n"
             "2. **语气必须对身份**：上级发下级可以「请遵照执行」；面向群众的倡议书、公开信"
             "**不能用命令口气**，要靠感染力；讲话稿要有现场感（同志们、大家）；"
             "新闻稿要客观，不许抒情。\n"
-            "3. 正文要点**分条写**（一是…二是…／1. 2. 3.），每条先亮做法再讲怎么落地，不要空喊。\n"
-            "4. 上面的规范表述要**用进去**，别自己造大白话。\n\n"
+            "3. **正文结构照历年真题的答法来**：能分条的文种（通知 / 方案 / 汇报 / 调研报告 / "
+            "建议书 / 简报 / 案例介绍等）主体用「一、二、三、」或「（一）（二）（三）」这类"
+            "**规范序号**分条，每条先亮做法再讲怎么落地，**不要拿「首先 / 其次 / 最后」这类连接词"
+            "当骨架**；面向群众、重感染力的文种（倡议书 / 公开信 / 讲话稿 / 宣传稿 / 短评）可用"
+            "连贯的行文段落，但也要**分层分段**。\n"
+            "4. **分段合理**：正文按层次分段，一段讲清一层意思（一般 2~5 句），"
+            "**严禁一句话一个自然段**；分条项内部若有展开，也放在同一段里。\n"
+            "5. **字数**：正文控制在 %d~%d 字（不含标题和落款日期），**绝不超过 %d 字**——"
+            "宁可精炼也别注水。\n"
+            "6. 上面的规范表述要**用进去**，别自己造大白话。\n\n"
+            % (wmin, wmax, MAX_YY_WORDS)) + (
             "【最重要的一条】除了正文，还要给**逐段批注**：把全文拆成若干段，每段说清楚\n"
             "· part：这一段是哪个部件（标题 / 称谓 / 开头·缘由 / 主体·举措 / 主体·成效 / "
             "结尾·号召 / 结尾·要求 / 落款 …）\n"
@@ -186,20 +224,27 @@ def _gen_yingyong(db, spec):
 
     prompt = head + setting + req
 
-    rep, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是申论阅卷组的应用文范文作者。格式是第一位的，"
-                                       "语气要合身份。严格输出 JSON。"},
-         {"role": "user", "content": prompt}],
-        temperature=0.5, max_tokens=3500, timeout=300, json_mode=True)
-    if err:
-        return None, err
-    try:
-        d = json.loads(rep)
-    except Exception:
-        return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
-    content = (d.get("content") or "").strip()
-    if not content:
-        return None, (jsonify({"error": "AI 没写出正文，请重试"}), 502)
+    # 范文超 500 字就自动重写一次（提示词管不死，加道硬兜底）。用整份 d 重来，批注不会错位。
+    d, content = None, ""
+    for attempt in range(2):
+        p = prompt if attempt == 0 else prompt + (
+            "\n\n⚠️ 上一版超了字数，这一版**务必把正文压到 %d 字以内**，删次要修饰、保住要点和格式。" % MAX_YY_WORDS)
+        rep, err = _ai_call_or_error(
+            [{"role": "system", "content": "你是申论阅卷组的应用文范文作者。格式是第一位的，"
+                                           "语气要合身份。严格输出 JSON。"},
+             {"role": "user", "content": p}],
+            temperature=0.5, max_tokens=3500, timeout=300, json_mode=True)
+        if err:
+            return None, err
+        try:
+            d = json.loads(rep)
+        except Exception:
+            return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
+        content = (d.get("content") or "").strip()
+        if not content:
+            return None, (jsonify({"error": "AI 没写出正文，请重试"}), 502)
+        if form != "full" or len(re.sub(r"\s", "", content)) <= MAX_YY_WORDS:
+            break     # 提纲不卡字数；范文达标就收工，否则再压一次
 
     # 批注的 text 必须真的来自正文，否则点了跳不过去、也说明它在瞎编
     flat = re.sub(r"\s", "", content)
@@ -220,17 +265,135 @@ def _gen_yingyong(db, spec):
             used.append({"sec": x["scene"], "text": "、".join(hit[:4])})
 
     words = len(re.sub(r"\s", "", content))
-    date = time.strftime("%Y-%m-%d %H:%M:%S")
+    date_val = date or time.strftime("%Y-%m-%d %H:%M:%S")
+    if date:                       # 每日成文按日期存：先删掉这天旧的（重写就覆盖）
+        db.execute("DELETE FROM daily_essays WHERE mode=? AND date=?", (mode, date_val))
     db.execute("INSERT INTO daily_essays(mode,date,topic,title,outline,content,words,used,note,spec) "
-               "VALUES('yingyong',?,?,?,?,?,?,?,?,?)",
-               (date, doctype, (d.get("title") or "").strip(),
+               "VALUES(?,?,?,?,?,?,?,?,?,?)",
+               (mode, date_val, doctype, (d.get("title") or "").strip(),
                 json.dumps(segs, ensure_ascii=False), content, words,
                 json.dumps(used, ensure_ascii=False), (d.get("note") or "").strip(),
                 json.dumps({"doctype": doctype, "scene": scene, "role": role,
-                            "audience": audience, "form": form,
-                            "cat": g["cat"]}, ensure_ascii=False)))
+                            "audience": audience, "form": form, "cat": g["cat"],
+                            "pos": pos, "wmin": wmin, "wmax": wmax}, ensure_ascii=False)))
     db.commit()
-    eid = db.execute("SELECT id FROM daily_essays WHERE mode='yingyong' AND date=?", (date,)).fetchone()[0]
+    eid = db.execute("SELECT id FROM daily_essays WHERE mode=? AND date=? ORDER BY id DESC LIMIT 1",
+                     (mode, date_val)).fetchone()[0]
+    return eid, None
+
+
+def _pick_daily_yy(db, date):
+    """每日成文：按日期轮一个文种（循环覆盖全部文种），场景优先取近期时政标题，
+    保证每天不同、贴近热点；没有时政就退回该文种的示范情景。"""
+    try:
+        ordinal = datetime.strptime(date[:10], "%Y-%m-%d").toordinal()
+    except Exception:
+        ordinal = 0
+    g = GW_DOCTYPES[ordinal % len(GW_DOCTYPES)]
+    scenes = []
+    for r in db.execute("SELECT title FROM news_items ORDER BY id DESC LIMIT 40"):
+        t = (r[0] or "").split("｜")[-1].strip()
+        if t and len(t) <= 22 and t not in scenes:
+            scenes.append(t)
+    scene = scenes[ordinal % len(scenes)] if scenes else g["demo"]["scene"]
+    # 题位也按天轮换：让你练到同一类文种在「小题位 / 中题位 / 大题位」下不同的字数要求
+    pos = ["small", "medium", "large"][ordinal % 3]
+    return {"doctype": g["k"], "scene": scene, "form": "full", "pos": pos}
+
+
+def _gen_yy_compose(db, date):
+    """综合应用能力大题：AI 出一段给定材料 + 作答要求，再写出参考范文（带逐段批注）。
+    存 mode='yingyong-compose'，一天一篇、可重写覆盖。材料/要求放进 spec，正文只存范文。"""
+    seeds = []
+    for r in db.execute("SELECT title FROM news_items ORDER BY id DESC LIMIT 12"):
+        t = (r[0] or "").split("｜")[-1].strip()
+        if t and len(t) <= 24:
+            seeds.append(t)
+    for r in db.execute("SELECT DISTINCT topic FROM gaikuo_items WHERE topic!='' ORDER BY date DESC LIMIT 8"):
+        if r[0]:
+            seeds.append(r[0])
+    seed_txt = ("【可选背景（挑一个改编成情景，别照抄标题）】\n"
+                + "\n".join("· " + s for s in seeds[:12]) + "\n\n") if seeds else ""
+    doctypes = "、".join(g["k"] for g in GW_DOCTYPES)
+    prompt = (
+        "出一道申论 / 事业单位**综合应用能力**大题，并写出参考范文。要像真考题：\n"
+        "① 先给一段【给定材料】（250~400 字，含背景、几条要点或数据、可有一句引语），"
+        "材料要具体、有情境，不要空泛口号；\n"
+        "② 再给【作答要求】：写明要写的文种（从这些里选一个：%s）、以谁的身份、写给谁、"
+        "**字数要求**（综合应用是大题位，设在 360~500 字之间，且**绝不超过 500 字**）；\n"
+        "③ 然后按要求写出【参考范文】，格式要照历年真题答案来：\n"
+        "   · 该有标题 / 称谓 / 落款就有，单位用「××」代替；**落款和日期各自单独成行、放在最后**"
+        "（倒数第二行署名机关、最后一行日期，如「××市××局」换行「2025年4月1日」），别和正文混在一起；\n"
+        "   · 能分条的文种（通知 / 方案 / 汇报 / 调研报告 / 建议书 / 简报等）主体用「一、二、三、」"
+        "或「（一）（二）（三）」**规范序号**分条，别用「首先 / 其次 / 最后」当骨架；面向群众的"
+        "（倡议书 / 公开信 / 讲话稿 / 短评）可用连贯段落但要分层；\n"
+        "   · **分段合理**：一段讲清一层意思（2~5 句），**严禁一句话一个自然段**；语气合身份、用词规范；\n"
+        "④ 给范文的**逐段批注** segs：把范文拆段，每段说清 part（部件名）、text（从范文逐字复制）、"
+        "why（这段阅卷看什么、为什么这么写，一句话）。\n\n"
+        "%s"
+        "只输出 JSON：\n"
+        '{"doctype":"选定的文种","material":"给定材料全文（用 \\n 分行）",'
+        '"task":"作答要求全文（用 \\n 分行）","title":"范文标题",'
+        '"content":"范文全文（含标题、称谓、落款，用 \\n 分行）",'
+        '"segs":[{"part":"","text":"","why":""}],'
+        '"note":"一句话说明这类综合应用最容易丢分的地方"}'
+        % (doctypes, seed_txt))
+    # 范文超 500 字就自动重出一次（硬兜底）
+    d, content, material, task = None, "", "", ""
+    for attempt in range(2):
+        p = prompt if attempt == 0 else prompt + (
+            "\n\n⚠️ 上一版范文超了字数，这一版**务必把范文压到 %d 字以内**，删次要修饰、保住要点和格式。" % MAX_YY_WORDS)
+        rep, err = _ai_call_or_error(
+            [{"role": "system", "content": "你是申论阅卷组的应用文范文作者，也擅长命制综合应用能力大题。"
+                                           "格式是第一位的，语气要合身份。严格输出 JSON。"},
+             {"role": "user", "content": p}],
+            temperature=0.6, max_tokens=4000, timeout=300, json_mode=True)
+        if err:
+            return None, err
+        try:
+            d = json.loads(rep)
+        except Exception:
+            return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
+        content = (d.get("content") or "").strip()
+        material = (d.get("material") or "").strip()
+        task = (d.get("task") or "").strip()
+        if not content or not material:
+            return None, (jsonify({"error": "AI 没出全题，请重试"}), 502)
+        if len(re.sub(r"\s", "", content)) <= MAX_YY_WORDS:
+            break
+    doctype = (d.get("doctype") or "").strip()
+    flat = re.sub(r"\s", "", content)
+    segs = []
+    for s in (d.get("segs") or []):
+        t = (s.get("text") or "").strip()
+        if not t or re.sub(r"\s", "", t) not in flat:
+            continue
+        segs.append({"part": (s.get("part") or "").strip()[:12],
+                     "text": t, "why": (s.get("why") or "").strip()[:140]})
+    gw = [dict(r) for r in db.execute("SELECT scene, phrases FROM gongwen_items ORDER BY id")]
+    used = []
+    for x in gw:
+        hit = [p for p in re.split(r"[、,，]", x["phrases"])
+               if len(p.replace("…", "").strip()) >= 2
+               and all(y in content for y in p.split("…") if len(y.strip()) >= 2)]
+        if hit:
+            used.append({"sec": x["scene"], "text": "、".join(hit[:4])})
+    words = len(re.sub(r"\s", "", content))
+    wmin, wmax = _word_band(doctype, "large")          # 综合应用是大题位
+    mode = "yingyong-compose"
+    db.execute("DELETE FROM daily_essays WHERE mode=? AND date=?", (mode, date))
+    db.execute("INSERT INTO daily_essays(mode,date,topic,title,outline,content,words,used,note,spec) "
+               "VALUES(?,?,?,?,?,?,?,?,?,?)",
+               (mode, date, doctype or "综合应用", (d.get("title") or "").strip(),
+                json.dumps(segs, ensure_ascii=False), content, words,
+                json.dumps(used, ensure_ascii=False), (d.get("note") or "").strip(),
+                json.dumps({"kind": "compose", "doctype": doctype,
+                            "material": material, "task": task, "form": "full",
+                            "pos": "large", "wmin": wmin, "wmax": wmax},
+                           ensure_ascii=False)))
+    db.commit()
+    eid = db.execute("SELECT id FROM daily_essays WHERE mode=? AND date=? ORDER BY id DESC LIMIT 1",
+                     (mode, date)).fetchone()[0]
     return eid, None
 
 
@@ -317,6 +480,102 @@ def write_yingyong():
     if err:
         return err
     return jsonify(_e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()))
+
+
+# ---- 应用文 · 每日成文（AI 每天出一道应用文题，一天一篇，可补齐往期）----
+@bp.get("/api/write/yingyong/days")
+def write_yy_days():
+    """列最近 14 天，每天计划一个文种、写了没有。"""
+    db = get_db()
+    today = datetime.now().date()
+    have = {r["date"]: r for r in db.execute(
+        "SELECT date,id,title,topic,words FROM daily_essays WHERE mode='yingyong-daily'")}
+    out = []
+    for i in range(14):
+        dt = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        plan = _pick_daily_yy(db, dt)
+        r = have.get(dt)
+        lo, hi = _word_band(plan["doctype"], plan["pos"])
+        out.append({"date": dt, "doctype": plan["doctype"], "scene": plan["scene"],
+                    "pos": plan["pos"], "pos_label": POS_LABEL.get(plan["pos"], ""),
+                    "wmin": lo, "wmax": hi,
+                    "eid": r["id"] if r else None,
+                    "title": r["title"] if r else "", "topic": r["topic"] if r else "",
+                    "words": r["words"] if r else 0})
+    return jsonify({"days": out})
+
+
+@bp.post("/api/write/yingyong/daily")
+def write_yy_daily():
+    d = request.get_json(silent=True) or {}
+    date = (d.get("date") or "").strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return jsonify({"error": "日期不对"}), 400
+    db = get_db()
+    if not d.get("force"):
+        r = db.execute("SELECT * FROM daily_essays WHERE mode='yingyong-daily' AND date=?", (date,)).fetchone()
+        if r:
+            return jsonify(_e_row(r))
+    eid, err = _gen_yingyong(db, _pick_daily_yy(db, date), mode="yingyong-daily", date=date)
+    if err:
+        return err
+    return jsonify(_e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()))
+
+
+@bp.post("/api/write/yingyong/compose")
+def write_yy_compose():
+    """综合应用能力大题：AI 出材料 + 要求 + 范文，每天一篇。"""
+    d = request.get_json(silent=True) or {}
+    date = time.strftime("%Y-%m-%d")
+    db = get_db()
+    if not d.get("force"):
+        r = db.execute("SELECT * FROM daily_essays WHERE mode='yingyong-compose' AND date=?", (date,)).fetchone()
+        if r:
+            return jsonify(_e_row(r))
+    eid, err = _gen_yy_compose(db, date)
+    if err:
+        return err
+    return jsonify(_e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()))
+
+
+@bp.post("/api/write/yingyong/backfill")
+def write_yy_backfill():
+    """把最近 14 天里还没写的每日应用文补齐（后台慢慢跑）。"""
+    db = get_db()
+    today = datetime.now().date()
+    done = {r[0] for r in db.execute("SELECT date FROM daily_essays WHERE mode='yingyong-daily'")}
+    todo = [dt for dt in ((today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(14))
+            if dt not in done]
+    if not todo:
+        return jsonify({"error": "最近 14 天都写好了"}), 400
+    tid = bg_new(db, "yingyong-daily", "补齐每日应用文 %d 天" % len(todo), len(todo))
+    flask_app = current_app._get_current_object()
+
+    def run():
+        con = sqlite3.connect(DB, timeout=60)
+        con.row_factory = sqlite3.Row
+        ok = 0
+        try:
+            for i, dt in enumerate(todo):
+                bg_set(con, tid, status="running", progress=i,
+                        message="正在写 %s（第 %d/%d 篇）" % (dt, i + 1, len(todo)))
+                try:
+                    with flask_app.app_context():
+                        _, err = _gen_yingyong(con, _pick_daily_yy(con, dt), mode="yingyong-daily", date=dt)
+                    if not err:
+                        ok += 1
+                except Exception:
+                    log.warning("批量生成每日应用文：%s 这天失败", dt, exc_info=True)
+            bad = len(todo) - ok
+            bg_set(con, tid, status="done", progress=len(todo),
+                    message="写好 %d 篇%s" % (ok, "（%d 天失败，可再点一次补）" % bad if bad else ""))
+        except Exception as ex:
+            bg_set(con, tid, status="error", message=str(ex)[:200])
+        finally:
+            con.close()
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"task": tid, "total": len(todo)}), 202
 
 
 @bp.get("/api/write/days")
