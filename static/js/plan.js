@@ -38,7 +38,7 @@ function renderRoadmap(rm, prof) {
   if (!rm || (!rm.phase && !rm.over)) {           // 没开启（或还没到开始日）
     box.innerHTML = `<div class="plr-off">
       <div class="plr-off-t">🚀 40 天冲刺路线</div>
-      <div class="plr-off-d">对标「140 分」强度，但按 <b>6 天推进 + 第 7 天复盘日</b> 排，能扛完全程。
+      <div class="plr-off-d">对标「140 分」强度，但按 <b>工作日推进 + 周末复盘</b> 排（周六稍多、周日更轻），能扛完全程。
         分三段：打牢根基(1-12) → 专项拔高(13-28) → 套题强化(29-40)；
         每天给你行测题量定额、申论安排、正确率目标，积累类任务直接用 App 里现成的内容。</div>
       <button class="btn primary" id="plr-start">开启 40 天冲刺</button>
@@ -63,12 +63,14 @@ function renderRoadmap(rm, prof) {
     <div class="plr-top">
       <span class="plr-day">第 <b>${rm.day}</b> / ${rm.days} 天</span>
       <span class="plr-ph">${esc(ph.key)} · ${esc(ph.name)}</span>
-      ${rm.review_day ? '<span class="plr-rv">★ 今天是复盘日</span>' : ''}
+      ${rm.review_day ? `<span class="plr-rv">★ ${rm.weekend === 'sat' ? '周六' : '周日'}复盘日</span>` : ''}
       <button class="plr-more" id="plr-more">${plRoadOpen ? '收起' : '看路线'}</button>
     </div>
     <div class="plr-bar"><i style="width:${pct}%"></i></div>
     <div class="plr-focus">${esc(ph.focus)}</div>
-    ${rm.review_day ? `<div class="plr-tip">上午一套行测限时套题（严格 120 分钟）→ 下午全套订正 + 错因归因 → 晚上错题过筛，然后<b>休半天</b>。今天别堆新知识。</div>` : ''}
+    ${rm.review_day ? `<div class="plr-tip">${rm.weekend === 'sat'
+      ? '周六复盘（稍满）：上午一套行测限时套题（严格 120 分钟）→ 下午全套订正 + 错因归因 → 晚上把本周错题过一遍。<b>今天不排新知识</b>，但别偷懒。'
+      : '周日复盘（更轻）：本周错题再过一遍 + 快速回看这周的新词 / 素材 / 时政，然后<b>休半天</b>放松。今天不排新任务，收收心准备下周。'}</div>` : ''}
     <div class="plr-quota"><span class="plr-qt">今日行测定额</span>${quota}</div>
     <div class="plr-sl">📝 申论：${esc(ph.shenlun)}</div>
     <div class="plr-detail ${plRoadOpen ? '' : 'hidden'}">
@@ -106,7 +108,7 @@ $('#pl-road').addEventListener('click', async e => {
     const mins = (plProfile && plProfile.minutes) || 0;
     const ok = await appConfirm(
       '开启 40 天冲刺：从今天算第 1 天，分三段（根基 12 天 → 专项 16 天 → 套题 12 天），'
-      + '每 7 天有一个复盘日。规划助手以后会按当天的定额和正确率目标排任务。'
+      + '周末（周六 / 周日）不排新任务，改为复盘本周（周六稍多、周日更轻）。规划助手以后会按当天的定额和正确率目标排任务。'
       + (mins < 300 ? '\n\n你说全天有 6~8 小时，我顺便把「每天可学」设成 420 分钟，可以吗？' : ''),
       { title: '40 天冲刺路线', okText: '开始' });
     if (!ok) return;

@@ -17,7 +17,7 @@ PLAN_EXAMS = ["四川省考", "国考", "事业单位", "其他"]
 
 # 计划条目可以直达 App 里的对应功能，和消息中心用同一套 link 约定
 PLAN_LINKS = ["review", "quiz", "changshi", "news", "sucai", "gaikuo",
-              "wrongq", "idiom", "changkao", "shenlun", "classics", "theory",
+              "wrongq", "idiom", "changkao", "shenlun", "find", "classics", "theory",
               "essays", "gongwen", "dtest", "drafts", "works", "partydict", "policydoc", ""]
 
 bp = Blueprint("plan", __name__)
@@ -26,8 +26,10 @@ bp = Blueprint("plan", __name__)
 ROADMAP_40 = {
     "name": "40 天冲刺路线（对标 140 分强度）",
     "days": 40,
-    "rhythm": "6 天推进 + 第 7 天复盘日（上午限时套题、下午全套订正归因、晚上错题过筛 + 半天休息）。"
-              "不设「全天不休」——连轴转 40 天必塌方，复盘日就是让你能扛完全程的那颗螺丝。",
+    "rhythm": "工作日推进 + 周末复盘：周一到周五学新内容，周六日不排新任务，回过头把本周的错题、"
+              "新词、素材、真题再过一遍。周六复盘可略满（上午限时套题、下午全套订正归因、晚上错题过筛），"
+              "周日更轻（错题再过一遍 + 本周新词素材快速回看 + 休半天）。不设「全天不休」——连轴转 40 天必"
+              "塌方，周末复盘就是让你能扛完全程的那颗螺丝。",
     "priority": "资料分析 ＞ 言语理解 ＞ 判断推理 ＞ 常识判断(积累型) ＞ 数量关系(战略选做)",
     "priority_why": "资料分析题型固定、练了就稳、分值大，是性价比最高的；数量关系耗时最长、提升最慢，"
                     "只保 10 题左右的会做题，其余果断放弃换时间——140 分不是靠数量关系堆出来的。",
@@ -132,6 +134,7 @@ def _plan_stats(db, today):
     st["daily_tasks"] = [r["text"] for r in db.execute(
         "SELECT text FROM task_templates WHERE user_id=? AND active=1 ORDER BY sort,id", (uid(),))]
     st["graded"] = db.execute("SELECT COUNT(*) FROM shenlun_grade WHERE user_id=?", (uid(),)).fetchone()[0]
+    st["find_done"] = db.execute("SELECT COUNT(*) FROM find_records WHERE user_id=?", (uid(),)).fetchone()[0]
     return st
 
 
@@ -241,18 +244,23 @@ def _roadmap_state(db):
     except Exception:
         return None
     total = r["days"] or 40
-    n = (datetime.now().date() - start).days + 1
+    now = datetime.now()
+    n = (now.date() - start).days + 1
     phase = None
     if 1 <= n <= total:
         for p in data.get("phases", []):
             if p["d0"] <= n <= p["d1"]:
                 phase = p
                 break
+    # 复盘日改按自然周末：周六 / 周日不排新任务，复盘本周内容（周六稍多、周日更轻）
+    wd = now.weekday()                              # 周一=0 … 周六=5、周日=6
+    weekend = "sat" if wd == 5 else ("sun" if wd == 6 else None)
     return {
         "start_date": r["start_date"], "days": total, "day": n,
         "over": n > total, "not_started": n < 1,
         "phase": phase,
-        "review_day": bool(phase) and n % 7 == 0,      # 每 7 天一个复盘日
+        "review_day": bool(phase) and weekend is not None,   # 周末即复盘日
+        "weekend": weekend,                                  # 'sat' / 'sun' / None
         "data": data,
     }
 
@@ -297,10 +305,16 @@ def _roadmap_prompt(rm):
     p, d = rm["phase"], rm["data"]
     quota = "、".join("%s %d 题" % (k, v) for k, v in p["quota"].items())
     acc = "、".join("%s %s" % (k, v) for k, v in p["accuracy"].items())
+    review = rm["review_day"]
     lines = [
         "\n【40 天冲刺路线·今天的硬约束】",
         "· 今天是第 %d / %d 天，阶段：%s（%s）" % (rm["day"], rm["days"], p["name"], p["focus"]),
-        "· 今日行测定额（必须排进去，可按薄弱模块微调，但总题量别少于八成）：%s" % quota,
+    ]
+    if review:   # 周末复盘：定额只当「复盘本周做过的题」的参考量，不是上新题
+        lines.append("· 今日行测定额仅作复盘参考（复盘本周做过 / 错过的题，不排新题）：%s" % quota)
+    else:
+        lines.append("· 今日行测定额（必须排进去，可按薄弱模块微调，但总题量别少于八成）：%s" % quota)
+    lines += [
         "· 申论：%s" % p["shenlun"],
         "· 本阶段正确率目标（写进 reason 里提醒他）：%s" % acc,
         "· 模块优先级：%s" % d.get("priority", ""),
@@ -309,9 +323,15 @@ def _roadmap_prompt(rm):
     lines.append("· link 必须选对地方：晨读/背高频词 → changkao（读「常考」里的新词，"
                  "**不要**和「到期复习」重复，那是 review 的活）；巩固测试 → dtest（在「任务清单·每日任务」里，"
                  "**不是**题库 quiz）；到期复习 → review；错题 → wrongq；刷套卷 → quiz；申论 → shenlun。")
-    if rm["review_day"]:
-        lines.append("· ★ 今天是【复盘日】：上午一套行测限时套题（严格 120 分钟），下午全套订正 + 错因归因，"
-                     "晚上错题过筛 + 看进度分析；把刷新题的量减下来，别再堆新知识。")
+    if review:
+        if rm.get("weekend") == "sat":
+            lines.append("· ★ 今天是【周六复盘日】：周末不排新任务、不上新知识，回头复盘本周。可略满一点——"
+                         "上午一套行测限时套题（严格 120 分钟）→ 下午全套订正 + 错因归因 → 晚上把本周错题过一遍。"
+                         "排的任务都要指向「复习本周内容」（错题、真题订正、本周新词/素材回看），不要出现学新知识/上新题。")
+        else:
+            lines.append("· ★ 今天是【周日复盘日】：周末不排新任务，且要比周六更轻——本周错题再过一遍、"
+                         "快速回看这周的新词/素材/时政，然后留出半天休息。任务别排满、时长比平日少，"
+                         "同样不要出现学新知识/上新题的任务。")
     if p.get("weekly"):
         lines.append("· 本阶段每周要做到：%s" % "；".join(p["weekly"]))
     return "\n".join(lines) + "\n"
@@ -358,7 +378,7 @@ def plan_generate():
         "· 错题分布：%s\n"
         "· 题库里还没做过的套卷：%d 套\n"
         "· 今天新增内容：常识 %d 条、时政 %d 条、议论文素材 %d 条、概括句 %d 条\n"
-        "· 已收录成语词语：%d 条；申论批改记录：%d 次\n"
+        "· 已收录成语词语：%d 条；申论批改记录：%d 次；小题找点/写点练习：%d 次\n"
         "· 用户已有的每日固定打卡：%s\n"
         "%s\n"
         "请为今天排一份学习计划：\n"
@@ -368,6 +388,7 @@ def plan_generate():
         "· 每条写清楚做什么、做多少（如「做 30 道图形推理并全部订正，错题进错题本」）；\n"
         "· reason 一句话说明为什么现在做这件事（引用上面的数字或正确率目标）；\n"
         "· link 从这个列表里选一个最相关的，选不出就填空字符串：%s\n"
+        "  （其中：申论小题练找点/写点 → find；上传真题逐点批改 → shenlun）；\n"
         "· module 填所属模块（如「言语理解」「常识判断」「申论」「复习」「错题」）。\n"
         '只输出 JSON：{"summary":"一句话today的重点","items":[{"title":"","module":"","minutes":30,"reason":"","link":""}]}'
         % (p["exam"], ("%d 天" % days) if days is not None else "未设置考试日期",
@@ -378,7 +399,7 @@ def plan_generate():
            st["quiz_undone"],
            st["new_today"]["常识积累"], st["new_today"]["每日时政"],
            st["new_today"]["议论文素材"], st["new_today"]["概括句"],
-           st["entries"], st["graded"],
+           st["entries"], st["graded"], st["find_done"],
            ("、".join(st["daily_tasks"]) or "无"),
            road, n_task, minutes, "/".join(x for x in PLAN_LINKS if x)))
 
