@@ -196,6 +196,7 @@ clsState
 composing
 compressImage
 copyImage
+copyText
 crFid
 crFriendAvatar
 crInRoom
@@ -281,6 +282,7 @@ dtTable
 dvBatchBar
 dvClip
 dvFolder
+dvGrid
 dvIcon
 dvInTrash
 dvLeaveTrash
@@ -298,6 +300,7 @@ dvSearchT
 dvSel
 dvSetClip
 dvSha256
+dvShare
 dvSort
 dvTrashRow
 dvUpKey

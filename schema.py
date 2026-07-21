@@ -304,6 +304,19 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_drive ON drive_files(owner_id, folder);
+        -- 分享链接：**全站唯一不需要登录就能取到东西的入口**，所以 token 必须够长够随机
+        -- （secrets.token_urlsafe，192 位），且每次取用都要复查有没有过期、文件还在不在。
+        CREATE TABLE IF NOT EXISTS drive_shares(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT UNIQUE NOT NULL,
+            file_id INTEGER NOT NULL,
+            owner_id INTEGER NOT NULL,
+            expires_at TEXT,                      -- NULL = 不过期
+            hits INTEGER DEFAULT 0,               -- 被下载过几次
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_share_tok ON drive_shares(token);
+        CREATE INDEX IF NOT EXISTS idx_share_own ON drive_shares(owner_id, file_id);
         -- 一对一聊天消息。文件类消息引用 drive_files.id（收到的文件也会进对方云盘的「聊天文件」夹）
         CREATE TABLE IF NOT EXISTS chat_msgs(
             id INTEGER PRIMARY KEY AUTOINCREMENT,

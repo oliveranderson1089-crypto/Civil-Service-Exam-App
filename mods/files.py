@@ -37,12 +37,14 @@ def _user_dir(user_id):
     return d
 
 
-def _remove_blob(path):
-    """删一个上传件，**连它的转换缓存一起删**。
+# 上传件旁边会派生出来的缓存（都拿原文件名去掉后缀当前缀）。
+# 新加一种派生缓存时**记得加进来** —— 漏了它就永远没人清：没有记录引用它、不计进配额、
+# 用户也看不见。.pdf 是 Office 预览转的，.thumb.jpg 是云盘网格视图的缩略图。
+_DERIVED = (".pdf", ".thumb.jpg")
 
-    _office_to_pdf 会在原文件旁边留一个同名 .pdf（预览 Office 时生成）。只删原件的话
-    那个 .pdf 就成了孤儿：没有任何记录引用它、不计进配额、也没人会再清它 —— 每预览过
-    一次又删掉的 Office 文件，都会永久占着一份完整的 PDF。
+
+def _remove_blob(path):
+    """删一个上传件，**连它派生出来的缓存一起删**。
 
     资料库/小记/知识库走 _remove_file（按 uid 拼路径），云盘的文件在 uploads/drive/<uid>/
     下、拼法不同，所以公共部分收在这里，两边都调它。
@@ -50,9 +52,11 @@ def _remove_blob(path):
     try:
         if os.path.exists(path):
             os.remove(path)
-        pdf = os.path.splitext(path)[0] + ".pdf"
-        if pdf != path and os.path.exists(pdf):
-            os.remove(pdf)
+        base = os.path.splitext(path)[0]
+        for suf in _DERIVED:
+            p = base + suf
+            if p != path and os.path.exists(p):
+                os.remove(p)
     except Exception:
         log.debug("删文件失败（残留不影响功能）", exc_info=True)
 

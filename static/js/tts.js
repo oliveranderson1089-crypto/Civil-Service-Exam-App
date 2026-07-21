@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, c, deskSay, deskStop, deskTTS, push,
+/* global copyText, $, c, deskSay, deskStop, deskTTS, push,
    toast */
 
 /* ================= 逐条朗读（安卓 TTS 桥 / 浏览器 speechSynthesis） ================= */
@@ -131,16 +131,7 @@ async function shareCard(card) {
     try { await navigator.share({ text: payload }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
   }
   // 剪贴板兜底（旧 APK / 无分享面板环境）
-  let copied = false;
-  try { await navigator.clipboard.writeText(payload); copied = true; } catch (_) { /* clipboard API 不给用，下面退回 execCommand */ }
-  if (!copied) {
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = payload; ta.style.position = 'fixed'; ta.style.opacity = '0';
-      document.body.appendChild(ta); ta.select();
-      copied = document.execCommand('copy'); ta.remove();
-    } catch (_) { /* execCommand 也不行就是真复制不了，copied 保持 false，下面会提示 */ }
-  }
+  const copied = await copyText(payload);
   toast(copied ? '已复制内容，去微信等应用粘贴即可（更新 APK 后可直接弹分享面板）' : '分享失败', !copied);
 }
 /* ---- 朗读：两条路，覆盖所有带文字的地方（不放进悬浮球）----

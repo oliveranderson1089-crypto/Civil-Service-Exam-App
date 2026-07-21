@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import threading
 import time
@@ -170,6 +171,8 @@ def _drive_row(r):
     d = dict(r)
     d["is_dir"] = bool(d.get("is_dir"))
     d["viewable"] = (not d["is_dir"]) and _viewable(d.get("ext"))
+    # 网格视图据此决定「出缩略图还是出图标」，省得前端自己维护一份后缀表
+    d["thumb"] = (not d["is_dir"]) and (d.get("ext") or "").lower() in IMAGE_EXT
     return d
 
 
@@ -595,6 +598,136 @@ def drive_patch(fid):
                        (new + k["folder"][len(old):], k["id"]))
     db.commit()
     return jsonify({"ok": True, "name": name, "folder": folder})
+
+
+# ---- 缩略图（网格视图用）----
+THUMB_PX = 320
+
+
+def _thumb_path(owner, stored):
+    return os.path.join(_drive_dir(owner), os.path.splitext(stored)[0] + ".thumb.jpg")
+
+
+def _make_thumb(src, dst):
+    """生成缩略图。失败返回 False —— 调用方退回图标，不要让列表因为一张坏图整个崩掉。"""
+    try:
+        from PIL import Image, ImageOps
+        try:                                    # iPhone 的 HEIC
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except Exception:
+            log.debug("pillow_heif 没装，HEIC 出不了缩略图", exc_info=True)
+        im = Image.open(src)
+        im.load()                               # 多帧 GIF 只取第一帧
+        im = ImageOps.exif_transpose(im)        # 手机竖拍的照片不转就是躺着的
+        if im.mode in ("RGBA", "LA", "P"):      # 透明底转 JPEG 会变黑，先铺白
+            im = im.convert("RGBA")
+            bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+            im = Image.alpha_composite(bg, im)
+        im = im.convert("RGB")
+        im.thumbnail((THUMB_PX, THUMB_PX), Image.LANCZOS)
+        im.save(dst, "JPEG", quality=82, optimize=True)
+        return True
+    except Exception:
+        log.debug("生成缩略图失败", exc_info=True)
+        return False
+
+
+@bp.get("/api/drive/<int:fid>/thumb")
+def drive_thumb(fid):
+    """图片缩略图，网格视图靠它。就地缓存成 <uuid>.thumb.jpg，删文件时由 _remove_blob 一并清。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
+    if not r or (r["ext"] or "").lower() not in IMAGE_EXT:
+        return jsonify({"error": "没有缩略图"}), 404
+    src = os.path.join(_drive_dir(uid()), r["stored_name"] or "")
+    if not os.path.exists(src):
+        return jsonify({"error": "文件丢失"}), 404
+    dst = _thumb_path(uid(), r["stored_name"])
+    if not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(src):
+        if not _make_thumb(src, dst):
+            return jsonify({"error": "这张图生成不了缩略图"}), 415
+    return _cacheable(_no_script(send_file(dst, mimetype="image/jpeg")))
+
+
+# ---- 分享链接 ----
+SHARE_DAYS = int(CFG.get("drive_share_days", 7))
+
+
+def _share_row(r):
+    return {"id": r["id"], "token": r["token"], "file_id": r["file_id"],
+            "name": r["name"], "size": r["size"], "hits": r["hits"],
+            "expires_at": r["expires_at"], "url": "/s/" + r["token"]}
+
+
+@bp.post("/api/drive/<int:fid>/share")
+def drive_share(fid):
+    """给一个文件建分享链接。同一个文件已有未过期的链接就复用，别越点越多。"""
+    days = int((request.get_json(silent=True) or {}).get("days") or SHARE_DAYS)
+    days = max(1, min(days, 365))
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "文件不存在"}), 404
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    old = db.execute("SELECT * FROM drive_shares WHERE owner_id=? AND file_id=? "
+                     "AND (expires_at IS NULL OR expires_at > ?)", (uid(), fid, now)).fetchone()
+    if old:
+        return jsonify(_share_row(dict(old, name=r["name"], size=r["size"])))
+    exp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + days * 86400))
+    token = secrets.token_urlsafe(24)          # 192 位，猜不出来
+    cur = db.execute("INSERT INTO drive_shares(token,file_id,owner_id,expires_at) VALUES(?,?,?,?)",
+                     (token, fid, uid(), exp))
+    db.commit()
+    return jsonify(_share_row({"id": cur.lastrowid, "token": token, "file_id": fid,
+                               "name": r["name"], "size": r["size"], "hits": 0,
+                               "expires_at": exp})), 201
+
+
+@bp.get("/api/drive/shares")
+def drive_shares():
+    rows = get_db().execute(
+        "SELECT s.*, f.name, f.size FROM drive_shares s JOIN drive_files f ON f.id=s.file_id "
+        "WHERE s.owner_id=? AND f.deleted_at IS NULL ORDER BY s.id DESC LIMIT 200",
+        (uid(),)).fetchall()
+    return jsonify({"shares": [_share_row(r) for r in rows], "days": SHARE_DAYS})
+
+
+@bp.delete("/api/drive/shares/<int:sid>")
+def drive_share_del(sid):
+    db = get_db()
+    db.execute("DELETE FROM drive_shares WHERE id=? AND owner_id=?", (sid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@bp.get("/s/<token>")
+def drive_share_get(token):
+    """**不需要登录**的取件口（app.py 的 _is_public 放行了 /s/）。
+
+    正因为不需要登录，这里每一步都得自己查：token 对不对、过没过期、文件还在不在、
+    有没有被扔进回收站。另外一律当附件下发并关进沙箱 —— 公开地址上绝不能内联渲染
+    别人上传的 .html。
+    """
+    db = get_db()
+    s = db.execute("SELECT * FROM drive_shares WHERE token=?", (token,)).fetchone()
+    if not s:
+        return "链接无效", 404
+    if s["expires_at"] and s["expires_at"] <= time.strftime("%Y-%m-%d %H:%M:%S"):
+        return "链接已过期", 410
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND is_dir=0 AND deleted_at IS NULL",
+                   (s["file_id"],)).fetchone()
+    if not r:
+        return "文件已被删除", 404
+    path = os.path.join(_drive_dir(s["owner_id"]), r["stored_name"] or "")
+    if not os.path.exists(path):
+        return "文件已丢失", 404
+    db.execute("UPDATE drive_shares SET hits=hits+1 WHERE id=?", (s["id"],))
+    db.commit()
+    return _no_script(send_file(path, as_attachment=True, download_name=r["name"],
+                                mimetype=r["mime"] or "application/octet-stream"))
 
 
 def _uniq_name(db, owner, folder, name):

@@ -83,6 +83,23 @@ function lsDel(key) {
   try { localStorage.removeItem(key); return true; }
   catch (e) { console.warn('[存储] 删除失败 %s：%s', key, (e && e.name) || e); return false; }
 }
+/* 复制文字到剪贴板。两条路都要留：
+   navigator.clipboard 在桌面壳（WebKitGTK）里会被拒（报 user denied，其实是不支持），
+   非 https 的局域网访问下也没有。退回 execCommand 那套老办法。
+   返回是否成功 —— 提示语交给调用方，各处措辞不一样。 */
+async function copyText(text) {
+  if (!text) return false;
+  try { await navigator.clipboard.writeText(text); return true; } catch (_) { /* 下面兜底 */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  ta.remove();
+  return ok;
+}
 function fmtSize(n) {
   if (n < 1024) return n + ' B';
   if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';

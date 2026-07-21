@@ -354,3 +354,37 @@ test('dvUploadChunked：记住 upload_id，重来时先问服务端收到哪些�
   const puts = calls.filter(u => /\/chunk\/d+\/\d+$/.test(u)).map(u => u.split('/').pop());
   assert.deepStrictEqual(puts, ['2'], '第 0、1 块服务端已经有了，只该补第 2 块');
 });
+
+/* ---- 网格视图 / 分享链接 ---- */
+
+test('dvRow：网格模式下图片出缩略图，非图片仍是图标', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dvGrid = true');
+  const img = h.run('dvRow')({ id: 3, is_dir: false, name: 'a.png', ext: '.png', size: 1,
+                               viewable: true, thumb: true });
+  const zip = h.run('dvRow')({ id: 4, is_dir: false, name: 'b.zip', ext: '.zip', size: 1,
+                               viewable: false, thumb: false });
+  assert.match(img, /src="\/api\/drive\/3\/thumb"/);
+  assert.match(img, /loading="lazy"/, '不懒加载的话，一屏几十张图会一次性全下');
+  assert.ok(!/dv-thumb/.test(zip), '压缩包不该去请求缩略图（后端只会回 404）');
+});
+
+test('dvRow：列表模式下不请求缩略图', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dvGrid = false');
+  const img = h.run('dvRow')({ id: 3, is_dir: false, name: 'a.png', ext: '.png', size: 1,
+                               viewable: true, thumb: true });
+  assert.ok(!/dv-thumb/.test(img), '列表模式白下一堆缩略图');
+});
+
+test('dvShare：拿到链接后复制的是完整地址（发给别人要能直接打开）', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  const copied = [];
+  h.window.navigator.clipboard = { writeText: async (v) => { copied.push(v); } };
+  stubFetch(h, [], () => ({ url: '/s/tok123', expires_at: '2026-08-01 12:00:00' }));
+  h.run("appPrompt = async () => null");        // 别真弹框
+  await h.run('dvShare')(5);
+  assert.strictEqual(copied.length, 1);
+  assert.ok(copied[0].startsWith('http'), '复制的是相对路径，别人打不开：' + copied[0]);
+  assert.ok(copied[0].endsWith('/s/tok123'));
+});

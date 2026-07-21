@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, esc,
+/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, copyText, esc,
    lsDel, lsGet, lsSet, openViewerUrl, push, toast */
 
 /* ================= 云盘 ================= */
@@ -24,6 +24,7 @@ function fSize(n) {
   return (n / 1073741824).toFixed(1) + ' GB';   // 配额是 GB 量级，别显示成「2048.0 MB」
 }
 let dvQuery = '', dvSort = 'new';
+let dvGrid = lsGet('dv:grid') === '1';   // 列表 / 网格，记住上次选的
 const dvSel = new Set();          // 多选中的 id（每次重新列目录都清空，见 loadDrive）
 
 let dvInTrash = false;             // 是否正停在回收站视图
@@ -53,10 +54,23 @@ function dvRow(it) {
   const name = it.viewable
     ? `<span class="dv-name dv-can" data-dvview="${it.id}" data-ext="${esc(it.ext || '')}">${esc(it.name)}</span>`
     : `<span class="dv-name">${esc(it.name)}</span>`;
-  return `<div class="dv-item">${pick}<span class="dv-ic">${dvIcon(it.ext)}</span>${name}
+  const share = `<button class="dv-act" data-dvshare="${it.id}" title="分享链接">🔗</button>`;
+  const acts = `${ren}${share}<button class="dv-act" data-dvsend="${it.id}" title="发给好友">📤</button>
+    <a class="dv-act" href="/api/drive/${it.id}/download" title="下载">⬇</a>${del}`;
+  // 网格里图片直接出缩略图；onerror 时换回图标 —— 一张坏图不该在格子里留个破图标
+  const face = (dvGrid && it.thumb)
+    ? `<img class="dv-thumb" loading="lazy" src="/api/drive/${it.id}/thumb" alt=""
+            data-dvview="${it.id}" data-ext="${esc(it.ext || '')}"
+            onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dv-ic',textContent:'🖼️'}))">`
+    : `<span class="dv-ic">${dvIcon(it.ext)}</span>`;
+  if (dvGrid) {
+    return `<div class="dv-item">${pick}${face}${name}
+      <span class="dv-meta">${fSize(it.size)}${where}</span>
+      <span class="dv-acts">${acts}</span></div>`;
+  }
+  return `<div class="dv-item">${pick}${face}${name}
     <span class="dv-meta">${fSize(it.size)}${it.source === 'chat' ? ' · 聊天' : ''}${where}</span>
-    ${ren}<button class="dv-act" data-dvsend="${it.id}" title="发给好友">📤</button>
-    <a class="dv-act" href="/api/drive/${it.id}/download" title="下载">⬇</a>${del}</div>`;
+    ${acts}</div>`;
 }
 
 /* ---- 回收站 ----
@@ -118,6 +132,7 @@ async function loadDrive() {
         : '这个文件夹是空的。把文件或整个文件夹拖进来，也可以用右上角的上传按钮。') + '</p>';
       return;
     }
+    $('#dv-list').classList.toggle('grid', dvGrid);
     $('#dv-list').innerHTML = d.items.map(dvRow).join('');
   } catch (e) { $('#dv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
@@ -164,9 +179,58 @@ $('#dv-list').addEventListener('click', async e => {
     try { await api('/api/drive/' + del.dataset.dvdel, { method: 'DELETE' }); loadDrive(); } catch (err) { toast(err.message, true); }
     return;
   }
+  const sh = e.target.closest('[data-dvshare]');
+  if (sh) { dvShare(+sh.dataset.dvshare); return; }
   const send = e.target.closest('[data-dvsend]');
   if (send) driveSend(+send.dataset.dvsend);
 });
+
+// 启动时让按钮反映记住的选择，否则明明是网格、按钮还写着「▦ 网格」
+if (dvGrid) { $('#dv-grid').classList.add('primary'); $('#dv-grid').textContent = '☰ 列表'; }
+$('#dv-grid').onclick = () => {
+  dvGrid = !dvGrid;
+  lsSet('dv:grid', dvGrid ? '1' : '0');
+  $('#dv-grid').classList.toggle('primary', dvGrid);
+  $('#dv-grid').textContent = dvGrid ? '☰ 列表' : '▦ 网格';
+  loadDrive();
+};
+
+/* ---- 分享链接 ----
+   这是全站唯一「不用登录就能取到东西」的口子，所以界面上要把有效期说清楚，
+   也要能随时收回（撤销后链接立刻失效）。 */
+async function dvShare(id) {
+  try {
+    const d = await api('/api/drive/' + id + '/share', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    const url = location.origin + d.url;
+    const ok = await copyText(url);     // 桌面壳里 navigator.clipboard 是被拒的，copyText 有兜底
+    await appPrompt(ok ? '链接已复制（有效期至 ' + (d.expires_at || '').slice(0, 10) + '）'
+                       : '复制不了，手动选中下面这行', '', url);
+  } catch (e) { toast(e.message, true); }
+}
+
+$('#dv-share-list').onclick = async () => {
+  let d;
+  try { d = await api('/api/drive/shares'); } catch (e) { toast(e.message, true); return; }
+  const el = $('#mat-share-sheet');
+  el.innerHTML = `<div class="ns-mask" data-sheet-close></div><div class="ns-panel">
+    <div class="ns-handle"></div><div class="ns-title">我分享出去的链接</div>
+    <div class="ms-list">${d.shares.length ? d.shares.map(s => `<div class="ms-frow">
+      🔗 ${esc(s.name)}<br><small>下载 ${s.hits} 次 · 有效期至 ${esc((s.expires_at || '不限').slice(0, 10))}</small>
+      <button class="btn tiny" data-dvunshare="${s.id}">撤销</button></div>`).join('')
+    : '<p class="empty">还没分享过。文件行上点 🔗 就能生成链接。</p>'}</div>
+    <div class="ms-acts"><button class="btn" id="dvsh-close">关闭</button></div></div>`;
+  el.classList.remove('hidden');
+  const close = () => el.classList.add('hidden');
+  el.querySelector('.ns-mask').onclick = close;
+  $('#dvsh-close').onclick = close;
+  el.querySelectorAll('[data-dvunshare]').forEach(b => {
+    b.onclick = async () => {
+      try { await api('/api/drive/shares/' + b.dataset.dvunshare, { method: 'DELETE' }); toast('已撤销'); close(); }
+      catch (err) { toast(err.message, true); }
+    };
+  });
+};
 
 /* ---- 搜索 / 排序 ---- */
 let dvSearchT = null;
@@ -267,6 +331,7 @@ function dvMenu(x, y, id, name, viewable, isDir) {
   if (id) {
     if (viewable) rows.push(['dvm-view', '👁 预览']);
     rows.push(['dvm-copy', '📄 复制'], ['dvm-ren', '✏️ 重命名']);
+    if (!isDir) rows.push(['dvm-share', '🔗 分享链接']);
     // 文件夹没有下载接口（/download 只认 is_dir=0），给了就是点出个 404
     if (!isDir) rows.push(['dvm-dl', '⬇ 下载']);
     rows.push(['dvm-del', '🗑 删除']);
@@ -304,6 +369,7 @@ $('#dv-menu').addEventListener('click', async e => {
   switch (b.dataset.dvm) {
     case 'dvm-view': $(`[data-dvview="${id}"]`).click(); break;
     case 'dvm-copy': dvSetClip([id]); break;
+    case 'dvm-share': dvShare(id); break;
     case 'dvm-paste': dvPaste(); break;
     case 'dvm-ren': dvRename(id, name); break;
     case 'dvm-dl': {

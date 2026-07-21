@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, ALL_BOARDS, Ink, KB, api, appConfirm,
+/* global copyText, $, ALL_BOARDS, Ink, KB, api, appConfirm,
    appPrompt, c, esc, fmtSize, hl, inkHere,
    kbPrompt, openMatMenu, push, toast */
 
@@ -308,11 +308,8 @@ $('#rd-serif').onclick = () => { readerSerif = !readerSerif; $('#rd-serif').text
 $('#rd-copy').onclick = async () => {
   const text = $('#viewer-reader').innerText || '';
   if (!text) { toast('没有可复制的内容', true); return; }
-  try { await navigator.clipboard.writeText(text); toast('已复制全文'); return; } catch (_) { /* 这一步失败不影响主流程，下面有兜底 */ }
-  const ta = document.createElement('textarea'); ta.value = text;
-  ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
-  try { document.execCommand('copy'); toast('已复制全文'); } catch (e) { toast('复制失败，请长按选择', true); }
-  ta.remove();
+  const ok = await copyText(text);
+  toast(ok ? '已复制全文' : '复制失败，请长按选择', !ok);
 };
 
 /* 轻量 Markdown → HTML（标题/加粗/斜体/代码/引用/列表/分割线/链接/表格） */

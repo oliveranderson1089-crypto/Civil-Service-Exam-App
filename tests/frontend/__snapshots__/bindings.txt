@@ -320,6 +320,8 @@ document @click
 #dv-trash .onclick
 #dv-crumb @click
 #dv-list @click
+#dv-grid .onclick
+#dv-share-list .onclick
 #dv-search @input
 #dv-sort @change
 #dv-bcancel .onclick

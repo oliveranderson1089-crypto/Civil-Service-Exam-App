@@ -157,7 +157,9 @@ _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
 
 def _is_public(path):
     # /skin/ 是壁纸和头像：文件名随机不可猜，登录页没登录时也要能显示壁纸
-    return path in _PUBLIC_EXACT or path.startswith("/icon-") or path.startswith("/skin/")
+    # /s/ 是云盘分享链接：本来就是发给没账号的人的，靠 token 本身当凭证（见 drive_share_get）
+    return (path in _PUBLIC_EXACT or path.startswith("/icon-")
+            or path.startswith("/skin/") or path.startswith("/s/"))
 
 
 # ---------------------------------------------------------------- 缓存策略
