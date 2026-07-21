@@ -19,6 +19,7 @@ DT_L
 DV_CHUNK
 DV_CHUNK_MIN
 DV_HASH_MAX
+DV_MENU_TRIGGER
 DV_PARALLEL
 DV_PICKDIR_VER
 DV_SORTS
@@ -257,6 +258,7 @@ drToken
 drType
 draft
 driveSend
+dropRoute
 dropTarget
 dtAns
 dtChart

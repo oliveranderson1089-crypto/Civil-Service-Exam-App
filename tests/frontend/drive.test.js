@@ -453,3 +453,50 @@ test('__dvShow：栈弹回来时按栈里记的目录重列', async (t) => {
   assert.strictEqual(h.run('dvInTrash'), false, '从回收站按返回回来，该回到普通列表');
   await settle();
 });
+
+/* ---- 两个真机上才暴露的 bug ---- */
+
+test('⋮ 菜单点开后不会被「点别处收起」当场关掉', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const w = h.window;
+  h.run('dvGrid = false; dvInTrash = false');
+  w.document.querySelector('#dv-list').innerHTML =
+    h.run('dvRow')({ id: 12, is_dir: false, name: 'a.pdf', ext: '.pdf', size: 1, viewable: true });
+  // 真实点击会冒泡到 document —— 那里挂着「点别处收起」，漏放行触发器就会开了又关
+  w.document.querySelector('[data-dvmore]')
+    .dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  assert.ok(!w.document.querySelector('#dv-menu').classList.contains('hidden'),
+    '菜单开了又被立刻关掉 —— 用户看到的就是「点 ⋮ 一点反应都没有」');
+});
+
+test('点菜单外面仍然要收起', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const w = h.window;
+  h.run('dvMenu')(10, 10, 3, 'x', false, false);
+  assert.ok(!w.document.querySelector('#dv-menu').classList.contains('hidden'));
+  w.document.querySelector('#dv-list').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  assert.ok(w.document.querySelector('#dv-menu').classList.contains('hidden'), '点空白处该收起');
+});
+
+test('__onPickedFiles：拖进小记就进小记，不该被送去云盘', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dropTarget = () => "notes"');
+  h.run('window.__routed = []; dropRoute = (t, files) => { window.__routed.push([t, files.length]); return null; }');
+  await h.window.__onPickedFiles([{ name: 'a.png', rel: '', data: '' }], '');
+  await new Promise(r => setTimeout(r, 0));
+  // 必须过 h.plain：jsdom 里造的数组原型不是本 realm 的，deepStrictEqual 会以
+  // 「结构一样但原型不同」失败，两边打印出来一模一样（harness 文档里写过这个坑）
+  assert.deepStrictEqual(h.plain('window.__routed'), [['notes', 1]],
+    '拖进小记的东西被送去别处了');
+});
+
+test('__onPickedFiles：点「传文件夹」时不看当前在哪一页，直接进云盘', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dropTarget = () => "notes"');            // 人正停在小记页
+  h.run('window.__up = []; dvUpload = (l) => { window.__up.push(l.length); return null; }');
+  h.run('window.__routed = []; dropRoute = (t) => { window.__routed.push(t); return null; }');
+  await h.window.__onPickedFiles([{ name: 'a.pdf', rel: '公考', data: '' }], 'drive');
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepStrictEqual(h.plain('window.__up'), [1], '「传文件夹」应当无条件进云盘');
+  assert.deepStrictEqual(h.plain('window.__routed'), [], '不该再走按页面分发');
+});

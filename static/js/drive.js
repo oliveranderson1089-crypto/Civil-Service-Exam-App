@@ -269,8 +269,7 @@ function dvSortLabel() {
   $('#dv-sort-label').textContent = hit ? hit[1] : DV_SORTS[0][1];
 }
 dvSortLabel();
-$('#dv-sort').onclick = e => {
-  e.stopPropagation();                     // 别让 document 上那个「点别处收起」立刻把它关掉
+$('#dv-sort').onclick = () => {
   const el = $('#dv-menu');
   el.innerHTML = DV_SORTS.map(([k, t]) =>
     `<button data-dvsort="${k}"${k === dvSort ? ' class="on"' : ''}>${t}</button>`).join('');
@@ -406,7 +405,15 @@ $('#view-drive').addEventListener('contextmenu', e => {
          !!(item && item.querySelector('[data-dvview]')),
          !!(item && item.classList.contains('dv-dir')));
 });
-document.addEventListener('click', e => { if (!e.target.closest('#dv-menu')) dvMenuHide(); });
+/* 点别处收起菜单。**必须放过打开菜单的那几个按钮** —— 它们的点击会冒泡到 document，
+   于是菜单刚开就被这里关掉，表现是「点 ⋮ 一点反应都没有」。
+   （右键不走 click，所以右键菜单一直是好的，只有 ⋮ 中招。）
+   在触发器上撒 stopPropagation 也能挡，但每加一个入口就得记得撒一次；
+   这里统一认「触发器」更省心。 */
+const DV_MENU_TRIGGER = '#dv-menu, [data-dvmore], #dv-sort';
+document.addEventListener('click', e => {
+  if (!e.target.closest(DV_MENU_TRIGGER)) dvMenuHide();
+});
 $('#dv-menu').addEventListener('click', async e => {
   const so = e.target.closest('[data-dvsort]');
   if (so) { dvSort = so.dataset.dvsort; dvSortLabel(); dvMenuHide(); loadDrive(); return; }

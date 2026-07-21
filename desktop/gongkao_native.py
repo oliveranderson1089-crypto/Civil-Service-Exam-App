@@ -43,7 +43,7 @@ except Exception:
         HAVE_TRAY = False
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "4.8"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "4.9"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -304,7 +304,7 @@ class Gongkao(Gtk.Application):
                     continue
                 out.append((os.path.join(dirpath, fn), rel))
 
-    def _send_paths(self, paths, label=""):
+    def _send_paths(self, paths, label="", intent=""):
         """收下一串路径 → 后台线程里遍历 + 读盘 + 分批送进网页。
 
         os.walk 也放进线程里：目录树深/在网络盘上时，遍历本身就是长阻塞，留在主线程
@@ -326,12 +326,12 @@ class Gongkao(Gtk.Application):
                 if not out:
                     GLib.idle_add(self._toast, "这里面没有可上传的文件")
                     return
-                self._pump(out)
+                self._pump(out, intent)
             finally:
                 self._pumping = False
         threading.Thread(target=work, daemon=True).start()
 
-    def _pump(self, pairs):
+    def _pump(self, pairs, intent=""):
         """把 [(路径, 相对目录)] 分批 base64 送进网页。**在后台线程里跑**。
 
         两件事必须做对，否则真实目录（实测「公考」= 497 个文件 / 816MB）会把壳搞死：
@@ -359,25 +359,27 @@ class Gongkao(Gtk.Application):
             size += n
             sent += 1
             if size >= self.DESK_BATCH:
-                self._push(batch)
+                self._push(batch, intent)
                 batch, size = [], 0
         if batch:
-            self._push(batch)
+            self._push(batch, intent)
         if skipped:
             # 单个太大的走网页那个「⬆ 上传」按钮更靠谱：那条是分片传的，不经这座 base64 的桥
             GLib.idle_add(self._toast, "%d 个文件太大没传（%s…），用「⬆ 上传」单独传"
                           % (len(skipped), skipped[0][:20]))
 
-    def _push(self, batch):
+    def _push(self, batch, intent=""):
         """送一批，然后等网页说「这批传完了」再回来送下一批。"""
         self._ack.clear()
-        GLib.idle_add(self._flush, batch)
+        GLib.idle_add(self._flush, batch, intent)
         if not self._ack.wait(300):          # 超时就往下走，别把整个上传永远卡住
             GLib.idle_add(self._toast, "有一批等太久，继续传后面的")
 
-    def _flush(self, batch):
-        self._js("window.__onPickedFiles && window.__onPickedFiles(%s)"
-                 % json.dumps(batch, ensure_ascii=False))
+    def _flush(self, batch, intent=""):
+        # intent 告诉网页这批的来路：'drive' 是点了「传文件夹」（明确要进云盘），
+        # 空字符串是拖放/粘贴（按用户当前在哪一页分发 —— 拖进小记就该进小记）
+        self._js("window.__onPickedFiles && window.__onPickedFiles(%s, %s)"
+                 % (json.dumps(batch, ensure_ascii=False), json.dumps(intent)))
         return False                          # idle_add 只跑一次
 
     def pick_dir(self):
@@ -394,7 +396,7 @@ class Gongkao(Gtk.Application):
         dlg.destroy()
         if not path:
             return
-        self._send_paths([path], "正在读取「%s」…" % os.path.basename(path))
+        self._send_paths([path], "正在读取「%s」…" % os.path.basename(path), intent="drive")
 
     def paste_files(self):
         """系统剪贴板里复制的**文件**（在文件管理器里 Ctrl+C 的那种）粘贴进来。

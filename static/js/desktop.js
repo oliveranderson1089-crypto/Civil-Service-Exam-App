@@ -8,7 +8,7 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, addDraftFiles, addDraftImages, aiHandleAttach, bindImgDrop, bindImgPaste,
-   c, compressImage, crFid, crSendFiles, deskMsg, dvOpenAndUpload, dvUpload,
+   c, compressImage, crFid, crSendFiles, deskMsg, dropRoute, dvOpenAndUpload, dvUpload,
    openAI, push, qnAddFiles, qnAddImgs, slUploadPaper, stack,
    toast, uploadDropped */
 
@@ -96,11 +96,10 @@ window.__onDragLeave = () => {
   const cm = $('#chat-main'); if (cm) cm.classList.remove('cr-drop');
 };
 const isImg = (f) => /^image\//.test(f.type || '') || /\.(jpe?g|png|gif|webp|bmp|heic)$/i.test(f.name || '');
-window.__onDropFiles = (items) => {
-  window.__onDragLeave();
-  const files = (items || []).map(x => b64ToFile(x.data, x.name));
-  if (!files.length) return;
-  const t = dropTarget();
+/* 收到的文件该交给谁 —— **只此一份分发表**。
+   拖放和「壳送进来的一批」都走它：之前 __onPickedFiles 自己另写了一套、只认云盘，
+   结果拖进小记/资料库/聊天的东西全被送进了云盘（而且不报错）。 */
+function dropRoute(t, files) {
   if (t === 'qnote' || t === 'notes') {            // 小记：图片当图片，别的当附件
     const imgs = files.filter(isImg);
     const atts = files.filter(f => !isImg(f));
@@ -110,26 +109,38 @@ window.__onDropFiles = (items) => {
     if (imgs.length) bits.push(`${imgs.length} 张图`);
     if (atts.length) bits.push(`${atts.length} 个附件`);
     toast('已加 ' + bits.join(' + '));
-    return;
+    return null;
   }
   if (t === 'ai') files.forEach(f => aiHandleAttach(f));         // AI 开着 → 当附件
   else if (t === 'shenlun') slUploadPaper(files[0]);             // 真题页 → 上传真题卷
   else if (t === 'materials') uploadDropped(files);              // 资料库 → 传进当前分类
   else if (t === 'chatroom') crSendFiles(files);                 // 聊天窗口 → 直接发给对方
-  else if (t === 'drive') dvUpload(files);                       // 云盘 → 上传到当前文件夹
+  else if (t === 'drive') return dvUpload(files);                // 云盘 → 上传到当前文件夹
   else toast('把文件拖到「资料库」「真题批改」「小记」「聊天」「云盘」，或先打开 AI / 随手记', true);
+  return null;
+}
+window.__onDropFiles = (items) => {
+  window.__onDragLeave();
+  const files = (items || []).map(x => b64ToFile(x.data, x.name));
+  if (files.length) dropRoute(dropTarget(), files);
 };
 /* 壳选了文件夹 / 拖进来一棵目录树 / 粘贴了文件 → 走这条。
    比 __onDropFiles 多一个 rel（相对目录），云盘据此把子目录建出来；
    目录树可能很大，壳那边是**分批**送的，所以这个函数会被连着调好几次。 */
-window.__onPickedFiles = (items) => {
+window.__onPickedFiles = (items, intent) => {
   window.__onDragLeave();
   const list = (items || []).map(x => ({ file: b64ToFile(x.data, x.name), folder: x.rel || '' }));
   // 传完必须回一句 batchdone：壳靠它做背压，等这批落地了才送下一批。
   // 不回的话壳会干等到超时（300s）才继续，整个文件夹要传到天荒地老。
   const done = () => { try { deskMsg({ a: 'batchdone' }); } catch (_) { /* 不在壳里就没这回事 */ } };
   if (!list.length) { done(); return; }
-  const p = (dropTarget() === 'drive') ? dvUpload(list) : dvOpenAndUpload(list);
+  /* intent==='drive' 是用户点了「传文件夹」，明确就是要进云盘，不看当前在哪一页；
+     拖放和粘贴则按当前页面分发 —— 拖进小记就该进小记。 */
+  const t = intent === 'drive' ? 'drive' : dropTarget();
+  let p;
+  if (t === 'drive') p = dvUpload(list);                 // 只有云盘认得「相对目录」
+  else if (t) p = dropRoute(t, list.map(x => x.file));   // 别的目标没有目录概念，摊平
+  else p = dvOpenAndUpload(list);                        // 没有明确目标 → 才收进云盘
   Promise.resolve(p).then(done, done);
 };
 window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」（壳里的粘贴也走这条路）
