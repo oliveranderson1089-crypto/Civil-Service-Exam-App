@@ -60,6 +60,15 @@ document.addEventListener('click', e => {
    ⚠️ 随手记和小记编辑器一直没接进这个路由，所以在桌面版里拖图片进随手记会掉进兜底提示。 */
 function dropTarget() {                 // 当前该把文件丢给谁
   const st = stack[stack.length - 1];
+  // ① 先看光标此刻在哪个输入区——人点了小记编辑框正要粘贴，就该进小记，
+  //    哪怕 AI 面板也开着（原来只按"哪个面板开着"排优先级，AI 一开就永远抢走粘贴）。
+  const ae = document.activeElement;
+  if (ae && ae.closest) {
+    if (ae.closest('#qnote') && $('#qnote') && !$('#qnote').classList.contains('hidden')) return 'qnote';
+    if (ae.closest('.composer')) return 'notes';                                      // 小记编辑器（含 #cp-content）
+    if (ae.closest('#ai-panel') && $('#ai-panel') && !$('#ai-panel').classList.contains('hidden')) return 'ai';
+  }
+  // ② 没有明确焦点时，才退回"谁开着"的老优先级
   // 随手记开着 → 它就是焦点，优先级**高于** AI 面板（人正在那儿写字）
   if ($('#qnote') && !$('#qnote').classList.contains('hidden')) return 'qnote';
   if ($('#ai-panel') && !$('#ai-panel').classList.contains('hidden')) return 'ai';

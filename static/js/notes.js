@@ -49,14 +49,19 @@ function openNotes(board) {
     $('#notes-msearch').classList.add('hidden');
     $('#notes-msearch-input').value = '';
     push({ view: 'notes' });
-    newDraft(); loadFeed(); loadFeedTags();
+    restoreDraftOrNew(); loadFeed(); loadFeedTags();
     return;
   }
   curNoteBoard = board != null ? board : (curNoteBoard || '');
   buildNotesSidebar();
   push({ view: 'notes' });
-  newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts();
+  restoreDraftOrNew(); loadFeed(); loadFeedTags(); refreshNoteCounts();
 }
+// 编辑器里任何输入/勾选/换板块 → 防抖存本地草稿；关页面/切走前立刻兜底存一次
+document.querySelector('.composer').addEventListener('input', saveDraftLocal);
+document.querySelector('.composer').addEventListener('change', saveDraftLocal);
+addEventListener('pagehide', flushDraftLocal);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDraftLocal(); });
 $('#feed-board').addEventListener('change', () => {     // 顶部下拉：按板块筛选
   curNoteBoard = $('#feed-board').value; curTag = '';
   loadFeed(); loadFeedTags();
@@ -67,11 +72,65 @@ $('#cp-board').addEventListener('change', () => {       // 编辑器：这条归
 
 /* ---- 编辑器（草稿） ---- */
 let draft = { id: null, content: '', images: [], files: [], todos: [], tags: [] };
-function newDraft() {
+function newDraft(clearLocal) {
   draft = { id: null, content: '', images: [], files: [], todos: [], tags: [],
             board: curNoteBoard };   // 新写的默认归到当前筛选的板块
   $('#cp-content').value = ''; renderComposer();
   closeComposerM();
+  if (clearLocal) clearDraftLocal();   // 只有发布/取消/删除才清；单纯进页面不清（否则刚要恢复就被抹掉）
+}
+
+/* ---- 自动保存草稿到本地：没点发布也不丢（关应用/切功能都在）----
+   只存文字类字段（正文/待办/标签/板块/所编辑的笔记id）。图片/附件是内存里的 blob，
+   没法塞进 localStorage，就不进自动草稿——真要连图带附件保住，还得点发布。 */
+const NOTE_DRAFT_KEY = 'noteDraft';
+let _draftSaveT = null;
+function _draftMeaningful(content) {
+  return (content || '').trim() ||
+         draft.todos.some(t => (t.text || '').trim()) ||
+         draft.tags.length > 0;
+}
+function flushDraftLocal() {            // 立刻存（关页面/切走时用，绕过防抖）
+  try {
+    const content = $('#cp-content').value;
+    if (!_draftMeaningful(content)) { clearDraftLocal(); return; }
+    lsSet(NOTE_DRAFT_KEY, JSON.stringify({
+      id: draft.id, content, board: draft.board,
+      todos: draft.todos, tags: draft.tags, ts: Date.now(),
+    }));
+  } catch (_) { /* 存不下（配额满等）就算了，别打断编辑 */ }
+}
+function saveDraftLocal() {             // 编辑时防抖存，别每个按键都写盘
+  clearTimeout(_draftSaveT);
+  _draftSaveT = setTimeout(flushDraftLocal, 500);
+}
+function clearDraftLocal() { clearTimeout(_draftSaveT); try { lsSet(NOTE_DRAFT_KEY, ''); } catch (_) { /* 清不掉不影响，下次覆盖 */ } }
+// 进小记时：有未保存草稿就恢复，否则开新草稿
+async function restoreDraftOrNew() {
+  let s = null;
+  try { s = JSON.parse(lsGet(NOTE_DRAFT_KEY) || 'null'); } catch (_) { /* 读坏就当没有 */ }
+  const meaningful = s && ((s.content || '').trim() ||
+    (s.todos || []).some(t => (t.text || '').trim()) || (s.tags || []).length);
+  if (!meaningful) { newDraft(); return; }
+  if (s.id) {                       // 恢复的是「对已有笔记的未保存修改」：先拉原笔记（要它的图/附件），再盖上改动
+    try {
+      const n = await api('/api/notes/' + s.id);
+      loadDraft(n);
+      draft.content = s.content || ''; $('#cp-content').value = draft.content;
+      if (s.todos) draft.todos = s.todos;
+      if (s.tags) draft.tags = s.tags;
+      if (s.board != null) draft.board = s.board;
+      renderComposer();
+      $('#cp-hint').textContent = '已恢复未保存的修改';
+      return;
+    } catch (_) { /* 原笔记没了（被删）→ 下面按新草稿把文字保住，别丢 */ }
+  }
+  draft = { id: null, content: s.content || '', images: [], files: [],
+            todos: s.todos || [], tags: s.tags || [],
+            board: s.board != null ? s.board : curNoteBoard };
+  $('#cp-content').value = draft.content;
+  renderComposer();
+  $('#cp-hint').textContent = '已恢复未发布的草稿';
 }
 // 手机端：把内嵌编辑器变成全屏弹出 / 收起
 function openComposerM() {
@@ -153,13 +212,13 @@ function addTagsFrom(raw) {
 $('#cp-taginput').addEventListener('keydown', e => {
   if (!composing(e) && e.key === 'Enter') {
     e.preventDefault();
-    if (addTagsFrom(e.target.value)) renderComposer();
+    if (addTagsFrom(e.target.value)) { renderComposer(); saveDraftLocal(); }
     e.target.value = '';
     setTimeout(() => { const i = $('#cp-taginput'); i.classList.remove('hidden'); i.focus(); }, 10);
   } else if (e.key === 'Escape') { e.target.value = ''; e.target.classList.add('hidden'); }
 });
 $('#cp-taginput').addEventListener('blur', e => {
-  if (addTagsFrom(e.target.value)) renderComposer();
+  if (addTagsFrom(e.target.value)) { renderComposer(); saveDraftLocal(); }
   e.target.value = ''; e.target.classList.add('hidden');
 });
 $('#cp-tags').addEventListener('click', e => {
@@ -344,7 +403,7 @@ $('#cp-attfile').addEventListener('change', async e => {
   const list = [...e.target.files]; e.target.value = '';
   await addDraftFiles(list);
 });
-$('#cp-todos').addEventListener('click', e => { const r = e.target.closest('[data-tdr]'); if (r) { draft.todos.splice(+r.dataset.tdr, 1); renderComposer(); } });
+$('#cp-todos').addEventListener('click', e => { const r = e.target.closest('[data-tdr]'); if (r) { draft.todos.splice(+r.dataset.tdr, 1); renderComposer(); saveDraftLocal(); } });
 $('#cp-todos').addEventListener('change', e => { const c = e.target.closest('[data-tdo]'); if (c) draft.todos[+c.dataset.tdo].done = c.checked; });
 $('#cp-todos').addEventListener('input', e => { const t = e.target.closest('[data-tdt]'); if (t) draft.todos[+t.dataset.tdt].text = t.value; });
 $('#cp-imgs').addEventListener('click', e => {
@@ -354,11 +413,11 @@ $('#cp-imgs').addEventListener('click', e => {
   if (b) lightbox(draft.images[+b.dataset.imbig].url);
 });
 $('#cp-files').addEventListener('click', e => { const r = e.target.closest('[data-flr]'); if (r) { draft.files.splice(+r.dataset.flr, 1); renderComposer(); } });
-$('#cp-tags').addEventListener('click', e => { const r = e.target.closest('[data-tgr]'); if (r) { draft.tags.splice(+r.dataset.tgr, 1); renderComposer(); } });
-$('#cp-cancel').onclick = () => newDraft();
+$('#cp-tags').addEventListener('click', e => { const r = e.target.closest('[data-tgr]'); if (r) { draft.tags.splice(+r.dataset.tgr, 1); renderComposer(); saveDraftLocal(); } });
+$('#cp-cancel').onclick = () => newDraft(true);
 $('#cp-del').onclick = async () => {
   if (!draft.id || !(await appConfirm('删除这条小记？'))) return;
-  try { await api('/api/notes/' + draft.id, { method: 'DELETE' }); toast('已删除'); newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
+  try { await api('/api/notes/' + draft.id, { method: 'DELETE' }); toast('已删除'); newDraft(true); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
   catch (e) { toast(e.message, true); }
 };
 $('#cp-submit').onclick = async () => {
@@ -384,14 +443,14 @@ $('#cp-submit').onclick = async () => {
     } else {
       await api('/api/notes', { method: 'POST', body: fd });
     }
-    toast('已保存'); newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts();
+    toast('已保存'); newDraft(true); loadFeed(); loadFeedTags(); refreshNoteCounts();
   } catch (e) { toast(e.message, true); }
   $('#cp-submit').disabled = false;
 };
 
 /* ---- 手机端：底部悬浮条 / 新建面板 / 全屏编辑器 ---- */
 // 全屏编辑器顶栏：取消 / 删除 / 完成
-$('#cp-mclose').onclick = () => newDraft();
+$('#cp-mclose').onclick = () => newDraft(true);
 $('#cp-msave').onclick = () => $('#cp-submit').click();
 $('#cp-mdel').onclick = () => $('#cp-del').click();
 // 底部悬浮条
@@ -520,7 +579,7 @@ $('#feed').addEventListener('click', async e => {
   const dl = e.target.closest('[data-del]');
   if (dl) {
     if (!(await appConfirm('删除这条小记？'))) return;
-    try { await api('/api/notes/' + dl.dataset.del, { method: 'DELETE' }); toast('已删除'); if (draft.id == dl.dataset.del) newDraft(); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
+    try { await api('/api/notes/' + dl.dataset.del, { method: 'DELETE' }); toast('已删除'); if (draft.id == dl.dataset.del) newDraft(true); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
     catch (err) { toast(err.message, true); } return;
   }
   const fl = e.target.closest('[data-file]');
