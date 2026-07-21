@@ -225,3 +225,32 @@ def test_match_answers_用量出来的偏移覆盖数块数那道闸():
     got, why = I._match_answers(qs, (a, True, "某答案卷", "国考", 2023))
     assert not why, why
     assert got[1][1] == a[2][1], "没按量出来的偏移修正：第 1 题该拿到原先编号 2 的那块"
+
+
+def test_重号题不挂答案():
+    """同一份卷子里两道题都叫「第 1 题」时，那个号的答案不能用。
+
+    2002 国考 A/B 卷分部分各自从 1 开始编号，于是数量关系第 1 题会拿到
+    常识第 1 题的答案 —— 整卷重合度看不出来（130 题里只重一两个号），
+    跨卷对账也救不了（这些题往往只此一份）。宁可这几道没答案。
+    """
+    qs, a = _fake_pair(shift=0)
+    qs.append({"seq": 1, "stem": "另一道也编成第1题的题目，内容完全不同零一二三四五六七八九"})
+    got, _why = I._match_answers(qs, (a, False, "某答案卷", "国考", 2002))
+    # _match_answers 本身只管配对；重号过滤在 extract_all 里，这里验的是过滤逻辑本身
+    import collections as _c
+    dup = {sq for sq, n in _c.Counter(q["seq"] for q in qs).items() if n > 1}
+    assert dup == {1}
+    kept = {k: v for k, v in got.items() if k not in dup}
+    assert 1 not in kept, "重号的第 1 题答案没被弃用"
+    assert 2 in kept and 40 in kept, "不该殃及其它题号"
+
+
+def test_没有重号时一道都不能少():
+    """过滤逻辑最容易写反 —— 没有重号时必须原样放行，别把全卷答案清空。"""
+    qs, a = _fake_pair(shift=0)
+    import collections as _c
+    dup = {sq for sq, n in _c.Counter(q["seq"] for q in qs).items() if n > 1}
+    assert dup == set()
+    got, _why = I._match_answers(qs, (a, False, "某答案卷", "国考", 2020))
+    assert len({k: v for k, v in got.items() if k not in dup}) == len(a)

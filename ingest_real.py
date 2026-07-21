@@ -22,6 +22,7 @@ real_questions 存**去重合并后**的题库，一道题只留一条，
     python3 ingest_real.py --dedup-only      # 素材没变，只重跑去重
 """
 import argparse
+import collections
 import difflib
 import hashlib
 import json
@@ -354,6 +355,16 @@ def extract_all(con, exts, force=False):
 
         ent = _find_answer(answers, r["name"], meta)
         ans, why = _match_answers(qs, ent)
+        # **一个题号对上两道题时，那个号的答案不能用**。老卷子（2002 国考 A/B 卷、
+        # 2007 四川招警）分部分各自从 1 开始编号，或者解析时把某行误当成题头，
+        # 于是同一份卷子里出现两个「第 1 题」—— 按题号挂答案就成了掷硬币，
+        # 数量关系第 1 题会拿到常识第 1 题的答案。整卷重合度看不出来（只重一两个号），
+        # 跨卷对账也救不了（这些题往往只此一份）。宁可这几道没答案。
+        seen = collections.Counter(q["seq"] for q in qs)
+        dup = {sq for sq, n in seen.items() if n > 1}
+        if dup and ans:
+            ans = {k: v for k, v in ans.items() if k not in dup}
+            why = why or "有 %d 个题号在本卷里对应多道题，这些题号的答案已弃用" % len(dup)
 
         note = "" if qs else "提取不到题目（多半是扫描件，需要 OCR）"
         pid = _paper_row(con, r, meta, "q", len(qs),
