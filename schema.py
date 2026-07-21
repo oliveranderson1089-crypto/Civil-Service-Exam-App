@@ -424,6 +424,10 @@ def init_db():
             -- synth=1：题号是按解析块出现顺序编的，不是卷子上印的。用之前必须核对
             -- 「块数 == 本卷最大题号」，中间吞一块就整卷错位一格，比没答案还糟。
             synth INTEGER DEFAULT 0,
+            -- **识别原文照原样存下来**：OCR 是整条链上最贵的一步（一份 A0 大卷 4 分钟），
+            -- 而 parse_answers 认的排版一直在加。不存原文的话，每补一种排版就得把
+            -- 几十页大图重扫一遍。存了就能 --reparse 秒级重跑。
+            ocr_text TEXT,
             n_item INTEGER DEFAULT 0, ans_json TEXT, model TEXT,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );

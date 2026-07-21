@@ -63,6 +63,10 @@ CREATE TABLE IF NOT EXISTS real_ocr(
     file_id INTEGER PRIMARY KEY,     -- drive_files.id，跟着云盘文件走，最稳
     name TEXT,
     synth INTEGER DEFAULT 0,         -- 1 = 题号是按顺序编的，用之前要核对题数
+    -- **识别原文照原样存下来**：OCR 是整条链上最贵的一步（一份 A0 大卷 4 分钟），
+    -- 而 parse_answers 认的排版一直在加。不存原文的话，每补一种排版就得把
+    -- 几十页大图重扫一遍。存了就能 --reparse 秒级重跑。
+    ocr_text TEXT,
     n_item INTEGER DEFAULT 0,
     ans_json TEXT,                   -- {题号: 答案}
     model TEXT,
@@ -156,10 +160,10 @@ def tess_answers(pdf, tmp, first=0, last=0, deadline=0):
     try:
         subprocess.run(cmd + [pdf, base], capture_output=True, timeout=900)
     except Exception:
-        return {}, False
+        return {}, False, ""
     pngs = sorted(f for f in os.listdir(tmp) if f.startswith("t") and f.endswith(".png"))
     if not pngs:
-        return {}, False
+        return {}, False, ""
     txt = []
     for f in pngs:
         if deadline and time.time() > deadline and txt:
@@ -176,11 +180,12 @@ def tess_answers(pdf, tmp, first=0, last=0, deadline=0):
             os.remove(os.path.join(tmp, f))
         except OSError:
             pass
-    ans, synth = R.parse_answers("\n".join(txt))
+    raw = "\n".join(txt)
+    ans, synth = R.parse_answers(raw)
     # **synth 要往上传，不能在这儿丢掉**：题号按顺序编的结果并不是垃圾，
     # 它要交给入库时那道「解析块数必须等于本卷最大题号」的闸去判 ——
     # 对得上就是完全可用的整卷答案（A0 那几份 34 页大卷正是这种）。
-    return {k: v[0] for k, v in ans.items()}, synth
+    return {k: v[0] for k, v in ans.items()}, synth, raw
 
 
 def pages_of(pdf, tmp):
@@ -191,6 +196,27 @@ def pages_of(pdf, tmp):
         return []
     return sorted(os.path.join(tmp, f) for f in os.listdir(tmp) if f.startswith("p") and
                   f.endswith(".png"))
+
+
+def _reparse(con):
+    """拿已存下的识别原文重跑一遍解析。OCR 一分钟不用花，秒级出结果。
+
+    补新排版时就靠它验证 —— 否则每加一种排版都要把几十页 A0 大图重扫一遍。
+    """
+    rows = con.execute("SELECT file_id, name, n_item, ocr_text FROM real_ocr "
+                       "WHERE ocr_text IS NOT NULL AND ocr_text != ''").fetchall()
+    print("有识别原文可重解析的：%d 份" % len(rows))
+    for r in rows:
+        ans, synth = R.parse_answers(r["ocr_text"])
+        got = {k: v[0] for k, v in ans.items()}
+        if len(got) == r["n_item"]:
+            continue
+        con.execute("UPDATE real_ocr SET synth=?, n_item=?, ans_json=? WHERE file_id=?",
+                    (1 if synth else 0, len(got), json.dumps(got), r["file_id"]))
+        print("   %3d → %3d 条%s  %s" % (r["n_item"], len(got),
+                                        "（题号是编的）" if synth else "", r["name"][:44]))
+    con.commit()
+    return
 
 
 def _has_text_layer(path, per_page=400):
@@ -212,6 +238,8 @@ def _has_text_layer(path, per_page=400):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--plan", action="store_true")
+    ap.add_argument("--reparse", action="store_true",
+                    help="拿已存下的识别原文重跑解析，不重新 OCR（补了新排版之后用）")
     ap.add_argument("--limit", type=int, help="只跑前 N 份")
     ap.add_argument("--workers", type=int, default=4, help="视觉模型的并发（tesseract 不用）")
     ap.add_argument("--tess-only", action="store_true",
@@ -228,6 +256,9 @@ def main():
     # （实测攒到过 273MB）。开跑前先扫一遍自己的残留。
     for d in glob.glob(os.path.join(tempfile.gettempdir(), "ocr-*")):
         shutil.rmtree(d, ignore_errors=True)
+
+    if a.reparse:
+        return _reparse(con)
 
     rows = con.execute(
         "SELECT p.file_id, p.name, d.stored_name FROM real_papers p "
@@ -256,11 +287,11 @@ def main():
         try:
             # ① 先扫前两页找**答案速览表**：很多卷子卷首就有，一页顶全卷
             dl = time.time() + PAPER_TIMEOUT
-            got, synth = tess_answers(path, tmp, 1, 2, dl)
+            got, synth, raw = tess_answers(path, tmp, 1, 2, dl)
             how = "tesseract表"
             # ② 没有速览表才整卷识别（仍然是免费的 tesseract）
             if len(got) < LOW_YIELD:
-                got, synth = tess_answers(path, tmp, deadline=dl)
+                got, synth, raw = tess_answers(path, tmp, deadline=dl)
                 how = "tesseract"
             # ③ 还是太少才上视觉模型 —— 有的扫描件糊到 tesseract 认不动
             if len(got) < LOW_YIELD and not a.tess_only:
@@ -276,9 +307,10 @@ def main():
             # ('answers_bad','failed','empty','thin')，新值会让 OCR 只识出三五条的
             # 那种明显失败的卷子在报告里彻底隐身
             con.execute(
-                "INSERT OR REPLACE INTO real_ocr(file_id,name,synth,n_item,ans_json,model) "
-                "VALUES(?,?,?,?,?,?)",
-                (r["file_id"], r["name"], 1 if synth else 0, len(got),
+                "INSERT OR REPLACE INTO real_ocr"
+                "(file_id,name,synth,ocr_text,n_item,ans_json,model) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (r["file_id"], r["name"], 1 if synth else 0, raw, len(got),
                  json.dumps(got), how))
             con.commit()
             print("  [%d/%d] %-38s %3d 条 by %-12s%s（已跑 %.1f 分钟）"

@@ -466,3 +466,24 @@ def test_ans_num_也认题目二字():
                   for i, v in want.items())
     ans, synth = R.parse_answers(t)
     assert synth is False and {k: v[0] for k, v in ans.items()} == want, len(ans)
+
+
+def test_ans_块头里直接带答案():
+    """⑬「【解析 9一正确答案A】」—— 题号和答案都印在块头里（2024 国考地市卷）。
+
+    中间那个「一」是分隔符被 OCR 认花了，所以不能写死分隔符长什么样。
+    """
+    want = {i: "ACBD"[i % 4] for i in range(1, 31)}
+    seps = ["一", "-", "·", " ", "—", ", "]           # OCR 把分隔符认成过这些
+    t = "\n".join("【解析 %d%s正确答案%s】\n解析: 这里是正文。" % (i, seps[i % len(seps)], v)
+                  for i, v in want.items())
+    ans, synth = R.parse_answers(t)
+    assert synth is False and {k: v[0] for k, v in ans.items()} == want, len(ans)
+
+
+def test_ans_块头带答案优先于正文里的结论():
+    """块头里印着的答案比正文里「因此本题正确答案为X」可靠 —— 后者可能被 OCR 认错。"""
+    t = "\n".join("【解析 %d一正确答案%s】\n解析: 正文。因此本题 正确答案为 A。"
+                  % (i, "CDCD"[i % 4]) for i in range(1, 31))
+    ans, _synth = R.parse_answers(t)
+    assert ans[1][0] == "D" and ans[2][0] == "C", "取成正文里那个 A 了"

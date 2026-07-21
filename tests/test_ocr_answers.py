@@ -18,22 +18,28 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import ocr_answers as O          # noqa: E402
 
 
-def test_tess_answers_所有分支都返回二元组():
-    """静态扫一遍所有 return —— 包括那些平时跑不到的早退分支。"""
+def test_tess_answers_所有分支返回元数一致():
+    """静态扫一遍所有 return —— 包括那些平时跑不到的早退分支。
+
+    这里**不写死元数**：真正要守的不变式是「所有出口长得一样」，
+    而不是「必须是二元组」。写死的话，往返回值里加一项时这个测试自己就先坏了，
+    改测试的顺手一改，反而把它本来要防的漏改放过去。
+    """
     src = open(O.__file__, encoding="utf-8").read()
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.FunctionDef) and n.name == "tess_answers")
     rets = [r for r in ast.walk(fn) if isinstance(r, ast.Return)]
     assert rets, "函数里一个 return 都没有？"
-    bad = [r.lineno for r in rets if not isinstance(r.value, ast.Tuple)
-           or len(r.value.elts) != 2]
-    assert not bad, "这些行的 return 不是 (答案, synth) 二元组：%s" % bad
+    arity = {(r.lineno, len(r.value.elts) if isinstance(r.value, ast.Tuple) else 1)
+             for r in rets}
+    assert len({n for _ln, n in arity}) == 1, \
+        "各个 return 的元数对不上，调用方解包会炸：%s" % sorted(arity)
 
 
 def test_tess_answers_渲染失败时不抛异常(tmp_path):
     """pdftoppm 渲不出东西（文件不存在/损坏）时，要安静地返回空，别把整轮带崩。"""
-    got, synth = O.tess_answers(str(tmp_path / "根本不存在.pdf"), str(tmp_path))
-    assert got == {} and synth is False
+    out = O.tess_answers(str(tmp_path / "根本不存在.pdf"), str(tmp_path))
+    assert out[0] == {} and out[1] is False
 
 
 @pytest.mark.parametrize("name", ["PX_W", "PX_W_VIS", "PAPER_TIMEOUT", "LOW_YIELD"])
