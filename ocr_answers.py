@@ -256,13 +256,21 @@ def main():
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(SCHEMA)
-    # 上一轮被 Ctrl-C / kill 掉时，finally 里的清理没跑到，/tmp 会留一堆几十 MB 的页图
-    # （实测攒到过 273MB）。开跑前先扫一遍自己的残留。
-    for d in glob.glob(os.path.join(tempfile.gettempdir(), "ocr-*")):
-        shutil.rmtree(d, ignore_errors=True)
-
     if a.reparse:
         return _reparse(con)
+
+    # 上一轮被 Ctrl-C / kill 掉时，finally 里的清理没跑到，/tmp 会留一堆几十 MB 的页图
+    # （实测攒到过 273MB）。开跑前扫一遍自己的残留 —— 但**只删放了两小时以上的**：
+    # 另一个 ocr_answers 进程可能正在跑（--plan / --reparse 也走这段），
+    # 无差别删会把人家正在用的目录端掉，对方下一句 listdir 就 FileNotFoundError。
+    # 这个坑我自己踩过：跑 --reparse 把正在识别的那轮弄崩了。
+    stale = time.time() - 2 * 3600
+    for d in glob.glob(os.path.join(tempfile.gettempdir(), "ocr-*")):
+        try:
+            if os.path.getmtime(d) < stale:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
 
     rows = con.execute(
         "SELECT p.file_id, p.name, d.stored_name, d.sha256 FROM real_papers p "
