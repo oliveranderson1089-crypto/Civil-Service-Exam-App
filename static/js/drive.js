@@ -316,7 +316,11 @@ function dvProg(cur, total, label) {
 }
 
 async function dvUpload(items) {
-  items = (items || []).filter(it => it && it.file);
+  /* 也收一串裸 File —— 桌面壳（desktop.js 的 __onDropFiles）就是那么调的。
+     P0 把入参从 File[] 改成 {file,folder}[] 时漏了它，filter 把裸 File 全滤掉，
+     桌面版拖拽上传于是**一声不吭地什么都不做**。这里认下两种形状，别再靠调用方记得。 */
+  items = (items || []).map(it => (it instanceof File ? { file: it, folder: '' } : it))
+    .filter(it => it && it.file);
   if (!items.length) return;
   const total = items.reduce((s, it) => s + (it.file.size || 0), 0);
   const sent = new Array(items.length).fill(0);       // 每个文件已发字节，汇总成总进度

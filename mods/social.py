@@ -140,7 +140,7 @@ def friends_del(fid):
 # ---- 云盘 ----
 # 两个上限都能在 config.json 里调（改完重启服务生效）
 DRIVE_MAX = int(CFG.get("drive_max_mb", 200)) * 1024 * 1024        # 单文件上限
-DRIVE_QUOTA = int(CFG.get("drive_quota_mb", 2048)) * 1024 * 1024   # 每人云盘总配额
+DRIVE_QUOTA = int(CFG.get("drive_quota_mb", 20480)) * 1024 * 1024  # 每人云盘总配额（默认 20GB）
 
 
 @bp.before_request

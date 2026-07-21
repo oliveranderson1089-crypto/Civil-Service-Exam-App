@@ -237,6 +237,26 @@ test('dvUploadChunked：进度报到文件总大小，不会停在半截', async
   assert.strictEqual(last, size, '最后一块只有 1MB，进度不能按整块算超或算少');
 });
 
+/* 桌面壳（WebKitGTK）的 drop 事件里 dataTransfer.files 是空的，所以拖放由 GTK 层接管，
+   最后走 desktop.js 的 __onDropFiles → dvUpload(files)，传的是**一串裸 File**。
+   P0 改 dvUpload 入参时漏了这个调用方，桌面版拖拽上传于是静默失效。 */
+test('dvUpload：也收一串裸 File（桌面壳就是这么调的）', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  const sent = [];
+  h.window.XMLHttpRequest = function () {
+    this.upload = {}; this.open = () => {};
+    this.send = (fd) => {
+      sent.push(fd.get('file').name);
+      this.status = 201; this.responseText = '{}';
+      setTimeout(() => this.onload(), 0);
+    };
+  };
+  h.run('dvFolder = "当前目录"');
+  await h.run('dvUpload')([new h.window.File(['x'], 'a.pdf'), new h.window.File(['y'], 'b.pdf')]);
+  assert.deepStrictEqual(sent.sort(), ['a.pdf', 'b.pdf'],
+    '裸 File 被滤掉了 —— 桌面版拖进来的文件会一声不吭地消失');
+});
+
 test('dvUpload：单个文件失败不拖垮其余的，并如实报失败数', async (t) => {
   const h = boot(); t.after(() => h.close());
   h.window.XMLHttpRequest = function () {
