@@ -421,3 +421,48 @@ def test_ans_光秃题号只在别的排版都失手时才用():
     ans, _synth = R.parse_answers(t)
     assert {k: v[0] for k, v in ans.items()} == want, \
         "被兜底排版劫走了：整卷答案都成了收尾那句的 A"
+
+
+def test_ans_inline_题号后可以没有分隔符():
+    """2004 国考 B 卷排的是「1【答案】C」—— 题号后面什么符号都没有。
+
+    后面紧跟着「【答案】」这么强的锚，分隔符可有可无也不会误伤。
+    """
+    want = {i: "CDAC"[i % 4] for i in range(1, 31)}
+    t = "\n".join("%d【答案】%s\n【解析】这里是解析正文。" % (i, v) for i, v in want.items())
+    ans, synth = R.parse_answers(t)
+    assert synth is False and {k: v[0] for k, v in ans.items()} == want
+
+
+def test_ans_tight_全角方括号():
+    """2006 国考排的是「1.B［ 解析］」，用的是全角［］而不是【】或半角[]。"""
+    want = {i: "BCCD"[i % 4] for i in range(1, 31)}
+    t = "\n".join("%d.%s［ 解析］这里是正文，故答案为 %s。" % (i, v, v)
+                  for i, v in want.items())
+    ans, _synth = R.parse_answers(t)
+    assert {k: v[0] for k, v in ans.items()} == want, len(ans)
+
+
+def test_ans_numbox_题号被括起来():
+    """⑫「【1】D。」—— 题号整个被括号包住，答案字母紧跟其后（2007 四川）。"""
+    want = {i: "DBDB"[i % 4] for i in range(1, 31)}
+    t = "\n".join("【%d】%s。这里是解析正文。" % (i, v) for i, v in want.items())
+    ans, _synth = R.parse_answers(t)
+    assert {k: v[0] for k, v in ans.items()} == want, len(ans)
+
+
+def test_ans_numbox_不吃正文里的选项引用():
+    """⑫ 后面那个标点是必需的：「【1】D 项错误」是正文引用，不是答案行。"""
+    t = "\n".join(["【%d】%s。解析正文。" % (i, "DBDB"[i % 4]) for i in range(1, 31)]
+                  + ["【9】A 项错误，因为它说反了"])       # 正文里的引用，不该覆盖第 9 题
+    ans, _synth = R.parse_answers(t)
+    assert ans[9][0] == "B", "正文里的「【9】A 项错误」把第 9 题的答案覆盖了"
+
+
+def test_ans_num_也认题目二字():
+    """⑨ 的块头除了「【解析 N】」还有「【题目 N】」（2024 四川）。"""
+    want = {i: "CADB"[i % 4] for i in range(1, 31)}
+    t = "\n".join("【题目 %d】\n本题考查甲乙丙。\n故正确答案为 %s。" % (i, v)
+                  for i, v in want.items())
+    ans, synth = R.parse_answers(t)
+    assert synth is False and {k: v[0] for k, v in ans.items()} == want, len(ans)
