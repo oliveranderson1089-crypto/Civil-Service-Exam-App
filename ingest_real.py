@@ -101,7 +101,7 @@ _ADDCOL = [("real_papers", "answers_ok", "INTEGER DEFAULT 1"),
            ("real_raw", "fighash", "TEXT DEFAULT ''"),
            ("real_questions", "fighash", "TEXT DEFAULT ''"),
            ("real_questions", "dkey", "TEXT"),
-           ("real_papers", "ocr_json", "TEXT")]
+           ]
 
 
 def migrate(con):
@@ -180,13 +180,13 @@ def _ocr_answers(con, file_id):
     """取 ocr_answers.py 识别好的扫描件答案。识别结果照样要过后面那两道对齐闸 ——
        是 OCR 出来的不代表可以放宽，错位的答案比没有答案更糟。"""
     try:
-        row = con.execute("SELECT ocr_json FROM real_papers WHERE file_id=?", (file_id,)).fetchone()
+        row = con.execute("SELECT ans_json FROM real_ocr WHERE file_id=?", (file_id,)).fetchone()
     except sqlite3.Error:
-        return {}
-    if not row or not row["ocr_json"]:
+        return {}                      # 还没建表 = 还没跑过 OCR
+    if not row or not row["ans_json"]:
         return {}
     try:
-        return {int(k): (v, "") for k, v in json.loads(row["ocr_json"]).items()}
+        return {int(k): (v, "") for k, v in json.loads(row["ans_json"]).items()}
     except Exception:
         return {}
 

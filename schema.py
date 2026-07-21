@@ -367,7 +367,6 @@ def init_db():
             name TEXT, folder TEXT, ext TEXT,
             exam TEXT, year INTEGER, season TEXT, paper TEXT, kind TEXT,
             pkey TEXT,                        -- 卷子身份（规范化文件名+卷别令牌）
-            ocr_json TEXT,                    -- 扫描件 OCR 出来的 {题号:答案}
             role TEXT, n_item INTEGER DEFAULT 0,
             answers_ok INTEGER DEFAULT 1,     -- 0 = 答案被判定错位，出题时屏蔽
             status TEXT, note TEXT,
@@ -418,6 +417,13 @@ def init_db():
             UNIQUE(qid, sha)
         );
         CREATE INDEX IF NOT EXISTS idx_rfig_q ON real_figs(qid);
+        -- 扫描件 OCR 的结果。**独立成表、按云盘文件 id 挂**：real_papers 会被
+        -- ingest_real.py 整表重建，挂在那上面一重建就没了，而视觉模型跑一遍要几小时。
+        CREATE TABLE IF NOT EXISTS real_ocr(
+            file_id INTEGER PRIMARY KEY, name TEXT,
+            n_item INTEGER DEFAULT 0, ans_json TEXT, model TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
         -- 小题训练（找点 + 写点）：归纳概括/综合分析/提出对策的共同难点都是「从材料里找要点」。
         -- 要能判「找漏了/找错了/找重了」，就必须存下**采分点 ↔ 材料原文的逐字依据**：
         -- points = [{point:概括后的要点, evidence:逐字来自材料的原句, score:分值}]

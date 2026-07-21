@@ -78,6 +78,8 @@ class TestCrawlNews:
     ("ingest_real.py", "real_questions"),
     ("gen_real_explain.py", "real_explains"),
     ("ingest_figs.py", "real_figs"),
+    # OCR 结果是「贵且不可重现」的产物，表定义漂了会导致重跑时白烧几小时
+    ("ocr_answers.py", "real_ocr"),
     # real_questions 的 material 列由 ingest_material.py 的 ALTER 加，
     # SCHEMA_Q 漏了它就会在每次 dedup 重建时把材料整列丢掉
     ("ingest_real.py", "real_questions"),

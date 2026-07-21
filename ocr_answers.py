@@ -44,6 +44,21 @@ V_KEY = CFG.get("vision_key") or ""
 V_MODEL = CFG.get("vision_model") or "glm-4.6v"
 DPI = 160          # 再高识别率没明显提升，图却大一倍、传得慢
 
+# ⚠️ OCR 结果**必须存在独立表里、按云盘文件 id 挂**，不能挂在 real_papers 上：
+#    那张表会被 ingest_real.py 整表重建（改卷别判定、改判重规则都得重跑），
+#    一重建 ocr_json 就没了 —— 实测这么丢过一次，45 分钟的视觉模型调用白烧。
+#    「贵且不可重现」的产物，一律别放在会被推导重建的表上。
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS real_ocr(
+    file_id INTEGER PRIMARY KEY,     -- drive_files.id，跟着云盘文件走，最稳
+    name TEXT,
+    n_item INTEGER DEFAULT 0,
+    ans_json TEXT,                   -- {题号: 答案}
+    model TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+"""
+
 
 def url_of(base):
     if base.endswith("/chat/completions"):
@@ -131,16 +146,13 @@ def main():
     con = sqlite3.connect(DB, timeout=60)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
-    if "ocr_json" not in {r[1] for r in con.execute("PRAGMA table_info(real_papers)")}:
-        # OCR 结果单独存一列：贵、慢、不该每次重跑；后面对齐规则改了也能直接复用
-        con.execute("ALTER TABLE real_papers ADD COLUMN ocr_json TEXT")
-        con.commit()
+    con.executescript(SCHEMA)
 
     rows = con.execute(
-        "SELECT p.id, p.name, d.stored_name FROM real_papers p "
+        "SELECT p.file_id, p.name, d.stored_name FROM real_papers p "
         "JOIN drive_files d ON d.id=p.file_id "
         "WHERE p.role='a' AND p.status='empty' AND p.ext='.pdf' "
-        "  AND (p.ocr_json IS NULL OR p.ocr_json='') "
+        "  AND p.file_id NOT IN (SELECT file_id FROM real_ocr) "
         "ORDER BY p.year DESC").fetchall()
     if a.limit:
         rows = rows[:a.limit]
@@ -165,17 +177,17 @@ def main():
             # 状态沿用既有的 ok/empty，不新造 'ocr' —— report() 的人工复核清单只认
             # ('answers_bad','failed','empty','thin')，新值会让 OCR 只识出三五条的
             # 那种明显失败的卷子在报告里彻底隐身
-            con.execute("UPDATE real_papers SET ocr_json=?, n_item=?, status=?, note=? WHERE id=?",
-                        (json.dumps(got), len(got), "ok" if len(got) >= 20 else "empty",
-                         ("扫描件 OCR（视觉模型 %s）识出 %d 条" % (V_MODEL, len(got))) if got
-                         else "扫描件 OCR 也没识出答案（图太糊或不是答案页）", r["id"]))
+            con.execute(
+                "INSERT OR REPLACE INTO real_ocr(file_id,name,n_item,ans_json,model) "
+                "VALUES(?,?,?,?,?)",
+                (r["file_id"], r["name"], len(got), json.dumps(got), V_MODEL))
             con.commit()
             print("  [%d/%d] %-44s %3d 页 → %3d 条答案  （已跑 %.1f 分钟）"
                   % (n, len(rows), r["name"][:44], len(pngs), len(got), (time.time() - t0) / 60))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    done = con.execute("SELECT COUNT(*), SUM(n_item) FROM real_papers WHERE ocr_json<>''").fetchone()
+    done = con.execute("SELECT COUNT(*), COALESCE(SUM(n_item),0) FROM real_ocr").fetchone()
     print("\n完成：%s 份卷子识出 %s 条答案，耗时 %.1f 分钟"
           % (done[0], done[1] or 0, (time.time() - t0) / 60))
     print("接下来跑 `python3 ingest_real.py` —— OCR 出来的答案会和 word 版答案一样"
