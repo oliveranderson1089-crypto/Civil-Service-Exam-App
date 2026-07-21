@@ -3,6 +3,7 @@
 零反向依赖：app.py 没有任何地方回头用这里的东西，
 所以是拆模块时最干净的一块。
 """
+import datetime
 import json
 import os
 import subprocess
@@ -143,16 +144,44 @@ def fanwen_annotate(mid):
     return jsonify({"notes": notes, "cached": False})
 
 
+def _md(datestr):
+    """'2026-07-21' → '7月21日'；拿不到就原样回。"""
+    try:
+        d = datetime.date.fromisoformat(datestr)
+        return "%d月%d日" % (d.month, d.day)
+    except Exception:
+        return datestr or ""
+
+
 @bp.post("/api/fanwen/refresh")
 def fanwen_refresh():
-    """手动抓一次今天的人民时评（平时定时器 07:10 跑）。抓取很轻量（纯 HTTP），同步跑就行。"""
-    before = get_db().execute("SELECT COUNT(*) FROM essay_models").fetchone()[0]
+    """手动抓一次今天的人民时评（平时定时器 07:10 跑）。抓取很轻量（纯 HTTP），同步跑就行。
+
+    抓完给一句**贴合当下**的话：抓到就报新增；没抓到要分清是「今天的已经收过了」、
+    「今天周末本就没评论版」还是「今天的还没见报」—— 别再一律甩「周末可能无评论版」。
+    """
+    db = get_db()
+    before = db.execute("SELECT COUNT(*) FROM essay_models").fetchone()[0]
     try:
-        r = subprocess.run(
+        subprocess.run(
             [os.path.join(BASE, ".venv/bin/python3"), os.path.join(BASE, "crawl_rmsp.py")],
             cwd=BASE, capture_output=True, text=True, timeout=90)
     except Exception as ex:
         return jsonify({"error": "抓取失败：" + str(ex)[:120]}), 500
-    after = get_db().execute("SELECT COUNT(*) FROM essay_models").fetchone()[0]
-    tail = (r.stdout or r.stderr or "").strip().splitlines()
-    return jsonify({"added": after - before, "msg": tail[-1] if tail else "完成"})
+    after = db.execute("SELECT COUNT(*) FROM essay_models").fetchone()[0]
+    added = after - before
+
+    latest = db.execute("SELECT pub_date, title FROM essay_models WHERE column_name='人民时评' "
+                        "ORDER BY pub_date DESC, id DESC LIMIT 1").fetchone()
+    today = datetime.date.today().isoformat()
+    tail = "（最新：%s《%s》）" % (_md(latest["pub_date"]), latest["title"]) if latest else ""
+
+    if added > 0:
+        msg = "新增 %d 篇：《%s》" % (added, latest["title"]) if latest else "新增 %d 篇" % added
+    elif latest and latest["pub_date"] == today:
+        msg = "今天的已经收录了：《%s》" % latest["title"]
+    elif datetime.date.today().weekday() >= 5:     # 周六=5、周日=6
+        msg = "今天周末，一般没有评论版 " + tail
+    else:
+        msg = "今天的评论版可能还没见报，晚点再抓 " + tail
+    return jsonify({"added": added, "msg": msg, "latest": latest["pub_date"] if latest else None})

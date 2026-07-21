@@ -52,7 +52,7 @@ $('#fw-refresh').onclick = async () => {
   const b = $('#fw-refresh'); b.disabled = true; $('#fw-msg').textContent = '正在抓取今天的人民时评…';
   try {
     const d = await api('/api/fanwen/refresh', { method: 'POST' });
-    $('#fw-msg').textContent = d.added > 0 ? `新增 ${d.added} 篇` : '今天暂无更新（周末可能无评论版）';
+    $('#fw-msg').textContent = d.msg || (d.added > 0 ? `新增 ${d.added} 篇` : '今天暂无更新');
     if (d.added > 0) { fwBoard = ''; loadFanwen(); }
   } catch (e) { $('#fw-msg').textContent = ''; toast(e.message, true); }
   b.disabled = false;
