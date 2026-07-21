@@ -500,3 +500,45 @@ test('__onPickedFiles：点「传文件夹」时不看当前在哪一页，直�
   assert.deepStrictEqual(h.plain('window.__up'), [1], '「传文件夹」应当无条件进云盘');
   assert.deepStrictEqual(h.plain('window.__routed'), [], '不该再走按页面分发');
 });
+
+/* ---- 行内长文本不能把按钮挤走（手机上点不到「恢复」就是栽在这） ---- */
+
+test('dvTrashRow：名字和「原在…」都在可收缩的 .dv-info 里，按钮独立成格', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const w = h.window;
+  w.document.querySelector('#dv-list').innerHTML = h.run('dvTrashRow')({
+    id: 1, is_dir: false, name: '一个名字很长很长的文件.pdf', ext: '.pdf', size: 61865984,
+    deleted_at: '2026-07-21 16:36:00', folder: '四川省考/公考/历年真题/行测/2020-2025合集',
+  });
+  const item = w.document.querySelector('.dv-item');
+  const info = item.querySelector('.dv-info');
+  assert.ok(info, '名字和副标题没装进 .dv-info，长文本会把按钮顶出屏幕');
+  assert.ok(info.querySelector('.dv-name') && info.querySelector('.dv-meta'),
+    '名字和副标题该竖排在 .dv-info 里');
+  const acts = item.querySelector('.dv-acts');
+  assert.ok(acts && acts.querySelector('[data-dvrestore]') && acts.querySelector('[data-dvpurge]'),
+    '恢复/彻底删除要在独立的 .dv-acts 里，才不会被长文本挤走');
+  // 按钮必须是 .dv-info 的兄弟，不能嵌在可收缩的那一格里
+  assert.strictEqual(acts.parentElement, item);
+});
+
+test('dvRow：文件行同样是 .dv-info + .dv-acts 两格', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const w = h.window;
+  h.run('dvGrid = false');
+  w.document.querySelector('#dv-list').innerHTML = h.run('dvRow')(
+    { id: 2, is_dir: false, name: 'x.pdf', ext: '.pdf', size: 1, viewable: true });
+  const item = w.document.querySelector('.dv-item');
+  assert.ok(item.querySelector('.dv-info > .dv-name'));
+  assert.ok(item.querySelector('.dv-acts > [data-dvmore]'));
+});
+
+test('CSS：可收缩那格 min-width:0、按钮那格 flex:0 0 auto', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const fs = require('fs');
+  const css = fs.readFileSync(require('path').join(__dirname, '../../static/style.css'), 'utf8');
+  const info = (css.match(/\.dv-info\{([^}]*)\}/) || [])[1] || '';
+  const acts = (css.match(/\.dv-acts\{([^}]*)\}/) || [])[1] || '';
+  assert.match(info, /min-width:\s*0/, '不写 min-width:0，flex 子项不会收缩，长文本照样撑破行');
+  assert.match(acts, /flex:\s*0 0 auto/, '按钮那格要固定，否则会被挤没');
+});

@@ -3159,13 +3159,21 @@ body.mobile-ui .cr-peer{display:none;}      /* 移动端用全局顶栏显示对
   border-radius:10px;padding:10px 12px;}
 .dv-dir{cursor:pointer;}
 .dv-ic{font-size:20px;flex:none;}
-.dv-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14.5px;color:#1f2733;}
-.dv-meta{font-size:12px;color:#9aa1ac;flex:none;}
+/* 名字和副标题竖排在一个可收缩的容器里（和资料库 .mat-info 同一套）。
+   原来两者是平铺的兄弟节点、.dv-meta 还是 flex:none —— 回收站那种
+   「59 MB · 删于 07-21 · 原在 📁 四川省考/公考/…」一长，直接把按钮顶出屏幕外，
+   手机上根本点不到「恢复」。要点是：能收缩的那格 min-width:0，按钮那格 flex:0 0 auto。 */
+.dv-info{flex:1;min-width:0;}
+.dv-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14.5px;color:#1f2733;}
+.dv-meta{font-size:12px;color:#9aa1ac;margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dv-acts{display:flex;align-items:center;gap:2px;flex:0 0 auto;}
 .dv-act,.dv-del{border:none;background:transparent;cursor:pointer;font-size:16px;color:#8a93a2;
-  text-decoration:none;padding:2px 4px;flex:none;}
+  text-decoration:none;padding:2px 4px;flex:0 0 auto;white-space:nowrap;}
 .dv-act:hover,.dv-del:hover{color:var(--blue);}
 .dv-del:hover{color:#c0392b;}
 body.dark .dv-item{background:#141b29;}
+body.dark .dv-name{color:#dbe2ec;}
 /* 搜索 / 排序 / 多选批量 */
 .dv-search{border:1px solid var(--line);border-radius:16px;padding:4px 12px;font-size:13px;
   background:#fff;color:inherit;min-width:130px;max-width:200px;}
@@ -3186,10 +3194,11 @@ body.dark .dv-search{background:#141b29;}
   background:#eef1f5;display:block;cursor:pointer;}
 body.dark .dv-list.grid .dv-thumb{background:#1b2433;}
 .dv-list.grid .dv-ic{font-size:44px;text-align:center;padding:14px 0;}
+.dv-list.grid .dv-info{flex:none;}
 .dv-list.grid .dv-name{white-space:normal;overflow:hidden;display:-webkit-box;
   -webkit-line-clamp:2;-webkit-box-orient:vertical;font-size:13px;line-height:1.35;}
 .dv-list.grid .dv-meta{font-size:11px;}
-.dv-list.grid .dv-acts{display:flex;justify-content:flex-end;gap:2px;}
+.dv-list.grid .dv-acts{justify-content:flex-end;}
 .dv-list.grid .dv-pick{position:absolute;top:12px;left:12px;z-index:2;}
 .dv-list.grid .dv-item{position:relative;}
 /* 右键菜单：桌面壳里 WebKit 自带那个只有「后退/前进」，没法用 */

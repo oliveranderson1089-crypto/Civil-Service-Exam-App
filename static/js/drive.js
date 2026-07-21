@@ -49,13 +49,15 @@ function dvRow(it) {
     const path = (it.folder ? it.folder + '/' : '') + it.name;
     return `<div class="dv-item dv-dir">${pick}
       <span class="dv-ic" data-dvopen="${esc(path)}">📁</span>
-      <span class="dv-name" data-dvopen="${esc(path)}">${esc(it.name)}</span>
-      <span class="dv-meta">文件夹</span>${more}</div>`;
+      <div class="dv-info" data-dvopen="${esc(path)}">
+        <div class="dv-name">${esc(it.name)}</div>
+        <div class="dv-meta">文件夹</div></div>
+      <span class="dv-acts">${more}</span></div>`;
   }
   const where = (dvQuery && it.folder) ? ' · 📁 ' + esc(it.folder) : '';
   const name = it.viewable
-    ? `<span class="dv-name dv-can" data-dvview="${it.id}" data-ext="${esc(it.ext || '')}">${esc(it.name)}</span>`
-    : `<span class="dv-name">${esc(it.name)}</span>`;
+    ? `<div class="dv-name dv-can" data-dvview="${it.id}" data-ext="${esc(it.ext || '')}">${esc(it.name)}</div>`
+    : `<div class="dv-name">${esc(it.name)}</div>`;
   const acts = more;
   // 网格里图片直接出缩略图；onerror 时换回图标 —— 一张坏图不该在格子里留个破图标
   const face = (dvGrid && it.thumb)
@@ -63,25 +65,31 @@ function dvRow(it) {
             data-dvview="${it.id}" data-ext="${esc(it.ext || '')}"
             onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dv-ic',textContent:'🖼️'}))">`
     : `<span class="dv-ic">${dvIcon(it.ext)}</span>`;
+  const meta = `<div class="dv-meta">${fSize(it.size)}${it.source === 'chat' ? ' · 聊天' : ''}${where}</div>`;
   if (dvGrid) {
-    return `<div class="dv-item">${pick}${face}${name}
-      <span class="dv-meta">${fSize(it.size)}${where}</span>
+    return `<div class="dv-item">${pick}${face}
+      <div class="dv-info">${name}${meta}</div>
       <span class="dv-acts">${acts}</span></div>`;
   }
-  return `<div class="dv-item">${pick}${face}${name}
-    <span class="dv-meta">${fSize(it.size)}${it.source === 'chat' ? ' · 聊天' : ''}${where}</span>
-    ${acts}</div>`;
+  return `<div class="dv-item">${pick}${face}
+    <div class="dv-info">${name}${meta}</div>
+    <span class="dv-acts">${acts}</span></div>`;
 }
 
 /* ---- 回收站 ----
    删除改成了软删，所以「删掉」和「真没了」是两件事。这个视图就是那两件事之间的地方。 */
 function dvTrashRow(it) {
+  /* 「原在 …」那串可以很长（原在 📁 四川省考/公考/…）。名字和它都放进可收缩的
+     .dv-info 里，按钮才不会被顶出屏幕 —— 手机上原来点不到「恢复」就是栽在这儿。 */
   return `<div class="dv-item">
     <span class="dv-ic">${it.is_dir ? '📁' : dvIcon(it.ext)}</span>
-    <span class="dv-name">${esc(it.name)}</span>
-    <span class="dv-meta">${it.is_dir ? '文件夹' : fSize(it.size)} · 删于 ${esc((it.deleted_at || '').slice(5, 16))}${it.folder ? ' · 原在 📁 ' + esc(it.folder) : ''}</span>
-    <button class="dv-act" data-dvrestore="${it.id}" title="恢复">↩︎ 恢复</button>
-    <button class="dv-del" data-dvpurge="${it.id}" title="彻底删除">🗑</button></div>`;
+    <div class="dv-info">
+      <div class="dv-name">${esc(it.name)}</div>
+      <div class="dv-meta">${it.is_dir ? '文件夹' : fSize(it.size)} · 删于 ${esc((it.deleted_at || '').slice(5, 16))}${it.folder ? ' · 原在 📁 ' + esc(it.folder) : ''}</div>
+    </div>
+    <span class="dv-acts">
+      <button class="dv-act" data-dvrestore="${it.id}" title="恢复">↩︎ 恢复</button>
+      <button class="dv-del" data-dvpurge="${it.id}" title="彻底删除">🗑</button></span></div>`;
 }
 
 async function loadTrash() {
