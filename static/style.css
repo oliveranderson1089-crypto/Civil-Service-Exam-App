@@ -1034,6 +1034,32 @@ img,svg,video{max-width:100%;}
 .ai-msg.assistant pre.md-code{background:#0f1324;color:#e8eaf0;padding:10px 12px;border-radius:8px;overflow-x:auto;margin:.7em 0;}
 body.dark .ai-msg.assistant strong,body.dark .ai-msg.assistant b{color:#f0f4fa;}
 body.dark .ai-msg.assistant blockquote{border-color:#33405480;color:#9aa6b6;}
+/* ---- LaTeX 数学公式（mdToHtml 里手写子集渲染，见 materials.js texToHtml）----
+   分数线/根号线一律走 currentColor，明暗主题自动跟着文字色，不用单独写 body.dark */
+.tex{font-family:"Cambria Math","STIX Two Math","Latin Modern Math",Georgia,"Times New Roman",serif;
+  font-style:normal;line-height:1;white-space:normal;}
+.tex .trm{font-family:inherit;font-style:normal;}   /* \text：用正文字体，中文才不走样 */
+.tex .tbf{font-weight:700;font-style:normal;}
+.tex .tit{font-style:italic;}
+.tex-block{display:block;text-align:center;font-size:1.1em;margin:.85em 0;overflow-x:auto;}
+/* 分数：分子分母竖排，中间一条分数线 */
+.tfr{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center;margin:0 .14em;}
+.tfr .tfn{border-bottom:1px solid currentColor;padding:0 .3em .08em;}
+.tfr .tfd{padding:.08em .3em 0;}
+.tex sup,.tex sub{font-size:.72em;line-height:0;}
+.tss{display:inline-flex;flex-direction:column;vertical-align:middle;font-size:.72em;line-height:1.05;}
+.tss sup,.tss sub{font-size:1em;line-height:1;}
+/* 根号：√ 接一条上划线盖住被开方数 */
+.tsq{white-space:nowrap;}
+.tsq .tsb{border-top:1px solid currentColor;padding:0 .2em;}
+.tsq .tsr{font-size:.7em;vertical-align:.55em;margin-right:-.32em;}
+.tov{border-top:1px solid currentColor;}
+.tun{border-bottom:1px solid currentColor;}
+/* 帽/矢量等重音：把符号叠在字符正上方 */
+.tac{position:relative;}
+.tac::before{content:attr(data-a);position:absolute;left:0;right:0;top:-.72em;
+  text-align:center;font-size:.8em;font-style:normal;line-height:1;}
+.tex-raw{font-family:inherit;color:var(--muted);}   /* 解析失败的兜底：原样、灰一点 */
 .ai-typing{color:var(--muted);}
 .ai-input{display:flex;flex-direction:column;gap:7px;padding:8px 12px;padding-bottom:calc(8px + env(safe-area-inset-bottom));
   background:#fff;border-top:1px solid var(--line);align-items:stretch;max-width:860px;width:100%;margin:0 auto;position:relative;}

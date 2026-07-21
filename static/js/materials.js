@@ -329,15 +329,161 @@ function mdSafeHref(u) {
   if (!MD_SAFE_URL.test(u)) return '#';                 // 不认识的协议一律不放行
   return u.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
+
+/* ---------- LaTeX 数学公式 → HTML ----------
+   AI（DeepSeek）讲数量关系/资料分析时爱用 $\frac{5}{8}$、$x^2$、$\sqrt{3}$ 这类 LaTeX，
+   原来的 mdToHtml 不认，$...$ 原样漏出来一串反斜杠，用户没法读（就是这次的反馈）。
+   这里手写一个够用的子集渲染器：分数 / 根号 / 上下标 / 常见运算符 / 希腊字母 / \text，
+   覆盖公考数学几乎全部写法。**不引 KaTeX** —— 它要拖 ~300KB JS + ~1MB 字体，跟本项目
+   「自带离线、依赖极简」的路子不搭；这个子集零依赖、明暗主题自适应（分数线/根号线走
+   currentColor 跟着文字色）。碰到不认识的命令就退化成原文，try/catch 兜底，绝不炸。 */
+const TEX_SYM = {
+  '\\times': '×', '\\div': '÷', '\\cdot': '·', '\\ast': '∗', '\\star': '⋆',
+  '\\pm': '±', '\\mp': '∓', '\\leq': '≤', '\\le': '≤', '\\geq': '≥', '\\ge': '≥',
+  '\\neq': '≠', '\\ne': '≠', '\\approx': '≈', '\\equiv': '≡', '\\cong': '≅',
+  '\\sim': '∼', '\\propto': '∝', '\\ll': '≪', '\\gg': '≫',
+  '\\to': '→', '\\rightarrow': '→', '\\leftarrow': '←', '\\Rightarrow': '⇒',
+  '\\Leftarrow': '⇐', '\\leftrightarrow': '↔', '\\Leftrightarrow': '⇔', '\\mapsto': '↦',
+  '\\uparrow': '↑', '\\downarrow': '↓', '\\infty': '∞',
+  '\\cdots': '⋯', '\\ldots': '…', '\\dots': '…', '\\vdots': '⋮', '\\ddots': '⋱',
+  '\\circ': '∘', '\\deg': '°', '\\angle': '∠', '\\perp': '⊥', '\\parallel': '∥',
+  '\\triangle': '△', '\\square': '□',
+  '\\sum': '∑', '\\prod': '∏', '\\int': '∫', '\\oint': '∮',
+  '\\partial': '∂', '\\nabla': '∇', '\\sqrt2': '√',
+  '\\in': '∈', '\\notin': '∉', '\\ni': '∋', '\\subset': '⊂', '\\subseteq': '⊆',
+  '\\supset': '⊃', '\\supseteq': '⊇', '\\cup': '∪', '\\cap': '∩', '\\setminus': '∖',
+  '\\emptyset': '∅', '\\varnothing': '∅', '\\forall': '∀', '\\exists': '∃',
+  '\\nexists': '∄', '\\neg': '¬', '\\land': '∧', '\\wedge': '∧', '\\lor': '∨', '\\vee': '∨',
+  '\\oplus': '⊕', '\\otimes': '⊗', '\\bullet': '•', '\\prime': '′', '\\therefore': '∴',
+  '\\because': '∵', '\\cdotp': '·', '\\ell': 'ℓ', '\\Re': 'ℜ', '\\Im': 'ℑ',
+  '\\%': '%', '\\#': '#', '\\&': '&', '\\_': '_', '\\{': '{', '\\}': '}', '\\$': '$',
+  '\\langle': '⟨', '\\rangle': '⟩', '\\lceil': '⌈', '\\rceil': '⌉',
+  '\\lfloor': '⌊', '\\rfloor': '⌋', '\\cong2': '≅',
+  // 希腊字母
+  '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ', '\\epsilon': 'ε',
+  '\\varepsilon': 'ε', '\\zeta': 'ζ', '\\eta': 'η', '\\theta': 'θ', '\\vartheta': 'ϑ',
+  '\\iota': 'ι', '\\kappa': 'κ', '\\lambda': 'λ', '\\mu': 'μ', '\\nu': 'ν', '\\xi': 'ξ',
+  '\\pi': 'π', '\\varpi': 'ϖ', '\\rho': 'ρ', '\\sigma': 'σ', '\\tau': 'τ',
+  '\\upsilon': 'υ', '\\phi': 'φ', '\\varphi': 'φ', '\\chi': 'χ', '\\psi': 'ψ', '\\omega': 'ω',
+  '\\Gamma': 'Γ', '\\Delta': 'Δ', '\\Theta': 'Θ', '\\Lambda': 'Λ', '\\Xi': 'Ξ',
+  '\\Pi': 'Π', '\\Sigma': 'Σ', '\\Phi': 'Φ', '\\Psi': 'Ψ', '\\Omega': 'Ω',
+};
+function texToHtml(tex, block) {
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  try {
+    const s = String(tex)
+      .replace(/\\left\b|\\right\b/g, '')                       // \left( \right) 只留定界符本身
+      .replace(/\\(?:displaystyle|textstyle|scriptstyle|limits|nolimits)\b/g, '')
+      .replace(/\\begin\{[^}]*\}|\\end\{[^}]*\}/g, '')          // 去掉环境壳，靠 \\ 与 & 排版
+      .replace(/\\[,;:!]|\\ /g, ' ')                            // \, \; \: \! 与 \空格 → 细空格
+      .replace(/\\(?:quad|qquad)\b/g, ' ')                // \quad → 全角空格
+      .replace(/[~ ]/g, ' ');
+    let p = 0;
+    const skipSp = () => { while (s[p] === ' ') p++; };
+    function readRaw() {                                        // \text 的实参：原样文本（含空格），不当数学解析
+      skipSp();
+      if (s[p] === '{') { let d = 1, r = ''; p++; while (p < s.length) { const c = s[p++]; if (c === '{') d++; else if (c === '}') { if (!--d) break; } r += c; } return esc(r); }
+      return esc(s[p++] || '');
+    }
+    function parseArg() { skipSp(); return parseAtom(); }       // 命令实参：一个 {组} 或一个记号
+    function parseAtom() {
+      const ch = s[p];
+      if (ch === undefined || ch === '}') return '';
+      if (ch === '{') { p++; const inner = parseSeq(); if (s[p] === '}') p++; return inner; }
+      if (ch === '\\') return parseCmd();
+      if (ch === ' ') { p++; return ' '; }
+      if (ch === '^' || ch === '_') { p++; return ''; }         // 落单的上下标符号：吞掉别让它卡住
+      p++;
+      if (ch === '-') return '−';                          // 真减号（比连字符好看）
+      if (ch === "'") return '′';                          // 撇 → 角分
+      return esc(ch);
+    }
+    function parseCmd() {
+      p++;                                                      // 跳过反斜杠
+      let name = '';
+      if (/[a-zA-Z]/.test(s[p] || '')) { while (/[a-zA-Z]/.test(s[p] || '')) name += s[p++]; }
+      else { name = s[p] || ''; p++; }
+      const cmd = '\\' + name;
+      switch (cmd) {
+        case '\\frac': case '\\dfrac': case '\\tfrac': case '\\cfrac': {
+          const a = parseArg(), b = parseArg();
+          return '<span class="tfr"><span class="tfn">' + a + '</span><span class="tfd">' + b + '</span></span>';
+        }
+        case '\\sqrt': {
+          skipSp(); let root = '';
+          if (s[p] === '[') { p++; let d = ''; while (p < s.length && s[p] !== ']') d += s[p++]; if (s[p] === ']') p++; root = esc(d); }
+          return '<span class="tsq">' + (root ? '<span class="tsr">' + root + '</span>' : '')
+            + '<span class="tsx">√</span><span class="tsb">' + parseArg() + '</span></span>';
+        }
+        case '\\text': case '\\textrm': case '\\textnormal': case '\\mbox': case '\\operatorname':
+          return '<span class="trm">' + readRaw() + '</span>';
+        case '\\mathrm': case '\\mathsf': case '\\mathbb': case '\\mathcal': case '\\mathfrak': case '\\rm':
+          return '<span class="trm">' + parseArg() + '</span>';
+        case '\\mathbf': case '\\boldsymbol': case '\\bm': case '\\bf':
+          return '<span class="tbf">' + parseArg() + '</span>';
+        case '\\mathit': case '\\it':
+          return '<span class="tit">' + parseArg() + '</span>';
+        case '\\overline': case '\\bar': return '<span class="tov">' + parseArg() + '</span>';
+        case '\\underline': return '<span class="tun">' + parseArg() + '</span>';
+        case '\\vec': return '<span class="tac" data-a="→">' + parseArg() + '</span>';
+        case '\\hat': case '\\widehat': return '<span class="tac" data-a="^">' + parseArg() + '</span>';
+        case '\\tilde': case '\\widetilde': return '<span class="tac" data-a="~">' + parseArg() + '</span>';
+        case '\\dot': return '<span class="tac" data-a="·">' + parseArg() + '</span>';
+        case '\\\\': return block ? '<br>' : ' ';
+        case '\\ ': return ' ';
+      }
+      if (TEX_SYM[cmd] !== undefined) return TEX_SYM[cmd];
+      // 没收录的命令（\sin \cos \log \lim \max …）：去掉反斜杠、正体显示，够读
+      return name ? '<span class="trm">' + esc(name) + '</span>' : esc(cmd);
+    }
+    function parseSeq() {
+      let out = '';
+      while (p < s.length && s[p] !== '}') {
+        let atom = parseAtom();
+        let sup = '', sub = '';                                 // 收集紧跟的上/下标（可同时有）
+        while (s[p] === '^' || s[p] === '_') {
+          const k = s[p]; p++; skipSp();
+          const sc = parseAtom();
+          if (k === '^') sup += sc; else sub += sc;
+        }
+        if (sup && sub) atom += '<span class="tss"><sup>' + sup + '</sup><sub>' + sub + '</sub></span>';
+        else if (sup) atom += '<sup>' + sup + '</sup>';
+        else if (sub) atom += '<sub>' + sub + '</sub>';
+        out += atom;
+      }
+      return out;
+    }
+    return '<span class="tex' + (block ? ' tex-block' : '') + '">' + parseSeq() + '</span>';
+  } catch (_) {
+    return '<span class="tex tex-raw">' + esc(String(tex)) + '</span>';   // 解析出岔子就原样显示，不炸
+  }
+}
+/* 从一行文本里把行内公式（$...$ / $$...$$ / \(...\) / \[...\]）抽出、渲染，塞回占位符。
+   在 markdown 转义/加粗等替换**之前**做，免得公式里的 _ ^ * 被 markdown 规则啃掉。 */
+function extractInlineMath(str, hold) {
+  return str
+    .replace(/\\\$/g, '')                                          // 先护住转义美元 \$
+    .replace(/\\\(([\s\S]+?)\\\)/g, (m, x) => hold(texToHtml(x)))        // \(...\)
+    .replace(/\\\[([\s\S]+?)\\\]/g, (m, x) => hold(texToHtml(x, true)))  // \[...\]（展示式）
+    .replace(/\$\$([^\n]+?)\$\$/g, (m, x) => hold(texToHtml(x, true)))   // $$...$$
+    .replace(/\$([^$\n]+?)\$/g, (m, x) => hold(texToHtml(x)))            // $...$
+    .replace(//g, '$');                                            // \$ 还原成普通美元
+}
 function mdToHtml(src) {
   const E = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const inline = s => {
+    // 行内代码与数学公式先抽成占位（私有区字符 … 能安全穿过下面的转义与
+    // markdown 替换），等加粗/斜体/链接都处理完再塞回 —— 否则公式里的 _ ^ * 会被啃掉。
+    const holds = [];
+    const hold = h => { holds.push(h); return '' + (holds.length - 1) + ''; };
+    s = s.replace(/`([^`]+)`/g, (m, c) => hold('<code>' + E(c) + '</code>'));
+    s = extractInlineMath(s, hold);
     s = E(s);
-    s = s.replace(/`([^`]+)`/g, (m, c) => '<code>' + c + '</code>');
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
     s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
     s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g,
                   (m, t, u) => '<a href="' + mdSafeHref(u) + '" target="_blank" rel="noopener">' + t + '</a>');
+    s = s.replace(/(\d+)/g, (m, k) => holds[+k]);
     return s;
   };
   const lines = src.replace(/\r\n/g, '\n').split('\n');
@@ -353,6 +499,24 @@ function mdToHtml(src) {
       continue;
     }
     if (inCode) { codeBuf.push(line); continue; }
+    // 块级公式：整行以 $$ 或 \[ 起头，收集到闭合 $$ / \] 为止，居中单独成块
+    const bt = line.trim();
+    if (bt.startsWith('$$') || bt.startsWith('\\[')) {
+      flushPara(); closeList();
+      const open = bt.startsWith('$$') ? '$$' : '\\[';
+      const close = open === '$$' ? '$$' : '\\]';
+      let body = bt.slice(open.length), closed = false;
+      const ci = body.indexOf(close);
+      if (ci >= 0) { body = body.slice(0, ci); closed = true; }
+      while (!closed && i + 1 < lines.length) {
+        i++;
+        const ci2 = lines[i].indexOf(close);
+        if (ci2 >= 0) { body += '\n' + lines[i].slice(0, ci2); closed = true; }
+        else body += '\n' + lines[i];
+      }
+      html += texToHtml(body, true);
+      continue;
+    }
     // 表格：| a | b | 后跟 |---|---|
     if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
       flushPara(); closeList();

@@ -99,3 +99,54 @@ test('空输入 / 奇怪输入不炸', (t) => {
   assert.strictEqual(typeof html(h, '[没闭合的链接]('), 'string');
   assert.strictEqual(typeof html(h, '[]()'), 'string');
 });
+
+// ---- 数学公式：AI 讲数量关系爱用 LaTeX，原来 $...$ 原样漏出一堆反斜杠没法读 ----
+function box(h, src) { const b = h.window.document.createElement('div'); b.innerHTML = html(h, src); return b; }
+
+test('行内 $\\frac{}{}$ 渲染成分数（分子/分母各就各位）', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const b = box(h, '男生占全班的 $\\frac{5}{8}$，也就是 62.5%。');
+  const fr = b.querySelector('.tfr');
+  assert.ok(fr, '没渲染出分数结构');
+  assert.strictEqual(fr.querySelector('.tfn').textContent, '5');
+  assert.strictEqual(fr.querySelector('.tfd').textContent, '8');
+  assert.doesNotMatch(b.textContent, /\\frac|\$/, '还漏着原始 LaTeX');
+});
+
+test('\\text{中文} 与上标/根号/符号都认', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const b = box(h, '$\\frac{\\text{男生}}{\\text{全班}} = \\frac{5}{8}$，$x^2$，$\\sqrt{9}=3$，$5 \\times 3$');
+  assert.match(b.textContent, /男生/);
+  assert.match(b.textContent, /全班/);
+  assert.ok(b.querySelector('sup'), '上标没出来');
+  assert.ok(b.querySelector('.tsq'), '根号没出来');
+  assert.match(b.textContent, /×/, '\\times 没转成 ×');
+});
+
+test('块级 $$...$$ 单独成块居中', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const b = box(h, '推导如下：\n\n$$\\frac{A}{B} = \\frac{m}{n}$$\n\n所以成立。');
+  const blk = b.querySelector('.tex-block');
+  assert.ok(blk, '块级公式没成块');
+  assert.strictEqual(b.querySelectorAll('.tfr').length, 2, '两个分数都该在');
+});
+
+test('公式里的下划线/星号不被 markdown 啃掉', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const b = box(h, '设 $a_1$ 与 $a_2$，$P(A_i)$ 表示概率。');
+  assert.ok(b.querySelector('sub'), '下标被 markdown 吞了');
+  assert.doesNotMatch(b.textContent, /_/, '还漏着裸下划线');
+});
+
+test('数学不炸 + XSS：公式里的尖括号照样转义', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const b = box(h, '$a < b$ 且 $<img src=x onerror=alert(1)>$');
+  assert.strictEqual(b.querySelector('img'), null, '公式里注入了 img');
+  assert.match(b.textContent, /a\s*<\s*b|a[−–-]?\s*<\s*b|a.*b/);
+  assert.strictEqual(typeof html(h, '$\\frac{1'), 'string', '残缺公式把渲染搞崩了');
+});
+
+test('转义美元 \\$ 不当公式定界符', (t) => {
+  const h = boot(); t.after(() => h.close());
+  assert.match(html(h, '花了 \\$5 又花了 \\$10'), /\$5|\$10/);
+});
