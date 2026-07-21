@@ -356,7 +356,14 @@ _ANS_BRACKET = re.compile(r"第[【\[]?(\d{1,3})[】\]]?题[\s\S]{0,20}?"
                           r"正确答案[：:]?[\s　]*[【\[]?([A-D])[】\]]?")
 # ③④：先按「N、解析」切段，再从段里把答案字母抠出来
 _ANS_SEG = re.compile(r"^[\s　]*(\d{1,3})[\s　]*[、.．][\s　]*解析", re.M)
-_ANS_BARE = re.compile(r"^[\s　]*解析[\s　]*$", re.M)      # ⑤ 题号丢了，只剩分隔用的「解析」
+# ⑤ 题号丢了，只剩分隔用的「解析」。也认「【解析 12】」这种带号的 ——
+#    带号也**不去读那个号**：扫描件里 】 常被认成 | 1 ) }，「【解析 21」到底是
+#    「解析2」还是「解析21」根本分不清，读错了整卷答案就错位。
+#    按出现顺序编号 + 自报 synth，让「块数必须等于本卷最大题号」那道闸去兜底。
+# ⑨「【解析 N】」独占一行（2024 国考那批 A0 扫描件）。题号是**卷子上印着的**，
+#   读出来就不怕中间吞了几块 —— 比 ⑤ 的顺序编号强，所以排在它前面当候选。
+_ANS_NUM = re.compile(r"^[\s　]*[【\[][\s　]*解析[\s　]*(\d{1,3})[\s　]*[】\]|1)}]?[\s　]*$", re.M)
+_ANS_BARE = re.compile(r"^[\s　]*(?:解析|[【\[][\s　]*解析[\s　]*\d{0,3}\s*[】\]|1)}]?)[\s　]*$", re.M)
 # ⑦ 第1 题 / 第 12 题 —— 独占一行的题头。扫描件 OCR 出来的基本都是这种
 #    （原卷是「第【1】题」，tesseract 认不出方括号，出来就是「第1 题」）
 _ANS_NOBR = re.compile(r"^[\s　]*第[\s　]*(\d{1,3})[\s　]*题[\s　]*$", re.M)
@@ -398,6 +405,32 @@ def _trim_next(body, cur_seq=0):
         if int(m.group(1)) > cur_seq:
             return body[:m.start()]
     return body
+
+
+def _read_seq_nums(hits):
+    """把「【解析 N】」里的题号读出来，用单调性消掉 OCR 的歧义。
+
+    扫描件里右括号 】 常被认成数字 1：「【解析 2】」识别出来是「【解析 21」，
+    跟真正的第 21 题长得一模一样，单看一行根本分不清。但解析块是按题号顺序排的，
+    拿上一条的号就能分开 —— 期望值是 prev+1，候选里取最小的那个 > prev：
+    在第 2 块时「21」判成 2，在第 21 块时「21」判成 21。
+
+    返回 (题号列表, 读不出来的块数)。读不出来的太多说明这批号本身不可信。
+    """
+    nums, prev, bad = [], 0, 0
+    for m in hits:
+        s = m.group(1)
+        cand = {int(s)}
+        if len(s) > 1 and s[-1] == "1":       # 末位那个 1 可能是右括号
+            cand.add(int(s[:-1]))
+        ok = [c for c in cand if c > prev]
+        if ok:
+            prev = min(ok)
+        else:
+            bad += 1
+            prev += 1          # 这块的号读废了就顺延一格，别让后面整串跟着崩
+        nums.append(prev)
+    return nums, bad
 
 
 def _seg_answers(text, hits, letter_from_body):
@@ -451,6 +484,22 @@ def parse_answers(text):
     h = list(_ANS_NOBR.finditer(text))
     if h:
         cands.append((_seg_answers(text, h, tail), False))
+
+    # ⑨「【解析 N】」独占一行。号是卷子上印的，有缺块也不会错位，所以 synth=False。
+    #   放在 ⑤ 前面：两者切出来的块数往往一样多，挑最多的那个时先到先得。
+    h = list(_ANS_NUM.finditer(text))
+    if len(h) > 20:
+        nums, bad = _read_seq_nums(h)
+        if bad <= len(h) // 10:      # 读废的超过一成 = 号不可信，交给 ⑤ 按顺序兜底
+            seq = {}
+            for i, m in enumerate(h):
+                end = h[i + 1].start() if i + 1 < len(h) else len(text)
+                body = _trim_next(text[m.end():end], nums[i])
+                letter = tail(m, body)
+                if letter:
+                    seq[nums[i]] = (letter, _clean_explain(body))
+            if len(seq) > 20:
+                cands.append((seq, False))
 
     # ⑤ 题号在转档时丢了，只剩一行一个光秃秃的「解析」当分隔（2025 国考那三份）。
     #    只能**按出现顺序**编号 —— 所以调用方必须拿题目卷的题数核一下，

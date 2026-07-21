@@ -316,3 +316,42 @@ class TestQhash:
 
     def test_不同的题仍要分得开(self):
         assert R.qhash_text("甲说法正确") != R.qhash_text("乙说法正确")
+
+
+def test_ans_numbered_block_ocr_bracket_ambiguity():
+    """⑨「【解析 N】」：右括号被 OCR 认成 1 时，别把「解析 2】」读成第 21 题。
+
+    这是 2024 国考那批 A0 扫描件的排版。真正的第 21 题也长「【解析 21]」，
+    单看一行分不清，只能靠「解析块按题号顺序排」这个事实消歧。
+    """
+    parts = []
+    for i in range(1, 26):
+        close = "1" if i in (2, 3) else "】"     # 前几块的 】 被认成了 1
+        parts.append("【解析 %d%s\n这里是解析正文。因此，选择 %s 选项。"
+                     % (i, close, "ABCD"[i % 4]))
+    ans, synth = R.parse_answers("\n".join(parts))
+    assert synth is False, "号是卷子上印的，不该标成合成号"
+    assert len(ans) == 25 and max(ans) == 25, ans.keys()
+    assert ans[2][0] == "C", "「【解析 21」在第 2 块的位置上应判成第 2 题"
+    assert ans[21][0] == "B", "第 21 块才是真的第 21 题"
+
+
+def test_ans_numbered_block_survives_gaps():
+    """⑨ 的价值就在这儿：中间吞了几块，剩下的照样挂在**正确**的题号上。
+
+    换成 ⑤ 的顺序编号，缺一块后面就全体错位一格 —— 那比没有答案还糟。
+    """
+    parts = ["【解析 %d】\n解析正文。因此，选择 %s 选项。" % (i, "ABCD"[i % 4])
+             for i in range(1, 31) if i not in (9, 12, 20)]
+    ans, synth = R.parse_answers("\n".join(parts))
+    assert synth is False
+    assert 9 not in ans and 12 not in ans and 20 not in ans
+    assert ans[30][0] == "C" and ans[13][0] == "B", "缺块之后的题号不能整体挪位"
+
+
+def test_ans_numbered_block_rejects_garbage_numbers():
+    """号读废的块超过一成，就别信这批号 —— 退回 ⑤ 按顺序编、自报 synth 让题数闸兜底。"""
+    parts = ["【解析 %d】\n解析正文。因此，选择 A 选项。" % n
+             for n in [7, 3, 9, 1, 5, 2, 8, 4, 6] * 3]      # 号完全乱序 = OCR 认废了
+    ans, synth = R.parse_answers("\n".join(parts))
+    assert synth is True, "乱序的号不可信，必须退回顺序编号并自报 synth"

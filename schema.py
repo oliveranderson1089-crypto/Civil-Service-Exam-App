@@ -421,6 +421,9 @@ def init_db():
         -- ingest_real.py 整表重建，挂在那上面一重建就没了，而视觉模型跑一遍要几小时。
         CREATE TABLE IF NOT EXISTS real_ocr(
             file_id INTEGER PRIMARY KEY, name TEXT,
+            -- synth=1：题号是按解析块出现顺序编的，不是卷子上印的。用之前必须核对
+            -- 「块数 == 本卷最大题号」，中间吞一块就整卷错位一格，比没答案还糟。
+            synth INTEGER DEFAULT 0,
             n_item INTEGER DEFAULT 0, ans_json TEXT, model TEXT,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );

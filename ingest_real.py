@@ -177,18 +177,23 @@ def _fig_hashes(path, text):
 
 
 def _ocr_answers(con, file_id):
-    """取 ocr_answers.py 识别好的扫描件答案。识别结果照样要过后面那两道对齐闸 ——
-       是 OCR 出来的不代表可以放宽，错位的答案比没有答案更糟。"""
+    """取 ocr_answers.py 识别好的扫描件答案，返回 (答案字典, 题号是否按顺序编的)。
+
+    识别结果照样要过后面那两道对齐闸 —— 是 OCR 出来的不代表可以放宽，
+    错位的答案比没有答案更糟。
+    """
     try:
-        row = con.execute("SELECT ans_json FROM real_ocr WHERE file_id=?", (file_id,)).fetchone()
+        row = con.execute("SELECT ans_json, synth FROM real_ocr WHERE file_id=?",
+                          (file_id,)).fetchone()
     except sqlite3.Error:
-        return {}                      # 还没建表 = 还没跑过 OCR
+        return {}, False               # 还没建表 = 还没跑过 OCR
     if not row or not row["ans_json"]:
-        return {}
+        return {}, False
     try:
-        return {int(k): (v, "") for k, v in json.loads(row["ans_json"]).items()}
+        return ({int(k): (v, "") for k, v in json.loads(row["ans_json"]).items()},
+                bool(row["synth"]))
     except Exception:
-        return {}
+        return {}, False
 
 
 def _find_answer(answers, name, meta):
@@ -263,8 +268,9 @@ def extract_all(con, exts, force=False):
             a, synth = R.parse_answers(R.file_text(p, tmp)[0])
             if not a:
                 # 扫描件（pdftotext 出 0 字符）——用 ocr_answers.py 事先识别好的结果。
-                # OCR 很贵很慢，所以结果存在 real_papers.ocr_json 里，这里只管取用。
-                a, synth = _ocr_answers(con, r["id"]), False
+                # synth 要一并取回：OCR 出来的题号常常是按顺序编的，
+                # 得走「块数必须等于本卷最大题号」那道闸，不能当成真题号直接用。
+                a, synth = _ocr_answers(con, r["id"])
         except Exception as e:
             _paper_row(con, r, meta, "a", 0, "failed", str(e)[:200])
             stats["fail"] += 1

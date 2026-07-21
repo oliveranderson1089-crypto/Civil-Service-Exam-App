@@ -20,6 +20,7 @@ glm-4.6v 才是视觉模型（config.json 的 vision_model），OCR 只能走它
     python3 ocr_answers.py
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -44,8 +45,14 @@ CFG = json.load(open(os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config
 V_BASE = (CFG.get("vision_base") or "").rstrip("/")
 V_KEY = CFG.get("vision_key") or ""
 V_MODEL = CFG.get("vision_model") or "glm-4.6v"
-DPI = 160          # 视觉模型用：再高识别率没明显提升，图却大一倍、传得慢
+# **按目标像素宽渲染，不用固定 DPI**：真题 PDF 的页面尺寸差得离谱 ——
+# 2024 国考那几份是 A0（2381×3367pt，海报大小），按 300dpi 渲出来是 9922×14032、
+# 单页 15MB，渲一页 25 秒，tesseract 还直接懵掉（--psm 6 假定的是正常版面）。
+# 归一到 A4@300dpi 的像素宽之后：4.3 秒渲两页、识别快 3 倍、体积小 7 倍。
+PX_W = 2480        # ≈ A4 @300dpi 的宽度
+PX_W_VIS = 1400    # 视觉模型不需要这么大，小一半传得快、也省 token
 LOW_YIELD = 20     # tesseract 抠出的答案少于这个数，才值得花钱上视觉模型
+PAPER_TIMEOUT = 900   # 单份卷子最多花这么久，别让一份怪卷把整轮拖死
 
 # ⚠️ OCR 结果**必须存在独立表里、按云盘文件 id 挂**，不能挂在 real_papers 上：
 #    那张表会被 ingest_real.py 整表重建（改卷别判定、改判重规则都得重跑），
@@ -55,6 +62,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS real_ocr(
     file_id INTEGER PRIMARY KEY,     -- drive_files.id，跟着云盘文件走，最稳
     name TEXT,
+    synth INTEGER DEFAULT 0,         -- 1 = 题号是按顺序编的，用之前要核对题数
     n_item INTEGER DEFAULT 0,
     ans_json TEXT,                   -- {题号: 答案}
     model TEXT,
@@ -130,7 +138,6 @@ def ocr_page(png, tries=3):
 # tesseract 是本机装的、免费、还快 —— 同一份 37 页的卷子它 228 秒跑完，
 # 视觉模型要 28 分钟。而答案卷是**高对比度印刷体**，正是 tesseract 的强项。
 # 所以顺序是：先用它，抠不出足够的答案再上视觉模型兜底。
-TESS_DPI = 300          # 300 比 160 明显准，本地跑不心疼
 
 
 def tess_answers(pdf, tmp, first=0, last=0):
@@ -140,7 +147,7 @@ def tess_answers(pdf, tmp, first=0, last=0):
     先只读前两页，够了就不用把三四十页全渲一遍 —— 快十几倍。
     """
     base = os.path.join(tmp, "t")
-    cmd = ["pdftoppm", "-png", "-r", str(TESS_DPI)]
+    cmd = ["pdftoppm", "-png", "-scale-to-x", str(PX_W), "-scale-to-y", "-1"]
     if first and last:
         cmd += ["-f", str(first), "-l", str(last)]
     try:
@@ -165,13 +172,16 @@ def tess_answers(pdf, tmp, first=0, last=0):
         except OSError:
             pass
     ans, synth = R.parse_answers("\n".join(txt))
-    return {} if synth else {k: v[0] for k, v in ans.items()}
+    # **synth 要往上传，不能在这儿丢掉**：题号按顺序编的结果并不是垃圾，
+    # 它要交给入库时那道「解析块数必须等于本卷最大题号」的闸去判 ——
+    # 对得上就是完全可用的整卷答案（A0 那几份 34 页大卷正是这种）。
+    return {k: v[0] for k, v in ans.items()}, synth
 
 
 def pages_of(pdf, tmp):
     try:
-        subprocess.run(["pdftoppm", "-png", "-r", str(DPI), pdf, os.path.join(tmp, "p")],
-                       capture_output=True, timeout=600)
+        subprocess.run(["pdftoppm", "-png", "-scale-to-x", str(PX_W_VIS), "-scale-to-y", "-1",
+                        pdf, os.path.join(tmp, "p")], capture_output=True, timeout=600)
     except Exception:
         return []
     return sorted(os.path.join(tmp, f) for f in os.listdir(tmp) if f.startswith("p") and
@@ -193,6 +203,10 @@ def main():
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(SCHEMA)
+    # 上一轮被 Ctrl-C / kill 掉时，finally 里的清理没跑到，/tmp 会留一堆几十 MB 的页图
+    # （实测攒到过 273MB）。开跑前先扫一遍自己的残留。
+    for d in glob.glob(os.path.join(tempfile.gettempdir(), "ocr-*")):
+        shutil.rmtree(d, ignore_errors=True)
 
     rows = con.execute(
         "SELECT p.file_id, p.name, d.stored_name FROM real_papers p "
@@ -214,10 +228,12 @@ def main():
         tmp = tempfile.mkdtemp(prefix="ocr-")
         try:
             # ① 先扫前两页找**答案速览表**：很多卷子卷首就有，一页顶全卷
-            got, how = tess_answers(path, tmp, 1, 2), "tesseract表"
+            got, synth = tess_answers(path, tmp, 1, 2)
+            how = "tesseract表"
             # ② 没有速览表才整卷识别（仍然是免费的 tesseract）
             if len(got) < LOW_YIELD:
-                got, how = tess_answers(path, tmp), "tesseract"
+                got, synth = tess_answers(path, tmp)
+                how = "tesseract"
             # ③ 还是太少才上视觉模型 —— 有的扫描件糊到 tesseract 认不动
             if len(got) < LOW_YIELD and not a.tess_only:
                 pngs = pages_of(path, tmp)
@@ -227,17 +243,19 @@ def main():
                         for f in as_completed({pool.submit(ocr_page, q): q for q in pngs}):
                             vis.update(f.result() or {})
                     if len(vis) > len(got):
-                        got, how = vis, V_MODEL
+                        got, synth, how = vis, False, V_MODEL
             # 状态沿用既有的 ok/empty，不新造 'ocr' —— report() 的人工复核清单只认
             # ('answers_bad','failed','empty','thin')，新值会让 OCR 只识出三五条的
             # 那种明显失败的卷子在报告里彻底隐身
             con.execute(
-                "INSERT OR REPLACE INTO real_ocr(file_id,name,n_item,ans_json,model) "
-                "VALUES(?,?,?,?,?)",
-                (r["file_id"], r["name"], len(got), json.dumps(got), how))
+                "INSERT OR REPLACE INTO real_ocr(file_id,name,synth,n_item,ans_json,model) "
+                "VALUES(?,?,?,?,?,?)",
+                (r["file_id"], r["name"], 1 if synth else 0, len(got),
+                 json.dumps(got), how))
             con.commit()
-            print("  [%d/%d] %-40s %3d 条答案 by %s （已跑 %.1f 分钟）"
-                  % (n, len(rows), r["name"][:40], len(got), how, (time.time() - t0) / 60))
+            print("  [%d/%d] %-38s %3d 条 by %-12s%s（已跑 %.1f 分钟）"
+                  % (n, len(rows), r["name"][:38], len(got), how,
+                     "，题号是编的、待核对" if synth else "", (time.time() - t0) / 60))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
