@@ -38,6 +38,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
+import realbank as R                                       # noqa: E402
+
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 CFG = json.load(open(os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json")),
                      encoding="utf-8"))
@@ -256,8 +258,11 @@ def _clean_tag(module, it, qtypes):
     自己发明「逻辑填空」「主旨概括题」，甚至把模块名（常识判断）当题型填进来。
     留着这些名字，前端「按题型刷」的清单里就会混进一堆对不上专项练的野名字。
     """
+    # 只认行测卷面真有的五个模块。qtypes 是从 DRILL_TYPES 建的、含「政治理论」
+    # （专项练有这个板块，行测卷面没有），不卡的话模型会把时政题判成政治理论，
+    # 回填进 real_questions.module 后，按模块刷的清单里会冒出一个卷面上不存在的桶。
     mod = (module or (it.get("module") or "").strip())
-    if mod not in qtypes:
+    if mod not in R.MODULES:
         mod = module or ""
     qt = (it.get("qtype") or "").strip()
     if qt not in qtypes.get(mod, []):

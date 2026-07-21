@@ -5,6 +5,12 @@ __pycache__/
 
 # 运行时生成（含个人数据 / 密码，切勿上传）
 app.db
+# SQLite WAL/SHM：**必须一起忽略**。它们是尚未合并回主库的最近写入页，
+# 内容跨全部业务表（users/notes/ai_chats…），而这个仓库是公开的 —— 提交上去等于
+# 把一份用户数据快照推进公开历史。只写 app.db 的话 `git add -A` 照样会把它俩扫进来。
+app.db-wal
+app.db-shm
+app.db-journal
 config.json
 
 # 导出/临时文件

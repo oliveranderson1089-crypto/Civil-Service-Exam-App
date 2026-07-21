@@ -367,6 +367,7 @@ def init_db():
             name TEXT, folder TEXT, ext TEXT,
             exam TEXT, year INTEGER, season TEXT, paper TEXT, kind TEXT,
             pkey TEXT,                        -- 卷子身份（规范化文件名+卷别令牌）
+            ocr_json TEXT,                    -- 扫描件 OCR 出来的 {题号:答案}
             role TEXT, n_item INTEGER DEFAULT 0,
             answers_ok INTEGER DEFAULT 1,     -- 0 = 答案被判定错位，出题时屏蔽
             status TEXT, note TEXT,
@@ -375,7 +376,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS real_raw(
             id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id INTEGER, seq INTEGER,
             module TEXT, stem TEXT, options TEXT, answer TEXT, explain TEXT,
-            qhash TEXT, ohash TEXT, qid INTEGER,
+            qhash TEXT, ohash TEXT, fighash TEXT DEFAULT '', qid INTEGER,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_raw_paper ON real_raw(paper_id);
@@ -386,7 +387,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS real_questions(
             id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT, qtype TEXT,
             stem TEXT, options TEXT, answer TEXT, explain TEXT,
-            qhash TEXT, ohash TEXT, sources TEXT, n_src INTEGER DEFAULT 1,
+            qhash TEXT, ohash TEXT, fighash TEXT DEFAULT '', dkey TEXT,
+            sources TEXT, n_src INTEGER DEFAULT 1,
             year_min INTEGER, year_max INTEGER,
             has_answer INTEGER DEFAULT 0, needs_asset INTEGER DEFAULT 0,
             created_at TEXT DEFAULT (datetime('now','localtime'))
@@ -405,6 +407,16 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_rex_agree ON real_explains(agree);
+        -- 真题里的图（图形推理的图就是题本身）。/api/real/quiz 会查它，
+        -- 只由 ingest_figs.py 建的话，没跑过提图脚本的新库上就查不到表。
+        CREATE TABLE IF NOT EXISTS real_figs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            qid INTEGER NOT NULL, ord INTEGER DEFAULT 0,
+            sha TEXT NOT NULL, ext TEXT,
+            big INTEGER DEFAULT 0,     -- 1 = 单张大图，多半是整题画在一起
+            UNIQUE(qid, sha)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rfig_q ON real_figs(qid);
         -- 小题训练（找点 + 写点）：归纳概括/综合分析/提出对策的共同难点都是「从材料里找要点」。
         -- 要能判「找漏了/找错了/找重了」，就必须存下**采分点 ↔ 材料原文的逐字依据**：
         -- points = [{point:概括后的要点, evidence:逐字来自材料的原句, score:分值}]

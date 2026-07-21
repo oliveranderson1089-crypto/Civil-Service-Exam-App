@@ -77,6 +77,7 @@ class TestCrawlNews:
     # 跑没跑过导入脚本的库结构就不一样 —— 最该盯的就是它
     ("ingest_real.py", "real_questions"),
     ("gen_real_explain.py", "real_explains"),
+    ("ingest_figs.py", "real_figs"),
 ])
 def test_脚本建表不超出app建表(src, table, tmp_path):
     """同一张表两处定义，app.py 那份必须是超集（少的列由 init_db 的 ALTER 补上）。"""

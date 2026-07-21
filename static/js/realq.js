@@ -118,6 +118,9 @@ function rqRender() {
       ${it.qtype ? `<span class="rq-tag">${esc(it.qtype)}</span>` : ''}
       <span class="rq-tag src">${src.year || ''} ${esc(src.exam || '')}${src.paper ? '·' + esc(src.paper) : ''}</span>
     </div>`;
+  // 资料分析：材料排在题干**上面**（考场上也是先给材料再问）
+  $('#rq-mat').innerHTML = it.material
+    ? `<div class="rq-mat-t">给定资料</div><div class="rq-mat-b">${esc(it.material)}</div>` : '';
   $('#rq-stem').textContent = it.stem;
   // 图形推理的题，图就是题本身 —— 题干只是一句「选择最合适的一个填入问号处」
   $('#rq-figs').innerHTML = (it.figs || []).map(f =>
@@ -178,6 +181,8 @@ async function rqFinish() {
     $('#rq-head').innerHTML = '';
     $('#rq-stem').textContent = '';
     $('#rq-opts').innerHTML = '';
+    $('#rq-figs').innerHTML = '';
+    $('#rq-mat').innerHTML = '';   // 新增容器别漏了清理，否则上一题的图会挂在成绩上方
     $('#rq-next').classList.add('hidden');
     $('#rq-quit').classList.add('hidden');
     $('#rq-exp').innerHTML = `<div class="rq-done">
@@ -192,15 +197,19 @@ async function rqFinish() {
 
 /* 模考交卷后的逐题回顾：模考过程中一直没给答案，全部答案和解析都在这儿一次性给。 */
 function rqReviewHtml(results) {
-  const byId = {};
-  rqItems.forEach(it => { byId[it.id] = it; });
+  const byId = {}, noById = {};
+  // 题号要用**卷面上的位置**，不能用结果数组下标：results 只含作答过的题，
+  // 130 道的模考里只答了第 40/55/77 三道，按下标就显示成「第1/2/3题」，回原卷根本找不到
+  rqItems.forEach((it, k) => { byId[it.id] = it; noById[it.id] = k + 1; });
   return `<div class="rq-review"><div class="rq-sec">逐题回顾</div>${
-    (results || []).map((r, i) => {
+    (results || []).map((r) => {
       const it = byId[r.id] || {};
       return `<div class="rq-rv${r.correct ? '' : ' bad'}">
-        <div class="rq-rv-h"><b>第 ${i + 1} 题</b>
+        <div class="rq-rv-h"><b>第 ${noById[r.id] || '?'} 题</b>
           <span>${r.correct ? '✓ 对' : `✗ 你选 ${esc(r.your || '未答')}，正确 ${esc(r.answer)}`}</span></div>
         <div class="rq-rv-q">${esc((it.stem || '').slice(0, 120))}</div>
+        ${(r.figs || []).map(f =>
+    `<img class="rq-rv-fig" src="/api/real/fig/${encodeURIComponent(f)}" alt="题目图" loading="lazy">`).join('')}
         ${r.correct ? '' : explainHtml({ explain: r.explain })}
       </div>`;
     }).join('')}</div>`;

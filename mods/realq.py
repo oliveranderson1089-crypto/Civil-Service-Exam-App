@@ -15,6 +15,7 @@
 import json
 import os
 import re
+import sqlite3
 
 from flask import Blueprint, abort, jsonify, request, send_file
 
@@ -56,8 +57,11 @@ def _figs_of(db, qids):
                 "SELECT qid, sha, ext FROM real_figs WHERE qid IN (%s) ORDER BY qid, ord"
                 % ",".join("?" * len(qids)), list(qids)):
             out.setdefault(f["qid"], []).append(f["sha"] + f["ext"])
-    except Exception:
-        pass                       # 还没跑过提图脚本
+    except sqlite3.OperationalError as e:
+        # 只放过「表还没建」这一种（没跑过提图脚本的库）。裸 except 会把 JSON 损坏、
+        # 磁盘错误、SQL 写错一起吞掉，表现是「图突然全没了」而日志里一个字都没有。
+        if "no such table" not in str(e):
+            raise
     return out
 
 
@@ -65,6 +69,9 @@ def _pub(r, exam=False, figs=None):
     # qtype 优先用规则判出来的；规则判不出的那 44%，用 AI 顺手判的那个补上
     d = {"id": r["id"], "module": r["module"] or "",
          "qtype": (r["qtype"] or "").strip() or (r["ai_qtype"] or "").strip(),
+         # 资料分析的题干本身没信息量（「2019 年该省 GDP 同比增长约：」），
+         # 真正的题在材料里 —— 材料和表格图都得给，不然这道题没法做
+         "material": (r["material"] or "") if "material" in r.keys() else "",
          "stem": r["stem"], "options": json.loads(r["options"]),
          "figs": (figs or {}).get(r["id"], []),
          "sources": json.loads(r["sources"] or "[]")[:3]}
@@ -217,6 +224,7 @@ def real_done():
         "%s WHERE %s AND q.id IN (%s)" % (_JOIN, SERVABLE, ",".join("?" * len(qids))),
         qids)}
 
+    figs = _figs_of(db, list(rows))
     res, ok_n, wrong_ids = [], 0, []
     for qid_s, choice in answers.items():
         if not str(qid_s).lstrip("-").isdigit():
@@ -245,6 +253,9 @@ def real_done():
         if not ok:
             wrong_ids.append(r["id"])
         res.append({"id": r["id"], "your": your, "answer": right, "correct": ok,
+                    # 图要带上：模考交卷后的逐题回顾里，图形推理题没有图就只剩一句
+                    # 「选择最合适的一个填入问号处」，正是这类题最需要对着图看解析
+                    "figs": figs.get(r["id"], []),
                     "explain": _explain_of(r)})
 
     added = _to_wrongq(db, [rows[i] for i in wrong_ids if i in rows])
@@ -277,8 +288,10 @@ def _to_wrongq(db, rows):
 @bp.get("/api/real/fig/<name>")
 def real_fig(name):
     """题目里的图。文件名是内容 sha256（提图时按内容存的），所以不用带鉴权参数；
-       但仍要**挡住路径穿越** —— 名字里只允许十六进制和一个扩展名。"""
-    if not re.fullmatch(r"[0-9a-f]{8,64}\.(png|jpe?g|gif|bmp|emf|wmf)", name or ""):
+       但仍要**挡住路径穿越** —— 名字里只允许十六进制和一个扩展名。
+       白名单里没有 emf/wmf：浏览器渲染不了这两种 Windows 图元格式，
+       放行只会显示成裂图；提图阶段已经把它们转成 png 了。"""
+    if not re.fullmatch(r"[0-9a-f]{8,64}\.(png|jpe?g|gif|bmp)", name or ""):
         abort(404)
     p = os.path.join(UPLOADS, "realfig", name)
     if not os.path.exists(p):

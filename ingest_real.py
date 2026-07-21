@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS real_raw(
     paper_id INTEGER, seq INTEGER,
     module TEXT, stem TEXT, options TEXT, answer TEXT, explain TEXT,
     qhash TEXT, ohash TEXT,
+    fighash TEXT DEFAULT '',         -- 这道题配的图的指纹（图形推理靠它才分得开）
     qid INTEGER,                     -- 去重后归到哪条 real_questions
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
@@ -77,7 +78,8 @@ CREATE TABLE IF NOT EXISTS real_questions(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     module TEXT, qtype TEXT,
     stem TEXT, options TEXT, answer TEXT, explain TEXT,
-    qhash TEXT, ohash TEXT,
+    qhash TEXT, ohash TEXT, fighash TEXT DEFAULT '',
+    dkey TEXT,                       -- 判重键本身：内容没变就靠它把 id 认回来
     sources TEXT,                    -- JSON：这道题在哪些卷子里出现过（去重时合并进来）
     n_src INTEGER DEFAULT 1,
     year_min INTEGER, year_max INTEGER,
@@ -94,7 +96,11 @@ CREATE INDEX IF NOT EXISTS idx_rq_hash ON real_questions(qhash, ohash);
 # real_papers 是长期表（real_raw.paper_id 指着它），不能像 real_questions 那样重建，
 # 后加的列只能补 —— CREATE TABLE IF NOT EXISTS 对已存在的表什么都不做。
 _ADDCOL = [("real_papers", "answers_ok", "INTEGER DEFAULT 1"),
-           ("real_papers", "pkey", "TEXT")]
+           ("real_papers", "pkey", "TEXT"),
+           ("real_raw", "fighash", "TEXT DEFAULT ''"),
+           ("real_questions", "fighash", "TEXT DEFAULT ''"),
+           ("real_questions", "dkey", "TEXT"),
+           ("real_papers", "ocr_json", "TEXT")]
 
 
 def migrate(con):
@@ -144,6 +150,49 @@ def scan_files(con, exts):
             continue
         out.append((dict(r), meta))
     return out
+
+
+def _fig_hashes(path, text, tmp):
+    """{卷面题号: 该题所有图的内容指纹}。图落在哪一段，那一段之前最近的题号就是它的题。
+
+    题号识别**必须复用 realbank._Q_HEAD**：real_raw.seq 就是它切出来的，
+    这里另写一个正则的话，两边对「哪行算题号」的判断会不一致，图就挂到错的题上
+    （这类「两个解析器必须对齐」的错位，这个项目已经栽过两次）。
+    """
+    if path.lower().endswith(".doc"):
+        try:
+            path = R.doc_to_docx(path, tmp)
+        except Exception:
+            return {}
+    figs = R.docx_figures(path)
+    if not figs:
+        return {}
+    lines = text.split("\n")
+    heads = [(i, int(m.group(1))) for i, ln in enumerate(lines)
+             for m in [R._Q_HEAD.match(ln)] if m]
+    if not heads:
+        return {}
+    out = {}
+    for para, blob, _ext in figs:
+        prev = [seq for i, seq in heads if i <= para]
+        if prev:
+            out.setdefault(prev[-1], []).append(hashlib.sha256(blob).hexdigest()[:16])
+    return {seq: md5("|".join(sorted(v))) for seq, v in out.items()}
+
+
+def _ocr_answers(con, file_id):
+    """取 ocr_answers.py 识别好的扫描件答案。识别结果照样要过后面那两道对齐闸 ——
+       是 OCR 出来的不代表可以放宽，错位的答案比没有答案更糟。"""
+    try:
+        row = con.execute("SELECT ocr_json FROM real_papers WHERE file_id=?", (file_id,)).fetchone()
+    except sqlite3.Error:
+        return {}
+    if not row or not row["ocr_json"]:
+        return {}
+    try:
+        return {int(k): (v, "") for k, v in json.loads(row["ocr_json"]).items()}
+    except Exception:
+        return {}
 
 
 def _find_answer(answers, name, meta):
@@ -216,6 +265,10 @@ def extract_all(con, exts, force=False):
             continue
         try:
             a, synth = R.parse_answers(R.file_text(p, tmp))
+            if not a:
+                # 扫描件（pdftotext 出 0 字符）——用 ocr_answers.py 事先识别好的结果。
+                # OCR 很贵很慢，所以结果存在 real_papers.ocr_json 里，这里只管取用。
+                a, synth = _ocr_answers(con, r["id"]), False
         except Exception as e:
             _paper_row(con, r, meta, "a", 0, "failed", str(e)[:200])
             stats["fail"] += 1
@@ -245,7 +298,12 @@ def extract_all(con, exts, force=False):
             stats["fail"] += 1
             continue
         try:
-            qs = R.parse_paper(R.file_text(p, tmp))
+            text = R.file_text(p, tmp)
+            qs = R.parse_paper(text)
+            # 图形推理的题**题干和选项全都一样**（「从所给的四个选项中…」+「如上图所示」×4），
+            # 光靠文字判重会把几十道不同的题并成一条。所以在这里就把每道题配的图算成指纹，
+            # 让判重看得见图 —— 否则等到提图阶段再补救已经晚了（那时题已经并掉了）。
+            figs = _fig_hashes(p, text, tmp) if r["ext"] in (".docx", ".doc") else {}
         except Exception as e:
             _paper_row(con, r, meta, "q", 0, "failed", str(e)[:200])
             stats["fail"] += 1
@@ -262,11 +320,12 @@ def extract_all(con, exts, force=False):
         for q in qs:
             a = ans.get(q["seq"], ("", ""))
             con.execute(
-                "INSERT INTO real_raw(paper_id,seq,module,stem,options,answer,explain,qhash,ohash) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO real_raw(paper_id,seq,module,stem,options,answer,explain,"
+                "qhash,ohash,fighash) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (pid, q["seq"], q["module"], q["stem"],
                  json.dumps(q["options"], ensure_ascii=False), a[0], a[1],
-                 md5(R.qhash_text(q["stem"])), ohash_of(q["options"])))
+                 md5(R.qhash_text(q["stem"])), ohash_of(q["options"]),
+                 figs.get(q["seq"], "")))
         stats["paper"] += 1
         stats["q"] += len(qs)
         con.commit()
@@ -350,21 +409,45 @@ def dedup(con):
        转写差异。但要求选项**含实打实的汉字**（≥12 个）：图形题的选项是
        「①③④，②⑤⑥」这种符号串，不同题之间撞车是常事，按它合并必错。
     """
+    # 重建前先把「内容指纹 → 旧 id」记下来，**重建时按原 id 插回去**。
+    # real_questions 是推导表、每次 dedup 都重建，但 real_explains（几千条 AI 解析）、
+    # real_figs、real_attempts、review_state 全都拿 qid 指着它 —— 让 id 随重建乱跳的话，
+    # 每改一次判重规则，下游引用就全成孤儿。内容没变就沿用原来的号。
+    # 键必须是**判重键本身**，不能是 (qhash,ohash,fighash)：
+    # 「永不合并」那一类（通用题干/通用选项且没有图）用的是 raw<行号>，
+    # 多条行共享同一组 (q,o,fh)，用它当键会撞车、每次跑抢到 id 的行都不一样，
+    # 于是 dedup 就不幂等了（实测每跑一次都有几条解析变孤儿）。
+    keep = {}
+    try:
+        for r in con.execute("SELECT id, dkey FROM real_questions WHERE dkey IS NOT NULL"):
+            keep[r["dkey"]] = r["id"]
+    except sqlite3.Error:
+        pass
     con.execute("UPDATE real_raw SET qid=NULL")
     con.execute("DROP TABLE IF EXISTS real_questions")
     con.executescript(SCHEMA_Q)
     con.commit()
+    used = set()
 
-    # 先数一遍：哪些题干是「通用句式」（同一题干配过多种选项）
+    # 先数两遍，**两个方向都要数**：
+    #   · 通用题干：同一题干配过多种选项 → 题干区分不了题，不按题干合并
+    #   · 通用选项：同一组选项配过多种题干 → 选项区分不了题，不按选项合并
+    # 只数第一个方向会漏掉镜像情况，而且漏得很惨：图形推理的选项**全是「如上图所示」**，
+    # 于是「立体图形剖开」「饼图」「纸盒展开」「正方体堆叠」12 道完全不同的题
+    # 因为选项指纹相同被并成一条 —— 每道题各自只有一种选项组，谁也没被判成通用题干。
     generic = {r[0] for r in con.execute(
         "SELECT qhash FROM real_raw GROUP BY qhash HAVING COUNT(DISTINCT ohash) > 1")}
-    print("  通用题干（题干相同但实为不同题，不按题干合并）：%d 种" % len(generic))
+    generic_opts = {r[0] for r in con.execute(
+        "SELECT ohash FROM real_raw GROUP BY ohash HAVING COUNT(DISTINCT qhash) > 1")}
+    print("  通用题干 %d 种、通用选项组 %d 种（这两类都不能单独拿来判重）"
+          % (len(generic), len(generic_opts)))
 
     rows = con.execute(
         # answers_ok=0 的卷子（被判定题号错位）**只屏蔽答案、题目照常收**。
         # 屏蔽而不是把 real_raw 改掉：那一层是「原样提取、一条不落」的底稿，
         # 改坏了就再也调不了阈值、也没法复查误判，只能整条管线重跑。
         "SELECT rr.id, rr.paper_id, rr.seq, rr.module, rr.stem, rr.options, rr.qhash, rr.ohash, "
+        "       COALESCE(rr.fighash,'') fighash, "
         "       CASE WHEN p.answers_ok=0 THEN '' ELSE rr.answer END AS answer, "
         "       CASE WHEN p.answers_ok=0 THEN '' ELSE rr.explain END AS explain, "
         "       p.exam, p.year, p.season, p.paper, p.name AS pname "
@@ -373,14 +456,35 @@ def dedup(con):
         "ORDER BY (answer<>'') DESC, p.year DESC, rr.id").fetchall()
 
     by_qo, by_q, by_o, merged = {}, {}, {}, 0
+    by_fig = {}
     conflicts = []
     for r in rows:
         opts = json.loads(r["options"])
-        qo = r["qhash"] + r["ohash"]
+        # 图指纹进判重键：图形推理的题干和选项全都一样，**只有图不一样**。
+        # 不带图的话，25 道不同的图形题会被并成一条，然后 25 份卷子的图全堆到它头上，
+        # 答案也只属于其中一道 —— 那道题就废了（实测 qid=271 就是这么来的）。
+        fh = r["fighash"] or ""
+        # 通用题干（题干和选项都区分不出题目）**又没提到图** ⇒ 我们手上根本没有任何
+        # 能区分它们的信息。这时合并等于凭空断言「这几道是同一题」，造出来的是缝合怪：
+        # 答案只属于其中一道、图会堆一堆。宁可各留各的（反正 needs_asset=1 不会发出去），
+        # 将来提到图了还能各自挂对。
+        if (r["qhash"] in generic or r["ohash"] in generic_opts) and not fh:
+            qo = "raw%d" % r["id"]
+        else:
+            qo = r["qhash"] + r["ohash"] + fh
         qid = by_qo.get(qo)
-        if not qid and r["qhash"] not in generic:
+        # 题干/选项相同但**图不同** ⇒ 铁定不是同一道题，后面两条模糊路一律不走
+        # 用「(题干,选项) → 见过哪些图指纹」的索引判，别遍历整个集合（那是 O(n²)，10 万次起）
+        seen_figs = by_fig.get((r["qhash"], r["ohash"]))
+        fig_differs = bool(fh and seen_figs and fh not in seen_figs)
+        if not qid and not fig_differs and r["qhash"] not in generic:
             qid = by_q.get(r["qhash"])
-        if not qid and cjk_len("".join(opts)) >= 12:
+        # ohash-only 这条路是用来兜「题干转写有出入、选项一字不差」的，
+        # 对**通用题干**毫无意义：它的题干本来就一模一样，选项也是通用的
+        # （图形题四个选项全是「如上图所示」，20 个汉字轻松过阈值），
+        # 于是这条路会把上面刚按图分开的题又原样并回去。
+        if not qid and not fig_differs and r["qhash"] not in generic \
+                and r["ohash"] not in generic_opts and cjk_len("".join(opts)) >= 12:
             qid = by_o.get(r["ohash"])
         src = {"exam": r["exam"], "year": r["year"], "paper": r["paper"],
                "season": r["season"], "seq": r["seq"], "file": r["pname"]}
@@ -405,18 +509,24 @@ def dedup(con):
                         (json.dumps(srcs, ensure_ascii=False), len(srcs), ans, ex,
                          1 if ans else 0, min(yrs or [0]), max(yrs or [0]), qid))
         else:
+            # 内容没变就用回原来的 id（见上面 keep 的注释）
+            old = keep.get(qo)
+            qid = old if (old and old not in used) else None
             cur = con.execute(
-                "INSERT INTO real_questions(module,qtype,stem,options,answer,explain,qhash,ohash,"
-                "sources,n_src,year_min,year_max,has_answer,needs_asset) "
-                "VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,?)",
-                (r["module"], R.classify_qtype(r["module"], r["stem"], json.loads(r["options"])),
+                "INSERT INTO real_questions(id,module,qtype,stem,options,answer,explain,"
+                "qhash,ohash,fighash,dkey,sources,n_src,year_min,year_max,has_answer,needs_asset) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)",
+                (qid,
+                 r["module"], R.classify_qtype(r["module"], r["stem"], json.loads(r["options"])),
                  r["stem"], r["options"], r["answer"], r["explain"],
-                 r["qhash"], r["ohash"],
+                 r["qhash"], r["ohash"], fh, qo,
                  json.dumps([src], ensure_ascii=False), r["year"], r["year"],
                  1 if r["answer"] else 0,
                  needs_asset(r["stem"], r["qhash"] in generic, r["module"])))
-            qid = cur.lastrowid
+            qid = qid or cur.lastrowid
+            used.add(qid)
             by_qo[qo] = qid
+            by_fig.setdefault((r["qhash"], r["ohash"]), set()).add(fh)
             by_q.setdefault(r["qhash"], qid)
             by_o.setdefault(r["ohash"], qid)
         con.execute("UPDATE real_raw SET qid=? WHERE id=?", (qid, r["id"]))

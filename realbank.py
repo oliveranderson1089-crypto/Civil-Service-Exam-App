@@ -27,7 +27,12 @@ _KANGXI = {c: unicodedata.normalize("NFKC", c)
            if unicodedata.normalize("NFKC", c) != c and len(unicodedata.normalize("NFKC", c)) == 1}
 _KANGXI_TAB = str.maketrans(_KANGXI)
 
-# 行测五大模块的节标题。认不出分节的卷子，题目的 module 就留空 —— 宁可空着，
+# 行测卷面**真实存在的五个模块**。别和 drill.py 的 DRILL_TYPES 混：那里还有一个
+# 「政治理论」板块（专项练自己分的），行测卷面上没有这个分节 —— 让模型判模块时
+# 必须对着这份白名单卡，否则时政题会被判成「政治理论」，回填进 real_questions.module
+# 之后，按模块刷的清单里就会冒出一个卷面上不存在的桶。
+MODULES = ["常识判断", "言语理解与表达", "数量关系", "判断推理", "资料分析"]
+# 认不出分节的卷子，题目的 module 就留空 —— 宁可空着，
 # 也不猜：猜错了整块题的模块归属都是错的，比没有归类更难查。
 _MOD = r"(常识判断|言语理解(?:与表达)?|数量关系|判断推理|资料分析)"
 # 分节标题二十年里有三种写法，都得认，不然模块归属全是空的：
@@ -77,6 +82,10 @@ _REL = re.compile(r'Id="(rId\d+)"[^>]*Target="([^"]+)"')
 def docx_figures(path):
     """返回 [(段落序号, 图片字节, 扩展名)]，段落序号和 docx_text 切出来的行号对得上。
 
+    **不在这儿按体积过滤**：图形推理的选项常常是极简线条图，压完几百字节很正常，
+    按体积一刀切会切出「题干图在、D 选项图没了」的半截题，而调用方还不知道少了图。
+    要滤请调用方自己滤，并且滤了要记一笔。
+
     两边必须用**同一套段落切分**（都以 </w:p> 为界），否则图和题对不上号 ——
     这类「两个列表用下标关联」的地方是错位事故的高发区，所以这里直接复用同一个正则。
     """
@@ -102,15 +111,23 @@ def docx_figures(path):
     return out
 
 
-def doc_text(path, tmpdir):
-    """老的二进制 .doc：交给 libreoffice 转成 docx。国考 2000-2023 有 25 份是这个格式。"""
+def doc_to_docx(path, tmpdir):
+    """老的二进制 .doc 转成 docx，返回转换后的路径。国考 2000-2023 有 25 份是这个格式。
+
+    单独暴露出来是因为**提图也要用它**：提图只需要转换产物，不需要文字。
+    原先提图那边靠调 doc_text() 触发转换、再把返回的文字扔掉，等于把整篇文字白抽一遍。
+    """
     r = subprocess.run(["libreoffice", "--headless", "--convert-to", "docx",
                         "--outdir", tmpdir, path],
                        capture_output=True, timeout=180)
     out = os.path.join(tmpdir, os.path.splitext(os.path.basename(path))[0] + ".docx")
     if not os.path.exists(out):
         raise RuntimeError("libreoffice 转换失败：%s" % r.stderr.decode("utf-8", "ignore")[:200])
-    return docx_text(out)
+    return out
+
+
+def doc_text(path, tmpdir):
+    return docx_text(doc_to_docx(path, tmpdir))
 
 
 def pdf_text(path):
