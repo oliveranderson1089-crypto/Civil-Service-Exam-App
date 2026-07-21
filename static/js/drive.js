@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IS_DESKTOP, KB, api, appConfirm, appPrompt, esc,
+/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, esc,
    lsDel, lsGet, lsSet, openViewerUrl, push, toast */
 
 /* ================= 云盘 ================= */
@@ -485,7 +485,12 @@ $('#dv-upfile').addEventListener('change', e => {
 /* 桌面壳（WebKitGTK）不认 <input webkitdirectory> —— 那是 Chromium 的能力，
    在壳里点「传文件夹」只会弹出选**文件**的框。所以桌面版改走原生的选目录对话框，
    由壳把整棵树摊平、带相对路径送回 __onPickedFiles。 */
+const DV_PICKDIR_VER = 4.8;        // 壳从这个版本起才认 pickdir
 function dvPickFolderNative() {
+  /* 老壳收到不认识的消息是**静默丢弃**的 —— 那样点「传文件夹」就是一点反应都没有。
+     所以先看版本：够新才走原生选目录，不够新就返回 false，让它退回 WebKit 自己的
+     文件选择框（只能选文件，但至少看得见东西弹出来，不像坏了）。 */
+  if (!(parseFloat(DESKTOP_VER || '0') >= DV_PICKDIR_VER)) return false;
   try {
     window.webkit.messageHandlers.gk.postMessage(JSON.stringify({ a: 'pickdir' }));
     return true;

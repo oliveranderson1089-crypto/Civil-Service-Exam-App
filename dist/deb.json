@@ -1,5 +1,5 @@
 {
-  "version_code": 47,
-  "version_name": "4.7",
-  "notes": "桌面通知改 libnotify（修好不弹）；加系统托盘图标、✕收进托盘。"
+  "version_code": 48,
+  "version_name": "4.8",
+  "notes": "修好「传文件夹」没反应、拖文件夹没反应；新增从文件管理器复制文件后直接粘贴进云盘；读取大目录不再卡界面。"
 }
