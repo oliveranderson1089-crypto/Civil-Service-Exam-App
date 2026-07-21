@@ -349,6 +349,62 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_drrec ON drill_records(user_id, id DESC);
+        -- 真题作答流水：**每做一次留一条，绝不覆盖**。
+        -- 真题就那么几千道、刷完不会再有新的，所以「第二遍第三遍做得怎么样」才是重点；
+        -- 只存「最近一次对不对」的话，一道题从错到对的过程就丢了，也排不出该先刷哪些。
+        -- 排程本身复用全站的 review_state（kind='realq'），不另起一套遗忘曲线。
+        CREATE TABLE IF NOT EXISTS real_attempts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            qid INTEGER NOT NULL, choice TEXT, correct INTEGER, seconds REAL,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_rat_user ON real_attempts(user_id, qid);
+        -- 真题库三张表。**必须建在这儿**，哪怕内容全靠 ingest_real.py 灌：
+        -- /api/real/* 会直接查它们，没跑过导入脚本的新库上就是 500
+        -- （schema.py 开头那段警告说的 changkao_items.freq / news_items.board 就是这么崩的）。
+        CREATE TABLE IF NOT EXISTS real_papers(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, file_id INTEGER UNIQUE,
+            name TEXT, folder TEXT, ext TEXT,
+            exam TEXT, year INTEGER, season TEXT, paper TEXT, kind TEXT,
+            pkey TEXT,                        -- 卷子身份（规范化文件名+卷别令牌）
+            role TEXT, n_item INTEGER DEFAULT 0,
+            answers_ok INTEGER DEFAULT 1,     -- 0 = 答案被判定错位，出题时屏蔽
+            status TEXT, note TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS real_raw(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, paper_id INTEGER, seq INTEGER,
+            module TEXT, stem TEXT, options TEXT, answer TEXT, explain TEXT,
+            qhash TEXT, ohash TEXT, qid INTEGER,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_raw_paper ON real_raw(paper_id);
+        CREATE INDEX IF NOT EXISTS idx_raw_hash ON real_raw(qhash);
+        CREATE INDEX IF NOT EXISTS idx_raw_ohash ON real_raw(ohash);
+        -- 去重后的真题。qid 上**没有 UNIQUE**：图形推理那种通用题干天然会有很多条
+        -- 题干一模一样、内容却不同的题，判重靠 (qhash, ohash) 两个一起。
+        CREATE TABLE IF NOT EXISTS real_questions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT, qtype TEXT,
+            stem TEXT, options TEXT, answer TEXT, explain TEXT,
+            qhash TEXT, ohash TEXT, sources TEXT, n_src INTEGER DEFAULT 1,
+            year_min INTEGER, year_max INTEGER,
+            has_answer INTEGER DEFAULT 0, needs_asset INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_rq_mod ON real_questions(module, qtype);
+        CREATE INDEX IF NOT EXISTS idx_rq_year ON real_questions(year_max);
+        CREATE INDEX IF NOT EXISTS idx_rq_hash ON real_questions(qhash, ohash);
+        -- AI 补的答案与**结构化**解析（关键/步骤/错项/举一反三，前端按固定版式排）
+        CREATE TABLE IF NOT EXISTS real_explains(
+            qid INTEGER PRIMARY KEY, answer TEXT, src TEXT,
+            module TEXT DEFAULT '', qtype TEXT,
+            keypoint TEXT, steps TEXT, wrong TEXT, tip TEXT, model TEXT,
+            audit_ans TEXT DEFAULT '',
+            agree INTEGER DEFAULT 1,      -- 0 = 双模型答案不一致，不发给人做
+            flaw TEXT DEFAULT 'ok',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_rex_agree ON real_explains(agree);
         -- 小题训练（找点 + 写点）：归纳概括/综合分析/提出对策的共同难点都是「从材料里找要点」。
         -- 要能判「找漏了/找错了/找重了」，就必须存下**采分点 ↔ 材料原文的逐字依据**：
         -- points = [{point:概括后的要点, evidence:逐字来自材料的原句, score:分值}]

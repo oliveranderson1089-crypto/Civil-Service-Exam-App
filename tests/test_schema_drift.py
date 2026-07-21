@@ -70,6 +70,13 @@ class TestCrawlNews:
     ("crawl_news.py", "xiyu_items"),
     ("gen_changshi.py", "changshi_items"),
     ("build_classics.py", "classics"),
+    # 真题库：脚本先建、app 直接查 —— 正是 news_items.board 那类事故的形状
+    ("ingest_real.py", "real_papers"),
+    ("ingest_real.py", "real_raw"),
+    # real_questions 每次 dedup 都 DROP 重建，两份定义一旦漂移，
+    # 跑没跑过导入脚本的库结构就不一样 —— 最该盯的就是它
+    ("ingest_real.py", "real_questions"),
+    ("gen_real_explain.py", "real_explains"),
 ])
 def test_脚本建表不超出app建表(src, table, tmp_path):
     """同一张表两处定义，app.py 那份必须是超集（少的列由 init_db 的 ALTER 补上）。"""

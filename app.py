@@ -63,6 +63,7 @@ from mods.pdfexport import bp as pdfexport_bp
 from mods.plan import bp as plan_bp
 from mods.policydocs import bp as policydocs_bp
 from mods.quiz import bp as quiz_bp
+from mods.realq import bp as realq_bp
 from mods.review import bp as review_bp
 from mods.search import bp as search_bp
 from mods.shenlun import bp as shenlun_bp
@@ -131,6 +132,7 @@ app.register_blueprint(pdfexport_bp)
 app.register_blueprint(plan_bp)
 app.register_blueprint(policydocs_bp)
 app.register_blueprint(quiz_bp)
+app.register_blueprint(realq_bp)
 app.register_blueprint(review_bp)
 app.register_blueprint(search_bp)
 app.register_blueprint(shenlun_bp)
