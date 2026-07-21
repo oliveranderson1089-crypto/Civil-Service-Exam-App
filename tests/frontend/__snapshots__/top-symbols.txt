@@ -21,6 +21,7 @@ DV_CHUNK_MIN
 DV_HASH_MAX
 DV_PARALLEL
 DV_PICKDIR_VER
+DV_SORTS
 EXT_ICON
 FEATURES
 FILE_ICON
@@ -281,7 +282,9 @@ dtSubmitted
 dtTable
 dvBatchBar
 dvClip
+dvDownload
 dvFolder
+dvGo
 dvGrid
 dvIcon
 dvInTrash
@@ -302,6 +305,7 @@ dvSetClip
 dvSha256
 dvShare
 dvSort
+dvSortLabel
 dvTrashRow
 dvUpKey
 dvUpload

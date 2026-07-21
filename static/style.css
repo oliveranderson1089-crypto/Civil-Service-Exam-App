@@ -3169,9 +3169,11 @@ body.dark .dv-item{background:#141b29;}
 /* 搜索 / 排序 / 多选批量 */
 .dv-search{border:1px solid var(--line);border-radius:16px;padding:4px 12px;font-size:13px;
   background:#fff;color:inherit;min-width:130px;max-width:200px;}
-.dv-sort{border:1px solid var(--line);border-radius:16px;padding:4px 8px;font-size:13px;
-  background:#fff;color:inherit;}
-body.dark .dv-search,body.dark .dv-sort{background:#141b29;}
+.dv-sortbtn{display:inline-flex;align-items:center;gap:4px;}
+body.dark .dv-search{background:#141b29;}
+/* 一行只留一个 ⋮：图标铺一排在手机上根本点不准，也把文件名挤没了 */
+.dv-more{font-size:19px;line-height:1;padding:2px 8px;border-radius:8px;}
+.dv-more:hover{background:rgba(74,163,223,.14);}
 .dv-pick{flex:none;width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
 .dv-can{cursor:pointer;}
 .dv-can:hover{color:var(--blue);text-decoration:underline;}

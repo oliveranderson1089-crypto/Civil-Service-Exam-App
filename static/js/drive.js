@@ -7,8 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, copyText, esc,
-   lsDel, lsGet, lsSet, openViewerUrl, push, toast */
+/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, back, copyText, esc,
+   lsDel, lsGet, lsSet, openViewerUrl, push, stack, toast */
 
 /* ================= 云盘 ================= */
 let dvFolder = '';
@@ -35,28 +35,28 @@ function dvLeaveTrash() {          // 回收站是个独立视图，离开它得
 function openDrive() {
   dvFolder = ''; dvQuery = ''; $('#dv-search').value = '';
   dvLeaveTrash();                  // 不复位的话 loadDrive 会短路去 loadTrash：
-  push({ view: 'drive', title: '云盘' });   // 云盘打开是回收站，上传完也看不见文件
+  push({ view: 'drive', title: '云盘', folder: '' });   // 云盘打开是回收站，上传完也看不见文件
   loadDrive();
 }
 
 function dvRow(it) {
   const pick = `<input type="checkbox" class="dv-pick" data-dvpick="${it.id}">`;
-  const ren = `<button class="dv-act" data-dvren="${it.id}" title="重命名">✏️</button>`;
-  const del = `<button class="dv-del" data-dvdel="${it.id}" title="删除">🗑</button>`;
+  /* 一行只留一个 ⋮：原来铺 5~6 个小图标，手机上点不准，也把文件名挤得只剩半截。
+     所有操作都收进菜单（右键打开的是同一个，见 dvMenu）。 */
+  const more = `<button class="dv-act dv-more" data-dvmore="${it.id}" title="更多">⋮</button>`;
   if (it.is_dir) {
     // 搜索结果里的文件夹，路径要用它自己的 folder 拼，不能用当前目录
     const path = (it.folder ? it.folder + '/' : '') + it.name;
     return `<div class="dv-item dv-dir">${pick}
       <span class="dv-ic" data-dvopen="${esc(path)}">📁</span>
-      <span class="dv-name" data-dvopen="${esc(path)}">${esc(it.name)}</span>${ren}${del}</div>`;
+      <span class="dv-name" data-dvopen="${esc(path)}">${esc(it.name)}</span>
+      <span class="dv-meta">文件夹</span>${more}</div>`;
   }
   const where = (dvQuery && it.folder) ? ' · 📁 ' + esc(it.folder) : '';
   const name = it.viewable
     ? `<span class="dv-name dv-can" data-dvview="${it.id}" data-ext="${esc(it.ext || '')}">${esc(it.name)}</span>`
     : `<span class="dv-name">${esc(it.name)}</span>`;
-  const share = `<button class="dv-act" data-dvshare="${it.id}" title="分享链接">🔗</button>`;
-  const acts = `${ren}${share}<button class="dv-act" data-dvsend="${it.id}" title="发给好友">📤</button>
-    <a class="dv-act" href="/api/drive/${it.id}/download" title="下载">⬇</a>${del}`;
+  const acts = more;
   // 网格里图片直接出缩略图；onerror 时换回图标 —— 一张坏图不该在格子里留个破图标
   const face = (dvGrid && it.thumb)
     ? `<img class="dv-thumb" loading="lazy" src="/api/drive/${it.id}/thumb" alt=""
@@ -137,10 +137,34 @@ async function loadDrive() {
   } catch (e) { $('#dv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
 
+/* 进目录 = 往导航栈压一层，于是全局「返回」自然是退到**上一级目录**，
+   而不是一步跳回首页。回到栈里已有的层级（点面包屑）则出栈，别把栈越堆越高。 */
+function dvGo(folder) {
+  dvQuery = ''; $('#dv-search').value = ''; dvLeaveTrash();
+  push({ view: 'drive', title: folder ? folder.split('/').pop() : '云盘', folder });
+}
 $('#dv-crumb').addEventListener('click', e => {
   const a = e.target.closest('[data-dvcd]');
-  if (a) { dvFolder = a.dataset.dvcd; dvQuery = ''; $('#dv-search').value = ''; dvLeaveTrash(); loadDrive(); }
+  if (!a) return;
+  const want = a.dataset.dvcd;
+  // 面包屑是往回走：把栈弹到那一层，不再往上堆
+  let hops = 0;
+  for (let i = stack.length - 1; i > 0; i--) {
+    if (stack[i].view !== 'drive') break;
+    if ((stack[i].folder || '') === want) { for (let k = 0; k < hops; k++) back(); return; }
+    hops++;
+  }
+  dvGo(want);
 });
+/* 栈顶变成云盘这一层时（含被 back() 弹回来），按它记着的 folder 重新列目录。
+   shell.js 的 render() 只负责显示/隐藏视图，不会替各模块重新取数据。 */
+window.__dvShow = (st) => {
+  const want = st.folder || '';
+  if (dvFolder === want && !dvInTrash) return;    // 没变就别白跑一趟接口
+  dvFolder = want;
+  dvInTrash = false;
+  loadDrive();
+};
 $('#dv-list').addEventListener('click', async e => {
   const back = e.target.closest('[data-dvrestore]');
   if (back) {
@@ -163,7 +187,7 @@ $('#dv-list').addEventListener('click', async e => {
     return;
   }
   const dir = e.target.closest('[data-dvopen]');
-  if (dir) { dvFolder = dir.dataset.dvopen; dvQuery = ''; $('#dv-search').value = ''; loadDrive(); return; }
+  if (dir) { dvGo(dir.dataset.dvopen); return; }
   const view = e.target.closest('[data-dvview]');
   if (view) {                      // 预览走资料库那套查看器：md/txt 阅读模式、pdf/office 走 pdf.js
     const id = view.dataset.dvview;
@@ -171,18 +195,15 @@ $('#dv-list').addEventListener('click', async e => {
                   '/api/drive/' + id + '/download', '/api/drive/' + id + '/view?text=1');
     return;
   }
-  const ren = e.target.closest('[data-dvren]');
-  if (ren) { dvRename(+ren.dataset.dvren, ren.closest('.dv-item').querySelector('.dv-name').textContent); return; }
-  const del = e.target.closest('[data-dvdel]');
-  if (del) {
-    if (!(await appConfirm('删除这个？（文件夹会连里面一起删）'))) return;
-    try { await api('/api/drive/' + del.dataset.dvdel, { method: 'DELETE' }); loadDrive(); } catch (err) { toast(err.message, true); }
+  const mo = e.target.closest('[data-dvmore]');
+  if (mo) {                          // ⋮ 和右键打开的是同一个菜单
+    const item = mo.closest('.dv-item');
+    const r = mo.getBoundingClientRect();
+    dvMenu(r.right - 4, r.bottom + 4, +mo.dataset.dvmore,
+           (item.querySelector('.dv-name') || {}).textContent,
+           !!item.querySelector('[data-dvview]'), item.classList.contains('dv-dir'));
     return;
   }
-  const sh = e.target.closest('[data-dvshare]');
-  if (sh) { dvShare(+sh.dataset.dvshare); return; }
-  const send = e.target.closest('[data-dvsend]');
-  if (send) driveSend(+send.dataset.dvsend);
 });
 
 // 启动时让按钮反映记住的选择，否则明明是网格、按钮还写着「▦ 网格」
@@ -239,7 +260,26 @@ $('#dv-search').addEventListener('input', e => {
   const v = e.target.value.trim();
   dvSearchT = setTimeout(() => { dvQuery = v; loadDrive(); }, 300);   // 打字防抖，别每个字母打一次接口
 });
-$('#dv-sort').addEventListener('change', e => { dvSort = e.target.value; loadDrive(); });
+/* 排序用自己的弹层，不用原生 <select>：原生控件各系统长相不一、跟不了皮肤，
+   而这套弹层和右键菜单共用一份样式（.dv-menu）。 */
+const DV_SORTS = [['new', '最新在前'], ['old', '最早在前'], ['name', '按名称'],
+                  ['big', '从大到小'], ['small', '从小到大']];
+function dvSortLabel() {
+  const hit = DV_SORTS.find(x => x[0] === dvSort);
+  $('#dv-sort-label').textContent = hit ? hit[1] : DV_SORTS[0][1];
+}
+dvSortLabel();
+$('#dv-sort').onclick = e => {
+  e.stopPropagation();                     // 别让 document 上那个「点别处收起」立刻把它关掉
+  const el = $('#dv-menu');
+  el.innerHTML = DV_SORTS.map(([k, t]) =>
+    `<button data-dvsort="${k}"${k === dvSort ? ' class="on"' : ''}>${t}</button>`).join('');
+  el.dataset.id = ''; el.dataset.name = '';
+  el.classList.remove('hidden');
+  const r = $('#dv-sort').getBoundingClientRect();
+  el.style.left = Math.min(r.left, window.innerWidth - (el.offsetWidth || 150) - 8) + 'px';
+  el.style.top = (r.bottom + 4) + 'px';
+};
 
 /* ---- 重命名 / 移动 / 批量 ---- */
 async function dvRename(id, cur) {
@@ -330,10 +370,10 @@ function dvMenu(x, y, id, name, viewable, isDir) {
   const rows = [];
   if (id) {
     if (viewable) rows.push(['dvm-view', '👁 预览']);
-    rows.push(['dvm-copy', '📄 复制'], ['dvm-ren', '✏️ 重命名']);
-    if (!isDir) rows.push(['dvm-share', '🔗 分享链接']);
-    // 文件夹没有下载接口（/download 只认 is_dir=0），给了就是点出个 404
-    if (!isDir) rows.push(['dvm-dl', '⬇ 下载']);
+    rows.push(['dvm-share', '🔗 分享链接'], ['dvm-copy', '📄 复制'], ['dvm-ren', '✏️ 重命名']);
+    // 文件夹没有单文件下载（/download 只认 is_dir=0），给它的是整个打包成 zip
+    rows.push(isDir ? ['dvm-zip', '📦 打包下载'] : ['dvm-dl', '⬇ 下载']);
+    if (!isDir) rows.push(['dvm-send', '📤 发给好友']);
     rows.push(['dvm-del', '🗑 删除']);
   }
   rows.push(['dvm-paste', '📋 粘贴' + (dvClip.length ? '（' + dvClip.length + ' 项）' : '')]);
@@ -346,6 +386,13 @@ function dvMenu(x, y, id, name, viewable, isDir) {
   el.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
   el.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
 }
+/* 下载一律用隐藏的 <a download>，不改 location.href ——
+   万一后端回了错误页，改 location 会**导航**过去，单页应用当场被冲掉。 */
+function dvDownload(url, name) {
+  const a = document.createElement('a');
+  a.href = url; a.download = name || '';
+  document.body.appendChild(a); a.click(); a.remove();
+}
 const dvMenuHide = () => $('#dv-menu').classList.add('hidden');
 $('#view-drive').addEventListener('contextmenu', e => {
   if (dvInTrash) return;                     // 回收站里只有恢复/彻底删，不给这套
@@ -353,14 +400,16 @@ $('#view-drive').addEventListener('contextmenu', e => {
   if (e.target.closest('input, textarea, select')) return;
   e.preventDefault();
   const item = e.target.closest('.dv-item');
-  const ren = item && item.querySelector('[data-dvren]');
-  const view = item && item.querySelector('[data-dvview]');
-  dvMenu(e.clientX, e.clientY, ren ? ren.dataset.dvren : '',
-         item ? (item.querySelector('.dv-name') || {}).textContent : '', !!view,
+  const mo = item && item.querySelector('[data-dvmore]');   // id 挂在 ⋮ 上
+  dvMenu(e.clientX, e.clientY, mo ? mo.dataset.dvmore : '',
+         item ? (item.querySelector('.dv-name') || {}).textContent : '',
+         !!(item && item.querySelector('[data-dvview]')),
          !!(item && item.classList.contains('dv-dir')));
 });
 document.addEventListener('click', e => { if (!e.target.closest('#dv-menu')) dvMenuHide(); });
 $('#dv-menu').addEventListener('click', async e => {
+  const so = e.target.closest('[data-dvsort]');
+  if (so) { dvSort = so.dataset.dvsort; dvSortLabel(); dvMenuHide(); loadDrive(); return; }
   const b = e.target.closest('[data-dvm]');
   if (!b) return;
   const el = $('#dv-menu');
@@ -370,15 +419,11 @@ $('#dv-menu').addEventListener('click', async e => {
     case 'dvm-view': $(`[data-dvview="${id}"]`).click(); break;
     case 'dvm-copy': dvSetClip([id]); break;
     case 'dvm-share': dvShare(id); break;
+    case 'dvm-send': driveSend(id); break;
+    case 'dvm-zip': dvDownload('/api/drive/' + id + '/zip', name + '.zip'); break;
     case 'dvm-paste': dvPaste(); break;
     case 'dvm-ren': dvRename(id, name); break;
-    case 'dvm-dl': {
-      // 别用 location.href：真出了 404/500，浏览器会**导航**过去，单页应用当场被冲掉
-      const a = document.createElement('a');
-      a.href = '/api/drive/' + id + '/download'; a.download = name || '';
-      document.body.appendChild(a); a.click(); a.remove();
-      break;
-    }
+    case 'dvm-dl': dvDownload('/api/drive/' + id + '/download', name); break;
     case 'dvm-del':
       if (await appConfirm('删除这个？（会先进回收站）')) {
         try { await api('/api/drive/' + id, { method: 'DELETE' }); loadDrive(); }

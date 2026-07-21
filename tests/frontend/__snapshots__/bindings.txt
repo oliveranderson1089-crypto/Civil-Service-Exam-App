@@ -323,7 +323,7 @@ document @click
 #dv-grid .onclick
 #dv-share-list .onclick
 #dv-search @input
-#dv-sort @change
+#dv-sort .onclick
 #dv-bcancel .onclick
 #dv-bdel .onclick
 #dv-move .onclick

@@ -26,6 +26,8 @@ function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
   // 聊天双栏：移动端按栈顶 state.room 决定显示会话列表还是聊天窗（back 出栈即回列表）
+  // 云盘：栈顶记着当前在哪个目录，back() 弹回来时按它重列（逐级退，不是一步回首页）
+  if (st.view === 'drive' && window.__dvShow) window.__dvShow(st);
   if (st.view === 'chat') {
     const p2 = $('#chat-2pane');
     if (p2 && IS_MOBILE) p2.classList.toggle('show-room', !!st.room);

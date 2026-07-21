@@ -763,6 +763,11 @@ def init_db():
     # 表现是「恢复一个文件夹，把早先单独删掉的东西也一并捞了回来」。
     if "del_batch" not in _cols(con, "drive_files"):
         con.execute("ALTER TABLE drive_files ADD COLUMN del_batch TEXT")
+    # 分享链接可以加访问密码（存 hash，绝不存明文 —— 这张表里的东西是给外人用的）；
+    # is_dir 记下分享的是文件还是文件夹，文件夹走打包下载。
+    for col, decl in (("pw_hash", "TEXT"), ("is_dir", "INTEGER DEFAULT 0")):
+        if col not in _cols(con, "drive_shares"):
+            con.execute("ALTER TABLE drive_shares ADD COLUMN %s %s" % (col, decl))
     con.execute("CREATE INDEX IF NOT EXISTS idx_drive_del ON drive_files(owner_id, deleted_at)")
     # 外观定制：头像 / 应用内壁纸 / 登录页壁纸（存文件名，图片放 uploads/skin/<uid>/）
     for col in ("avatar", "wall_app", "wall_login"):

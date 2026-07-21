@@ -88,11 +88,78 @@ def test_不能分享别人的文件(auth_client):
     assert auth_client.post("/api/drive/999999/share", json={}).status_code == 404
 
 
-def test_文件夹不能分享(auth_client):
-    _up(auth_client, "里面.txt", "不能分享的夹子")
+def test_分享文件夹拿到的是打包好的zip(auth_client, flask_app):
+    """原来只给文件分享。契约改了：文件夹也能分享，对方拿到的是现打包的 zip。"""
+    import zipfile
+    _up(auth_client, "甲.txt", "分享夹/子层", "内容甲".encode())
+    _up(auth_client, "乙.txt", "分享夹", "内容乙".encode())
     top = [i for i in auth_client.get("/api/drive").get_json()["items"]
-           if i["name"] == "不能分享的夹子"][0]
-    assert auth_client.post("/api/drive/%d/share" % top["id"], json={}).status_code == 404
+           if i["name"] == "分享夹"][0]
+    d = auth_client.post("/api/drive/%d/share" % top["id"], json={}).get_json()
+    assert d["is_dir"] is True
+    r = flask_app.test_client().get(d["url"])          # 未登录
+    assert r.status_code == 200
+    assert r.headers["Content-Type"].startswith("application/zip")
+    names = zipfile.ZipFile(io.BytesIO(r.data)).namelist()
+    assert sorted(names) == ["分享夹/乙.txt", "分享夹/子层/甲.txt"], names
+
+
+def test_加了密码的链接要先输密码(auth_client, flask_app):
+    a = _up(auth_client, "机密.txt", "带密码", "只有知道密码的人能看".encode())
+    d = auth_client.post("/api/drive/%d/share" % a["id"],
+                         json={"password": "kouling8"}).get_json()
+    assert d["has_pw"] is True
+    anon = flask_app.test_client()
+    r = anon.get(d["url"])
+    assert r.status_code == 200 and "访问密码" in r.get_data(as_text=True), "该出密码表单"
+    assert b"\xe5\x8f\xaa\xe6\x9c\x89" not in r.data, "还没验密码就把内容吐出来了"
+    assert anon.post(d["url"], data={"pw": "猜错的"}).status_code == 401
+    r = anon.post(d["url"], data={"pw": "kouling8"})
+    assert r.status_code == 200 and r.data == "只有知道密码的人能看".encode()
+
+
+def test_密码不存明文(auth_client, flask_app):
+    a = _up(auth_client, "查库.txt", "带密码")
+    auth_client.post("/api/drive/%d/share" % a["id"], json={"password": "mingwen123"})
+    with flask_app.app_context():
+        from core import get_db
+        row = get_db().execute("SELECT pw_hash FROM drive_shares WHERE pw_hash IS NOT NULL "
+                               "ORDER BY id DESC LIMIT 1").fetchone()
+    assert "mingwen123" not in (row["pw_hash"] or ""), "密码存成明文了"
+
+
+def test_文件夹打包下载(auth_client):
+    import zipfile
+    _up(auth_client, "深.txt", "打包/里层", "深处内容".encode())
+    _up(auth_client, "浅.txt", "打包", "浅处内容".encode())
+    top = [i for i in auth_client.get("/api/drive").get_json()["items"]
+           if i["name"] == "打包"][0]
+    r = auth_client.get("/api/drive/%d/zip" % top["id"])
+    assert r.status_code == 200
+    z = zipfile.ZipFile(io.BytesIO(r.data))
+    assert sorted(z.namelist()) == ["打包/浅.txt", "打包/里层/深.txt"]
+    assert z.read("打包/里层/深.txt") == "深处内容".encode(), "打进去的内容不对"
+
+
+def test_空文件夹打包给明确提示而不是空zip(auth_client):
+    auth_client.post("/api/drive/folder", json={"name": "空夹", "parent": ""})
+    top = [i for i in auth_client.get("/api/drive").get_json()["items"]
+           if i["name"] == "空夹"][0]
+    r = auth_client.get("/api/drive/%d/zip" % top["id"])
+    assert r.status_code == 400 and "空的" in r.get_json()["error"]
+
+
+def test_打包超过上限会被拦下(auth_client, monkeypatch):
+    monkeypatch.setattr(social, "ZIP_MAX", 100)
+    _up(auth_client, "大.bin", "超限打包", b"x" * 4096)
+    top = [i for i in auth_client.get("/api/drive").get_json()["items"]
+           if i["name"] == "超限打包"][0]
+    assert auth_client.get("/api/drive/%d/zip" % top["id"]).status_code == 413
+
+
+def test_不是文件夹不能打包(auth_client):
+    a = _up(auth_client, "单文件.txt", "打包")
+    assert auth_client.get("/api/drive/%d/zip" % a["id"]).status_code == 404
 
 
 # ---- 缩略图 ----
@@ -151,3 +218,15 @@ def test_删文件时缩略图缓存一起清掉(auth_client):
     auth_client.delete("/api/drive/%d" % a["id"])
     auth_client.delete("/api/drive/trash/%d" % a["id"])
     assert not os.path.exists(cached), "缩略图缓存留在磁盘上，和之前那个 .pdf 泄漏一模一样"
+
+
+def test_打包下载不会在磁盘上留临时zip(auth_client):
+    """原来靠 resp.call_on_close 挂回调删临时文件，实测回调根本没触发 ——
+    每下一次就留一个几百 MB 的 .tmp_zip_。现在改成先 unlink 再发。"""
+    _up(auth_client, "留痕.txt", "查残留", b"x" * 2048)
+    top = [i for i in auth_client.get("/api/drive").get_json()["items"]
+           if i["name"] == "查残留"][0]
+    for _ in range(3):
+        assert auth_client.get("/api/drive/%d/zip" % top["id"]).status_code == 200
+    left = [f for f in os.listdir(social._drive_dir(1)) if f.startswith(".tmp_zip_")]
+    assert not left, "下了 3 次留下 %d 个临时 zip：%s" % (len(left), left)

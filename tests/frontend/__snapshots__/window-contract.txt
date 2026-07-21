@@ -1,5 +1,6 @@
 Reader
 __bmView
+__dvShow
 __hwNative
 __onDownloaded
 __onDragLeave

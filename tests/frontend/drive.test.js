@@ -388,3 +388,68 @@ test('dvShare：拿到链接后复制的是完整地址（发给别人要能直�
   assert.ok(copied[0].startsWith('http'), '复制的是相对路径，别人打不开：' + copied[0]);
   assert.ok(copied[0].endsWith('/s/tok123'));
 });
+
+/* ---- 一行一个 ⋮ / 排序弹层 / 返回逐级 ---- */
+
+test('dvRow：一行只留一个 ⋮，操作都收进菜单', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dvGrid = false');
+  const html = h.run('dvRow')({ id: 5, is_dir: false, name: 'a.pdf', ext: '.pdf', size: 1,
+                                viewable: true, thumb: false });
+  assert.match(html, /data-dvmore="5"/);
+  const btns = (html.match(/<button|<a /g) || []).length;
+  assert.ok(btns <= 2, '一行还铺着 ' + btns + ' 个按钮，手机上点不准也挤没文件名');
+});
+
+test('dvMenu：文件夹给「打包下载」，文件给「下载」', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const keys = (isDir) => {
+    h.run('dvMenu')(10, 10, 9, 'x', false, isDir);
+    return [...h.window.document.querySelectorAll('#dv-menu [data-dvm]')].map(b => b.dataset.dvm);
+  };
+  const dir = keys(true), file = keys(false);
+  assert.ok(dir.includes('dvm-zip') && !dir.includes('dvm-dl'), '文件夹给了单文件下载');
+  assert.ok(file.includes('dvm-dl') && !file.includes('dvm-zip'));
+  assert.ok(dir.includes('dvm-share'), '文件夹现在也能分享');
+  assert.ok(!dir.includes('dvm-send'), '文件夹发不了给好友（走的是单文件接口）');
+});
+
+test('排序：点按钮出自定义弹层，选中后回写标签', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const w = h.window;
+  assert.strictEqual(w.document.querySelector('select#dv-sort'), null, '还留着原生 select');
+  w.document.querySelector('#dv-sort').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  const opts = [...w.document.querySelectorAll('#dv-menu [data-dvsort]')].map(b => b.dataset.dvsort);
+  assert.deepStrictEqual(opts, ['new', 'old', 'name', 'big', 'small']);
+  h.run('dvSort = "big"; dvSortLabel()');
+  assert.strictEqual(w.document.querySelector('#dv-sort-label').textContent, '从大到小');
+});
+
+const settle = () => new Promise(r => setTimeout(r, 0)).then(() => new Promise(r => setTimeout(r, 0)));
+
+test('dvGo：进目录压一层栈，返回退到上一级而不是首页', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  stubFetch(h, [], () => ({ items: [], used: 0, quota: 100 }));
+  h.run('stack = [{view:"home"}]');
+  h.run('openDrive()');
+  h.run('dvGo("国考")');
+  h.run('dvGo("国考/真题")');
+  assert.strictEqual(h.run('stack.length'), 4, '进目录没压栈，返回会一步跳回首页');
+  h.run('back()');
+  assert.strictEqual(h.run('stack[stack.length-1].folder'), '国考', '返回该退到上一级目录');
+  h.run('back()');
+  assert.strictEqual(h.run('stack[stack.length-1].folder'), '');
+  h.run('back()');
+  assert.strictEqual(h.run('stack[stack.length-1].view'), 'home', '再返回才回首页');
+  await settle();          // loadDrive 是异步的，等它落地再让 t.after 关掉 jsdom
+});
+
+test('__dvShow：栈弹回来时按栈里记的目录重列', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  stubFetch(h, [], () => ({ items: [], used: 0, quota: 100 }));
+  h.run('dvFolder = "别处"; dvInTrash = true');
+  h.run('window.__dvShow({view:"drive", folder:"国考/真题"})');
+  assert.strictEqual(h.run('dvFolder'), '国考/真题');
+  assert.strictEqual(h.run('dvInTrash'), false, '从回收站按返回回来，该回到普通列表');
+  await settle();
+});

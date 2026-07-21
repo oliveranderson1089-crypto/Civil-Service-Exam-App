@@ -13,11 +13,15 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import threading
 import time
 import uuid
+import zipfile
 
 from flask import Blueprint, Response, jsonify, request, send_file
+
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from core import CFG, UPLOADS, get_db, log, uid, uname
 from mods.files import (IMAGE_EXT, INLINE_EXT, OFFICE_EXT, _cacheable,
@@ -172,7 +176,9 @@ def _drive_row(r):
     d["is_dir"] = bool(d.get("is_dir"))
     d["viewable"] = (not d["is_dir"]) and _viewable(d.get("ext"))
     # 网格视图据此决定「出缩略图还是出图标」，省得前端自己维护一份后缀表
-    d["thumb"] = (not d["is_dir"]) and (d.get("ext") or "").lower() in IMAGE_EXT
+    _e = (d.get("ext") or "").lower()
+    # 视频也出封面（取首帧，要 ffmpeg）；取不到时前端的 onerror 会换回图标
+    d["thumb"] = (not d["is_dir"]) and (_e in IMAGE_EXT or _e in MEDIA_EXT)
     return d
 
 
@@ -600,6 +606,93 @@ def drive_patch(fid):
     return jsonify({"ok": True, "name": name, "folder": folder})
 
 
+# ---- 文件夹打包下载 ----
+ZIP_MAX = int(CFG.get("drive_zip_max_mb", 2048)) * 1024 * 1024      # 打包总量上限
+
+
+def _folder_files(db, owner, path):
+    """一个文件夹底下的所有文件，返回 [(zip 里的相对路径, 磁盘路径, 大小)]。"""
+    rows = db.execute(
+        "SELECT folder, name, stored_name, size FROM drive_files WHERE owner_id=? AND is_dir=0 "
+        "AND (folder=? OR folder LIKE ? ESCAPE '\\') AND deleted_at IS NULL "
+        "AND stored_name IS NOT NULL AND stored_name<>''",
+        (owner,) + _subtree(path)).fetchall()
+    base = os.path.dirname(path)            # 让 zip 里的顶层就是这个文件夹本身
+    out = []
+    for r in rows:
+        rel = ((r["folder"] + "/" + r["name"]) if r["folder"] else r["name"])
+        if base:
+            rel = rel[len(base) + 1:]
+        out.append((rel, os.path.join(_drive_dir(owner), r["stored_name"]), r["size"] or 0))
+    return out
+
+
+def _zip_folder(db, owner, r):
+    """把一个文件夹打成 zip，返回临时文件路径；超限或空目录返回 (None, 错误响应)。
+
+    写到临时文件而不是全在内存里拼：一个几百 MB 的目录直接进内存，服务端会被一个
+    下载请求打垮。调用方负责用完删掉。
+    """
+    path = (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"]
+    items = _folder_files(db, owner, path)
+    if not items:
+        return None, (jsonify({"error": "这个文件夹是空的，没什么可打包"}), 400)
+    total = sum(n for _, _, n in items)
+    if total > ZIP_MAX:
+        return None, (jsonify({"error": "文件夹太大（%d MB），超过打包上限 %d MB"
+                               % (total // (1024 * 1024), ZIP_MAX // (1024 * 1024))}), 413)
+    tmp = os.path.join(_drive_dir(owner), ".tmp_zip_" + uuid.uuid4().hex)
+    try:
+        # ZIP_STORED 不压缩：云盘里多是 pdf/图片/视频，本来就压不动，白费 CPU
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+            for rel, src, _n in items:
+                if os.path.exists(src):
+                    z.write(src, rel)
+    except Exception:
+        log.debug("打包失败", exc_info=True)
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        return None, (jsonify({"error": "打包失败"}), 500)
+    return tmp, None
+
+
+def _send_temp(path, download_name):
+    """发一个临时文件，**先 unlink 再发**。
+
+    POSIX 下已经打开的 fd 在文件被 unlink 之后照样读得完，所以这样既能正常下发、
+    又保证磁盘一定回收 —— 哪怕进程中途崩了，内核也会在 fd 关闭时收走。
+
+    原来用 resp.call_on_close 挂回调，实测**回调没被触发**、每下载一次就留一个几百 MB
+    的 .tmp_zip_ 在磁盘上。「发完再删」这种依赖回调时机的写法不可靠，unlink 才是硬的。
+    """
+    size = os.path.getsize(path)
+    fp = open(path, "rb")
+    try:
+        os.remove(path)
+    except Exception:
+        log.debug("临时 zip 没删掉", exc_info=True)
+    resp = _no_script(send_file(fp, as_attachment=True, download_name=download_name,
+                                mimetype="application/zip"))
+    resp.headers["Content-Length"] = str(size)   # 文件对象拿不到大小，得自己带上
+    return resp
+
+
+@bp.get("/api/drive/<int:fid>/zip")
+def drive_zip(fid):
+    """整个文件夹打包下载。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=1 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "文件夹不存在"}), 404
+    tmp, err = _zip_folder(db, uid(), r)
+    if err:
+        return err
+    return _send_temp(tmp, r["name"] + ".zip")
+
+
 # ---- 缩略图（网格视图用）----
 THUMB_PX = 320
 
@@ -608,8 +701,23 @@ def _thumb_path(owner, stored):
     return os.path.join(_drive_dir(owner), os.path.splitext(stored)[0] + ".thumb.jpg")
 
 
+def _video_frame(src, dst):
+    """取视频首帧当封面。**没装 ffmpeg 就返回 False**，调用方退回图标 —— 缺个可选依赖
+    不该让整个网格视图报错。装了 ffmpeg 之后不用改代码，重启即生效。"""
+    try:
+        subprocess.run(["ffmpeg", "-y", "-ss", "1", "-i", src, "-frames:v", "1",
+                        "-vf", "scale=%d:-1" % THUMB_PX, "-f", "image2", dst],
+                       timeout=30, check=True, capture_output=True)
+        return os.path.exists(dst) and os.path.getsize(dst) > 0
+    except Exception:
+        log.debug("取视频首帧失败（没装 ffmpeg 就是正常的）", exc_info=True)
+        return False
+
+
 def _make_thumb(src, dst):
     """生成缩略图。失败返回 False —— 调用方退回图标，不要让列表因为一张坏图整个崩掉。"""
+    if os.path.splitext(src)[1].lower() in MEDIA_EXT:
+        return _video_frame(src, dst)
     try:
         from PIL import Image, ImageOps
         try:                                    # iPhone 的 HEIC
@@ -639,7 +747,8 @@ def drive_thumb(fid):
     db = get_db()
     r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
                    "AND deleted_at IS NULL", (fid, uid())).fetchone()
-    if not r or (r["ext"] or "").lower() not in IMAGE_EXT:
+    ext = (r["ext"] or "").lower() if r else ""
+    if not r or not (ext in IMAGE_EXT or ext in MEDIA_EXT):
         return jsonify({"error": "没有缩略图"}), 404
     src = os.path.join(_drive_dir(uid()), r["stored_name"] or "")
     if not os.path.exists(src):
@@ -658,6 +767,7 @@ SHARE_DAYS = int(CFG.get("drive_share_days", 7))
 def _share_row(r):
     return {"id": r["id"], "token": r["token"], "file_id": r["file_id"],
             "name": r["name"], "size": r["size"], "hits": r["hits"],
+            "is_dir": bool(r["is_dir"]), "has_pw": bool(r["pw_hash"]),
             "expires_at": r["expires_at"], "url": "/s/" + r["token"]}
 
 
@@ -667,8 +777,9 @@ def drive_share(fid):
     days = int((request.get_json(silent=True) or {}).get("days") or SHARE_DAYS)
     days = max(1, min(days, 365))
     db = get_db()
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
-                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
+    pw = ((request.get_json(silent=True) or {}).get("password") or "").strip()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND deleted_at IS NULL",
+                   (fid, uid())).fetchone()
     if not r:
         return jsonify({"error": "文件不存在"}), 404
     now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -678,11 +789,14 @@ def drive_share(fid):
         return jsonify(_share_row(dict(old, name=r["name"], size=r["size"])))
     exp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + days * 86400))
     token = secrets.token_urlsafe(24)          # 192 位，猜不出来
-    cur = db.execute("INSERT INTO drive_shares(token,file_id,owner_id,expires_at) VALUES(?,?,?,?)",
-                     (token, fid, uid(), exp))
+    cur = db.execute(
+        "INSERT INTO drive_shares(token,file_id,owner_id,expires_at,pw_hash,is_dir) "
+        "VALUES(?,?,?,?,?,?)",
+        (token, fid, uid(), exp, generate_password_hash(pw) if pw else None, 1 if r["is_dir"] else 0))
     db.commit()
     return jsonify(_share_row({"id": cur.lastrowid, "token": token, "file_id": fid,
                                "name": r["name"], "size": r["size"], "hits": 0,
+                               "is_dir": r["is_dir"], "pw_hash": pw or None,
                                "expires_at": exp})), 201
 
 
@@ -703,13 +817,33 @@ def drive_share_del(sid):
     return jsonify({"ok": True})
 
 
-@bp.get("/s/<token>")
+_PW_PAGE = """<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>需要访问密码</title>
+<style>body{font-family:system-ui,-apple-system,"Noto Sans CJK SC",sans-serif;background:#f4f6fa;
+margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}
+.c{background:#fff;padding:28px 26px;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.08);
+width:min(340px,90vw)}h1{font-size:17px;margin:0 0 4px}p{color:#6b7480;font-size:13px;margin:0 0 16px}
+input{width:100%%;box-sizing:border-box;padding:10px 12px;border:1px solid #dfe4ec;border-radius:9px;
+font-size:15px}button{width:100%%;margin-top:12px;padding:10px;border:0;border-radius:9px;
+background:#2f7fe0;color:#fff;font-size:15px;cursor:pointer}.e{color:#c0392b;font-size:13px;margin-top:10px}
+</style><div class="c"><h1>%s</h1><p>这个分享需要访问密码</p>
+<form method="post"><input type="password" name="pw" placeholder="请输入访问密码" autofocus>
+<button type="submit">打开</button></form>%s</div>"""
+
+
+def _pw_page(name, wrong=False):
+    from markupsafe import escape
+    return _PW_PAGE % (escape(name), '<div class="e">密码不对，再试一次</div>' if wrong else "")
+
+
+@bp.route("/s/<token>", methods=["GET", "POST"])
 def drive_share_get(token):
     """**不需要登录**的取件口（app.py 的 _is_public 放行了 /s/）。
 
-    正因为不需要登录，这里每一步都得自己查：token 对不对、过没过期、文件还在不在、
-    有没有被扔进回收站。另外一律当附件下发并关进沙箱 —— 公开地址上绝不能内联渲染
-    别人上传的 .html。
+    正因为不需要登录，这里每一步都得自己查：token 对不对、过没过期、东西还在不在、
+    有没有被扔进回收站、要不要密码。一律当附件下发并关进沙箱 —— 公开地址上绝不能
+    内联渲染别人上传的 .html。文件夹则现打包成 zip 再给。
     """
     db = get_db()
     s = db.execute("SELECT * FROM drive_shares WHERE token=?", (token,)).fetchone()
@@ -717,15 +851,24 @@ def drive_share_get(token):
         return "链接无效", 404
     if s["expires_at"] and s["expires_at"] <= time.strftime("%Y-%m-%d %H:%M:%S"):
         return "链接已过期", 410
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND is_dir=0 AND deleted_at IS NULL",
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND deleted_at IS NULL",
                    (s["file_id"],)).fetchone()
     if not r:
         return "文件已被删除", 404
+    if s["pw_hash"]:                       # 要密码：GET 给表单，POST 验一下
+        pw = (request.form.get("pw") or request.args.get("pw") or "")
+        if not check_password_hash(s["pw_hash"], pw):
+            return _pw_page(r["name"], wrong=bool(pw)), (401 if pw else 200)
+    db.execute("UPDATE drive_shares SET hits=hits+1 WHERE id=?", (s["id"],))
+    db.commit()
+    if r["is_dir"]:                        # 文件夹 → 现打包
+        tmp, err = _zip_folder(db, s["owner_id"], r)
+        if err:
+            return err
+        return _send_temp(tmp, r["name"] + ".zip")
     path = os.path.join(_drive_dir(s["owner_id"]), r["stored_name"] or "")
     if not os.path.exists(path):
         return "文件已丢失", 404
-    db.execute("UPDATE drive_shares SET hits=hits+1 WHERE id=?", (s["id"],))
-    db.commit()
     return _no_script(send_file(path, as_attachment=True, download_name=r["name"],
                                 mimetype=r["mime"] or "application/octet-stream"))
 
