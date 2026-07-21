@@ -9,15 +9,18 @@ _dtest_to_wrongq（做错的题进错题本）也放这儿：专项练和每日�
 """
 import hashlib
 import json
+import random
 import re
 import secrets
 import sqlite3
+import threading
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Blueprint, jsonify, request
 
-from core import get_db, uid
+from core import DB, get_db, log, uid
 from figgen import _gen_figure_q, _gen_math_q, _gen_ziliao
 from mods.ai import _ai_call_or_error, _vision_conf
 
@@ -250,7 +253,7 @@ def _audit_q(q, options, board, qtype):
         req = urllib.request.Request(
             url, data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": "Bearer " + c["key"]})
-        with urllib.request.urlopen(req, timeout=90) as r:
+        with urllib.request.urlopen(req, timeout=45) as r:
             d = json.loads(r.read().decode("utf-8"))
         txt = (d["choices"][0]["message"].get("content") or "").strip()
         m = re.search(r"\{.*\}", txt, re.S)
@@ -314,9 +317,64 @@ _AI_SPEC = {
 }
 
 
+def _salvage_items(rep):
+    """JSON 被 max_tokens 截断时，把已经写完整的那几道抢救出来。
+
+    分析推理是重灾区：模型会在 explain 里把所有情况枚举一遍，一道解析就几百字，
+    整批 JSON 写不完就断在半路。原先 json.loads 一失败就整批丢弃 ——
+    12 道里写好的 8 道也跟着没了，表现出来就是这个题型「一道都出不来」。
+    """
+    # 用栈记每一层花括号的起点：题目对象嵌在 {"items":[ … ]} 里面，
+    # 只盯「深度回到 0」的话，外层那个 { 永远等不到它的 }（就是它被截断的），一道也捞不出来。
+    out, stack, instr, esc = [], [], False, False
+    for i, ch in enumerate(rep):
+        if instr:                       # 字符串里的花括号不算层级
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                instr = False
+            continue
+        if ch == '"':
+            instr = True
+        elif ch == "{":
+            stack.append(i)
+        elif ch == "}" and stack:
+            start = stack.pop()
+            try:
+                o = json.loads(rep[start:i + 1])
+            except Exception:
+                continue
+            # 只收长得像题目的：外层的 {"items":…} 和解析里嵌的小对象都会走到这儿
+            if isinstance(o, dict) and o.get("q") and o.get("options"):
+                out.append(o)
+    return out
+
+
+def _bank_avoid(db, board, qtype, n=25):
+    """已经出过的题干开头，喂给模型让它别再出一样的。
+
+    sig 指纹是 md5(板块+题型+题干) —— **不含难度**，这是故意的：同一道题不该在
+    「入门」和「考场真实」里各出现一次。但代价是模型一旦收敛到那几道经典题
+    （定义判断的「行政处罚」、类比推理的「医生：手术刀」），换个难度再出还是它们，
+    12 道全撞 UNIQUE 被跳过 —— 日志上看就是「一道都没出来」。
+    所以把已有的题干告诉它，逼它换新的。
+    """
+    rows = db.execute("SELECT q FROM drill_bank WHERE board=? AND qtype=? "
+                      "ORDER BY id DESC LIMIT ?", (board, qtype, n)).fetchall()
+    return [re.sub(r"\s+", "", (r["q"] or ""))[:40] for r in rows if r["q"]]
+
+
 def _bank_fill(db, board, qtype, level, want=8):
-    """题库不够了就补一批。返回新增数量。
-       **每个题型的出题要点不一样**（见 _AI_SPEC）——不写清楚，AI 会把「判断意图」出成「概括主旨」。"""
+    """题库不够了就补一批。返回 {"ok":可用, "dup":撞已有题, "bad":格式不合格, "flaw":没过核验}。
+
+    调用方要能分清「AI 出不了这个题型」和「出的全是重复题」—— 两者的处置完全不同：
+    前者该放弃，后者该换个角度再出。原先只返回一个数字，两种情况都显示成 0。
+
+    **每个题型的出题要点不一样**（见 _AI_SPEC）——不写清楚，AI 会把「判断意图」出成「概括主旨」。
+    """
+    stat = {"ok": 0, "dup": 0, "bad": 0, "flaw": 0}
     mat = _bank_material(db, board, qtype)
     tip = DRILL_TIP.get(qtype, "")
     spec = _AI_SPEC.get(qtype, "")
@@ -345,7 +403,9 @@ def _bank_fill(db, board, qtype, level, want=8):
         "· q：题干（题型要求见上；片段阅读/文章阅读要把**文段原文写进题干**）\n"
         "· options：四个选项，形如 \"A. …\"\n"
         "· answer：正确选项字母\n"
-        "· explain：解析，讲清**为什么对、为什么其他三个错**（不是只说答案）\n"
+        "· explain：解析，讲清**为什么对、为什么其他三个错**（不是只说答案）。"
+        "**控制在 150 字以内** —— 别把推理过程一步步全枚举出来，写太长会把整批输出撑爆、"
+        "后面的题一道都收不到。\n"
         "· source：这题考的具体考点（如「人文常识-唐宋八大家」「词语辨析-一蹴而就」）\n\n"
         "【硬要求】\n"
         "1. 答案**唯一且经得起推敲**，不能出现两个都对或都说得通的选项。\n"
@@ -358,32 +418,52 @@ def _bank_fill(db, board, qtype, level, want=8):
         % (want, board, qtype, spec or "按这个题型的常规考法出",
            _LV_PROMPT.get(level, ""), qtype)) + extra
 
+    # 避重：不告诉它已经出过什么，它就会一直出那几道经典题，全撞指纹被跳过
+    avoid = _bank_avoid(db, board, qtype)
+    if avoid:
+        prompt += ("\n\n【这些题已经出过了，**换新的**，别再出意思一样的】\n"
+                   + "\n".join("· " + x + "…" for x in avoid))
+
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是四川省考命题老师。答案唯一、干扰项讲究，"
                                        "解析要说清其他三个为什么错。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
-        temperature=0.6, max_tokens=3500, timeout=300, json_mode=True)
+        temperature=0.6, max_tokens=4096, timeout=120, json_mode=True)
     if err:
-        return 0
+        return stat
     try:
         got = json.loads(rep).get("items") or []
     except Exception:
-        return 0
-    n = 0
+        got = _salvage_items(rep)      # 被 max_tokens 截断：把写完整的那几道捞回来
+        if not got:
+            return stat
+        log.info("题库补充 %s·%s/%s：JSON 截断，抢救回 %d 道", board, qtype, level, len(got))
+
+    # 先把明显不合格的筛掉，再统一送核验 —— 核验是网络往返，一道 5~40 秒，
+    # **串行**做 8 道就能拖到十分钟以上（这是「点了出题没反应」的主因之一）。
+    ready = []
     for it in got:
         q = (it.get("q") or "").strip()
         opts = it.get("options") or []
         ans = (it.get("answer") or "").strip().upper()[:1]
         # 逐条把关：四选项、答案字母合法、选项不重复 —— AI 这三样都会翻车
         if not q or len(opts) != 4 or ans not in "ABCD":
+            stat["bad"] += 1
             continue
         body = [re.sub(r"^[A-D][.、．)]\s*", "", str(o)).strip() for o in opts]
         if len(set(body)) != 4 or not all(body):
+            stat["bad"] += 1
             continue
-        opts_std = ["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)]
-        # ★ 双模型核验：另一家模型独立做一遍。答案不一致 → **入库但标为存疑，不发给人做**。
-        #   （不直接丢弃：存疑的题本身是有价值的数据，可以回查；但绝不能让人拿去背。）
-        au = _audit_q(q, opts_std, board, qtype)
+        ready.append((it, q, ans, ["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)]))
+    if not ready:
+        return stat
+    # ★ 双模型核验：另一家模型独立做一遍。**并发**跑，总耗时从「道数 × 单道」压到「单道」量级。
+    with ThreadPoolExecutor(max_workers=min(6, len(ready))) as pool:
+        audits = list(pool.map(lambda r: _audit_q(r[1], r[3], board, qtype), ready))
+
+    for (it, q, ans, opts_std), au in zip(ready, audits):
+        # 答案不一致 → **入库但标为存疑，不发给人做**。
+        # （不直接丢弃：存疑的题本身是有价值的数据，可以回查；但绝不能让人拿去背。）
         if au is None:
             agree, aans, flaw, note = 0, "", "unchecked", "核验模型没响应"
             checked = 0
@@ -401,26 +481,85 @@ def _bank_fill(db, board, qtype, level, want=8):
                  (it.get("source") or ("%s-%s" % (board, qtype))).strip(), sig,
                  str(checked), str(agree), aans, note, flaw))
             if agree:
-                n += 1          # 只把「过了核验的」算作有效产出
+                stat["ok"] += 1      # 只把「过了核验的」算作有效产出
+            else:
+                stat["flaw"] += 1    # 入库了，但存疑，不发给人做
         except sqlite3.IntegrityError:
-            pass               # 撞指纹 = 出过一样的题，跳过
+            stat["dup"] += 1         # 撞指纹 = 这道题出过了（跨难度也算），跳过
     db.commit()
-    return n
+    return stat
+
+
+# ---- 后台补库：出题请求里**绝不**调 AI ----------------------------------------
+# 原先库里没题就当场生成：DeepSeek 出一批 + 每道题串行核验，最坏能跑十几分钟，
+# 而前端的 fetch 没有超时，用户看到的就是「点了出题，没反应」。
+# 现在改成：取到多少给多少，缺口排进后台队列，下次进来就有了。
+_FILL_LOCK = threading.Lock()
+_FILL_INFLIGHT = set()          # 正在补的 (board,qtype,level)，同一格不重复排队
+_FILL_POOL = None
+
+
+def _fill_pool():
+    """**必须在 _FILL_LOCK 里调用**：waitress 跑 32 个线程，两个请求同时首次触发补库时
+       都会看到 None，各建一个池，其中一个虽被覆盖但已提交的任务照跑 ——
+       实际并发变成 4，「并发 2」这个刻意的限流约束就形同虚设了。"""
+    global _FILL_POOL
+    if _FILL_POOL is None:       # 并发 2：再多就把 AI 接口的限流打满，反而更慢
+        _FILL_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="drillfill")
+    return _FILL_POOL
+
+
+def _bank_warm(board, qtype, level, want=12):
+    """排一次后台补库，**立刻返回**。同一格已在排队的不重复排。
+       用自己的 sqlite 连接：请求线程的连接绑在 flask.g 上，请求一结束就关了。"""
+    if DRILL_ENGINE.get((board, qtype)) != "ai":
+        return False
+    key = (board, qtype, level)
+    with _FILL_LOCK:
+        if key in _FILL_INFLIGHT:
+            return False
+        _FILL_INFLIGHT.add(key)
+        pool = _fill_pool()
+
+    def job():
+        con = None
+        try:
+            con = sqlite3.connect(DB, timeout=30)
+            con.row_factory = sqlite3.Row
+            con.execute("PRAGMA journal_mode=WAL")
+            s = _bank_fill(con, board, qtype, level, want=want)
+            log.info("题库补充 %s·%s/%s：+%d 可用（重复 %d、存疑 %d、格式不合格 %d）",
+                     board, qtype, level, s["ok"], s["dup"], s["flaw"], s["bad"])
+        except Exception as e:
+            log.warning("题库补充失败 %s·%s/%s：%s", board, qtype, level, e)
+        finally:
+            if con is not None:
+                con.close()
+            with _FILL_LOCK:
+                _FILL_INFLIGHT.discard(key)
+
+    try:
+        pool.submit(job)
+    except Exception as e:
+        # submit 抛了（线程池已关闭等）→ job 永远不会跑，finally 里的 discard 也就不会执行。
+        # 不在这儿补一刀的话，这一格会**在整个进程生命周期内**卡在「正在补库」，
+        # 再也排不进队，用户反复点只会一直看到「题库还没预热好」。
+        with _FILL_LOCK:
+            _FILL_INFLIGHT.discard(key)
+        log.warning("题库补充没能排队 %s·%s/%s：%s", board, qtype, level, e)
+        return False
+    return True
 
 
 def _bank_take(db, board, qtype, level, n):
-    """从题库取 n 道 —— **只取过了双模型核验的**（agree=1）。不够就现补。
+    """从题库取 n 道 —— **只取过了双模型核验的**（agree=1）。
+       **取不够也立刻返回**，缺口交给后台补库：让人等十分钟不如先给他 4 道能做的。
        存疑的题留在库里可以回查，但绝不发给人做（拿去背错的答案，比不做还糟）。"""
-    def grab():
-        return [dict(r) for r in db.execute(
-            "SELECT * FROM drill_bank WHERE board=? AND qtype=? AND level=? AND agree='1' "
-            "ORDER BY RANDOM() LIMIT ?", (board, qtype, level, n))]
-    got = grab()
-    tries = 0
-    while len(got) < n and tries < 2:      # 核验会刷掉一部分，所以多出一些
-        tries += 1
-        _bank_fill(db, board, qtype, level, want=max(10, (n - len(got)) * 2))
-        got = grab()
+    got = [dict(r) for r in db.execute(
+        "SELECT * FROM drill_bank WHERE board=? AND qtype=? AND level=? AND agree='1' "
+        "ORDER BY RANDOM() LIMIT ?", (board, qtype, level, n))]
+    if len(got) < n:                      # 核验会刷掉一部分，所以多补一些
+        _bank_warm(board, qtype, level, want=max(12, (n - len(got)) * 2))
     out = []
     for r in got:
         out.append({"q": r["q"], "options": json.loads(r["options"]), "answer": r["answer"],
@@ -433,10 +572,17 @@ def _drill_gen(db, board, qtype, n, level="mid"):
     """出 n 道题。**按题型决定用哪个引擎** —— 判断推理是混合的：
        图形推理能构造（prog），定义/类比/逻辑判断只能让 AI 出（ai）。"""
     types = [t[0] for t in DRILL_TYPES[board]]
-    if not qtype:                                  # 混合练：题型按目录顺序轮着来
-        out = []
+    if not qtype:                                  # 混合练：题型轮着来，但**每个题型一次取够**
+        # 原先是逐题递归（一道题调一次 _drill_gen），10 道题就可能触发 10 轮补库；
+        # 判断推理前 4 个题型是图形（秒出）、第 5 个撞上空库，整个请求就卡死在那儿了。
+        need = {}
         for i in range(n):
-            out += _drill_gen(db, board, types[i % len(types)], 1, level)
+            t = types[i % len(types)]
+            need[t] = need.get(t, 0) + 1
+        out = []
+        for t, k in need.items():
+            out += _drill_gen(db, board, t, k, level)
+        random.shuffle(out)                        # 混合练就该乱序，别一坨一坨按题型来
         return out[:n]
     if qtype not in types:
         return []
@@ -517,12 +663,23 @@ def drill_quiz():
     if board not in DRILL_TYPES:
         return jsonify({"error": "这个板块没有专项练"}), 400
     qtype = (d.get("type") or "").strip()
+    # 题型名不认识就当场说清楚。**别混进下面那条「题库还没预热好」**——
+    # 那句话承诺了「已经在后台出题了，过一两分钟回来再点」，而这种情况根本没排队，
+    # 用户等一辈子也不会好，换难度也没用。
+    if qtype and qtype not in [t[0] for t in DRILL_TYPES[board]]:
+        return jsonify({"error": "「%s」板块里没有「%s」这个题型" % (board, qtype)}), 400
     level = d.get("level") if d.get("level") in ("easy", "mid", "real") else "mid"
     n = max(1, min(30, int(d.get("n") or 5)))
     exam = bool(d.get("exam"))                    # 测试模式：答案不下发
     items = _drill_gen(get_db(), board, qtype, n, level)
     if not items:
-        return jsonify({"error": "这个题型暂时出不了题，换一个或稍后再试"}), 502
+        # 走到这儿说明这一格题库是空的。**绝不在请求里现场调 AI 补**——那要几分钟，
+        # 前端只会表现为「点了没反应」。_bank_take 已经把补库排进后台了，这里只管说清楚。
+        lv = DRILL_LV_NAME.get(level, level)
+        return jsonify({"error": "「%s · %s」在「%s」难度下题库还没预热好，已经在后台出题了，"
+                                 "过一两分钟回来再点。想现在就练，可以换「考场真实」难度，"
+                                 "或先做本板块程序出题的题型。" % (board, qtype or "混合练", lv),
+                        "warming": True}), 503
     pub = []
     for it in items:
         x = dict(it)
@@ -534,6 +691,9 @@ def drill_quiz():
     return jsonify({"board": board, "type": qtype, "level": level, "exam": exam,
                     "coef": drill_coef(board, level),
                     "limit": DRILL_LIMIT.get(board, 60), "items": pub,
+                    # 要 n 道只凑出 len(items) 道 = 题库这一格还没满，后台正在补。
+                    # 照常让人先做，但要说一声，别让他以为题量设置没生效。
+                    "short": max(0, n - len(items)),
                     "full": items if not exam else None,
                     "token": _drill_stash(items) if exam else ""})
 

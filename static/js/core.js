@@ -11,17 +11,42 @@
 
 'use strict';
 const $ = (s) => document.querySelector(s);
-const api = (u, o) => fetch(u, o).then(async r => {
-  if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
-  const ct = r.headers.get('content-type') || '';
-  if (ct.includes('application/json')) {
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || '请求失败');
-    return d;
+/* o.timeoutMs：可选的请求超时（毫秒）。**不设默认值** —— 上传、AI 生成这类接口本来就慢，
+   给全局加超时会误杀。只在「用户点一下就该马上有反应」的接口上显式开（如专项练出题）：
+   没有它的话，服务端一旦卡住，前端既不报错也不结束，表现就是「点了没反应」。 */
+/* 安卓壳 minSdk21，系统 WebView 可能停留在很老的版本：AbortController 要 Chrome 66、
+   Promise.prototype.finally 要 Chrome 63。两者都得先探再用，**探不到就退回无超时的老行为** ——
+   超时只是锦上添花，为它把整个 api() 打崩（连出题按钮都点不动）得不偿失。 */
+const CAN_ABORT = typeof AbortController !== 'undefined';
+const api = (u, o) => {
+  const ms = o && o.timeoutMs;
+  let timer = 0;
+  if (ms) {
+    o = Object.assign({}, o);
+    delete o.timeoutMs;
+    if (CAN_ABORT) {
+      const ctl = new AbortController();
+      timer = setTimeout(() => ctl.abort(), ms);
+      o.signal = ctl.signal;
+    }
   }
-  if (!r.ok) throw new Error('请求失败');
-  return r;
-});
+  const done = (v) => { if (timer) clearTimeout(timer); return v; };
+  return fetch(u, o).then(async r => {
+    if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+    const ct = r.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || '请求失败');
+      return d;
+    }
+    if (!r.ok) throw new Error('请求失败');
+    return r;
+  }).then(done, e => {
+    done();
+    if (e.name === 'AbortError') throw new Error('服务端响应太慢，已中断。稍后再试一次');
+    throw e;
+  });
+};
 /* 中文输入法正在组字时，回车是「确认候选词」，不是「提交」。
    所有回车处理都必须先问一句 composing(e)，否则 fcitx/搜狗打中文时会被打断，
    表现就是「只打得出英文字母、候选框弹不出来」。 */

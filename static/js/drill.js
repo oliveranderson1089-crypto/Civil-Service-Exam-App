@@ -105,12 +105,15 @@ async function drStart(type) {
   drType = type;
   toast('出题中…');
   try {
+    /* 20 秒超时：服务端已改成「只从题库取，不现场调 AI」，正常是毫秒级返回。
+       超过 20 秒一定是哪里不对，宁可报错也别让人对着没反应的按钮干等。 */
     const d = await api('/api/drill/quiz', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, timeoutMs: 20000,
       body: JSON.stringify({ board: drBoard, type, n: drN, level: drLevel, exam: drMode === 'exam' }),
     });
     drItems = d.items; drLimit = d.limit; drCoef = d.coef; drToken = d.token || '';
     drIdx = 0; drAns = []; drSec = [];
+    if (d.short) toast(`题库这一格还差 ${d.short} 道，后台正在补，先做这 ${d.items.length} 道`);
     push({ view: 'drillrun', title: (type || '混合') + ' · 专项练' });
     drRender();
   } catch (e) { toast(e.message, true); }
