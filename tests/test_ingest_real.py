@@ -168,3 +168,60 @@ class TestNeedsAsset:
 
     def test_普通文字题不标(self):
         assert I.needs_asset("下列关于宪法的说法正确的是：", False, "常识判断") == 0
+
+
+# ---- 答案卷整体偏移的自动测定 ----------------------------------------------
+
+def _fake_pair(shift=0, related=True):
+    """造一对题目卷/答案卷：解析里抄了题干的词，所以对齐时重合度高。
+
+    shift 表示答案卷的编号整体比题目卷大多少（2023 国考那份就是 +1）。
+    """
+    # 每道题的用字必须**真的互不相同** —— 都用同一串字的话，任何偏移都能对上，
+    # margin 那道判据会（正确地）拒绝表态，测的就不是想测的东西了
+    def words(i):
+        return "".join(chr(0x4E00 + (i * 211 + k * 17) % 8000) for k in range(24))
+
+    qs = [{"seq": i, "stem": "下列关于%s的说法正确的是" % words(i)} for i in range(1, 41)]
+    a = {}
+    for q in qs:
+        body = ("本题考查%s，因此选择 A 选项。" % words(q["seq"]) if related
+                else "本题考查完全无关的内容%s。" % words(q["seq"] + 500))
+        a[q["seq"] + shift] = ("A", body)
+    return qs, a
+
+
+def test_best_offset_量出整卷差一格():
+    """2023 国考那份：答案卷编号整体比题目卷大 1，得量出来并修正。"""
+    qs, a = _fake_pair(shift=1)
+    assert I._best_offset(qs, a) == 1
+
+
+def test_best_offset_对齐时返回0():
+    qs, a = _fake_pair(shift=0)
+    assert I._best_offset(qs, a) == 0
+
+
+def test_best_offset_含糊不清时不猜():
+    """解析和题干毫无重合（比如整卷都是数量关系的算式），量不出来就别猜 ——
+    猜错一格比没有答案更糟，这时候该退回「数块数」那道老闸。"""
+    qs, a = _fake_pair(shift=2, related=False)
+    assert I._best_offset(qs, a) is None
+
+
+def test_best_offset_样本太少不判():
+    qs, a = _fake_pair(shift=1)
+    assert I._best_offset(qs[:10], a) is None
+
+
+def test_match_answers_用量出来的偏移覆盖数块数那道闸():
+    """量得出对齐 ⇒ 直接采信，不必再要求「块数正好等于最大题号」。
+
+    2025 国考副省级那份就卡在这：134 块 vs 最大题号 135，数目对不上被整份丢掉，
+    可对齐其实只差一格，量出来一修就是 0.41 的重合度。
+    """
+    qs, a = _fake_pair(shift=1)
+    del a[41]                                   # 块数比最大题号少一，老闸会拒
+    got, why = I._match_answers(qs, (a, True, "某答案卷", "国考", 2023))
+    assert not why, why
+    assert got[1][1] == a[2][1], "没按量出来的偏移修正：第 1 题该拿到原先编号 2 的那块"

@@ -221,6 +221,40 @@ def _find_answer(answers, name, meta):
     return answers[ranked[-1][1]]
 
 
+def _best_offset(qs, a, span=5, floor=0.15, margin=2.0):
+    """量出答案卷相对题目卷的整体偏移量。量不准就返回 None，让调用方按老规矩办。
+
+    答案卷按顺序编号时（题号在转档时丢了），开头多一块或少一块，整卷就差一格。
+    「块数正好等于最大题号」那道闸**拦不住这个**：2023 国考那份恰好丢了第一块、
+    又在卷首多出一块，块数刚好对上，答案却整卷偏一位 —— 数得对不等于对得齐。
+
+    但偏移量是可以**直接量**的：拿题干和解析的二元组重合度扫一遍候选偏移，
+    正确的那个 0.41、次优只有 0.09，差 4 倍，不是掷硬币。所以只在「最优值够高、
+    且明显甩开次优」时才认，含糊不清时一律不认 —— 错位一格比没有答案更糟。
+    """
+    def bigrams(s):
+        return {s[i:i + 2] for i in range(len(s) - 1)}
+
+    # 用 .get：qs 是从各条解析路径拼出来的，不保证每条都带 stem
+    stems = [(q["seq"], bigrams(q.get("stem") or "")) for q in qs
+             if len(q.get("stem") or "") > 8]
+    if len(stems) < 15:                  # 样本太少，量出来的重合度不可信
+        return None
+    scored = []
+    for off in range(-span, span + 1):
+        sc = [len(sb & bigrams(a[seq + off][1])) / len(sb)
+              for seq, sb in stems
+              if sb and seq + off in a and len(a[seq + off][1]) >= 20]
+        if len(sc) >= 15:
+            scored.append((sum(sc) / len(sc), off))
+    if len(scored) < 2:                  # 没有可比的次优，无从判断「甩开」
+        return None
+    scored.sort(reverse=True)
+    if scored[0][0] < floor or scored[0][0] < scored[1][0] * margin:
+        return None
+    return scored[0][1]
+
+
 def _match_answers(qs, ent):
     """决定这份题目卷能不能用配对到的答案。返回 (答案字典, 不能用的理由)。
 
@@ -234,6 +268,11 @@ def _match_answers(qs, ent):
     max_seq = max((q["seq"] for q in qs), default=0)
     if qs and qs[0].get("synth_seq"):
         return {}, "本卷没印题号、题号是解析时按顺序编的，不能拿去对答案卷"
+    # 先**量**一下对齐：量得出来就以量出来的为准，比数块数可靠得多
+    # （数块数只能证明「数目对」，证明不了「对得上」）。
+    off = _best_offset(qs, a)
+    if off is not None:
+        return ({k - off: v for k, v in a.items()} if off else a), ""
     if synth:
         # 答案卷题号在转档时丢了、只能按顺序编。**这时才做文档里承诺的那道核对**：
         # 解析块数正好等于本卷最大题号 ⇒ 一块对一题，序号天然对齐，可以用。
