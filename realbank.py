@@ -527,8 +527,15 @@ def paper_meta(name, folder=""):
         season = "下半年"
     elif "上半年" in name:
         season = "上半年"
-    # 是题目卷还是答案卷 —— 目录名和文件名都可能带这个信息
-    is_ans = bool(re.search(r"答案|解析", name)) or "答案" in folder
+    # 是题目卷还是答案卷。文件名说了算；文件名没说才看目录 —— 但**不能只看「目录里有没有答案二字」**：
+    # 「1、2025国考【行测】真题试卷及答案」这种是**混装目录**，题目卷和答案卷都在里面，
+    # 按它判会把《2025国考行测题（副省级）》这类题目卷全判成答案卷 ——
+    # 后果不只是白跑 OCR，这些卷子的**题目从此不会被解析**（提取只处理 role='q'）。
+    # 判据：某一段目录名**只说答案、不说试卷/真题**，才算答案目录。
+    # 逐段看而不是看整条路径，是为了照顾「…/答案（已更新）/国考地市卷」这种嵌套。
+    is_ans = bool(re.search(r"答案|解析", name)) or any(
+        re.search(r"答案|解析", seg) and not re.search(r"试卷|真题", seg)
+        for seg in folder.split("/") if seg)
     return {"year": int(y.group()) if y else 0, "exam": exam, "kind": kind,
             "paper": paper, "season": season, "is_answer": is_ans}
 
