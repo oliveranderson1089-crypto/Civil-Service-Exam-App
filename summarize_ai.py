@@ -18,7 +18,9 @@ import time
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import app as A  # noqa: E402
+from core import DB  # noqa: E402
+from mods.ai import _ai_call_or_error  # noqa: E402
+from mods.files import _user_dir  # noqa: E402
 
 CATEGORY = "AI 学习问答"          # 资料库里新分的类
 MIN_CHARS = 200                   # 当天对话太少（没怎么学）就不生成，免得净是空笔记
@@ -47,7 +49,7 @@ def summarize(msgs, day):
         "## 值得记住的表述 / 例子（如果有金句、典型例子、辨析）\n"
         "只保留对备考有用的；没营养的闲聊略过。若当天没什么实质学习内容，只回一行「（今日无实质学习对话）」。\n\n"
         "问答记录：\n%s" % text)
-    reply, err = A._ai_call_or_error(
+    reply, err = _ai_call_or_error(
         [{"role": "system", "content": "你是学习助理，把一天的问答提炼成有条理、能复习的学习笔记。简体中文 Markdown。"},
          {"role": "user", "content": prompt}], temperature=0.4, max_tokens=2500)
     if err:
@@ -57,7 +59,7 @@ def summarize(msgs, day):
 
 def save_note(db, user_id, day, md):
     """把总结存成资料库里的一份 .md（阅读模式能渲染），分类 = AI 学习问答。"""
-    d = A._user_dir(user_id)
+    d = _user_dir(user_id)
     stored = uuid.uuid4().hex + ".md"
     title = "AI 学习问答 · " + day
     header = "# %s\n\n> 由 AI 每日自动汇总当天的学习问答\n\n" % title
@@ -77,7 +79,7 @@ def main():
     a = ap.parse_args()
     day = a.date or time.strftime("%Y-%m-%d")
 
-    db = sqlite3.connect(A.DB, timeout=60)
+    db = sqlite3.connect(DB, timeout=60)
     db.row_factory = sqlite3.Row
     users = [r["id"] for r in db.execute("SELECT id FROM users")]
     print("汇总 %s 的 AI 学习对话，共 %d 个用户" % (day, len(users)))
