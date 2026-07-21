@@ -1,5 +1,6 @@
 $
 AI_FOLDER
+AI_TOOL_GROUPS
 ALL_BOARDS
 ANN_CTX
 ANN_QLEN
@@ -18,6 +19,7 @@ DT_L
 EXT_ICON
 FEATURES
 FILE_ICON
+HOME_IC
 IC
 ICON_BULB
 ICON_CHECKBOX
@@ -47,6 +49,7 @@ MK_COLORS
 MK_SKIP
 MK_SKIP_BASE
 MK_VIEWS
+NOTE_DRAFT_KEY
 NTF_ICON
 NW_KIND
 OFFICE_EXT
@@ -74,6 +77,7 @@ SR_TYPE
 STATUS_OPTS
 SW_AT_START
 SYNC_REFRESH
+TEX_SYM
 TITLES
 TTS_ENGS
 TTS_VOICES
@@ -81,11 +85,15 @@ UI_ORDERS
 VIEWS
 WQ_BOARDS
 XY_COLOR
+YY_POS_LABEL
 __hwReq
 _adDone
 _adResolve
+_aiToolG
 _dialog
 _docSaveFailed
+_draftMeaningful
+_draftSaveT
 _kbpResolve
 _lastUpdChk
 _lsWarned
@@ -106,10 +114,12 @@ aiAtts
 aiBack
 aiBusy
 aiChatId
+aiConfirm
 aiCurProject
 aiDk
 aiGrow
 aiHandleAttach
+aiHomeNavItems
 aiInitDock
 aiMenuCtx
 aiMsgs
@@ -119,6 +129,8 @@ aiProjectId
 aiRunActions
 aiSend
 aiShow
+aiToolRun
+aiToolSend
 annAnchorAt
 annCtx
 annLocate
@@ -172,6 +184,7 @@ ckLoadConfuse
 ckLoadExample
 ckRenderConfuse
 ckStarred
+clearDraftLocal
 closeComposerM
 closeSlideshow
 clsState
@@ -272,28 +285,41 @@ esPapers
 esTopic
 esc
 esdTab
+extractInlineMath
 fSize
 fabClamp
+fdBatchDel
 fdCheck
+fdDelPaper
 fdDoctype
 fdDoctypes
 fdDrag
+fdManage
 fdPaper
+fdPaperCard
 fdPicked
+fdSel
 fdStep
+fdSyncBatchBar
 fdSyncDoctypes
 fdType
 feedCard
 fillPlanExams
 findNode
+flushDraftLocal
 fmtDay
+fmtGwBody
 fmtSize
 fmtTime
 focusBlock
+frDelRec
 frDoCheck
 frDoGrade
+frFindRecapHtml
 frFoot
 frMat
+frRecCard
+frRecListClick
 frRender
 frResultBody
 frScoreHtml
@@ -307,6 +333,7 @@ goPage
 gwCard
 gwFmt
 gwForm
+gwPos
 gwSpec
 gwTimer
 gwType
@@ -341,6 +368,7 @@ hwPump
 hwQueue
 hwRecognizeManual
 hwRedraw
+hwResetTools
 hwSetCands
 hwStrokes
 hwT0
@@ -353,6 +381,8 @@ inkHere
 inkMigrate
 inkOrphClose
 inkOrphOpen
+inkRekey
+inkTabSuffix
 inkUpload
 insertAfterCur
 isDocHeading
@@ -413,6 +443,7 @@ loadWrGw
 loadWrongq
 loadXiyu
 loadYyCats
+loadYyDays
 lsDel
 lsGet
 lsSet
@@ -461,6 +492,7 @@ mkRenderBar
 mkText
 mkWrapOne
 nativeNotify
+navHomeCard
 nbCover
 nbEditId
 newBlock
@@ -517,6 +549,7 @@ openFind
 openFindRec
 openFindRecs
 openFindRun
+openFindWrong
 openGaikuo
 openGongwen
 openHandwrite
@@ -660,6 +693,7 @@ render
 renderAI
 renderAiAtts
 renderAiProjects
+renderAiTools
 renderBkb
 renderCDetail
 renderCkList
@@ -690,6 +724,7 @@ renderWq
 renderWqDetail
 renderWrited
 replaceSharedItem
+restoreDraftOrNew
 runSearch
 rvAll
 rvAnswer
@@ -707,6 +742,7 @@ rvTotal
 rvUpdateCounts
 saveCardOrder
 saveDoc
+saveDraftLocal
 saveMatBoards
 scKind
 searchData
@@ -751,6 +787,7 @@ stripHtml
 sysIsDark
 tdRecalcProg
 tdSetDone
+texToHtml
 tkItemsById
 tkMeId
 tkMembers
@@ -787,6 +824,7 @@ wqImgFile
 wqOcrFill
 wqSec
 wqState
+wrApp
 wrCur
 wrPoll
 wrSwitch
