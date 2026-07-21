@@ -3373,3 +3373,6 @@ body.dark .rq-stat,body.dark .rq-t,body.dark .rq-paper,body.dark .rq-opt{backgro
 .rq-rv-h span{color:var(--muted);}
 .rq-rv.bad .rq-rv-h span{color:#fa5252;}
 .rq-rv-q{font-size:13.5px;line-height:1.75;color:var(--muted);}
+.rq-figs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px;}
+.rq-figs img{max-width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;}
+body.dark .rq-figs img{background:#e8ecf3;}

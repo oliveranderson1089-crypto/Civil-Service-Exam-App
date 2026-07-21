@@ -13,10 +13,12 @@
 答案存疑的留在库里可以回查，但绝不发给人做。
 """
 import json
+import os
+import re
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, abort, jsonify, request, send_file
 
-from core import get_db, uid
+from core import UPLOADS, get_db, uid
 from mods.review import REVIEW_INTERVALS
 
 bp = Blueprint("realq", __name__)
@@ -43,11 +45,28 @@ def _explain_of(r):
     return out
 
 
-def _pub(r, exam=False):
+def _figs_of(db, qids):
+    """哪些题带图（图形推理的图从 docx 里提出来的，见 ingest_figs.py）。
+       一次查完，别在渲染每道题时各查一次。"""
+    if not qids:
+        return {}
+    out = {}
+    try:
+        for f in db.execute(
+                "SELECT qid, sha, ext FROM real_figs WHERE qid IN (%s) ORDER BY qid, ord"
+                % ",".join("?" * len(qids)), list(qids)):
+            out.setdefault(f["qid"], []).append(f["sha"] + f["ext"])
+    except Exception:
+        pass                       # 还没跑过提图脚本
+    return out
+
+
+def _pub(r, exam=False, figs=None):
     # qtype 优先用规则判出来的；规则判不出的那 44%，用 AI 顺手判的那个补上
     d = {"id": r["id"], "module": r["module"] or "",
          "qtype": (r["qtype"] or "").strip() or (r["ai_qtype"] or "").strip(),
          "stem": r["stem"], "options": json.loads(r["options"]),
+         "figs": (figs or {}).get(r["id"], []),
          "sources": json.loads(r["sources"] or "[]")[:3]}
     if not exam:
         d["answer"] = r["answer"] or r["ai_answer"] or ""
@@ -173,8 +192,9 @@ def real_quiz():
         return jsonify({"error": "这个范围里没有可做的真题（答案存疑的题不会发出来）"}), 404
     # 测试模式下答案和解析都不下发（_pub 会剥掉），交卷时由服务端按库里的答案判分 ——
     # 所以不需要另外把答案暂存一份给自己看。
+    figs = _figs_of(get_db(), [r["id"] for r in items])
     return jsonify({"mode": mode, "exam": exam_mode, "n": len(items),
-                    "items": [_pub(r, exam_mode) for r in items]})
+                    "items": [_pub(r, exam_mode, figs) for r in items]})
 
 
 @bp.post("/api/real/done")
@@ -252,6 +272,18 @@ def _to_wrongq(db, rows):
                     qt, qt, "来自真题练习"))
         n += 1
     return n
+
+
+@bp.get("/api/real/fig/<name>")
+def real_fig(name):
+    """题目里的图。文件名是内容 sha256（提图时按内容存的），所以不用带鉴权参数；
+       但仍要**挡住路径穿越** —— 名字里只允许十六进制和一个扩展名。"""
+    if not re.fullmatch(r"[0-9a-f]{8,64}\.(png|jpe?g|gif|bmp|emf|wmf)", name or ""):
+        abort(404)
+    p = os.path.join(UPLOADS, "realfig", name)
+    if not os.path.exists(p):
+        abort(404)
+    return send_file(p, max_age=86400)
 
 
 @bp.get("/api/real/stats")

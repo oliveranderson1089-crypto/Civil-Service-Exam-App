@@ -66,6 +66,42 @@ def docx_text(path):
     return re.sub(r"\n{3,}", "\n\n", txt)
 
 
+# ---- 题目里的图 -------------------------------------------------------------
+# 图形推理的图、资料分析的图表都嵌在 docx 里。只提图不够，还得知道**每张图属于哪道题**：
+# 靠的是段落位置 —— 图片锚在某个 <w:p> 里，那一段之前最近的题号就是它所属的题。
+# （PDF 版没有这个结构，只能整页渲染，先不做。）
+_EMBED = re.compile(r'r:(?:embed|link)="(rId\d+)"')
+_REL = re.compile(r'Id="(rId\d+)"[^>]*Target="([^"]+)"')
+
+
+def docx_figures(path):
+    """返回 [(段落序号, 图片字节, 扩展名)]，段落序号和 docx_text 切出来的行号对得上。
+
+    两边必须用**同一套段落切分**（都以 </w:p> 为界），否则图和题对不上号 ——
+    这类「两个列表用下标关联」的地方是错位事故的高发区，所以这里直接复用同一个正则。
+    """
+    out = []
+    try:
+        with zipfile.ZipFile(path) as z:
+            rels = dict(_REL.findall(
+                z.read("word/_rels/document.xml.rels").decode("utf-8", "ignore")))
+            xml = z.read("word/document.xml").decode("utf-8", "ignore")
+            xml = re.sub(r"<w:br[^>]*/>", "\n", xml)
+            for i, para in enumerate(re.sub(r"</w:p>", "\n", xml).split("\n")):
+                for rid in _EMBED.findall(para):
+                    tgt = rels.get(rid, "")
+                    if not tgt or "media/" not in tgt:
+                        continue
+                    name = "word/" + tgt.lstrip("./")
+                    try:
+                        out.append((i, z.read(name), os.path.splitext(name)[1].lower()))
+                    except KeyError:
+                        pass
+    except Exception:
+        pass
+    return out
+
+
 def doc_text(path, tmpdir):
     """老的二进制 .doc：交给 libreoffice 转成 docx。国考 2000-2023 有 25 份是这个格式。"""
     r = subprocess.run(["libreoffice", "--headless", "--convert-to", "docx",

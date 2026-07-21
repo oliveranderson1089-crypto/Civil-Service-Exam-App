@@ -119,6 +119,9 @@ function rqRender() {
       <span class="rq-tag src">${src.year || ''} ${esc(src.exam || '')}${src.paper ? '·' + esc(src.paper) : ''}</span>
     </div>`;
   $('#rq-stem').textContent = it.stem;
+  // 图形推理的题，图就是题本身 —— 题干只是一句「选择最合适的一个填入问号处」
+  $('#rq-figs').innerHTML = (it.figs || []).map(f =>
+    `<img src="/api/real/fig/${encodeURIComponent(f)}" alt="题目图" loading="lazy">`).join('');
   $('#rq-opts').innerHTML = it.options.map((o, j) => {
     const L = 'ABCD'[j];
     let cls = '';
