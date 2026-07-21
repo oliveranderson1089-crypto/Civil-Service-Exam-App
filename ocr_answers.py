@@ -167,7 +167,11 @@ def tess_answers(pdf, tmp, first=0, last=0, deadline=0):
     txt = []
     for f in pngs:
         if deadline and time.time() > deadline and txt:
-            break          # 超时就用已识别的这些页，聊胜于无
+            # **截断必须喊出来**：残缺的识别结果和成功的长得一模一样，
+            # 悄悄少认一半页，下游只会看到「这卷答案就是少」。
+            print("      ⚠️ 单卷超时截断：只认了 %d/%d 页" % (len(txt), len(pngs)),
+                  flush=True)
+            break
         try:
             o = subprocess.run(["tesseract", os.path.join(tmp, f), "stdout",
                                 "-l", "chi_sim+eng", "--psm", "6"],
@@ -275,6 +279,27 @@ def main():
     # **内容相同的只跑一遍**：云盘里同一份卷子常有多份副本（放在不同目录下），
     # 实测待跑的 55 份里有 18 组重复、白跑 19 遍，一遍 4 分钟就是一个多小时。
     # 跑完把结果分发给同 sha256 的兄弟文件，它们各自的 file_id 照样有记录。
+    # 先把**往轮已经识别过**的同哈希结果直接抄过来。只在本轮队列内去重是不够的：
+    # 上一轮跑过 A、这一轮轮到它的副本 B，B 照样会从头再扫一遍几十页大图
+    # （实见副省卷跑了两遍，第二遍还因负载高被超时截断，识别量从 117 条掉到 18 条）。
+    done_by_hash = {r["sha256"]: r["file_id"] for r in con.execute(
+        "SELECT d.sha256, o.file_id FROM real_ocr o JOIN drive_files d ON d.id=o.file_id "
+        "WHERE d.sha256 IS NOT NULL AND o.n_item > 0")}
+    copied = 0
+    for r in rows:
+        src = done_by_hash.get(r["sha256"])
+        if src:
+            con.execute(
+                "INSERT OR REPLACE INTO real_ocr"
+                "(file_id,name,synth,ocr_text,n_item,ans_json,model) "
+                "SELECT ?,?,synth,ocr_text,n_item,ans_json,model FROM real_ocr WHERE file_id=?",
+                (r["file_id"], r["name"], src))
+            copied += 1
+    if copied:
+        con.commit()
+        print("有 %d 份和往轮识别过的卷子内容相同，直接抄结果，不重跑" % copied)
+        rows = [r for r in rows if not done_by_hash.get(r["sha256"])]
+
     same = {}
     for r in rows:
         same.setdefault(r["sha256"] or "id:%d" % r["file_id"], []).append(r)
@@ -314,9 +339,16 @@ def main():
             # ('answers_bad','failed','empty','thin')，新值会让 OCR 只识出三五条的
             # 那种明显失败的卷子在报告里彻底隐身
             con.executemany(
-                "INSERT OR REPLACE INTO real_ocr"
+                # **只准越写越好**：同一份卷子重跑时，机器负载高会触发超时截断，
+                # 拿 10KB 的残缺识别覆盖掉上一轮 40KB 的完整识别（实见 117 条→18 条）。
+                # 用 UPSERT 加条件，而不是 INSERT OR REPLACE。
+                "INSERT INTO real_ocr"
                 "(file_id,name,synth,ocr_text,n_item,ans_json,model) "
-                "VALUES(?,?,?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,?,?) "
+                "ON CONFLICT(file_id) DO UPDATE SET "
+                "  name=excluded.name, synth=excluded.synth, ocr_text=excluded.ocr_text,"
+                "  n_item=excluded.n_item, ans_json=excluded.ans_json, model=excluded.model "
+                "WHERE excluded.n_item > real_ocr.n_item",
                 [(x["file_id"], x["name"], 1 if synth else 0, raw, len(got),
                   json.dumps(got), how)
                  for x in same[r["sha256"] or "id:%d" % r["file_id"]]])

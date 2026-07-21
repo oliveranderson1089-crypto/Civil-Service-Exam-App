@@ -498,3 +498,16 @@ def test_ans_块头带答案优先于正文里的结论():
                   % (i, "CDCD"[i % 4]) for i in range(1, 31))
     ans, _synth = R.parse_answers(t)
     assert ans[1][0] == "D" and ans[2][0] == "C", "取成正文里那个 A 了"
+
+
+def test_ans_inline_冒号被ocr认成逗号():
+    """扫描件里「正确答案：C」的冒号常被认成逗号或顿号。
+
+    2022 四川那份实见「3、正确答案，D，」—— 只认冒号的话整卷只剩 6 条。
+    """
+    want = {i: "CBDB"[i % 4] for i in range(1, 31)}
+    seps = ["：", ":", "，", ",", "、", " "]
+    t = "\n".join("%d、正确答案%s%s。\n解析" % (i, seps[i % len(seps)], v)
+                  for i, v in want.items())
+    ans, _synth = R.parse_answers(t)
+    assert {k: v[0] for k, v in ans.items()} == want, len(ans)
