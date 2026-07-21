@@ -475,10 +475,21 @@ def test_ans_块头里直接带答案():
     """
     want = {i: "ACBD"[i % 4] for i in range(1, 31)}
     seps = ["一", "-", "·", " ", "—", ", "]           # OCR 把分隔符认成过这些
-    t = "\n".join("【解析 %d%s正确答案%s】\n解析: 这里是正文。" % (i, seps[i % len(seps)], v)
+    # 「人」是 OCR 在答案字母前凭空塞进来的杂字，实见于 2024 国考副省卷
+    junk = ["", " ", "人", ": ", "  "]
+    t = "\n".join("【解析 %d%s正确答案%s%s】\n解析: 这里是正文。"
+                  % (i, seps[i % len(seps)], junk[i % len(junk)], v)
                   for i, v in want.items())
     ans, synth = R.parse_answers(t)
     assert synth is False and {k: v[0] for k, v in ans.items()} == want, len(ans)
+
+
+def test_ans_块头带答案_省掉解析二字也认():
+    """首块常排成「【1】【正确答案B】」—— 没有「解析」两个字。"""
+    want = {i: "BDAC"[i % 4] for i in range(1, 31)}
+    t = "\n".join("【%d】【正确答案%s】\n本题考查甲乙丙。" % (i, v) for i, v in want.items())
+    ans, _synth = R.parse_answers(t)
+    assert {k: v[0] for k, v in ans.items()} == want, len(ans)
 
 
 def test_ans_块头带答案优先于正文里的结论():
