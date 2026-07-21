@@ -207,14 +207,18 @@ def _reparse(con):
 
     补新排版时就靠它验证 —— 否则每加一种排版都要把几十页 A0 大图重扫一遍。
     """
+    # **只重解析 tesseract 出的结果**：视觉模型胜出时，ocr_text 里存的仍是
+    # tesseract 那份（更差的）文本，答案却是视觉模型给的。拿它重算等于把好结果
+    # 换成坏结果 —— 而且 n_item 一变就写库，悄无声息。
     rows = con.execute("SELECT file_id, name, n_item, ocr_text FROM real_ocr "
-                       "WHERE ocr_text IS NOT NULL AND ocr_text != ''").fetchall()
+                       "WHERE ocr_text IS NOT NULL AND ocr_text != '' "
+                       "  AND model LIKE 'tesseract%'").fetchall()
     print("有识别原文可重解析的：%d 份" % len(rows))
     for r in rows:
         ans, synth = R.parse_answers(r["ocr_text"])
         got = {k: v[0] for k, v in ans.items()}
-        if len(got) == r["n_item"]:
-            continue
+        if len(got) <= r["n_item"]:
+            continue          # 只准越改越好，重解析不该让识别量倒退
         con.execute("UPDATE real_ocr SET synth=?, n_item=?, ans_json=? WHERE file_id=?",
                     (1 if synth else 0, len(got), json.dumps(got), r["file_id"]))
         print("   %3d → %3d 条%s  %s" % (r["n_item"], len(got),
