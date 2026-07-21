@@ -261,7 +261,7 @@ def main():
         return _reparse(con)
 
     rows = con.execute(
-        "SELECT p.file_id, p.name, d.stored_name FROM real_papers p "
+        "SELECT p.file_id, p.name, d.stored_name, d.sha256 FROM real_papers p "
         "JOIN drive_files d ON d.id=p.file_id "
         "WHERE p.role='a' AND p.status='empty' AND p.ext='.pdf' "
         "  AND p.file_id NOT IN (SELECT file_id FROM real_ocr) "
@@ -272,9 +272,16 @@ def main():
     # 对后者 OCR 是纯浪费 —— 识别出来的是同一个排版的**更差**版本
     # （实测「烹饪」认成「襄饪」），该改的是解析器不是这里。实测 55 份里 42 份是这种。
     rows = [r for r in rows if not _has_text_layer(find_path(r["stored_name"]))]
-    if a.limit:
-        rows = rows[:a.limit]
-    print("待 OCR 的扫描版答案卷：%d 份" % len(rows))
+    # **内容相同的只跑一遍**：云盘里同一份卷子常有多份副本（放在不同目录下），
+    # 实测待跑的 55 份里有 18 组重复、白跑 19 遍，一遍 4 分钟就是一个多小时。
+    # 跑完把结果分发给同 sha256 的兄弟文件，它们各自的 file_id 照样有记录。
+    same = {}
+    for r in rows:
+        same.setdefault(r["sha256"] or "id:%d" % r["file_id"], []).append(r)
+    rows = [v[0] for v in same.values()]
+    dup = sum(len(v) - 1 for v in same.values())
+    print("待 OCR 的扫描版答案卷：%d 份%s"
+          % (len(rows), ("（另有 %d 份内容重复，跑完直接分发）" % dup) if dup else ""))
     if a.plan or not rows:
         return
 
@@ -306,12 +313,13 @@ def main():
             # 状态沿用既有的 ok/empty，不新造 'ocr' —— report() 的人工复核清单只认
             # ('answers_bad','failed','empty','thin')，新值会让 OCR 只识出三五条的
             # 那种明显失败的卷子在报告里彻底隐身
-            con.execute(
+            con.executemany(
                 "INSERT OR REPLACE INTO real_ocr"
                 "(file_id,name,synth,ocr_text,n_item,ans_json,model) "
                 "VALUES(?,?,?,?,?,?,?)",
-                (r["file_id"], r["name"], 1 if synth else 0, raw, len(got),
-                 json.dumps(got), how))
+                [(x["file_id"], x["name"], 1 if synth else 0, raw, len(got),
+                  json.dumps(got), how)
+                 for x in same[r["sha256"] or "id:%d" % r["file_id"]]])
             con.commit()
             print("  [%d/%d] %-38s %3d 条 by %-12s%s（已跑 %.1f 分钟）"
                   % (n, len(rows), r["name"][:38], len(got), how,
