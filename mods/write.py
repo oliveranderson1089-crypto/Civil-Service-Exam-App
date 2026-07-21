@@ -195,22 +195,77 @@ def _write_lack(p, content):
     return need
 
 
+_DIR_MIN = 5     # 一个方向至少要有这么多素材才够写成一篇（低于此的算冷门方向，先不轮到）
+
+
+def _compose_dirs(db, p, n_hist=40, n_out=4):
+    """给「综合应用」按方向轮换配题：谁最久没写过就先写谁，实现各方向公平分配。
+
+       之前每期都收敛到「创新 / 高质量发展」——池子里创新素材最多、提示词又拿科技创新举例，
+       模型每次输入几乎一样，就每次都挑同一个最安全的题。这里不排斥任何老方向，而是排一个队：
+         · 候选 = 全库素材够料（≥_DIR_MIN 条）的所有方向——新素材带出的新方向会自动进来，
+           老方向（创新/发展等）也一直在队里，不会被永久踢掉；
+         · 排序按「上一次写它是哪天」，从没写过的排最前，写过的越久越靠前——
+           轮到谁就写谁，创新只是暂时沉底，等别的方向都轮过一遍自然回到前面。
+       再把靠前几个方向的素材补进池子，保证换了方向也有东西可写。
+
+       返回 (dirs, recent)：dirs 是本期优先方向（越靠前越久没写），recent 是最近几期已写话题。"""
+    hist = [((r[0] or "").strip(), r[1]) for r in db.execute(   # [(topic, date), ...] 近 n_hist 期
+        "SELECT topic, date FROM daily_essays WHERE mode='compose' ORDER BY date DESC LIMIT ?",
+        (n_hist,))]
+    recent = [t for t, _ in hist[:8]]
+    # 全库素材够料的方向（按 topic 标签词频，和 _kw_of 同一套分隔符）。随素材增减自动变。
+    cnt = {}
+    for r in db.execute("SELECT topic FROM sucai_items WHERE kind!='衔接表达'"):
+        for w in re.split(r"[·、,，/]", r[0] or ""):
+            w = w.strip()
+            if 2 <= len(w) <= 4:
+                cnt[w] = cnt.get(w, 0) + 1
+    cand = [(w, c) for w, c in cnt.items() if c >= _DIR_MIN]
+
+    def last_used(w):   # 该方向上一次被写的日期（子串命中即算写过）；从没写过→空串，排最前
+        ds = [d for t, d in hist if w in t]
+        return max(ds) if ds else ""
+
+    # 轮换排序：最久没写的在前；同样久的，素材多的优先（能写得更实在）。
+    dirs = [w for w, _ in sorted(cand, key=lambda wc: (last_used(wc[0]), -wc[1]))][:n_out]
+    # 补料：把靠前几个方向的素材塞进池子，保证轮到冷门方向也有得写；按 (kind,content) 去重。
+    if dirs:
+        have = {(x.get("kind"), x.get("content")) for x in p["sucai"]}
+        for w in dirs:
+            for r in db.execute(
+                "SELECT kind,topic,content FROM sucai_items "
+                "WHERE kind!='衔接表达' AND topic LIKE ? ORDER BY date DESC LIMIT 4",
+                ("%" + w + "%",)):
+                key = (r["kind"], r["content"])
+                if key not in have:
+                    have.add(key)
+                    p["sucai"].append(dict(r))
+    return dirs, recent
+
+
 def _write_gen(db, mode, date):
     """生成一篇。返回 (essay_dict, None) 或 (None, (json, code))。"""
     p = _write_pool(db, date if mode == "daily" else None)
     if mode == "daily" and not p["sucai"] and not p["lianjie"]:
         return None, (jsonify({"error": "这一天没有素材，写不了"}), 400)
-    pool, idx = _pool_text(p)
 
     if mode == "daily":
         head = ("下面是 %s 这一天更新的备考素材。请**只用这些素材**，写一篇申论大作文。\n"
                 "立意从素材里长出来——先看这批素材共同指向什么问题，再定题目，"
                 "不要硬凑一个宏大题目再往里塞素材。\n" % date)
     else:
-        head = ("下面是素材库里挑出来的一批素材（跨越多日）。请自己**选一个有价值的话题**"
-                "——要是省考真考的方向（基层治理、科技创新、乡村振兴、文化自信、"
-                "民生保障、绿色发展、法治建设这类），不要选空泛口号；"
-                "然后从素材里挑真正用得上的写一篇大作文。用不上的素材就不要用，别硬塞。\n")
+        dirs, recent = _compose_dirs(db, p)   # 会把优先方向的素材补进 p["sucai"]，须在 _pool_text 前调
+        rec_hint = "、".join(dict.fromkeys(t for t in recent[:5] if t)) or "创新、高质量发展"
+        cand_hint = "、".join(dirs) if dirs else "为民、奉献、担当、坚守"
+        head = ("下面是素材库里挑出来的一批素材（跨越多日）。请从中选一个方向，写一篇申论大作文。\n"
+                "为了让各方向轮流覆盖、不天天写同一个题，这一期请**优先从下面这几个"
+                "最久没写过的方向里挑一个**（越靠前越该写，挑你素材最足、最能写好的）：%s。\n"
+                "最近几期已经写过「%s」，尽量别再挑这些重复；但只要素材撑得住、和上面方向不重复，"
+                "另选省考真考方向（基层治理、乡村振兴、文化自信、民生保障、法治建设等）也行。\n"
+                "选定后从素材里挑真正用得上的写，用不上的别硬塞。\n" % (cand_hint, rec_hint))
+
+    pool, idx = _pool_text(p)
 
     prompt = (head + "\n" + pool + "\n\n"
               "【要求】\n"
