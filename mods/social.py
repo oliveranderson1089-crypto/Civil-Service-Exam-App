@@ -549,6 +549,60 @@ def drive_patch(fid):
     return jsonify({"ok": True, "name": name, "folder": folder})
 
 
+def _uniq_name(db, owner, folder, name):
+    """同目录重名就叫「x 副本.txt」—— 复制到原地是很常见的操作，不能直接 400 顶回去。"""
+    def taken(n):
+        return db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? "
+                          "AND deleted_at IS NULL", (owner, folder, n)).fetchone()
+    if not taken(name):
+        return name
+    stem, ext = os.path.splitext(name)
+    for i in range(2, 100):
+        cand = "%s 副本%s%s" % (stem, "" if i == 2 else str(i), ext)
+        if not taken(cand):
+            return cand
+    return "%s %s%s" % (stem, uuid.uuid4().hex[:6], ext)
+
+
+@bp.post("/api/drive/<int:fid>/copy")
+def drive_copy(fid):
+    """复制到另一个目录。
+
+    内容一个字节都不用动：新行沿用同一个 stored_name / sha256，靠去重那套共用磁盘上
+    那一份。所以复制是瞬时的、也不吃配额（_drive_used 按 DISTINCT stored_name 算）。
+    """
+    dest = ((request.get_json(silent=True) or {}).get("folder") or "").strip().strip("/")
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND deleted_at IS NULL",
+                   (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "不存在"}), 404
+    src = (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"]
+    if r["is_dir"] and (dest == src or dest.startswith(src + "/")):
+        return jsonify({"error": "不能把文件夹复制到它自己里面"}), 400
+    dest = _ensure_folder_path(db, uid(), dest)
+    name = _uniq_name(db, uid(), dest, r["name"])
+    if r["is_dir"]:
+        newtop = (dest + "/" + name) if dest else name
+        db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) VALUES(?,?,?,1,'drive')",
+                   (uid(), dest, name))
+        for k in db.execute("SELECT * FROM drive_files WHERE owner_id=? AND "
+                            "(folder=? OR folder LIKE ?) AND deleted_at IS NULL",
+                            (uid(), src, src + "/%")).fetchall():
+            db.execute(
+                "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,"
+                "source,sha256) VALUES(?,?,?,?,?,?,?,?,'drive',?)",
+                (uid(), newtop + k["folder"][len(src):], k["name"], k["stored_name"], k["ext"],
+                 k["mime"], k["size"], k["is_dir"], k["sha256"]))
+    else:
+        db.execute(
+            "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,"
+            "source,sha256) VALUES(?,?,?,?,?,?,?,0,'drive',?)",
+            (uid(), dest, name, r["stored_name"], r["ext"], r["mime"], r["size"], r["sha256"]))
+    db.commit()
+    return jsonify({"ok": True, "name": name, "folder": dest}), 201
+
+
 @bp.delete("/api/drive/<int:fid>")
 def drive_del(fid):
     db = get_db()

@@ -7,6 +7,7 @@ __onDragOver
 __onDropFiles
 __onNotePasteImage
 __onPasteImage
+__onPickedFiles
 __onShot
 __onSysTheme
 __padTheme

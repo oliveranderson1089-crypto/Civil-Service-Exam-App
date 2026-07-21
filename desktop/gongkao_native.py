@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import subprocess
+import threading
 from shlex import quote as shlex_quote
 from urllib.parse import urlparse
 
@@ -276,6 +277,133 @@ class Gongkao(Gtk.Application):
         dlg.destroy()
         return True
 
+    # ---------------- 送文件进网页：拖放 / 选文件夹 / 粘贴 共用 ----------------
+    # 走 base64 桥的单文件上限。**不是**云盘的 200MB —— 200MB 文件 base64 后是 267MB 的
+    # JS 源码，run_javascript 扛不住。更大的文件走网页那个「⬆ 上传」按钮（分片传，不经这座桥）。
+    DESK_MAX_FILE = 64 * 1024 * 1024
+    DESK_BATCH = 6 * 1024 * 1024             # 一批最多这么多原始字节（base64 还会再涨 1/3）
+
+    def _walk(self, path, out, base=None):
+        """把一个路径摊成 [(绝对路径, 相对目录)]。目录就整棵走下去。
+
+        相对目录是给云盘建子目录用的：拖进来 /home/me/文档/公考，就该在云盘里建出
+        「公考/…」这棵树，而不是把里面的文件全倒在当前目录。
+        """
+        if base is None:
+            base = os.path.dirname(path.rstrip(os.sep))
+        if os.path.isfile(path):
+            out.append((path, os.path.relpath(os.path.dirname(path), base).replace(os.sep, "/")))
+            return
+        if not os.path.isdir(path):
+            return
+        for dirpath, dirnames, filenames in os.walk(path):
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+            rel = os.path.relpath(dirpath, base).replace(os.sep, "/")
+            for fn in sorted(filenames):
+                if fn.startswith("."):
+                    continue
+                out.append((os.path.join(dirpath, fn), rel))
+
+    def _send_files(self, pairs):
+        """把 [(路径, 相对目录)] 分批 base64 送进网页。
+
+        两件事必须做对，否则真实目录（实测「公考」= 497 个文件 / 816MB）会把壳搞死：
+
+        ① **不能在主线程上读**。读几百 MB + base64 是长阻塞，GTK 主线程一堵界面就冻住
+           （README 第 3 条：主线程上一个阻塞调用都不能有）。所以读盘在后台线程，
+           只把 run_javascript 用 idle_add 丢回主线程。
+        ② **要有背压**。一口气把 136 批塞进网页，浏览器那边同时开一百多个上传、
+           base64 字符串全堆在内存里。所以每批送完等网页回一句 batchdone 再送下一批。
+        """
+        if not pairs:
+            self._toast("这里面没有可上传的文件")
+            return
+        self._ack = threading.Event()
+        threading.Thread(target=self._pump, args=(pairs,), daemon=True).start()
+
+    def _pump(self, pairs):
+        batch, size, sent, skipped = [], 0, 0, []
+        for p, rel in pairs:
+            try:
+                n = os.path.getsize(p)
+                if n > self.DESK_MAX_FILE:
+                    skipped.append(os.path.basename(p))
+                    continue
+                with open(p, "rb") as f:
+                    raw = f.read()
+            except Exception:
+                skipped.append(os.path.basename(p))
+                continue
+            batch.append({"name": os.path.basename(p), "rel": "" if rel == "." else rel,
+                          "data": base64.b64encode(raw).decode()})
+            size += n
+            sent += 1
+            if size >= self.DESK_BATCH:
+                self._push(batch)
+                batch, size = [], 0
+        if batch:
+            self._push(batch)
+        if skipped:
+            # 单个太大的走网页那个「⬆ 上传」按钮更靠谱：那条是分片传的，不经这座 base64 的桥
+            GLib.idle_add(self._toast, "%d 个文件太大没传（%s…），用「⬆ 上传」单独传"
+                          % (len(skipped), skipped[0][:20]))
+
+    def _push(self, batch):
+        """送一批，然后等网页说「这批传完了」再回来送下一批。"""
+        self._ack.clear()
+        GLib.idle_add(self._flush, batch)
+        if not self._ack.wait(300):          # 超时就往下走，别把整个上传永远卡住
+            GLib.idle_add(self._toast, "有一批等太久，继续传后面的")
+
+    def _flush(self, batch):
+        self._js("window.__onPickedFiles && window.__onPickedFiles(%s)"
+                 % json.dumps(batch, ensure_ascii=False))
+        return False                          # idle_add 只跑一次
+
+    def pick_dir(self):
+        """选一个文件夹整个传上去。
+
+        网页那套 <input webkitdirectory> 是 Chromium 的能力，WebKitGTK 不认 —— 在壳里
+        点「传文件夹」只会弹出选**文件**的框（这正是用户反馈的现象）。所以桌面版改走
+        这条原生路：GTK 开 SELECT_FOLDER，选完在 Python 这边把整棵树摊平送进网页。
+        """
+        dlg = Gtk.FileChooserDialog(title="选择要上传的文件夹", transient_for=self.win,
+                                    action=Gtk.FileChooserAction.SELECT_FOLDER)
+        dlg.add_buttons("取消", Gtk.ResponseType.CANCEL, "上传这个文件夹", Gtk.ResponseType.ACCEPT)
+        path = dlg.get_filename() if dlg.run() == Gtk.ResponseType.ACCEPT else None
+        dlg.destroy()
+        if not path:
+            return
+        out = []
+        self._walk(path, out)
+        self._toast("正在读取「%s」：%d 个文件" % (os.path.basename(path), len(out)))
+        self._send_files(out)
+
+    def paste_files(self):
+        """系统剪贴板里复制的**文件**（在文件管理器里 Ctrl+C 的那种）粘贴进来。
+
+        WebKitGTK 的 paste 事件拿不到文件，只能从 GTK 这层读 text/uri-list。
+        剪贴板里是图片时走原来的 paste_image。
+        """
+        clip = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        uris = clip.wait_for_uris() or []
+        paths = []
+        for u in uris:
+            try:
+                p = GLib.filename_from_uri(u)[0]
+            except Exception:
+                continue
+            if p and os.path.exists(p):
+                paths.append(p)
+        if not paths:
+            return False
+        out = []
+        for p in paths:
+            self._walk(p, out)
+        self._toast("正在粘贴 %d 个文件" % len(out))
+        self._send_files(out)
+        return True
+
     # ---------------- 拖放：GTK 层接管（WebKit 的 drop 给不到文件） ----------------
     def on_drag_motion(self, widget, ctx, x, y, time):
         Gdk.drag_status(ctx, Gdk.DragAction.COPY, time)
@@ -298,30 +426,27 @@ class Gongkao(Gtk.Application):
         return True
 
     def on_drag_data(self, widget, ctx, x, y, data, info, time):
-        files = []
-        too_big = False
-        for uri in (data.get_uris() or [])[:10]:
+        """拖进来的既可能是文件、也可能是**整个文件夹** —— 后者要整棵走下去。
+
+        原来这里 `os.path.isfile` 一判，目录直接被跳过，拖文件夹进来什么也不会发生。
+        """
+        paths = []
+        for uri in (data.get_uris() or [])[:50]:
             try:
                 p = GLib.filename_from_uri(uri)[0]
             except Exception:
                 continue
-            if not p or not os.path.isfile(p):
-                continue
-            if os.path.getsize(p) > 200 * 1024 * 1024:   # 和云盘一致 200MB（apk 装机包多在这以内）
-                too_big = True
-                continue
-            with open(p, "rb") as f:
-                files.append({"name": os.path.basename(p),
-                              "data": base64.b64encode(f.read()).decode()})
-        Gtk.drag_finish(ctx, bool(files), False, time)
+            if p and os.path.exists(p):
+                paths.append(p)
+        Gtk.drag_finish(ctx, bool(paths), False, time)
         self._js("window.__onDragLeave && window.__onDragLeave()")
-        if files:
-            self._js("window.__onDropFiles && window.__onDropFiles(%s)"
-                     % json.dumps(files, ensure_ascii=False))
-        elif too_big:
-            self._toast("文件超过 200MB，太大了")
-        else:
+        if not paths:
             self._toast("这些东西读不出文件（只支持本地文件）")
+            return
+        out = []
+        for p in paths:
+            self._walk(p, out)
+        self._send_files(out)
 
     # ---------------- 剪贴板里的图片：Ctrl+V / 右键粘贴 ----------------
     def _clip_image_b64(self):
@@ -423,6 +548,17 @@ class Gongkao(Gtk.Application):
             self.open_external(d.get("url") or "")
         elif act == "copyimg":
             self.copy_image(d.get("data") or "")
+        elif act == "pickdir":
+            self.pick_dir()
+        elif act == "batchdone":
+            # 网页把这一批传完了 → 放行下一批（背压，见 _push）
+            ev = getattr(self, "_ack", None)
+            if ev:
+                ev.set()
+        elif act == "pastefiles":
+            # 剪贴板里先看有没有文件，没有再当图片粘
+            if not self.paste_files() and not self.paste_image():
+                self._toast("剪贴板里没有文件或图片")
 
     def copy_image(self, b64):
         """把网页传来的 PNG（base64）**真的写进系统剪贴板**。

@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, KB, api, appConfirm, appPrompt, esc,
+/* global $, IS_DESKTOP, KB, api, appConfirm, appPrompt, esc,
    openViewerUrl, push, toast */
 
 /* ================= 云盘 ================= */
@@ -211,6 +211,96 @@ $('#dv-move').onclick = async () => {
   loadDrive();
 };
 
+/* ---- 复制 / 粘贴 ----
+   桌面壳里 WebKit 自带的右键菜单只有「后退/前进/停止/重新加载」，没有复制粘贴；
+   而应用内本来也没有「把文件复制到另一个目录」这回事。这里两件都补上。
+   复制是瞬时的：后端沿用同一个 blob（去重那套），不搬数据、不吃配额。 */
+let dvClip = [];          // 剪贴板里存的是云盘文件 id
+
+function dvSetClip(ids) {
+  dvClip = ids.slice();
+  toast(dvClip.length ? '已复制 ' + dvClip.length + ' 项，去目标文件夹点「粘贴」' : '没选中东西');
+}
+
+async function dvPaste() {
+  if (!dvClip.length) {
+    // 应用内剪贴板是空的 → 问问系统剪贴板里有没有文件（桌面壳专属）
+    if (IS_DESKTOP) {
+      try {
+        window.webkit.messageHandlers.gk.postMessage(JSON.stringify({ a: 'pastefiles' }));
+        return;
+      } catch (_) { /* 桥不在就往下走 */ }
+    }
+    toast('剪贴板是空的。先选中文件点「复制」', true);
+    return;
+  }
+  let ok = 0, fail = 0;
+  for (const id of dvClip) {
+    try {
+      await api('/api/drive/' + id + '/copy', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: dvFolder }) });
+      ok++;
+    } catch (err) { fail++; toast(err.message, true); }
+  }
+  toast(fail ? '粘贴 ' + ok + ' 项，失败 ' + fail + ' 项' : '已粘贴 ' + ok + ' 项', fail > 0 && !ok);
+  loadDrive();
+}
+$('#dv-copy').onclick = () => { dvSetClip([...dvSel]); };
+$('#dv-paste').onclick = dvPaste;
+
+/* 右键菜单。桌面壳里必须 preventDefault 掉，否则弹出来的是 WebKit 那个
+   「后退/前进/停止/重新加载」，在云盘里毫无用处。 */
+function dvMenu(x, y, id, name, viewable) {
+  const el = $('#dv-menu');
+  const rows = [];
+  if (id) {
+    if (viewable) rows.push(['dvm-view', '👁 预览']);
+    rows.push(['dvm-copy', '📄 复制'], ['dvm-ren', '✏️ 重命名'],
+              ['dvm-dl', '⬇ 下载'], ['dvm-del', '🗑 删除']);
+  }
+  rows.push(['dvm-paste', '📋 粘贴' + (dvClip.length ? '（' + dvClip.length + ' 项）' : '')]);
+  el.innerHTML = rows.map(([k, t]) => `<button data-dvm="${k}">${t}</button>`).join('');
+  el.dataset.id = id || '';
+  el.dataset.name = name || '';
+  el.classList.remove('hidden');
+  // 靠右/靠下时翻到另一侧，别让菜单跑到屏幕外
+  const w = el.offsetWidth || 150, h = el.offsetHeight || 180;
+  el.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+  el.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
+}
+const dvMenuHide = () => $('#dv-menu').classList.add('hidden');
+$('#view-drive').addEventListener('contextmenu', e => {
+  if (dvInTrash) return;                     // 回收站里只有恢复/彻底删，不给这套
+  e.preventDefault();
+  const item = e.target.closest('.dv-item');
+  const ren = item && item.querySelector('[data-dvren]');
+  const view = item && item.querySelector('[data-dvview]');
+  dvMenu(e.clientX, e.clientY, ren ? ren.dataset.dvren : '',
+         item ? (item.querySelector('.dv-name') || {}).textContent : '', !!view);
+});
+document.addEventListener('click', e => { if (!e.target.closest('#dv-menu')) dvMenuHide(); });
+$('#dv-menu').addEventListener('click', async e => {
+  const b = e.target.closest('[data-dvm]');
+  if (!b) return;
+  const el = $('#dv-menu');
+  const id = +el.dataset.id, name = el.dataset.name;
+  dvMenuHide();
+  switch (b.dataset.dvm) {
+    case 'dvm-view': $(`[data-dvview="${id}"]`).click(); break;
+    case 'dvm-copy': dvSetClip([id]); break;
+    case 'dvm-paste': dvPaste(); break;
+    case 'dvm-ren': dvRename(id, name); break;
+    case 'dvm-dl': window.location.href = '/api/drive/' + id + '/download'; break;
+    case 'dvm-del':
+      if (await appConfirm('删除这个？（会先进回收站）')) {
+        try { await api('/api/drive/' + id, { method: 'DELETE' }); loadDrive(); }
+        catch (err) { toast(err.message, true); }
+      }
+      break;
+  }
+});
+
 // 选目标文件夹（复用发好友那个底部面板的样式）
 async function dvPickFolder() {
   let folders = [];
@@ -347,6 +437,25 @@ $('#dv-upfile').addEventListener('change', e => {
   const items = [...e.target.files].map(f => ({ file: f, folder: '' }));
   e.target.value = '';
   dvUpload(items);
+});
+/* 桌面壳（WebKitGTK）不认 <input webkitdirectory> —— 那是 Chromium 的能力，
+   在壳里点「传文件夹」只会弹出选**文件**的框。所以桌面版改走原生的选目录对话框，
+   由壳把整棵树摊平、带相对路径送回 __onPickedFiles。 */
+function dvPickFolderNative() {
+  try {
+    window.webkit.messageHandlers.gk.postMessage(JSON.stringify({ a: 'pickdir' }));
+    return true;
+  } catch (_) { return false; }
+}
+/* 不在云盘页时收到文件（壳里粘贴/拖放）：先把人带到云盘再传，否则传完看不见。
+   要把 dvUpload 的 promise 交回去 —— 壳的背压等的就是它。 */
+function dvOpenAndUpload(list) {
+  openDrive();
+  return new Promise(res => setTimeout(() => res(dvUpload(list)), 0));
+}
+$('#dv-upfolder').addEventListener('click', e => {
+  // 桌面壳里拦下来走原生选目录，别让 WebKit 弹出那个只能选文件的框
+  if (IS_DESKTOP && dvPickFolderNative()) e.preventDefault();
 });
 $('#dv-upfolder').addEventListener('change', e => {
   // webkitRelativePath 形如 '照片/2024/a.jpg'，砍掉文件名剩下的就是要建的子目录

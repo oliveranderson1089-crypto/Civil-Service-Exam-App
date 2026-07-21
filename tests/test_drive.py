@@ -222,3 +222,47 @@ def test_文件名里的路径会被剥掉(auth_client):
     r = _up(auth_client, "../../etc/passwd")
     assert r.status_code == 201
     assert r.get_json()["name"] == "passwd"
+
+
+# ---- 复制（右键「复制/粘贴」用） ----
+
+def test_复制到别的目录内容共用不占额外磁盘(auth_client):
+    a = _mk(auth_client, "原件.bin", folder="复制源", data=b"y" * 2048)
+    before = _ls(auth_client)["used"]
+    r = auth_client.post("/api/drive/%d/copy" % a, json={"folder": "复制目标"})
+    assert r.status_code == 201, r.get_data(as_text=True)[:200]
+    assert [i["name"] for i in _ls(auth_client, "复制目标")["items"]] == ["原件.bin"]
+    assert _ls(auth_client)["used"] == before, "复制吃了配额 —— 内容明明是共用的"
+
+
+def test_复制到同一个目录自动改名而不是报错(auth_client):
+    a = _mk(auth_client, "就地.txt", folder="就地复制")
+    assert auth_client.post("/api/drive/%d/copy" % a, json={"folder": "就地复制"}).status_code == 201
+    names = sorted(i["name"] for i in _ls(auth_client, "就地复制")["items"])
+    assert names == ["就地 副本.txt", "就地.txt"], names
+
+
+def test_复制文件夹连子孙一起复制(auth_client):
+    _mk(auth_client, "深文件.txt", folder="待复制/内层")
+    top = [i for i in _ls(auth_client)["items"] if i["name"] == "待复制"][0]["id"]
+    assert auth_client.post("/api/drive/%d/copy" % top, json={"folder": "存档"}).status_code == 201
+    assert [i["name"] for i in _ls(auth_client, "存档/待复制/内层")["items"]] == ["深文件.txt"]
+    # 原件必须原封不动（复制不是移动）
+    assert [i["name"] for i in _ls(auth_client, "待复制/内层")["items"]] == ["深文件.txt"]
+
+
+def test_不能把文件夹复制进它自己里面(auth_client):
+    _mk(auth_client, "x.txt", folder="自我复制/下层")
+    top = [i for i in _ls(auth_client)["items"] if i["name"] == "自我复制"][0]["id"]
+    r = auth_client.post("/api/drive/%d/copy" % top, json={"folder": "自我复制/下层"})
+    assert r.status_code == 400
+
+
+def test_复制出来的那份能独立删除(auth_client):
+    """复制共用 blob，所以删副本绝不能把原件的文件带走。"""
+    a = _mk(auth_client, "共享.bin", folder="独立删", data=b"w" * 999)
+    auth_client.post("/api/drive/%d/copy" % a, json={"folder": "独立删2"})
+    cid = _ls(auth_client, "独立删2")["items"][0]["id"]
+    auth_client.delete("/api/drive/%d" % cid)
+    auth_client.delete("/api/drive/trash/%d" % cid)
+    assert auth_client.get("/api/drive/%d/download" % a).status_code == 200, "原件被副本的删除带坏了"

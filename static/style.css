@@ -3177,6 +3177,14 @@ body.dark .dv-search,body.dark .dv-sort{background:#141b29;}
 .dv-can:hover{color:var(--blue);text-decoration:underline;}
 .dv-batch{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:6px 12px;
   border-radius:10px;background:rgba(74,163,223,.12);font-size:13px;}
+/* 右键菜单：桌面壳里 WebKit 自带那个只有「后退/前进」，没法用 */
+.dv-menu{position:fixed;z-index:60;min-width:140px;padding:4px;border-radius:10px;
+  background:#fff;border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.16);}
+.dv-menu button{display:block;width:100%;text-align:left;border:none;background:transparent;
+  padding:7px 12px;border-radius:7px;font-size:13.5px;color:#1f2733;cursor:pointer;}
+.dv-menu button:hover{background:rgba(74,163,223,.14);color:var(--blue);}
+body.dark .dv-menu{background:#141b29;}
+body.dark .dv-menu button{color:#cfd6e2;}
 /* 上传进度条 */
 .dv-prog{display:flex;align-items:center;gap:10px;margin:-4px 0 12px;}
 .dv-prog-track{flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden;}

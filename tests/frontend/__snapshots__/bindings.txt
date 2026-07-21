@@ -325,7 +325,13 @@ document @click
 #dv-bcancel .onclick
 #dv-bdel .onclick
 #dv-move .onclick
+#dv-copy .onclick
+#dv-paste .onclick
+#view-drive @contextmenu
+document @click
+#dv-menu @click
 #dv-upfile @change
+#dv-upfolder @click
 #dv-upfolder @change
 #view-drive @dragover
 #view-drive @dragleave
