@@ -15,7 +15,7 @@ import uuid
 
 from flask import Blueprint, Response, jsonify, request, send_file
 
-from core import UPLOADS, get_db, log, uid, uname
+from core import CFG, UPLOADS, get_db, log, uid, uname
 
 bp = Blueprint("social", __name__)
 
@@ -133,13 +133,53 @@ def friends_del(fid):
 
 
 # ---- 云盘 ----
-DRIVE_MAX = 200 * 1024 * 1024        # 单文件上限 200MB
+# 两个上限都能在 config.json 里调（改完重启服务生效）
+DRIVE_MAX = int(CFG.get("drive_max_mb", 200)) * 1024 * 1024        # 单文件上限
+DRIVE_QUOTA = int(CFG.get("drive_quota_mb", 2048)) * 1024 * 1024   # 每人云盘总配额
+
+
+@bp.before_request
+def _relax_body_limit():
+    """只给「收文件」的两条路放宽请求体上限，其余接口仍受 app.py 的全局 64MB 保护。
+
+    以前这里写着 200MB，app.py 的 MAX_CONTENT_LENGTH 却是 64MB —— 超过 64MB 的文件
+    在进到视图函数之前就被 Flask 413 掉了，前端还照着「200MB」提示。表现出来就是
+    「云盘传不了大文件」，且报错莫名其妙。现在统一以 DRIVE_MAX 为准。
+    """
+    if request.method == "POST" and (request.path == "/api/drive"
+                                     or request.path.startswith("/api/chat/")):
+        request.max_content_length = DRIVE_MAX + 16 * 1024 * 1024   # 留 multipart 边框的余量
 
 
 def _drive_row(r):
     d = dict(r)
     d["is_dir"] = bool(d.get("is_dir"))
     return d
+
+
+def _drive_used(db, owner):
+    return db.execute("SELECT COALESCE(SUM(size),0) FROM drive_files WHERE owner_id=?",
+                      (owner,)).fetchone()[0]
+
+
+def _ensure_folder_path(db, owner, path):
+    """把 'a/b/c' 逐级补出 is_dir 行，返回规整后的路径。
+
+    上传整个文件夹时，中间目录必须先在库里存在：drive_list 是按 folder 精确匹配列的，
+    只有 is_dir 行才让人点得进去。缺了它，文件的 folder 指向一个列表里根本看不见的
+    目录 —— 传上去了，但用户找不着，等于传丢了。
+    """
+    parent = ""
+    for seg in (path or "").split("/"):
+        seg = seg.strip()
+        if not seg:
+            continue
+        if not db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? "
+                          "AND is_dir=1", (owner, parent, seg)).fetchone():
+            db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) "
+                       "VALUES(?,?,?,1,'drive')", (owner, parent, seg))
+        parent = (parent + "/" + seg) if parent else seg
+    return parent
 
 
 @bp.get("/api/drive")
@@ -149,9 +189,8 @@ def drive_list():
     rows = db.execute(
         "SELECT id, folder, name, ext, mime, size, is_dir, source, created_at FROM drive_files "
         "WHERE owner_id=? AND folder=? ORDER BY is_dir DESC, id DESC", (uid(), folder)).fetchall()
-    used = db.execute("SELECT COALESCE(SUM(size),0) FROM drive_files WHERE owner_id=?",
-                      (uid(),)).fetchone()[0]
-    return jsonify({"folder": folder, "items": [_drive_row(r) for r in rows], "used": used})
+    return jsonify({"folder": folder, "items": [_drive_row(r) for r in rows],
+                    "used": _drive_used(db, uid()), "quota": DRIVE_QUOTA, "max_file": DRIVE_MAX})
 
 
 @bp.post("/api/drive")
@@ -164,15 +203,20 @@ def drive_upload():
     size = f.tell()
     f.seek(0)
     if size > DRIVE_MAX:
-        return jsonify({"error": "文件超过 200MB"}), 400
-    ext = os.path.splitext(f.filename)[1].lower()
+        return jsonify({"error": "文件超过 %d MB" % (DRIVE_MAX // (1024 * 1024))}), 400
+    db = get_db()
+    if _drive_used(db, uid()) + size > DRIVE_QUOTA:
+        return jsonify({"error": "云盘空间不足（配额 %d MB）" % (DRIVE_QUOTA // (1024 * 1024))}), 400
+    # 传文件夹时前端把相对目录一并传上来，这里逐级补出中间目录
+    folder = _ensure_folder_path(db, uid(), folder)
+    name = os.path.basename((f.filename or "").replace("\\", "/")) or "未命名"
+    ext = os.path.splitext(name)[1].lower()
     stored = uuid.uuid4().hex + ext
     f.save(os.path.join(_drive_dir(uid()), stored))
-    db = get_db()
     cur = db.execute(
         "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
         "VALUES(?,?,?,?,?,?,?,0,'drive')",
-        (uid(), folder, f.filename, stored, ext, f.mimetype or "", size))
+        (uid(), folder, name, stored, ext, f.mimetype or "", size))
     db.commit()
     return jsonify(_drive_row(db.execute("SELECT * FROM drive_files WHERE id=?", (cur.lastrowid,)).fetchone())), 201
 
@@ -357,7 +401,7 @@ def chat_send(fid):
         size = f.tell()
         f.seek(0)
         if size > DRIVE_MAX:
-            return jsonify({"error": "文件超过 200MB"}), 400
+            return jsonify({"error": "文件超过 %d MB" % (DRIVE_MAX // (1024 * 1024))}), 400
         ext = os.path.splitext(f.filename)[1].lower()
         stored = uuid.uuid4().hex + ext
         # 发送方也留一份在自己云盘「聊天文件」，并作为源

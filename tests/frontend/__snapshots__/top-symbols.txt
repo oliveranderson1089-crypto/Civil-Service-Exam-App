@@ -16,6 +16,7 @@ DESKTOP_VER
 DOC
 DOCK_NAME
 DT_L
+DV_PARALLEL
 EXT_ICON
 FEATURES
 FILE_ICON
@@ -275,7 +276,11 @@ dtSubmitted
 dtTable
 dvFolder
 dvIcon
+dvProg
 dvUpload
+dvUploadOne
+dvView
+dvWalkEntry
 editNote
 emKey
 ensureNotifyPerm

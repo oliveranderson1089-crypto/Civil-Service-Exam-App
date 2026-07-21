@@ -594,9 +594,14 @@
       <div class="dv-crumb" id="dv-crumb"></div>
       <span class="dv-used" id="dv-used"></span>
       <button class="btn tiny" id="dv-newfolder">＋ 文件夹</button>
+      <label class="btn tiny">⬆ 传文件夹<input type="file" id="dv-upfolder" webkitdirectory directory multiple hidden></label>
       <label class="btn tiny primary">⬆ 上传<input type="file" id="dv-upfile" multiple hidden></label>
     </div>
+    <div id="dv-prog" class="dv-prog hidden">
+      <div class="dv-prog-track"><i id="dv-prog-bar"></i></div><span id="dv-prog-txt"></span>
+    </div>
     <div id="dv-list" class="dv-list"></div>
+    <div class="dv-drop"><span>📥 松手上传到当前文件夹（支持整个文件夹）</span></div>
   </section>
 
   <!-- ===== 聊天：会话/好友列表 ===== -->

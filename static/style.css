@@ -3166,6 +3166,18 @@ body.mobile-ui .cr-peer{display:none;}      /* 移动端用全局顶栏显示对
 .dv-act:hover,.dv-del:hover{color:var(--blue);}
 .dv-del:hover{color:#c0392b;}
 body.dark .dv-item{background:#141b29;}
+/* 上传进度条 */
+.dv-prog{display:flex;align-items:center;gap:10px;margin:-4px 0 12px;}
+.dv-prog-track{flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden;}
+.dv-prog-track i{display:block;height:100%;width:0;border-radius:3px;background:var(--blue);transition:width .18s ease;}
+.dv-prog span{font-size:12px;color:#9aa1ac;flex:none;}
+/* 拖拽落区：平时不占位，拖进来才铺满整个云盘视图 */
+#view-drive{position:relative;}
+.dv-drop{display:none;position:absolute;inset:0;z-index:5;align-items:center;justify-content:center;
+  border:2px dashed var(--blue);border-radius:14px;background:rgba(74,163,223,.10);
+  font-size:15px;color:var(--blue);pointer-events:none;}
+#view-drive.dv-drag .dv-drop{display:flex;}
+body.dark .dv-drop{background:rgba(74,163,223,.16);}
 .hc-drive{background:linear-gradient(135deg,#4aa3df,#2d7fc4);color:#fff;}
 .hc-chat{background:linear-gradient(135deg,#38c172,#22a05b);color:#fff;position:relative;}
 

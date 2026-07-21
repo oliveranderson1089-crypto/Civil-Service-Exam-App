@@ -320,6 +320,10 @@ document @click
 #dv-crumb @click
 #dv-list @click
 #dv-upfile @change
+#dv-upfolder @change
+#view-drive @dragover
+#view-drive @dragleave
+#view-drive @drop
 #dv-newfolder .onclick
 #ch-tabs @click
 #ch-convos @click

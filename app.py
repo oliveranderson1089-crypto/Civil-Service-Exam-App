@@ -79,7 +79,9 @@ from mods.xiyu import bp as xiyu_bp
 from mods.zinnia import bp as zinnia_bp
 
 app = Flask(__name__, static_folder=None)
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 单文件最大 64MB
+# 单文件最大 64MB。云盘/聊天要收更大的文件，在 mods/social.py 里按请求单独放宽
+# （别在这儿改大：那等于给所有接口都开了口子）
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
 app.secret_key = CFG["secret_key"]
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
