@@ -281,3 +281,76 @@ test('dvUpload：单个文件失败不拖垮其余的，并如实报失败数', 
   assert.ok(msgs.some(m => m.includes('2 个') && m.includes('失败 1 个')),
     '汇总要如实：成功 2 个、失败 1 个。实际：' + JSON.stringify(msgs));
 });
+
+/* ---- 代码审查查出来的前端坑 ---- */
+
+test('dvMenu：文件夹不给「下载」（/download 只认文件，给了就是点出个 404）', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dvMenu')(10, 10, 7, '某文件夹', false, true);      // isDir = true
+  const keys = [...h.window.document.querySelectorAll('#dv-menu [data-dvm]')]
+    .map(b => b.dataset.dvm);
+  assert.ok(!keys.includes('dvm-dl'), '文件夹给了下载项，点下去会把单页应用冲到 404 页');
+  assert.ok(keys.includes('dvm-del') && keys.includes('dvm-copy'));
+});
+
+test('dvMenu：文件才给「下载」', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('dvMenu')(10, 10, 8, 'a.pdf', true, false);
+  const keys = [...h.window.document.querySelectorAll('#dv-menu [data-dvm]')]
+    .map(b => b.dataset.dvm);
+  assert.ok(keys.includes('dvm-dl') && keys.includes('dvm-view'));
+});
+
+test('openDrive：从回收站回到云盘要退出回收站视图', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  const calls = [];
+  stubFetch(h, calls, () => ({ items: [], used: 0, quota: 100 }));
+  h.run('dvInTrash = true');
+  h.run('openDrive()');
+  assert.strictEqual(h.run('dvInTrash'), false,
+    '不复位的话 loadDrive 会短路去 loadTrash —— 云盘打开是回收站，上传完也看不见文件');
+  // openDrive 里的 loadDrive 是异步的：不等它落地就 close()，它会在关掉的 jsdom 上继续跑
+  await new Promise(r => setTimeout(r, 0));
+  await new Promise(r => setTimeout(r, 0));
+  assert.ok(calls.some(u => u.includes('/api/drive?')), '走的是列目录，不是回收站');
+  assert.ok(!calls.some(u => u.includes('/api/drive/trash')));
+});
+
+test('右键菜单放过输入框：搜索框上仍是系统那套文字菜单', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const w = h.window;
+  const fire = (el) => {
+    const e = new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    el.dispatchEvent(e);
+    return e.defaultPrevented;
+  };
+  assert.strictEqual(fire(w.document.querySelector('#dv-search')), false,
+    '搜索框的右键被吞了，用户粘不了文字');
+  assert.strictEqual(fire(w.document.querySelector('#dv-list')), true,
+    '列表区的右键应该给我们自己的菜单');
+});
+
+test('dvUploadChunked：记住 upload_id，重来时先问服务端收到哪些块', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  const calls = [];
+  // 第一次：init 给会话号，传到一半「断了」
+  h.window.fetch = async (url) => {
+    const u = String(url); calls.push(u);
+    let body = {};
+    if (u.includes('/chunk/init')) body = { upload_id: 'd'.repeat(32), received: [] };
+    if (/\/chunk\/d+$/.test(u)) body = { received: [0, 1] };     // 续传时服务端说收到 0、1
+    return { status: 201, ok: true, headers: { get: () => 'application/json' }, json: async () => body };
+  };
+  const big = new h.window.File([new Uint8Array(9 * 1024 * 1024)], 'big.bin');
+  await h.run('dvUploadChunked')(big, '', () => {});
+  const key = h.run('dvUpKey')(big, '');
+  assert.strictEqual(h.window.localStorage.getItem(key), null, '传完了该把会话号清掉');
+
+  // 第二次：手动塞回一个会话号，应该先问进度、只补没传的那块
+  h.window.localStorage.setItem(key, 'd'.repeat(32));
+  calls.length = 0;
+  await h.run('dvUploadChunked')(big, '', () => {});
+  assert.ok(!calls.some(u => u.includes('/chunk/init')), '有会话号还去重开了新会话，等于没有续传');
+  const puts = calls.filter(u => /\/chunk\/d+\/\d+$/.test(u)).map(u => u.split('/').pop());
+  assert.deepStrictEqual(puts, ['2'], '第 0、1 块服务端已经有了，只该补第 2 块');
+});

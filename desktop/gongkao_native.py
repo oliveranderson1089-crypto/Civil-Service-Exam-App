@@ -304,24 +304,44 @@ class Gongkao(Gtk.Application):
                     continue
                 out.append((os.path.join(dirpath, fn), rel))
 
-    def _send_files(self, pairs):
-        """把 [(路径, 相对目录)] 分批 base64 送进网页。
+    def _send_paths(self, paths, label=""):
+        """收下一串路径 → 后台线程里遍历 + 读盘 + 分批送进网页。
+
+        os.walk 也放进线程里：目录树深/在网络盘上时，遍历本身就是长阻塞，留在主线程
+        照样冻界面（README 第 3 条）。主线程这边只负责立刻给个「正在读取」的提示。
+        """
+        if getattr(self, "_pumping", False):
+            self._toast("上一批还在传，等它传完再来")   # 两个 pump 会互相抢 _ack
+            return
+        self._pumping = True
+        self._ack = threading.Event()
+        if label:
+            self._toast(label)
+
+        def work():
+            try:
+                out = []
+                for p in paths:
+                    self._walk(p, out)
+                if not out:
+                    GLib.idle_add(self._toast, "这里面没有可上传的文件")
+                    return
+                self._pump(out)
+            finally:
+                self._pumping = False
+        threading.Thread(target=work, daemon=True).start()
+
+    def _pump(self, pairs):
+        """把 [(路径, 相对目录)] 分批 base64 送进网页。**在后台线程里跑**。
 
         两件事必须做对，否则真实目录（实测「公考」= 497 个文件 / 816MB）会把壳搞死：
 
         ① **不能在主线程上读**。读几百 MB + base64 是长阻塞，GTK 主线程一堵界面就冻住
-           （README 第 3 条：主线程上一个阻塞调用都不能有）。所以读盘在后台线程，
-           只把 run_javascript 用 idle_add 丢回主线程。
+           （README 第 3 条：主线程上一个阻塞调用都不能有）。所以读盘（连同 os.walk）
+           都在后台线程，只把 run_javascript 用 idle_add 丢回主线程。
         ② **要有背压**。一口气把 136 批塞进网页，浏览器那边同时开一百多个上传、
            base64 字符串全堆在内存里。所以每批送完等网页回一句 batchdone 再送下一批。
         """
-        if not pairs:
-            self._toast("这里面没有可上传的文件")
-            return
-        self._ack = threading.Event()
-        threading.Thread(target=self._pump, args=(pairs,), daemon=True).start()
-
-    def _pump(self, pairs):
         batch, size, sent, skipped = [], 0, 0, []
         for p, rel in pairs:
             try:
@@ -374,10 +394,7 @@ class Gongkao(Gtk.Application):
         dlg.destroy()
         if not path:
             return
-        out = []
-        self._walk(path, out)
-        self._toast("正在读取「%s」：%d 个文件" % (os.path.basename(path), len(out)))
-        self._send_files(out)
+        self._send_paths([path], "正在读取「%s」…" % os.path.basename(path))
 
     def paste_files(self):
         """系统剪贴板里复制的**文件**（在文件管理器里 Ctrl+C 的那种）粘贴进来。
@@ -397,11 +414,7 @@ class Gongkao(Gtk.Application):
                 paths.append(p)
         if not paths:
             return False
-        out = []
-        for p in paths:
-            self._walk(p, out)
-        self._toast("正在粘贴 %d 个文件" % len(out))
-        self._send_files(out)
+        self._send_paths(paths, "正在粘贴…")
         return True
 
     # ---------------- 拖放：GTK 层接管（WebKit 的 drop 给不到文件） ----------------
@@ -443,10 +456,7 @@ class Gongkao(Gtk.Application):
         if not paths:
             self._toast("这些东西读不出文件（只支持本地文件）")
             return
-        out = []
-        for p in paths:
-            self._walk(p, out)
-        self._send_files(out)
+        self._send_paths(paths)
 
     # ---------------- 剪贴板里的图片：Ctrl+V / 右键粘贴 ----------------
     def _clip_image_b64(self):

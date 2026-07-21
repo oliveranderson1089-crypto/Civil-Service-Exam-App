@@ -8,7 +8,7 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, IS_DESKTOP, KB, api, appConfirm, appPrompt, esc,
-   openViewerUrl, push, toast */
+   lsDel, lsGet, lsSet, openViewerUrl, push, toast */
 
 /* ================= 云盘 ================= */
 let dvFolder = '';
@@ -26,7 +26,17 @@ function fSize(n) {
 let dvQuery = '', dvSort = 'new';
 const dvSel = new Set();          // 多选中的 id（每次重新列目录都清空，见 loadDrive）
 
-function openDrive() { dvFolder = ''; dvQuery = ''; $('#dv-search').value = ''; push({ view: 'drive', title: '云盘' }); loadDrive(); }
+let dvInTrash = false;             // 是否正停在回收站视图
+function dvLeaveTrash() {          // 回收站是个独立视图，离开它得显式复位
+  dvInTrash = false;
+  const b = $('#dv-trash'); if (b) b.classList.remove('primary');
+}
+function openDrive() {
+  dvFolder = ''; dvQuery = ''; $('#dv-search').value = '';
+  dvLeaveTrash();                  // 不复位的话 loadDrive 会短路去 loadTrash：
+  push({ view: 'drive', title: '云盘' });   // 云盘打开是回收站，上传完也看不见文件
+  loadDrive();
+}
 
 function dvRow(it) {
   const pick = `<input type="checkbox" class="dv-pick" data-dvpick="${it.id}">`;
@@ -51,8 +61,6 @@ function dvRow(it) {
 
 /* ---- 回收站 ----
    删除改成了软删，所以「删掉」和「真没了」是两件事。这个视图就是那两件事之间的地方。 */
-let dvInTrash = false;
-
 function dvTrashRow(it) {
   return `<div class="dv-item">
     <span class="dv-ic">${it.is_dir ? '📁' : dvIcon(it.ext)}</span>
@@ -116,7 +124,7 @@ async function loadDrive() {
 
 $('#dv-crumb').addEventListener('click', e => {
   const a = e.target.closest('[data-dvcd]');
-  if (a) { dvFolder = a.dataset.dvcd; dvQuery = ''; $('#dv-search').value = ''; loadDrive(); }
+  if (a) { dvFolder = a.dataset.dvcd; dvQuery = ''; $('#dv-search').value = ''; dvLeaveTrash(); loadDrive(); }
 });
 $('#dv-list').addEventListener('click', async e => {
   const back = e.target.closest('[data-dvrestore]');
@@ -190,7 +198,9 @@ $('#dv-bdel').onclick = async () => {
   if (!(await appConfirm('删除选中的 ' + dvSel.size + ' 项？（文件夹会连里面一起删）'))) return;
   let fail = 0;
   for (const id of [...dvSel]) {
-    try { await api('/api/drive/' + id, { method: 'DELETE' }); } catch (_) { fail++; }
+    // 别把原因吞掉：只报个数字的话，用户既不知道是哪一项、也不知道为什么（见 README 第 1 条）
+    try { await api('/api/drive/' + id, { method: 'DELETE' }); }
+    catch (err) { fail++; toast(err.message, true); }
   }
   toast(fail ? '删除完成，' + fail + ' 项失败' : '已删除', fail > 0);
   loadDrive();
@@ -251,13 +261,15 @@ $('#dv-paste').onclick = dvPaste;
 
 /* 右键菜单。桌面壳里必须 preventDefault 掉，否则弹出来的是 WebKit 那个
    「后退/前进/停止/重新加载」，在云盘里毫无用处。 */
-function dvMenu(x, y, id, name, viewable) {
+function dvMenu(x, y, id, name, viewable, isDir) {
   const el = $('#dv-menu');
   const rows = [];
   if (id) {
     if (viewable) rows.push(['dvm-view', '👁 预览']);
-    rows.push(['dvm-copy', '📄 复制'], ['dvm-ren', '✏️ 重命名'],
-              ['dvm-dl', '⬇ 下载'], ['dvm-del', '🗑 删除']);
+    rows.push(['dvm-copy', '📄 复制'], ['dvm-ren', '✏️ 重命名']);
+    // 文件夹没有下载接口（/download 只认 is_dir=0），给了就是点出个 404
+    if (!isDir) rows.push(['dvm-dl', '⬇ 下载']);
+    rows.push(['dvm-del', '🗑 删除']);
   }
   rows.push(['dvm-paste', '📋 粘贴' + (dvClip.length ? '（' + dvClip.length + ' 项）' : '')]);
   el.innerHTML = rows.map(([k, t]) => `<button data-dvm="${k}">${t}</button>`).join('');
@@ -272,12 +284,15 @@ function dvMenu(x, y, id, name, viewable) {
 const dvMenuHide = () => $('#dv-menu').classList.add('hidden');
 $('#view-drive').addEventListener('contextmenu', e => {
   if (dvInTrash) return;                     // 回收站里只有恢复/彻底删，不给这套
+  // 输入框放行：搜索框上右键该是系统那套「剪切/复制/粘贴」，我们这套菜单粘的是文件不是文字
+  if (e.target.closest('input, textarea, select')) return;
   e.preventDefault();
   const item = e.target.closest('.dv-item');
   const ren = item && item.querySelector('[data-dvren]');
   const view = item && item.querySelector('[data-dvview]');
   dvMenu(e.clientX, e.clientY, ren ? ren.dataset.dvren : '',
-         item ? (item.querySelector('.dv-name') || {}).textContent : '', !!view);
+         item ? (item.querySelector('.dv-name') || {}).textContent : '', !!view,
+         !!(item && item.classList.contains('dv-dir')));
 });
 document.addEventListener('click', e => { if (!e.target.closest('#dv-menu')) dvMenuHide(); });
 $('#dv-menu').addEventListener('click', async e => {
@@ -291,7 +306,13 @@ $('#dv-menu').addEventListener('click', async e => {
     case 'dvm-copy': dvSetClip([id]); break;
     case 'dvm-paste': dvPaste(); break;
     case 'dvm-ren': dvRename(id, name); break;
-    case 'dvm-dl': window.location.href = '/api/drive/' + id + '/download'; break;
+    case 'dvm-dl': {
+      // 别用 location.href：真出了 404/500，浏览器会**导航**过去，单页应用当场被冲掉
+      const a = document.createElement('a');
+      a.href = '/api/drive/' + id + '/download'; a.download = name || '';
+      document.body.appendChild(a); a.click(); a.remove();
+      break;
+    }
     case 'dvm-del':
       if (await appConfirm('删除这个？（会先进回收站）')) {
         try { await api('/api/drive/' + id, { method: 'DELETE' }); loadDrive(); }
@@ -327,7 +348,12 @@ async function dvPickFolder() {
 const DV_PARALLEL = 3;      // 并发数：再多就是把上行带宽切碎，总时间反而更长
 const DV_CHUNK = 4 * 1024 * 1024;        // 分片大小，远小于 Cloudflare 隧道那 100MB 硬上限
 const DV_CHUNK_MIN = 8 * 1024 * 1024;    // 超过这么大才值得切片（小文件切了反而更慢）
-const DV_HASH_MAX = 64 * 1024 * 1024;    // 秒传要把整个文件读进内存算哈希，太大的就别算了
+/* 秒传的哈希只算到这个大小为止（= 走整发上传的那档）。
+   crypto.subtle 没有流式接口，算哈希必须把**整个文件**读进内存；对超过这条线的文件，
+   那既是一次白读（后面分片还要再读一遍），也是一次几十 MB 的内存尖峰。
+   更大的文件就不在前端问秒传了 —— 服务端 _finish_upload 仍然会按 sha256 去重，
+   省的是磁盘，只是省不掉这一次上传的流量。 */
+const DV_HASH_MAX = DV_CHUNK_MIN;
 
 /* 算 sha256 给「秒传」用。拿不到就返回 null，调用方照常传 ——
    crypto.subtle 只在安全上下文（https / localhost）里有，局域网用 http 访问时是 undefined，
@@ -343,12 +369,28 @@ async function dvSha256(file) {
 
 /* 分片上传：走隧道时请求体有 100MB 硬上限，单请求再放宽也没用，只能切块分多次送。
    顺带能续传 —— init 会告诉你已经收到哪些块，跳过它们接着传就行。 */
+/* 续传要能跨「这次失败、下次再来」，就得把 upload_id 记在本地 —— 只存在内存里的话，
+   每次重来都是全新的会话，服务端那边已经收到的块永远用不上（等于没有续传）。
+   key 用「名字+大小+修改时间+目标目录」认同一个文件。 */
+const dvUpKey = (file, folder) =>
+  'dv:up:' + [file.name, file.size, file.lastModified, folder].join('|');
+
 async function dvUploadChunked(file, folder, onProg) {
-  const init = await api('/api/drive/chunk/init', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: file.name, folder, size: file.size, mime: file.type || '' }) });
-  const id = init.upload_id;
-  const had = new Set(init.received || []);
+  const key = dvUpKey(file, folder);
+  let id = lsGet(key), had = new Set();
+  if (id) {
+    try {                                  // 会话还在就接着传
+      had = new Set((await api('/api/drive/chunk/' + id)).received || []);
+    } catch (_) { id = null; lsDel(key); }  // 过期/被清了 → 从头来
+  }
+  if (!id) {
+    const init = await api('/api/drive/chunk/init', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: file.name, folder, size: file.size, mime: file.type || '' }) });
+    id = init.upload_id;
+    had = new Set(init.received || []);
+    lsSet(key, id);
+  }
   const n = Math.ceil(file.size / DV_CHUNK);
   for (let i = 0; i < n; i++) {
     const end = Math.min(file.size, (i + 1) * DV_CHUNK);
@@ -358,7 +400,9 @@ async function dvUploadChunked(file, folder, onProg) {
     }
     onProg(end);
   }
-  return api('/api/drive/chunk/' + id + '/done', { method: 'POST' });
+  const row = await api('/api/drive/chunk/' + id + '/done', { method: 'POST' });
+  lsDel(key);                              // 传成了，别把死 id 留到下次
+  return row;
 }
 
 async function dvUploadOne(file, folder, onProg) {

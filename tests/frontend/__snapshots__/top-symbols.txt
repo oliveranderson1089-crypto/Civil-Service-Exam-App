@@ -282,6 +282,7 @@ dvClip
 dvFolder
 dvIcon
 dvInTrash
+dvLeaveTrash
 dvMenu
 dvMenuHide
 dvOpenAndUpload
@@ -298,6 +299,7 @@ dvSetClip
 dvSha256
 dvSort
 dvTrashRow
+dvUpKey
 dvUpload
 dvUploadChunked
 dvUploadOne

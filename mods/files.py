@@ -37,16 +37,28 @@ def _user_dir(user_id):
     return d
 
 
-def _remove_file(user_id, stored_name):
+def _remove_blob(path):
+    """删一个上传件，**连它的转换缓存一起删**。
+
+    _office_to_pdf 会在原文件旁边留一个同名 .pdf（预览 Office 时生成）。只删原件的话
+    那个 .pdf 就成了孤儿：没有任何记录引用它、不计进配额、也没人会再清它 —— 每预览过
+    一次又删掉的 Office 文件，都会永久占着一份完整的 PDF。
+
+    资料库/小记/知识库走 _remove_file（按 uid 拼路径），云盘的文件在 uploads/drive/<uid>/
+    下、拼法不同，所以公共部分收在这里，两边都调它。
+    """
     try:
-        p = os.path.join(UPLOADS, str(user_id), stored_name)
-        if os.path.exists(p):
-            os.remove(p)
-        base = os.path.splitext(p)[0]
-        if os.path.exists(base + ".pdf"):  # 缓存的转换结果
-            os.remove(base + ".pdf")
+        if os.path.exists(path):
+            os.remove(path)
+        pdf = os.path.splitext(path)[0] + ".pdf"
+        if pdf != path and os.path.exists(pdf):
+            os.remove(pdf)
     except Exception:
         log.debug("删文件失败（残留不影响功能）", exc_info=True)
+
+
+def _remove_file(user_id, stored_name):
+    _remove_blob(os.path.join(UPLOADS, str(user_id), stored_name))
 
 
 def _office_to_pdf(src):

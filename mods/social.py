@@ -20,7 +20,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from core import CFG, UPLOADS, get_db, log, uid, uname
 from mods.files import (IMAGE_EXT, INLINE_EXT, OFFICE_EXT, _cacheable,
-                        _extract_text, _no_script, _office_to_pdf)
+                        _extract_text, _no_script, _office_to_pdf, _remove_blob)
 
 bp = Blueprint("social", __name__)
 
@@ -173,6 +173,22 @@ def _drive_row(r):
     return d
 
 
+def _like_esc(s):
+    """转义 LIKE 的通配符。
+
+    子树查询都是 `folder=? OR folder LIKE ?` 配 `前缀/%`。folder 是**用户起的名字**，
+    里面的 `_` 和 `%` 在 LIKE 里是通配符 —— 不转义的话，删「a_b」会连「aXb」里的东西
+    一起删掉（实测复现过）。带下划线的目录名很常见，比如 xwechat_files。
+    用它的地方都要跟上 ESCAPE '\\'。
+    """
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _subtree(path):
+    """返回子树查询要用的两个参数：(自己, 子孙的 LIKE 前缀)。"""
+    return path, _like_esc(path) + "/%"
+
+
 def _drive_used(db, owner):
     """按**去重后**的实际占用算：同一份内容传两次只在磁盘上存一份，不该收两份的钱。"""
     return db.execute(
@@ -202,10 +218,9 @@ def _drop_blob(db, owner, stored_name):
     if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND stored_name=? LIMIT 1",
                   (owner, stored_name)).fetchone():
         return                                   # 还有人在用，留着
-    try:
-        os.remove(os.path.join(_drive_dir(owner), stored_name))
-    except Exception:
-        log.debug("删网盘文件失败（残留不影响功能）", exc_info=True)
+    # 走 _remove_blob 而不是裸 os.remove：Office 预览会在旁边留一个同名 .pdf 缓存，
+    # 只删原件的话那个 PDF 会永远留在磁盘上（没记录引用它，也不计进配额）
+    _remove_blob(os.path.join(_drive_dir(owner), stored_name))
 
 
 def _finish_upload(db, folder, name, tmp, mime):
@@ -353,6 +368,7 @@ def drive_instant():
 # max_content_length 都没用 —— 只能切成小块分多次请求送。顺带换来断点续传。
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 CHUNK_TTL = 24 * 3600            # 没传完的会话留一天，之后当垃圾清掉
+CHUNK_SLACK = 4 * 1024 * 1024    # 允许比声明大小多出这点（重传同一块时的容差）
 
 
 def _chunk_dir(owner, upload_id):
@@ -362,18 +378,31 @@ def _chunk_dir(owner, upload_id):
     return os.path.join(_drive_dir(owner), ".chunks", upload_id)
 
 
-def _sweep_chunks(owner):
-    root = os.path.join(_drive_dir(owner), ".chunks")
-    if not os.path.isdir(root):
-        return
+def _sweep_stale(owner):
+    """清掉过期的分片会话，以及上传中断留下的 .tmp_ 暂存件。
+
+    .tmp_ 是 _finish_upload 之前的落脚点：客户端中途断开（关标签页、隧道掉线）就没人
+    再管它了 —— 没有任何记录引用它、不计进配额、用户也看不见，只会慢慢把磁盘吃掉。
+    """
     now = time.time()
-    for d in os.listdir(root):
-        p = os.path.join(root, d)
+    root = os.path.join(_drive_dir(owner), ".chunks")
+    if os.path.isdir(root):
+        for d in os.listdir(root):
+            p = os.path.join(root, d)
+            try:
+                if now - os.path.getmtime(p) > CHUNK_TTL:
+                    shutil.rmtree(p, ignore_errors=True)
+            except Exception:
+                log.debug("清理分片残留失败", exc_info=True)
+    for f in os.listdir(_drive_dir(owner)):
+        if not f.startswith(".tmp_"):
+            continue
+        p = os.path.join(_drive_dir(owner), f)
         try:
-            if now - os.path.getmtime(p) > CHUNK_TTL:
-                shutil.rmtree(p, ignore_errors=True)
+            if os.path.isfile(p) and now - os.path.getmtime(p) > CHUNK_TTL:
+                os.remove(p)
         except Exception:
-            log.debug("清理分片残留失败", exc_info=True)
+            log.debug("清理上传暂存失败", exc_info=True)
 
 
 @bp.post("/api/drive/chunk/init")
@@ -387,7 +416,7 @@ def chunk_init():
     db = get_db()
     if _drive_used(db, uid()) + size > DRIVE_QUOTA:
         return jsonify({"error": "云盘空间不足（配额 %d MB）" % (DRIVE_QUOTA // (1024 * 1024))}), 400
-    _sweep_chunks(uid())
+    _sweep_stale(uid())
     upload_id = uuid.uuid4().hex
     d = _chunk_dir(uid(), upload_id)
     os.makedirs(d, exist_ok=True)
@@ -413,9 +442,23 @@ def chunk_put(upload_id, idx):
         return jsonify({"error": "会话不存在"}), 404
     if idx < 0 or idx > 100000:
         return jsonify({"error": "块号不合法"}), 400
+    # 暂存也要有上限：init 只校验了「声明的大小」，若不看实际落盘量，客户端可以一直往
+    # 会话里灌块，把磁盘写满 —— 这些字节不属于任何记录，_drive_used 也数不到它们。
+    try:
+        with open(os.path.join(d, "meta.json"), encoding="utf-8") as fp:
+            declared = int(json.load(fp).get("size") or 0)
+    except Exception:
+        return jsonify({"error": "会话已损坏，请重传"}), 400
+    have = 0
+    for x in os.listdir(d):
+        if x.isdigit() and x != str(idx):
+            have += os.path.getsize(os.path.join(d, x))
     blob = request.files.get("chunk")
+    data = blob.read() if blob else request.get_data()
+    if have + len(data) > declared + CHUNK_SLACK:
+        return jsonify({"error": "传的比说好的多，已中止"}), 400
     with open(os.path.join(d, str(idx)), "wb") as fp:
-        fp.write(blob.read() if blob else request.get_data())
+        fp.write(data)
     return jsonify({"ok": True, "index": idx})
 
 
@@ -530,6 +573,10 @@ def drive_patch(fid):
     folder = r["folder"] if folder is None else folder.strip().strip("/")
     if not name or "/" in name:
         return jsonify({"error": "名字不合法"}), 400
+    # 先把目标路径规整掉（每段去空白、去空段），再拿规整后的去做各项检查 ——
+    # 否则「甲/ 乙」会绕过重名检查、也绕过「移进自己」的判断，最后文件落在一个
+    # 建都没建过的目录里，列表按 folder 精确匹配，点不进去 = 静默丢失。
+    folder = "/".join(seg.strip() for seg in folder.split("/") if seg.strip())
     old = (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"]
     new = (folder + "/" + name) if folder else name
     if r["is_dir"] and (folder == old or folder.startswith(old + "/")):
@@ -538,11 +585,12 @@ def drive_patch(fid):
                   "AND deleted_at IS NULL", (uid(), folder, name, fid)).fetchone():
         return jsonify({"error": "目标位置已有同名的"}), 400
     if folder and folder != r["folder"]:
-        _ensure_folder_path(db, uid(), folder)
+        _ensure_folder_path(db, uid(), folder)      # 规整过了，返回值必然等于 folder
     db.execute("UPDATE drive_files SET name=?, folder=? WHERE id=?", (name, folder, fid))
     if r["is_dir"] and new != old:
         for k in db.execute("SELECT id, folder FROM drive_files WHERE owner_id=? AND "
-                            "(folder=? OR folder LIKE ?)", (uid(), old, old + "/%")).fetchall():
+                            "(folder=? OR folder LIKE ? ESCAPE '\\')",
+                            (uid(),) + _subtree(old)).fetchall():
             db.execute("UPDATE drive_files SET folder=? WHERE id=?",
                        (new + k["folder"][len(old):], k["id"]))
     db.commit()
@@ -587,8 +635,8 @@ def drive_copy(fid):
         db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) VALUES(?,?,?,1,'drive')",
                    (uid(), dest, name))
         for k in db.execute("SELECT * FROM drive_files WHERE owner_id=? AND "
-                            "(folder=? OR folder LIKE ?) AND deleted_at IS NULL",
-                            (uid(), src, src + "/%")).fetchall():
+                            "(folder=? OR folder LIKE ? ESCAPE '\\') AND deleted_at IS NULL",
+                            (uid(),) + _subtree(src)).fetchall():
             db.execute(
                 "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,"
                 "source,sha256) VALUES(?,?,?,?,?,?,?,?,'drive',?)",
@@ -606,7 +654,11 @@ def drive_copy(fid):
 @bp.delete("/api/drive/<int:fid>")
 def drive_del(fid):
     db = get_db()
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=?", (fid, uid())).fetchone()
+    # 必须带 deleted_at IS NULL：对已经在回收站里的东西再删一次，会给它重打一个
+    # del_batch，于是它和当初一起删的那批脱钩 —— 恢复父文件夹时它不会跟着回来，
+    # 而且不报错（搜索结果里同时选中父目录和它的子文件，批量删除就会这样）。
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND deleted_at IS NULL",
+                   (fid, uid())).fetchone()
     if not r:
         return jsonify({"error": "不存在"}), 404
     # 软删：只打个时间戳，磁盘上的东西一个字节不动，还能后悔。
@@ -618,8 +670,8 @@ def drive_del(fid):
     if r["is_dir"]:
         sub = r["name"] if not r["folder"] else (r["folder"] + "/" + r["name"])
         db.execute("UPDATE drive_files SET deleted_at=?, del_batch=? WHERE owner_id=? AND "
-                   "(folder=? OR folder LIKE ?) AND deleted_at IS NULL",
-                   (ts, batch, uid(), sub, sub + "/%"))
+                   "(folder=? OR folder LIKE ? ESCAPE '\\') AND deleted_at IS NULL",
+                   (ts, batch, uid()) + _subtree(sub))
     db.execute("UPDATE drive_files SET deleted_at=?, del_batch=? WHERE id=?", (ts, batch, fid))
     db.commit()
     return jsonify({"ok": True, "trashed": True})
@@ -633,8 +685,9 @@ def _kids_of(db, owner, r):
     """一个文件夹在这次删除批次里带走的所有子孙（靠 del_batch 认，不靠时间戳）。"""
     sub = r["name"] if not r["folder"] else (r["folder"] + "/" + r["name"])
     return db.execute("SELECT id, stored_name FROM drive_files WHERE owner_id=? AND "
-                      "(folder=? OR folder LIKE ?) AND del_batch=? AND del_batch IS NOT NULL",
-                      (owner, sub, sub + "/%", r["del_batch"])).fetchall()
+                      "(folder=? OR folder LIKE ? ESCAPE '\\') AND del_batch=? "
+                      "AND del_batch IS NOT NULL",
+                      (owner,) + _subtree(sub) + (r["del_batch"],)).fetchall()
 
 
 def _purge(db, owner, rows):
@@ -643,7 +696,11 @@ def _purge(db, owner, rows):
     if not ids:
         return
     blobs = {r["stored_name"] for r in rows if r["stored_name"]}
-    db.execute("DELETE FROM drive_files WHERE id IN (%s)" % ",".join("?" * len(ids)), ids)
+    # 分批删：一次一个占位符，清空一个几百上千项的回收站会撞上 SQLite 的
+    # 宿主参数上限（老版本 999），抛异常时前面的 blob 已经删了，留下半清空的烂摊子
+    for i in range(0, len(ids), 400):
+        part = ids[i:i + 400]
+        db.execute("DELETE FROM drive_files WHERE id IN (%s)" % ",".join("?" * len(part)), part)
     for b in blobs:
         _drop_blob(db, owner, b)
 
