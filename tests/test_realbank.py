@@ -355,3 +355,69 @@ def test_ans_numbered_block_rejects_garbage_numbers():
              for n in [7, 3, 9, 1, 5, 2, 8, 4, 6] * 3]      # 号完全乱序 = OCR 认废了
     ans, synth = R.parse_answers("\n".join(parts))
     assert synth is True, "乱序的号不可信，必须退回顺序编号并自报 synth"
+
+
+def test_ans_tight_括号里有空格也要认():
+    """2005/2006 国考排的是「1．B    【 解析】」—— 【 和 解析 之间有个空格。
+
+    先行断言写死 "【解析】" 的话，这两份整卷抠不出一条答案（实测就是 0 条）。
+    """
+    want = {i: "BACD"[i % 4] for i in range(1, 31)}
+    t = "\n".join("%d．%s    【 解析】这里是正文。" % (i, v) for i, v in want.items())
+    ans, synth = R.parse_answers(t)
+    assert synth is False and len(ans) == 30, len(ans)
+    assert {k: v[0] for k, v in ans.items()} == want
+
+
+def test_ans_题答合一卷():
+    """⑪ 26 国考考生回忆版：块头「N{单选题}」，题干选项解析全挤在一块里。
+
+    答案要取块里**第一个**独占一行的「答案：X」—— 解析正文里会大段引用
+    别的选项（「①正确，…」「B 项错误」），取最后一个必错。
+    """
+    want = {i: "DBCA"[i % 4] for i in range(1, 26)}
+    t = "\n".join("%d{单选题}某道题的题干。\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案：%s\n"
+                  "解析：分析时会提到 A 项和 D 项如何如何。" % (i, v)
+                  for i, v in want.items())
+    ans, synth = R.parse_answers(t)
+    assert synth is False and len(ans) == 25, len(ans)
+    assert {k: v[0] for k, v in ans.items()} == want, "答案该取块首那行，不是解析里提到的选项"
+
+
+def test_ans_光秃题号兜底():
+    """⑩ 块头只有「N、」，答案全靠正文收尾的「故正确答案为 X」（2010~2018 那批）。"""
+    want = {i: "CABD"[i % 4] for i in range(1, 41)}
+    # 正文**不能**以「解析」开头 —— 那样会命中格式③④，根本走不到兜底
+    t = "\n".join("%d、本题考查甲乙丙。\n故正确答案为 %s。" % (i, v) for i, v in want.items())
+    ans, synth = R.parse_answers(t)
+    assert synth is False and len(ans) == 40, len(ans)
+    assert {k: v[0] for k, v in ans.items()} == want
+
+
+def test_ans_光秃题号不被正文里的枚举带偏():
+    """⑩ 最危险的地方：解析正文里的枚举行（「1、…」「2、…」）长得和题头一模一样。
+
+    靠「题号必须接得上上一个」筛掉 —— 第 5 题解析里的「1、2、3、」不该被当成题头，
+    否则第 5 题往后的答案会整体错位。
+    """
+    want = {i: "CABD"[i % 4] for i in range(1, 41)}
+    parts = []
+    for i, v in want.items():
+        body = "本题考查甲乙丙。"
+        if i == 5:      # 第 5 题的正文里嵌了一段从 1 开始的枚举
+            body = "分三种情形：\n1、第一种。\n2、第二种。\n3、第三种。\n综上，"
+        parts.append("%d、%s\n故正确答案为 %s。" % (i, body, v))
+    ans, _synth = R.parse_answers("\n".join(parts))
+    assert len(ans) == 40, "枚举行被当成题头了：只切出 %d 块" % len(ans)
+    assert {k: v[0] for k, v in ans.items()} == want, "第 5 题之后的题号整体错位了"
+
+
+def test_ans_光秃题号只在别的排版都失手时才用():
+    """⑩ 太泛，必须让位给任何一种正经排版 —— 否则它会把已经解析正常的卷子劫走。"""
+    want = {i: "CABD"[i % 4] for i in range(1, 41)}
+    # 每块都写了【答案】X，收尾那句却一律是 A：兜底排版抠出来的会全是 A
+    t = "\n".join("%d、【答案】%s\n本题考查甲乙丙。故正确答案为 A。" % (i, v)
+                  for i, v in want.items())
+    ans, _synth = R.parse_answers(t)
+    assert {k: v[0] for k, v in ans.items()} == want, \
+        "被兜底排版劫走了：整卷答案都成了收尾那句的 A"

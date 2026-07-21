@@ -193,6 +193,22 @@ def pages_of(pdf, tmp):
                   f.endswith(".png"))
 
 
+def _has_text_layer(path, per_page=400):
+    """这份 PDF 自带文字层吗？按「平均每页字符数」判，不看总量 ——
+    总量会被页数带偏：一份 45 页的扫描件里夹两页文字也能凑够几万字符。"""
+    if not path:
+        return False
+    try:
+        info = subprocess.run(["pdfinfo", path], capture_output=True, timeout=60)
+        m = re.search(rb"Pages:\s*(\d+)", info.stdout)
+        pages = int(m.group(1)) if m else 1
+        out = subprocess.run(["pdftotext", "-layout", path, "-"],
+                             capture_output=True, timeout=300)
+        return len(out.stdout.decode("utf-8", "ignore")) / max(pages, 1) > per_page
+    except Exception:
+        return False          # 判不出来就当没有，宁可多 OCR 一份也别漏
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--plan", action="store_true")
@@ -219,6 +235,12 @@ def main():
         "WHERE p.role='a' AND p.status='empty' AND p.ext='.pdf' "
         "  AND p.file_id NOT IN (SELECT file_id FROM real_ocr) "
         "ORDER BY p.year DESC").fetchall()
+    # **有文字层的卷子不能进 OCR 队列**。status='empty' 只说明「没抠出答案」，
+    # 里头混着两拨完全不同的卷子：真扫描件（没文字层，只能 OCR），和
+    # 「文字层好端端的、只是排版没被 parse_answers 认出来」的。
+    # 对后者 OCR 是纯浪费 —— 识别出来的是同一个排版的**更差**版本
+    # （实测「烹饪」认成「襄饪」），该改的是解析器不是这里。实测 55 份里 42 份是这种。
+    rows = [r for r in rows if not _has_text_layer(find_path(r["stored_name"]))]
     if a.limit:
         rows = rows[:a.limit]
     print("待 OCR 的扫描版答案卷：%d 份" % len(rows))

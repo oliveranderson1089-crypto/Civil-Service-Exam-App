@@ -375,7 +375,21 @@ _ANS_TABLE = re.compile(
     r"[【\[{(（][\s　]*(\d{1,3})[\s　]*[-–—~－][\s　]*(\d{1,3})[\s　]*[】\]}）)][\s　]*"
     r"([A-D][A-D\s　]{1,30})")
 # ⑥ 1.A【解析】…… —— 答案字母紧跟题号，连「【答案】」都不写（2000/2001 国考的 PDF）
-_ANS_TIGHT = re.compile(r"^[\s　]*(\d{1,3})[\s　]*[、.．][\s　]*([A-D])[\s　]*(?=【解析】|解析)", re.M)
+# 先行断言里的括号必须放宽：2005 国考排的是「1．B    【 解析】」，
+# 【 和 解析 之间有个空格，写死 "【解析】" 就整卷抠不出来。
+_ANS_TIGHT = re.compile(r"^[\s　]*(\d{1,3})[\s　]*[、.．][\s　]*([A-D])[\s　]*"
+                        r"(?=[【\[]?[\s　]*解析)", re.M)
+# ⑪ 题答合一的卷子（26 国考考生回忆版）：块头是「1{单选题}」，
+#    题干、选项、「答案：D」、解析全挤在一块里。答案取块里**第一个**独占一行的
+#    「答案：X」—— 解析正文里会大段引用别的选项，取最后一个必错。
+_ANS_QT = re.compile(r"^[\s　]*(\d{1,3})[\s　]*[{｛(（][\s　]*"
+                     r"(?:单选|多选|不定项)[\s　]*题?[\s　]*[}｝)）]", re.M)
+_ANS_QT_LETTER = re.compile(r"^[\s　]*(?:正确)?答案[：:][\s　]*[【\[]?([A-D])", re.M)
+# ⑩ 块头只有光秃秃的「N、」，连「解析」两个字都不写，答案全靠正文收尾那句
+#    「故正确答案为 X」（2010~2018 那批四川卷/联考卷，21 份）。
+#    这个模式泛得吓人 —— 解析正文里的枚举、年份、算式行首都长这样 ——
+#    所以它只当**最后的兜底**，而且必须过 _pick_monotonic 那道筛。
+_ANS_PLAIN = re.compile(r"^[\s　]*(\d{1,3})[\s　]*[、.．][\s　]*(?=\S)", re.M)
 _ANS_TAIL = re.compile(r"(?:因此[，,]?\s*选择|故正确答案(?:为|是)|故本题选|所以本题选|"
                        r"因此本题选|正确答案(?:为|是)|故答案为)[\s　]*[【\[]?([A-D])")
 
@@ -431,6 +445,22 @@ def _read_seq_nums(hits):
             prev += 1          # 这块的号读废了就顺延一格，别让后面整串跟着崩
         nums.append(prev)
     return nums, bad
+
+
+def _pick_monotonic(hits, tol=3):
+    """从一堆「行首 N、」里挑出真正的题号序列，其余当正文。
+
+    行首数字在解析正文里到处都是（枚举、年份、算式），见一个切一个会把解析剁碎。
+    但题号有个很强的性质：从 1 开始、严格递增、基本不跳号。所以只收「接得上」的：
+    期望值是上一个 +1，允许往前跳 tol 个（有的题头会被转档吞掉），跳得更远的当正文。
+    """
+    out, expect = [], 1
+    for m in hits:
+        n = int(m.group(1))
+        if expect <= n <= expect + tol:
+            out.append((n, m))
+            expect = n + 1
+    return out
 
 
 def _seg_answers(text, hits, letter_from_body):
@@ -528,6 +558,27 @@ def parse_answers(text):
                 tbl[lo + i] = (a, "")
     if len(tbl) >= 10:
         cands.append((tbl, False))   # 表里的题号是原卷明写的，不是编的
+
+    # ⑪ 题答合一卷。答案离块头很远（隔着整个题干和四个选项），所以不能用
+    #    「紧跟题号」那套，得进块里找独占一行的「答案：X」。
+    h = list(_ANS_QT.finditer(text))
+    if len(h) > 20:
+        cands.append((_seg_answers(
+            text, h, lambda m, b: (_ANS_QT_LETTER.search(b) or [None, ""])[1]), False))
+
+    # ⑩ 最后的兜底：块头只有「N、」。只在**别的排版都没抠出东西**时才动它 ——
+    #    它太容易把解析正文里的枚举行当成题头，宁可让位给任何一种正经排版。
+    if not any(len(a) >= 20 for a, _s in cands):
+        h = _pick_monotonic(list(_ANS_PLAIN.finditer(text)))
+        if len(h) > 20:
+            seq = {}
+            for i, (num, m) in enumerate(h):
+                end = h[i + 1][1].start() if i + 1 < len(h) else len(text)
+                letter = tail(m, text[m.end():end])
+                if letter:
+                    seq[num] = (letter, _clean_explain(text[m.end():end]))
+            if len(seq) > 20:
+                cands.append((seq, False))
 
     if not cands:
         return {}, False
