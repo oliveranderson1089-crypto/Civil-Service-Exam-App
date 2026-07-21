@@ -388,6 +388,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT, qtype TEXT,
             stem TEXT, options TEXT, answer TEXT, explain TEXT,
             qhash TEXT, ohash TEXT, fighash TEXT DEFAULT '', dkey TEXT,
+            material TEXT,                    -- 资料分析的给定资料
             sources TEXT, n_src INTEGER DEFAULT 1,
             year_min INTEGER, year_max INTEGER,
             has_answer INTEGER DEFAULT 0, needs_asset INTEGER DEFAULT 0,

@@ -79,7 +79,8 @@ CREATE TABLE IF NOT EXISTS real_questions(
     module TEXT, qtype TEXT,
     stem TEXT, options TEXT, answer TEXT, explain TEXT,
     qhash TEXT, ohash TEXT, fighash TEXT DEFAULT '',
-    dkey TEXT,                       -- 判重键本身：内容没变就靠它把 id 认回来
+    dkey TEXT,
+    material TEXT,                   -- 资料分析的给定资料（ingest_material.py 灌）                       -- 判重键本身：内容没变就靠它把 id 认回来
     sources TEXT,                    -- JSON：这道题在哪些卷子里出现过（去重时合并进来）
     n_src INTEGER DEFAULT 1,
     year_min INTEGER, year_max INTEGER,
@@ -152,18 +153,13 @@ def scan_files(con, exts):
     return out
 
 
-def _fig_hashes(path, text, tmp):
+def _fig_hashes(path, text):
     """{卷面题号: 该题所有图的内容指纹}。图落在哪一段，那一段之前最近的题号就是它的题。
 
     题号识别**必须复用 realbank._Q_HEAD**：real_raw.seq 就是它切出来的，
     这里另写一个正则的话，两边对「哪行算题号」的判断会不一致，图就挂到错的题上
     （这类「两个解析器必须对齐」的错位，这个项目已经栽过两次）。
     """
-    if path.lower().endswith(".doc"):
-        try:
-            path = R.doc_to_docx(path, tmp)
-        except Exception:
-            return {}
     figs = R.docx_figures(path)
     if not figs:
         return {}
@@ -264,7 +260,7 @@ def extract_all(con, exts, force=False):
         if not p:
             continue
         try:
-            a, synth = R.parse_answers(R.file_text(p, tmp))
+            a, synth = R.parse_answers(R.file_text(p, tmp)[0])
             if not a:
                 # 扫描件（pdftotext 出 0 字符）——用 ocr_answers.py 事先识别好的结果。
                 # OCR 很贵很慢，所以结果存在 real_papers.ocr_json 里，这里只管取用。
@@ -298,12 +294,13 @@ def extract_all(con, exts, force=False):
             stats["fail"] += 1
             continue
         try:
-            text = R.file_text(p, tmp)
+            text, real_path = R.file_text(p, tmp)
             qs = R.parse_paper(text)
             # 图形推理的题**题干和选项全都一样**（「从所给的四个选项中…」+「如上图所示」×4），
             # 光靠文字判重会把几十道不同的题并成一条。所以在这里就把每道题配的图算成指纹，
             # 让判重看得见图 —— 否则等到提图阶段再补救已经晚了（那时题已经并掉了）。
-            figs = _fig_hashes(p, text, tmp) if r["ext"] in (".docx", ".doc") else {}
+            # 传 real_path：.doc 已经在 file_text 里转成 docx 了，别再转一遍
+            figs = _fig_hashes(real_path, text) if r["ext"] in (".docx", ".doc") else {}
         except Exception as e:
             _paper_row(con, r, meta, "q", 0, "failed", str(e)[:200])
             stats["fail"] += 1
@@ -419,10 +416,21 @@ def dedup(con):
     # 于是 dedup 就不幂等了（实测每跑一次都有几条解析变孤儿）。
     keep = {}
     try:
-        for r in con.execute("SELECT id, dkey FROM real_questions WHERE dkey IS NOT NULL"):
-            keep[r["dkey"]] = r["id"]
+        for r in con.execute("SELECT id, dkey, material, needs_asset FROM real_questions "
+                             "WHERE dkey IS NOT NULL"):
+            keep[r["dkey"]] = (r["id"], r["material"], r["needs_asset"])
     except sqlite3.Error:
         pass
+    # 资产（图/材料）是另外三个脚本灌进来的，**重建时必须原样带回来**：
+    # material 存在 real_questions 自己身上，一 DROP 就没了；
+    # needs_asset 更隐蔽 —— 它是那三个脚本按各自的标准「翻」的标志位
+    # （图形题要 ≥5 张图或一张大图；资料分析要材料正文和表格图都到位），
+    # 而这里原先每次都按题干重算一遍，跑一次 ingest_real 就把它们的产出全部悄悄锁回去。
+    #
+    # 这里**不重新判定「资产够不够」**：那套标准归资产脚本管，在两个地方各写一份
+    # 迟早会打架（实测就打过：这边按「有图或有材料」放行，比 ingest_material 自己的
+    # 「材料和图都要有」松，解封数比有材料的题还多）。dedup 只负责一件事 ——
+    # 内容没变就把上一轮的判定原样搬回来。
     con.execute("UPDATE real_raw SET qid=NULL")
     con.execute("DROP TABLE IF EXISTS real_questions")
     con.executescript(SCHEMA_Q)
@@ -468,7 +476,10 @@ def dedup(con):
         # 能区分它们的信息。这时合并等于凭空断言「这几道是同一题」，造出来的是缝合怪：
         # 答案只属于其中一道、图会堆一堆。宁可各留各的（反正 needs_asset=1 不会发出去），
         # 将来提到图了还能各自挂对。
-        if (r["qhash"] in generic or r["ohash"] in generic_opts) and not fh:
+        # **两个方向都通用**才叫「手上没有任何能区分它们的信息」。
+        # 写成 or 的话，题干本来能标识题、只是选项恰好撞进 generic_opts 的普通题
+        # 也会被拆开（实测 68 组 word 版/PDF 版就是这么分家的）。
+        if r["qhash"] in generic and r["ohash"] in generic_opts and not fh:
             qo = "raw%d" % r["id"]
         else:
             qo = r["qhash"] + r["ohash"] + fh
@@ -510,19 +521,22 @@ def dedup(con):
                          1 if ans else 0, min(yrs or [0]), max(yrs or [0]), qid))
         else:
             # 内容没变就用回原来的 id（见上面 keep 的注释）
-            old = keep.get(qo)
-            qid = old if (old and old not in used) else None
+            old_id, old_mat, old_na = keep.get(qo, (None, None, None))
+            qid = old_id if (old_id and old_id not in used) else None
             cur = con.execute(
                 "INSERT INTO real_questions(id,module,qtype,stem,options,answer,explain,"
-                "qhash,ohash,fighash,dkey,sources,n_src,year_min,year_max,has_answer,needs_asset) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)",
+                "qhash,ohash,fighash,dkey,material,"
+                "sources,n_src,year_min,year_max,has_answer,needs_asset) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)",
                 (qid,
                  r["module"], R.classify_qtype(r["module"], r["stem"], json.loads(r["options"])),
                  r["stem"], r["options"], r["answer"], r["explain"],
-                 r["qhash"], r["ohash"], fh, qo,
+                 r["qhash"], r["ohash"], fh, qo, old_mat,
                  json.dumps([src], ensure_ascii=False), r["year"], r["year"],
                  1 if r["answer"] else 0,
-                 needs_asset(r["stem"], r["qhash"] in generic, r["module"])))
+                 # 这道题上一轮是什么判定就还是什么；全新的题才按题干算
+                 old_na if old_na is not None
+                 else needs_asset(r["stem"], r["qhash"] in generic, r["module"])))
             qid = qid or cur.lastrowid
             used.add(qid)
             by_qo[qo] = qid

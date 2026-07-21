@@ -137,13 +137,19 @@ def pdf_text(path):
 
 
 def file_text(path, tmpdir=None):
+    """返回 (文字, 实际解析的文件路径)。
+
+    第二个返回值是给**提图**用的：.doc 要先转 docx 才能提图，而转换在这里已经做过一次。
+    不把路径带出去的话，调用方只能再转一遍 —— 27 份 .doc 每份多花 4 秒 libreoffice。
+    """
     ext = os.path.splitext(path)[1].lower()
     if ext == ".docx":
-        return docx_text(path)
+        return docx_text(path), path
     if ext == ".doc":
-        return doc_text(path, tmpdir or "/tmp")
+        out = doc_to_docx(path, tmpdir or "/tmp")
+        return docx_text(out), out
     if ext == ".pdf":
-        return pdf_text(path)
+        return pdf_text(path), path
     raise ValueError("不认识的格式：" + ext)
 
 

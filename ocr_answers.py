@@ -66,8 +66,14 @@ PROMPT = ("这是一份公务员考试答案解析卷的扫描页。请把页面
           '只输出 JSON：{"items":[{"seq":1,"answer":"B"}]}')
 
 
-def ocr_page(png):
-    """一页 → {题号: 答案}。识别不出就返回空。"""
+def ocr_page(png, tries=3):
+    """一页 → {题号: 答案}。识别不出就返回空。
+
+    **必须重试**：71 份卷子上千页要跑几个小时，网络抖动是必然事件
+    （同一个项目里 gen_real_explain 就是撞到 SSL UNEXPECTED_EOF 才加的重试）。
+    这里失败即静默丢页，而外层写完 ocr_json 之后重跑会跳过整份卷子，
+    缺的那几页就永远缺着了。
+    """
     import base64
     with open(png, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
@@ -79,24 +85,28 @@ def ocr_page(png):
     req = urllib.request.Request(
         url_of(V_BASE), data=json.dumps(payload).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + V_KEY})
-    try:
-        with urllib.request.urlopen(req, timeout=180) as r:
-            d = json.loads(r.read().decode("utf-8"))
-        txt = (d["choices"][0]["message"].get("content") or "").strip()
-        m = re.search(r"\{.*\}", txt, re.S)
-        got = json.loads(m.group()) if m else {}
-        out = {}
-        for it in got.get("items") or []:
-            try:
-                seq = int(it["seq"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            a = (it.get("answer") or "").strip().upper()[:1]
-            if a in "ABCD":
-                out[seq] = a
-        return out
-    except Exception:
-        return {}
+    for k in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                d = json.loads(r.read().decode("utf-8"))
+            txt = (d["choices"][0]["message"].get("content") or "").strip()
+            m = re.search(r"\{.*\}", txt, re.S)
+            got = json.loads(m.group()) if m else {}
+            out = {}
+            for it in got.get("items") or []:
+                try:
+                    seq = int(it["seq"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                a = (it.get("answer") or "").strip().upper()[:1]
+                if a in "ABCD":
+                    out[seq] = a
+            return out
+        except Exception:
+            if k == tries - 1:
+                return {}
+            time.sleep(3 * (k + 1))
+    return {}
 
 
 def pages_of(pdf, tmp):
@@ -152,10 +162,13 @@ def main():
             with ThreadPoolExecutor(max_workers=a.workers) as pool:
                 for f in as_completed({pool.submit(ocr_page, p): p for p in pngs}):
                     got.update(f.result() or {})
+            # 状态沿用既有的 ok/empty，不新造 'ocr' —— report() 的人工复核清单只认
+            # ('answers_bad','failed','empty','thin')，新值会让 OCR 只识出三五条的
+            # 那种明显失败的卷子在报告里彻底隐身
             con.execute("UPDATE real_papers SET ocr_json=?, n_item=?, status=?, note=? WHERE id=?",
-                        (json.dumps(got), len(got), "ocr" if got else "empty",
-                         "扫描件 OCR（视觉模型 %s）识出 %d 条" % (V_MODEL, len(got)) if got
-                         else "扫描件 OCR 也没识出答案", r["id"]))
+                        (json.dumps(got), len(got), "ok" if len(got) >= 20 else "empty",
+                         ("扫描件 OCR（视觉模型 %s）识出 %d 条" % (V_MODEL, len(got))) if got
+                         else "扫描件 OCR 也没识出答案（图太糊或不是答案页）", r["id"]))
             con.commit()
             print("  [%d/%d] %-44s %3d 页 → %3d 条答案  （已跑 %.1f 分钟）"
                   % (n, len(rows), r["name"][:44], len(pngs), len(got), (time.time() - t0) / 60))

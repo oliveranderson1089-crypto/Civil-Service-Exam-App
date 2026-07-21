@@ -256,6 +256,9 @@ def real_done():
                     # 图要带上：模考交卷后的逐题回顾里，图形推理题没有图就只剩一句
                     # 「选择最合适的一个填入问号处」，正是这类题最需要对着图看解析
                     "figs": figs.get(r["id"], []),
+                    # 材料也要带：资料分析做错的题，回顾时没有材料就只剩
+                    # 「2019 年该省 GDP 同比增长约：」和四个数字，解析根本看不懂
+                    "material": (r["material"] or "") if "material" in r.keys() else "",
                     "explain": _explain_of(r)})
 
     added = _to_wrongq(db, [rows[i] for i in wrong_ids if i in rows])

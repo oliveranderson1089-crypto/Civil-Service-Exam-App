@@ -56,7 +56,7 @@ def find_path(stored):
 
 
 def page_lines(pdf):
-    """[(页码, 页高, [(yMin, yMax, 该行文字), ...]), ...]"""
+    """[(页码, 页高, [(yMin, 文字), ...]), ...]"""
     try:
         out = subprocess.run(["pdftotext", "-bbox-layout", pdf, "-"],
                              capture_output=True, timeout=300)
@@ -66,7 +66,7 @@ def page_lines(pdf):
     pages = []
     for i, m in enumerate(_PAGE.finditer(xml), 1):
         h = float(m.group(2))
-        lines = [(float(y), y, t) for y, t in _WORD.findall(m.group(3))]
+        lines = [(float(y), t) for y, t in _WORD.findall(m.group(3))]
         pages.append((i, h, lines))
     return pages
 
@@ -80,7 +80,7 @@ def crop_for(pdf, pages, want_seqs, tmp):
     # 先把「第几题在第几页、从哪个 y 开始」找出来
     marks = []                    # (页码, 页高, y, 题号)
     for pno, h, lines in pages:
-        for y0, _y1, text in lines:
+        for y0, text in lines:
             m = _QNO.match(text)
             if m:
                 marks.append((pno, h, y0, int(m.group(1))))
@@ -96,12 +96,10 @@ def crop_for(pdf, pages, want_seqs, tmp):
             # 太窄 = 把选项行当题号了；太宽 = 下一题没在本页、退化成整页，
             # 那样会把同页别的题一起露出来，不如不给
             continue
-        png = _render(pdf, pno, tmp)
-        if not png:
+        im = _page_image(pdf, pno, tmp)
+        if im is None:
             continue
         try:
-            from PIL import Image
-            im = Image.open(png)
             sc = im.height / h                       # 渲染图高 ÷ PDF 页高
             box = (0, max(0, int(y0 * sc) - 4), im.width,
                    min(im.height, int(y1 * sc) + 4))
@@ -118,14 +116,35 @@ def crop_for(pdf, pages, want_seqs, tmp):
 
 
 _RENDERED = {}
+_IMAGES = {}
+
+
+def _page_image(pdf, pno, tmp):
+    """整页的 PIL 图。**渲染和解码都只做一次** —— 一页上通常有 4~6 道图形题，
+       每道题各自 Image.open 一遍等于把 1241×1754 的位图反复解码。"""
+    key = (pdf, pno)
+    if key not in _IMAGES:
+        png = _render(pdf, pno, tmp)
+        try:
+            from PIL import Image
+            _IMAGES[key] = Image.open(png) if png else None
+        except Exception:
+            _IMAGES[key] = None
+    return _IMAGES[key]
 
 
 def _render(pdf, pno, tmp):
-    """整页渲染成 png（一页只渲一次，同一页上的题共用）。"""
+    """整页渲染成 png（一页只渲一次，同一页上的题共用）。
+
+    文件名带上卷子的哈希：tmp 是所有卷子共用的，只用 pg<页码> 的话，
+    下一份卷子的第 3 页若 pdftoppm 失败，后面的 os.path.exists 会捡到**上一份卷子**
+    留下的同名旧文件，静默裁出一张张冠李戴的题图。
+    """
     key = (pdf, pno)
     if key in _RENDERED:
         return _RENDERED[key]
-    base = os.path.join(tmp, "pg%d" % pno)
+    tag = hashlib.sha256(pdf.encode()).hexdigest()[:8]
+    base = os.path.join(tmp, "pg_%s_%d" % (tag, pno))
     try:
         subprocess.run(["pdftoppm", "-png", "-r", str(DPI), "-f", str(pno), "-l", str(pno),
                         pdf, base], capture_output=True, timeout=120)
@@ -177,7 +196,7 @@ def main():
     if a.plan:
         return
 
-    n_fig = 0
+    n_fig, made = 0, set()
     for (pid, name, stored), items in papers:
         path = find_path(stored)
         if not path:
@@ -200,15 +219,23 @@ def main():
             # 裁出来的是**整条题**（题干+图都在），所以按大图算，一张就够
             con.execute("INSERT OR IGNORE INTO real_figs(qid,ord,sha,ext,big) VALUES(?,0,?,'.png',1)",
                         (qid, sha))
+            made.add(sha)
             n_fig += 1
         con.commit()
         if got:
             print("  %-46s 裁出 %3d 道" % (name[:46], len(got)))
         _RENDERED.clear()          # 换卷子就清，别把上一份的渲染缓存留着占内存
+        for im in _IMAGES.values():
+            if im is not None:
+                im.close()
+        _IMAGES.clear()
 
+    # 只算**本次裁出来的**那些：real_figs 里 big=1 的还有 ingest_figs.py 早先写入的
+    # 整题合成图，一起 UPDATE 的话打印出来的数字混了两个来源，出问题时定位不到是哪一步
     freed = con.execute(
         "UPDATE real_questions SET needs_asset=0 WHERE needs_asset=1 AND module='判断推理' "
-        "AND id IN (SELECT qid FROM real_figs WHERE big=1)").rowcount
+        "AND id IN (SELECT qid FROM real_figs WHERE sha IN (%s))"
+        % (",".join("?" * len(made)) or "''"), list(made)).rowcount if made else 0
     con.commit()
     print("\n裁出 %d 张整题图，解除 needs_asset：判断推理 %d 道" % (n_fig, freed))
     con.close()

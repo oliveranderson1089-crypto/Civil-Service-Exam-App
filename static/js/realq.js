@@ -207,6 +207,7 @@ function rqReviewHtml(results) {
       return `<div class="rq-rv${r.correct ? '' : ' bad'}">
         <div class="rq-rv-h"><b>第 ${noById[r.id] || '?'} 题</b>
           <span>${r.correct ? '✓ 对' : `✗ 你选 ${esc(r.your || '未答')}，正确 ${esc(r.answer)}`}</span></div>
+        ${r.material ? `<div class="rq-mat"><div class="rq-mat-t">给定资料</div><div class="rq-mat-b">${esc(r.material)}</div></div>` : ''}
         <div class="rq-rv-q">${esc((it.stem || '').slice(0, 120))}</div>
         ${(r.figs || []).map(f =>
     `<img class="rq-rv-fig" src="/api/real/fig/${encodeURIComponent(f)}" alt="题目图" loading="lazy">`).join('')}

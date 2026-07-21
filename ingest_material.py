@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 
@@ -48,12 +49,17 @@ FIGDIR = os.path.join(UPLOADS, "realfig")
 #   （一）（二）（三）         —— 国考/联考常见，光秃秃一个序号占一行
 #   根据以下资料回答…          —— 老卷子
 #   图1  2010-2018年…／表1 … —— 有的卷子干脆没有材料头，直接以图表标题起头
+# 前三种是**明确的材料头**，一眼能认；「图1／表1」是兜底 —— 有的卷子干脆没有材料头，
+# 直接以图表标题起头。但它**不能和前三种混用**：材料正文里往往还有第二第三个图表标题
+# （「图1 …」「图2 …」连着两行），当成材料头就会把一份材料从中间劈成两半，
+# 前半段分不到题号被丢弃、图也跟着丢，用户拿到残缺的材料。
+# 所以分两级：本卷能认出明确材料头就只用它们，认不出才退到图表标题。
 _MAT_HEAD = re.compile(
     r"^[\s　]*[（(]?\s*材料\s*[一二三四五六七八九十\d]+\s*[）)]?[\s　:：]*$"
     r"|^[\s　]*[（(]\s*[一二三四五六七八九十]\s*[）)][\s　]*$"
     r"|^[\s　]*根据(?:以下|下列|下面)(?:资料|材料)"
-    r"|^[\s　]*(?:以下|下列|下面)(?:资料|材料)[^\n]{0,12}$"
-    r"|^[\s　]*[图表]\s*\d+[\s　]")
+    r"|^[\s　]*(?:以下|下列|下面)(?:资料|材料)[^\n]{0,12}$")
+_MAT_HEAD_WEAK = re.compile(r"^[\s　]*[图表]\s*\d+[\s　]")
 _MIN_MAT = 20          # 太短的不算材料（多半是个孤零零的小标题）
 
 
@@ -73,6 +79,8 @@ def split_materials(text, figs_by_para):
     """
     lines = text.split("\n")
     heads = [i for i, ln in enumerate(lines) if _MAT_HEAD.match(ln)]
+    if not heads:                       # 本卷没有明确材料头，才退到「图1／表1」兜底
+        heads = [i for i, ln in enumerate(lines) if _MAT_HEAD_WEAK.match(ln)]
     if not heads:
         return []
     qmark = [(i, int(m.group(1))) for i, ln in enumerate(lines)
@@ -90,6 +98,23 @@ def split_materials(text, figs_by_para):
             continue                              # 既没正文又没图，不是材料
         out.append((body[:4000], paras, {seq for _i, seq in qs}))
     return out
+
+
+def _to_png(blob, tmp):
+    """emf/wmf 转 png（走 libreoffice）。转不了返回 None —— 宁可没有图，也别给裂图。"""
+    src = os.path.join(tmp, "matconv.emf")
+    with open(src, "wb") as f:
+        f.write(blob)
+    try:
+        subprocess.run(["libreoffice", "--headless", "--convert-to", "png", "--outdir", tmp, src],
+                       capture_output=True, timeout=60)
+        out = os.path.join(tmp, "matconv.png")
+        if os.path.exists(out):
+            with open(out, "rb") as f:
+                return f.read(), ".png"
+    except Exception:
+        pass
+    return None
 
 
 def main():
@@ -113,7 +138,8 @@ def main():
         "ORDER BY p.year DESC").fetchall()
     print("扫 %d 份 word 版题目卷" % len(papers))
 
-    n_mat = n_q = n_fig = 0
+    n_mat = n_q = 0
+    seen_sha = set()          # 按**内容**计数：同一张表挂给材料下的每道题，不该算成很多张
     for p in papers:
         path = find_path(p["stored_name"])
         if not path:
@@ -142,7 +168,7 @@ def main():
             if a.plan:
                 n_mat += 1
                 n_q += len(qids)
-                n_fig += len(mat_figs)
+                seen_sha.update(hashlib.sha256(b).hexdigest()[:32] for b, _e in mat_figs)
                 continue
             for qid in qids:
                 con.execute("UPDATE real_questions SET material=? WHERE id=? "
@@ -153,8 +179,16 @@ def main():
                 for k, (blob, ext) in enumerate(mat_figs, base):
                     if len(blob) < 400:
                         continue
+                    if ext in (".emf", ".wmf"):
+                        # **不能只改扩展名**：浏览器解不了图元格式，改名成 .png 只会
+                        # 让它以 image/png 发出去、显示成裂图。要么真转，要么整张丢掉。
+                        got = _to_png(blob, tmp)
+                        if not got:
+                            continue
+                        blob, ext = got
+                    elif ext not in (".png", ".jpg", ".jpeg", ".gif", ".bmp"):
+                        continue
                     sha = hashlib.sha256(blob).hexdigest()[:32]
-                    ext = ext if ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp") else ".png"
                     fp = os.path.join(FIGDIR, sha + ext)
                     if not os.path.exists(fp):
                         with open(fp, "wb") as f:
@@ -162,7 +196,7 @@ def main():
                     con.execute(
                         "INSERT OR IGNORE INTO real_figs(qid,ord,sha,ext,big) VALUES(?,?,?,?,1)",
                         (qid, k, sha, ext))
-                    n_fig += 1
+                    seen_sha.add(sha)
             n_mat += 1
             n_q += len(qids)
             hit += 1
@@ -170,7 +204,8 @@ def main():
         if hit:
             print("  %-46s %2d 份材料" % (p["name"][:46], hit))
 
-    print("\n%d 份材料，覆盖 %d 道题，配 %d 张表格图" % (n_mat, n_q, n_fig))
+    print("\n%d 份材料，覆盖 %d 道题，配 %d 张表格图（按内容去重计）"
+          % (n_mat, n_q, len(seen_sha)))
     if a.plan:
         return
     # 材料**正文和表格图都到位**才放行：只有正文没有表，数还是在图里、题照样做不了
