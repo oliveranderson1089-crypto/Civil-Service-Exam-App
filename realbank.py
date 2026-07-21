@@ -558,6 +558,13 @@ def paper_meta(name, folder=""):
         season = "下半年"
     elif "上半年" in name:
         season = "上半年"
+    # 「无答案版」「不含答案」说的是**没有**答案，可它里面就带着「答案」二字 ——
+    # 直接 search("答案") 会把 2024 国考那三份「无答案版」题目卷判成答案卷，
+    # 白跑一遍 OCR 不说，抠出来的东西还会当成答案去和题目卷配对。
+    if re.search(r"无答案|不含答案|没有答案", name):
+        return {"year": int(y.group()) if y else 0, "exam": exam, "kind": kind,
+                "paper": paper, "season": season, "is_answer": False}
+
     # 是题目卷还是答案卷。文件名说了算；文件名没说才看目录 —— 但**不能只看「目录里有没有答案二字」**：
     # 「1、2025国考【行测】真题试卷及答案」这种是**混装目录**，题目卷和答案卷都在里面，
     # 按它判会把《2025国考行测题（副省级）》这类题目卷全判成答案卷 ——

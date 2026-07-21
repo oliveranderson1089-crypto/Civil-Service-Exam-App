@@ -222,6 +222,22 @@ class TestPaperRole:
                             "公考/2026国考行测真题试卷和答案/01、26国考行测答案（已更新）/国考地市卷"
                             )["is_answer"] is True
 
+    def test_无答案版是题目卷不是答案卷(self):
+        """「无答案版」说的是**没有**答案，可它里面就带着「答案」二字。
+
+        直接 search("答案") 会把 2024 国考那三份「无答案版」判成答案卷 ——
+        白跑一遍 OCR 不说，抠出来的东西还会当成答案去和题目卷配对
+        （它俩的 pair_key 恰好相同，真答案卷反而可能被顶掉）。
+        """
+        for n in ("1-【行政执法】2024年国考-无答案版.pdf",
+                  "3-【地市卷】2024年国考-无答案版（1月23日修订）.pdf",
+                  "5-【副省卷】2024年国考-无答案版（1月28日更新）.pdf"):
+            m = R.paper_meta(n, "")
+            assert m["is_answer"] is False, n
+            assert m["paper"], "卷种不能因为提前返回而丢：" + n
+        # 真答案卷不受影响
+        assert R.paper_meta("2-【行政执法】2024年国考-答案和解析.pdf", "")["is_answer"] is True
+
     def test_文件名自己说了就不看目录(self):
         assert R.paper_meta("2005年国考《行测》真题答案及解析.pdf", "公考/随便什么目录"
                             )["is_answer"] is True
