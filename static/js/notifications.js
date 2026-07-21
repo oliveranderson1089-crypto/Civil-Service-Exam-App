@@ -9,7 +9,7 @@
  */
 /* global $, ME, api, appConfirm, esc, openChangkao,
    openChangshi, openChat, openChatroom, openCkBoard, openClassics, openCsBoard,
-   openDrafts, openEssays, openGaikuo, openGongwen, openIdiom, openNews,
+   openDrafts, openEssays, openFind, openGaikuo, openGongwen, openIdiom, openNews,
    openPartyDict, openPolicyDocs, openQuiz, openReview, openShenlun, openSucai,
    openTasks, openThBoard, openTheory, openWorks, openWrongq, push,
    tkSwitch, toast */
@@ -44,6 +44,7 @@ function ntfGo(link) {
     idiom: () => openIdiom(),
     changkao: () => { openChangkao(); if (arg) setTimeout(() => openCkBoard(arg), 260); },
     shenlun: () => openShenlun(),
+    find: () => openFind(),
     classics: () => openClassics(),
     theory: () => { openTheory(); if (arg) setTimeout(() => openThBoard(arg), 260); },
     works: () => openWorks(),

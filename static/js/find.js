@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, back, c, esc, push,
+/* global $, api, appConfirm, back, c, esc, push,
    toast */
 
 /* ============= 小题训练：找点 + 写点 =============
@@ -18,8 +18,10 @@
    勾画粒度是**句**：申论找点本来就是找句子，句子边界明确才判得准
    （自由划词的区间对不齐采分点，判定必然变成玄学）。 */
 let fdPaper = null, fdPicked = new Set(), fdStep = 1, fdCheck = null, fdDrag = null;
+let fdManage = false, fdSel = new Set();   // 我的题：批量删除的管理态
 
 function openFind() {
+  fdManage = false; fdSel.clear();
   push({ view: 'find', title: '小题训练' });
   loadFindTypes();
   loadFindList();
@@ -57,26 +59,95 @@ $('#fd-doctypes').addEventListener('click', e => {
 const fdType = () => (document.querySelector('#fd-types .fd-type.on') || {}).dataset?.fdt || 'guina';
 const fdDoctype = () => (document.querySelector('#fd-doctypes .chip.on') || {}).dataset?.fdd || '';
 
+// 一张题目卡片。done=true 是「做过的题」区（显示最好成绩/最近时间，纯重练，无勾选/删除）；
+// 否则是「我的题」区（可单删；管理态下带勾选做批量删）。
+function fdPaperCard(x, opt = {}) {
+  if (opt.done) {
+    return `<div class="wr-day done" data-fdp="${x.id}">
+      <div class="wr-day-d">${esc(x.type_name)}</div>
+      <div class="wr-day-m"><b>${esc((x.stem || '').slice(0, 40))}</b>
+        ${x.best != null ? `<span class="dr-acc${x.best >= x.full * 0.6 ? '' : ' bad'}">最好 ${x.best}/${x.full}</span>` : ''}
+        <span class="fd-done">练过 ${x.done} 次</span>
+        <span class="wr-w">${esc((x.last_done || '').slice(5, 16))}</span></div></div>`;
+  }
+  const chk = fdManage ? `<input type="checkbox" class="fd-chk" data-fdchk="${x.id}"${fdSel.has(x.id) ? ' checked' : ''}>` : '';
+  return `<div class="wr-day done${fdManage ? ' fd-managing' : ''}" data-fdp="${x.id}">
+    ${chk}
+    <div class="wr-day-d">${esc(x.type_name)}</div>
+    <div class="wr-day-m"><b>${esc((x.stem || '').slice(0, 40))}</b>
+      <span class="wr-w">${x.full} 分</span>
+      <span class="wr-tag">${esc(x.source || '')}</span>
+      ${x.done ? `<span class="fd-done">练过 ${x.done} 次</span>` : ''}</div>
+    <button class="btn danger tiny fd-del" data-fddel="${x.id}" title="删除这道题">🗑</button></div>`;
+}
+
 async function loadFindList() {
   const box = $('#fd-list');
   try {
     const d = await api('/api/find/papers');
-    box.innerHTML = d.items.length ? d.items.map(x => `
-      <div class="wr-day done" data-fdp="${x.id}">
-        <div class="wr-day-d">${esc(x.type_name)}</div>
-        <div class="wr-day-m"><b>${esc((x.stem || '').slice(0, 40))}</b>
-          <span class="wr-w">${x.full} 分</span>
-          <span class="wr-tag">${esc(x.source || '')}</span>
-          ${x.done ? `<span class="fd-done">练过 ${x.done} 次</span>` : ''}</div>
-      </div>`).join('') : '<p class="empty">还没有题。上面点「出一道」，或上传一份真题。</p>';
+    const items = d.items || [];
+    // 做过的题：按最近练习时间倒排，一键重练（纳入复习规划）
+    const done = items.filter(x => x.done > 0)
+      .sort((a, b) => (b.last_done || '').localeCompare(a.last_done || ''));
+    const dw = $('#fd-done-wrap'), dbox = $('#fd-done');
+    if (done.length) {
+      dbox.innerHTML = done.map(x => fdPaperCard(x, { done: true })).join('');
+      dw.classList.remove('hidden');
+    } else dw.classList.add('hidden');
+    // 我的题：全部（新到旧）
+    box.innerHTML = items.length ? items.map(x => fdPaperCard(x)).join('')
+      : '<p class="empty">还没有题。上面点「出一道」，或上传一份真题。</p>';
+    fdSyncBatchBar();
   } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
-$('#fd-list').addEventListener('click', e => {
-  const c = e.target.closest('[data-fdp]'); if (c) openFindRun(+c.dataset.fdp);
+$('#fd-done').addEventListener('click', e => {
+  const c = e.target.closest('[data-fdp]'); if (c) openFindRun(+c.dataset.fdp);   // 一键重练
 });
+$('#fd-list').addEventListener('click', e => {
+  const del = e.target.closest('[data-fddel]');
+  if (del) { e.stopPropagation(); fdDelPaper(+del.dataset.fddel); return; }
+  const card = e.target.closest('[data-fdp]'); if (!card) return;
+  if (fdManage) {                                  // 管理态：点卡=勾选/取消
+    const id = +card.dataset.fdp;
+    if (fdSel.has(id)) fdSel.delete(id); else fdSel.add(id);
+    const box = card.querySelector('.fd-chk'); if (box) box.checked = fdSel.has(id);
+    fdSyncBatchBar();
+    return;
+  }
+  openFindRun(+card.dataset.fdp);
+});
+
+/* ---- 题目删除：单删 + 批量删（管理态）---- */
+async function fdDelPaper(id) {
+  if (!(await appConfirm('删除这道题？它的做题记录也会一起删掉，且不可恢复。'))) return;
+  try {
+    await api('/api/find/paper/' + id, { method: 'DELETE' });
+    fdSel.delete(id); toast('已删除'); loadFindList(); loadFindTypes();
+  } catch (e) { toast(e.message, true); }
+}
+async function fdBatchDel() {
+  if (!fdSel.size) { toast('先勾选要删的题', true); return; }
+  if (!(await appConfirm(`删除选中的 ${fdSel.size} 道题？它们的做题记录也会一起删掉，且不可恢复。`))) return;
+  try {
+    const r = await api('/api/find/papers/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [...fdSel] }),
+    });
+    toast(`已删除 ${r.deleted} 道`); fdSel.clear(); fdManage = false;
+    loadFindList(); loadFindTypes();
+  } catch (e) { toast(e.message, true); }
+}
+function fdSyncBatchBar() {
+  const bar = $('#fd-batchbar');
+  if (bar) bar.classList.toggle('hidden', !fdManage);
+  const n = $('#fd-seln'); if (n) n.textContent = '已选 ' + fdSel.size;
+  const mb = $('#fd-manage'); if (mb) mb.textContent = fdManage ? '✓ 完成' : '🗑 管理';
+}
+$('#fd-manage').onclick = () => { fdManage = !fdManage; if (!fdManage) fdSel.clear(); loadFindList(); };
+$('#fd-batchdel').onclick = fdBatchDel;
 $('#fd-gen').onclick = async () => {
-  const b = $('#fd-gen'); b.disabled = true; b.textContent = '出题中…（约 30~60 秒）';
-  $('#fd-msg').textContent = 'AI 正在按题型出对应材料（每则对齐真题单则字数、掺干扰信息），字数不够会自动扩写，再标采分点…';
+  const b = $('#fd-gen'); b.disabled = true; b.textContent = '出题中…（约 1~2 分钟）';
+  $('#fd-msg').textContent = 'AI 正在按题型出一则材料（对齐真题单则字数 1400~2500 字、掺干扰信息），字数不够会自动扩写，再标采分点…';
   try {
     const d = await api('/api/find/gen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -123,10 +194,15 @@ function frRender() {
     </div>
     <div class="fr-stem">${esc(p.stem)}</div>
     <div class="fr-meta">${esc(p.type_name)} · ${p.full} 分 · 答案 ${p.word_min}~${p.word_max} 字
-      · <b>共 ${p.n_points} 个采分点</b>${p.material_words ? ` · 给定资料 ${p.material_words} 字` : ''} · ${esc(p.source || '')}</div>`;
+      · <b>共 ${p.n_points} 个采分点</b>${p.material_words ? ` · 给定资料 ${p.material_words} 字` : ''} · ${esc(p.source || '')}</div>
+    ${p.done ? `<div class="fr-hist"><i class="fr-histgo">🕐 本题练过 ${p.done} 次 · 查看记录 ›</i></div>` : ''}`;
   frMat();
   frFoot();
 }
+// 做题页点「查看记录」→ 打开过滤到本题的做题记录（题目内部按时间的多次留痕）
+$('#fr-head').addEventListener('click', e => {
+  if (e.target.closest('.fr-histgo') && fdPaper) openFindRecs(fdPaper.id);
+});
 
 function frMat() {
   const p = fdPaper;
@@ -264,7 +340,15 @@ async function frDoGrade() {
   try {
     const g = await api('/api/find/grade', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paper_id: fdPaper.id, answer: ans, sents: [...fdPicked] }),
+      body: JSON.stringify({
+        paper_id: fdPaper.id, answer: ans, sents: [...fdPicked],
+        // 把这次的找点判定一起存下（记录详情里回看「我的找点过程」）
+        find_result: fdCheck ? {
+          found: fdCheck.found, total: fdCheck.total, acc: fdCheck.acc,
+          missed: (fdCheck.missed || []).map(m => m.point),
+          wrong_n: (fdCheck.wrong || []).length, dup_n: (fdCheck.dup || []).length,
+        } : null,
+      }),
     });
     fdStep = 3;
     $('#fr-head').innerHTML = `
@@ -306,27 +390,77 @@ function frResultBody(g) {
     </div>`;
 }
 
-/* ---- 找点/写点 做题记录：每次批改都留着，可回看题干、采分点、格式分、我写的答案 ---- */
+/* ---- 找点/写点 记录：每次批改都留一条（含找点过程），可回看、可删。
+       做题记录（全局/本题按时间）与错题记录（没满分、按时间）共用一套卡片。 ---- */
+// 一条记录卡片。wrong=true 时多显示「漏 N 点」。每条带删除按钮。
+function frRecCard(x, opt = {}) {
+  return `<div class="wr-day done" data-frrec="${x.id}">
+    <div class="wr-day-d">${esc(x.type_name)}${x.doctype ? ' · ' + esc(x.doctype) : ''}</div>
+    <div class="wr-day-m"><b>${esc(x.stem || '')}</b>
+      <span class="dr-acc${x.score >= x.full * 0.6 ? '' : ' bad'}">${x.score}/${x.full} 分</span>
+      ${opt.wrong && x.miss_n ? `<span class="dr-acc bad">漏 ${x.miss_n} 点</span>` : ''}
+      ${x.content_score != null ? `<span class="wr-tag">内容 ${x.content_score}/${x.content_full} + 格式 ${x.format_score}/${x.format_full}</span>` : ''}
+      <span class="wr-w">${esc((x.created_at || '').slice(5, 16))}</span></div>
+    <button class="btn danger tiny fr-recdel" data-frdel="${x.id}" title="删除这条记录">🗑</button></div>`;
+}
+// 删一条记录：直接把卡片从当前列表移除，不重拉/不改题目本身
+async function frDelRec(rid) {
+  if (!(await appConfirm('删除这条做题记录？'))) return;
+  try {
+    await api('/api/find/record/' + rid, { method: 'DELETE' });
+    const card = document.querySelector(`[data-frrec="${rid}"]`);
+    if (card) card.remove();
+    toast('已删除');
+  } catch (e) { toast(e.message, true); }
+}
+function frRecListClick(e) {
+  const del = e.target.closest('[data-frdel]');
+  if (del) { e.stopPropagation(); frDelRec(+del.dataset.frdel); return; }
+  const c = e.target.closest('[data-frrec]'); if (c) openFindRec(+c.dataset.frrec);
+}
+
+// 做题记录：不传 paperId=全局；传了=只看这道题（题目内部按时间的多次留痕）
 $('#fd-recs').onclick = () => openFindRecs();
-async function openFindRecs() {
-  push({ view: 'findrec', title: '做题记录' });
+async function openFindRecs(paperId) {
+  push({ view: 'findrec', title: paperId ? '本题记录' : '做题记录' });
   const box = $('#frr-list');
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
-    const d = await api('/api/find/records');
-    box.innerHTML = d.items.length ? d.items.map(x => `
-      <div class="wr-day done" data-frrec="${x.id}">
-        <div class="wr-day-d">${esc(x.type_name)}${x.doctype ? ' · ' + esc(x.doctype) : ''}</div>
-        <div class="wr-day-m"><b>${esc(x.stem || '')}</b>
-          <span class="dr-acc${x.score >= x.full * 0.6 ? '' : ' bad'}">${x.score}/${x.full} 分</span>
-          ${x.content_score != null ? `<span class="wr-tag">内容 ${x.content_score}/${x.content_full} + 格式 ${x.format_score}/${x.format_full}</span>` : ''}
-          <span class="wr-w">${esc((x.created_at || '').slice(5, 16))}</span></div>
-      </div>`).join('') : '<p class="empty">还没练过题。做完一道就会留在这里。</p>';
+    const d = await api('/api/find/records' + (paperId ? '?paper_id=' + paperId : ''));
+    box.innerHTML = d.items.length ? d.items.map(x => frRecCard(x)).join('')
+      : '<p class="empty">还没练过题。做完一道就会留在这里。</p>';
   } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
-$('#frr-list').addEventListener('click', e => {
-  const c = e.target.closest('[data-frrec]'); if (c) openFindRec(+c.dataset.frrec);
-});
+$('#frr-list').addEventListener('click', frRecListClick);
+
+// 错题记录：没拿满分的作答，按时间倒序，方便按做题顺序复习
+$('#fd-wrong').onclick = () => openFindWrong();
+async function openFindWrong() {
+  push({ view: 'findwrong', title: '错题记录' });
+  const box = $('#fdw-list');
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/find/records?wrong=1');
+    box.innerHTML = d.items.length ? d.items.map(x => frRecCard(x, { wrong: true })).join('')
+      : '<p class="empty">还没有错题。没拿满分的作答会按时间留在这里，方便按顺序复习。</p>';
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+$('#fdw-list').addEventListener('click', frRecListClick);
+
+// 「我的找点过程」回看：找到几/漏几/错几/重几（有存 find_result 的记录才显示）
+function frFindRecapHtml(fr) {
+  if (!fr || fr.total == null) return '';
+  const acc = fr.acc != null ? fr.acc : (fr.total ? Math.round(100 * fr.found / fr.total) : 0);
+  const bits = [];
+  if ((fr.missed || []).length) bits.push('找漏 ' + fr.missed.length);
+  if (fr.wrong_n) bits.push('找错 ' + fr.wrong_n);
+  if (fr.dup_n) bits.push('找重 ' + fr.dup_n);
+  return `<div class="fr-sec fr-recap"><div class="fr-sec-t">🖍 我的找点过程</div>
+    <div class="fr-item">找到 <b>${fr.found}</b> / ${fr.total} 个采分点
+      <span class="fr-acc${acc < 60 ? ' bad' : ''}">${acc}%</span>${bits.length ? ' · ' + bits.join(' · ') : ''}</div>
+    ${(fr.missed || []).length ? `<div class="fr-item">当时漏掉：${fr.missed.map(esc).join('；')}</div>` : ''}
+  </div>`;
+}
 async function openFindRec(rid) {
   push({ view: 'findrecd', title: '这次的批改' });
   $('#frd-head').innerHTML = '<p class="empty">加载中…</p>'; $('#frd-body').innerHTML = '';
@@ -336,7 +470,7 @@ async function openFindRec(rid) {
     $('#frd-head').innerHTML = `<div class="fr-stem">${esc(d.stem)}</div>
       <div class="fr-meta">${esc(d.type_name)} · ${d.full} 分 · 答案 ${d.word_min}~${d.word_max} 字 · ${esc((d.created_at || '').slice(0, 16))}</div>`
       + frScoreHtml(g);
-    $('#frd-body').innerHTML = frResultBody(g)
+    $('#frd-body').innerHTML = frFindRecapHtml(d.find_result) + frResultBody(g)
       + `<div class="fr-sec"><div class="fr-sec-t">✍️ 我写的答案</div>
          <div class="frd-ans">${esc(d.answer).replace(/\n/g, '<br>')}</div></div>`
       + `<div class="fr-acts"><button class="btn primary" id="frd-again">🔄 再练这道</button>

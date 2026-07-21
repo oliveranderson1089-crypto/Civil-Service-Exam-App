@@ -184,27 +184,29 @@ def _find_fit_words(base_prompt, lo, hi, sys, tries=1, temperature=0.78):
     return best
 
 
-# 材料与题型一一对应，字数对齐真题：查 2025 四川省考、2026 国考真题——一道小题对应的
-# 「给定资料N」通常由 2~4 则子材料组成、总量约 1800~2500 字（如国考归纳概括的给定资料1≈1800 字、
-# 综合分析的给定资料2≈2100 字、提出对策的给定资料4≈2000 字）。所以按「多则、每则真题体量、
-# 总量到位」出：3 则、每则约 550~750 字、合计约 1700~2200 字。
+# 一道小题 = 一则材料（用户要求：真题里一道小题一般只对应「给定资料N」中的某一则，
+# 而不是一道题对多则）。所以每次只出**一则**，但这一则要够真题单则体量（字数达标）。
+# 字数按 2026 国考真题单则给定资料实测标定（材料字数≈答案上限的 5~7 倍）：
+#   归纳概括：城市用光≈1600 字 / 鲁师傅烧饼≈2000 字；综合分析：三家制造业≈2200 / 威山≈1900；
+#   提出对策：养老机构≈2200；贯彻执行：星空短评≈2800 / 政务云推荐≈2200 / 三案例汇报≈2000。
+# 内部融合背景/做法/成效/问题多个面并掺干扰信息，供从同一则里提取 5~8 个采分点。
+# spec = (则数=1, 单则字数区间, [这一则内部要覆盖的面])。
 _FIND_MAT_SPEC = {
-    "guina": (3, (520, 740), [
-        "某地区/某单位在这方面的【具体做法与措施】：有主体、有动作、有数据、有干部或群众原话",
-        "另一处的【做法与成效】：换个地方/主体，做法各有侧重，穿插一些无关背景作干扰",
-        "第三处的【经验或问题】：或再补一个典型案例，或点出推进中的困难与短板（掺入干扰信息）"]),
-    "zonghe": (3, (560, 780), [
-        "摆出要分析的【现象 / 观点 / 一句话】本身：它是什么、从哪来、有哪些具体表现（事实、数据、场景）",
-        "围绕它的【不同角度看法与成因】：不同主体怎么看、为什么会这样、正反两面（供『为什么』层）",
-        "它的【影响、意义与走向】：带来了什么、启示是什么、该怎么办（供『怎么样』层，掺入干扰信息）"]),
-    "duice": (3, (520, 740), [
-        "这个话题当前存在的【问题 / 困难 / 矛盾 / 短板】：具体是什么、卡在哪、谁受影响，有一线声音和数据",
-        "另一类【问题及其成因】：换个侧面把问题铺清楚（对策要从问题里长出来）",
-        "相关【背景、零散做法或他山之石】：可借鉴的经验，并掺入【无关细节、同义重复】作干扰"]),
-    "guanche": (3, (620, 820), [
-        "这件事的【背景与基本情况】：来龙去脉、现状、有关数据（写公文的由头/依据都从这里来）",
-        "各方的【具体做法 / 举措 / 经验】：分主体、有细节、有原话，是公文正文要点的主要来源",
-        "【成效、问题与各方反响】：做出了什么效果、还存在什么问题（掺入干扰信息，供辨别取舍）"]),
+    "guina": (1, (1400, 1900), [
+        "以某地区/某单位为主线，把它在这方面的【具体做法与成效】一整则写透：有主体、有动作、有数据、"
+        "有干部或群众原话；做法分几个各有侧重的方面，穿插【无关背景、同义重复、推进中的困难】等干扰信息"]),
+    "zonghe": (1, (1600, 2100), [
+        "在同一则里把要分析的【现象 / 观点 / 一句话】讲清：它是什么、从哪来、有哪些具体表现（事实、数据、"
+        "场景）；不同主体怎么看、为什么会这样、正反两面；以及它的影响、意义与走向（供『是什么→为什么→"
+        "怎么样』三层），并掺入干扰信息"]),
+    "duice": (1, (1700, 2200), [
+        "在同一则里把这个话题当前的【问题 / 困难 / 矛盾 / 短板】铺清楚：具体是什么、卡在哪、谁受影响，"
+        "有一线声音和数据，问题分几个侧面（对策要从问题里长出来）；再补相关背景或他山之石，"
+        "并掺入【无关细节、同义重复】作干扰"]),
+    "guanche": (1, (1900, 2500), [
+        "在同一则里写全这件事的【背景与基本情况】（来龙去脉、现状、数据，写公文的由头/依据从这里来）、"
+        "各方的【具体做法 / 举措 / 经验】（分主体、有细节、有原话，是正文要点主要来源）、"
+        "以及【成效、问题与各方反响】（掺入干扰信息，供辨别取舍）"]),
 }
 
 
@@ -243,32 +245,39 @@ def _find_gen_stem(name, full, wmin, wmax, tip, topic, material, doctype=""):
 
 
 def _find_gen_material(qtype, name, full, wmin, wmax, tip, topic, doctype=""):
-    """按【题型】出对应的给定资料 —— 每则都对齐真题单则字数（用户要求：宁可少出、每则要够）。
-    再据材料出题干。返回 (material, stem, err)。贯彻执行题另传文种 doctype。"""
+    """按【题型】出对应的给定资料 —— **只出一则**，但这一则要够真题单则体量、字数达标
+    （用户要求：一道小题只对应一则材料，别拆成材料一/二/三）。再据材料出题干。
+    返回 (material, stem, err)。贯彻执行题另传文种 doctype。"""
     n_pass, per, angles = _FIND_MAT_SPEC.get(qtype, _FIND_MAT_SPEC["guina"])
     lo, hi = per
-    sys = ("你是申论命题人。给定资料贴近国考/省考真题：**单则材料就有真题的体量（%d~%d 字）**，"
+    sys = ("你是申论命题人。给定资料贴近国考/省考真题：**这一则材料就有真题单则的体量（%d~%d 字）**，"
            "有具体地名、人名、数据、对话，并**掺入干扰信息**（背景铺垫、无关细节、同义重复、反面例子）"
-           "供考生练找点。直接输出材料正文，不要「材料N」标题、不要 Markdown 记号。" % (lo, hi))
+           "供考生练找点。直接输出这一则材料的正文，不要「材料一/材料二」这类标题、不要 Markdown 记号。"
+           % (lo, hi))
     if doctype:                                       # 贯彻执行：材料要能支撑该文种的写作
         sys += "这份给定资料将用于让考生写一篇「%s」，材料要提供足够支撑该文种的素材（由头、要点、事例）。" % doctype
-    passages, sofar = [], []
+    passages = []
     for i in range(n_pass):
         angle = angles[i % len(angles)]
-        avoid = ("（避免和已写材料重复主旨：" + "；".join(sofar) + "）") if sofar else ""
-        p = ("请命制一份申论试卷的「给定资料」中的一则，主题：%s，服务于一道**%s**。\n"
-             "本则材料写：%s%s\n"
-             "字数 %d~%d 字（对齐真题单则材料体量，硬性要求，别写短）。" %
-             (topic, name, angle, avoid, lo, hi))
-        txt = _find_fit_words(p, lo, hi, sys)
+        p = ("请命制一道**%s**的「给定资料」——**只写一则完整材料**，主题：%s。\n"
+             "这一则材料要：%s\n"
+             "字数 %d~%d 字（对齐真题单则材料体量、字数达标，硬性要求，别写短）。"
+             "内容要能从中提取 5~8 个采分点。" %
+             (name, topic, angle, lo, hi))
+        # 只出一则，可以多返工两次把字数收进区间（真题单则体量偏大，一次常写不够）
+        txt = _find_fit_words(p, lo, hi, sys, tries=2)
         if txt:
             passages.append(txt)
-            sofar.append(txt[:40])
     if not passages:
         return None, None, (jsonify({"error": "AI 没出好材料，请重试"}), 502)
-    cn = "一二三四五六七八九十"
-    material = "\n\n".join("材料%s\n%s" % (cn[i] if i < len(cn) else str(i + 1), t)
-                           for i, t in enumerate(passages))
+    # 一道题一则：直接就是这一则正文，不加「材料N」标题（真题里一道小题只对应某一则）。
+    # 兼容将来若某题型改回多则：>1 则时才补标题。
+    if len(passages) == 1:
+        material = passages[0]
+    else:
+        cn = "一二三四五六七八九十"
+        material = "\n\n".join("材料%s\n%s" % (cn[i] if i < len(cn) else str(i + 1), t)
+                               for i, t in enumerate(passages))
     stem, err = _find_gen_stem(name, full, wmin, wmax, tip, topic, material, doctype)
     if err:
         return None, None, err
@@ -311,11 +320,55 @@ def find_gen():
 
 @bp.get("/api/find/papers")
 def find_papers():
+    # done=练过几次、last_done=最近一次练习时间、best=最高分 —— 前端「做过的题」区靠
+    # last_done 倒排、显示练习次数与最好成绩（做过的题一键重练，纳入复习规划）。
     rows = get_db().execute(
         "SELECT id,qtype,type_name,stem,full,source,created_at,"
-        "(SELECT COUNT(*) FROM find_records r WHERE r.paper_id=find_papers.id) done "
+        "(SELECT COUNT(*) FROM find_records r WHERE r.paper_id=find_papers.id) done,"
+        "(SELECT MAX(r.created_at) FROM find_records r WHERE r.paper_id=find_papers.id) last_done,"
+        "(SELECT MAX(r.score) FROM find_records r WHERE r.paper_id=find_papers.id) best "
         "FROM find_papers WHERE user_id=? ORDER BY id DESC LIMIT 100", (uid(),)).fetchall()
     return jsonify({"items": [dict(r) for r in rows]})
+
+
+@bp.delete("/api/find/paper/<int:pid>")
+def find_paper_del(pid):
+    """删一道小题：题目和它的所有做题记录一起删（用户自定义清理不需要/生成质量不高的题）。"""
+    db = get_db()
+    if not db.execute("SELECT 1 FROM find_papers WHERE id=? AND user_id=?", (pid, uid())).fetchone():
+        return jsonify({"error": "题目不存在"}), 404
+    db.execute("DELETE FROM find_records WHERE paper_id=? AND user_id=?", (pid, uid()))
+    db.execute("DELETE FROM find_papers WHERE id=? AND user_id=?", (pid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/find/papers/delete")
+def find_papers_del():
+    """批量删小题：只删本人的、id 合法的那些。返回实删数量。"""
+    d = request.get_json(silent=True) or {}
+    ids = [int(x) for x in (d.get("ids") or []) if str(x).isdigit()]
+    if not ids:
+        return jsonify({"error": "没选中题目"}), 400
+    db = get_db()
+    qs = ",".join("?" * len(ids))
+    mine = [r[0] for r in db.execute(
+        "SELECT id FROM find_papers WHERE user_id=? AND id IN (%s)" % qs, [uid(), *ids])]
+    if mine:
+        mq = ",".join("?" * len(mine))
+        db.execute("DELETE FROM find_records WHERE user_id=? AND paper_id IN (%s)" % mq, [uid(), *mine])
+        db.execute("DELETE FROM find_papers WHERE user_id=? AND id IN (%s)" % mq, [uid(), *mine])
+        db.commit()
+    return jsonify({"ok": True, "deleted": len(mine)})
+
+
+@bp.delete("/api/find/record/<int:rid>")
+def find_record_del(rid):
+    """删单条做题记录（做题记录/错题记录页里逐条清理），不动题目本身。"""
+    db = get_db()
+    db.execute("DELETE FROM find_records WHERE id=? AND user_id=?", (rid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 def _find_paper(db, pid):
@@ -333,10 +386,12 @@ def find_paper(pid):
     sents = _find_sents(r["material"])
     npt = len(json.loads(r["points"] or "[]"))
     doctype = _find_doctype(r)                         # 贯彻执行题：认出文种，把格式骨架带给前端
+    done = db.execute("SELECT COUNT(*) c FROM find_records WHERE paper_id=? AND user_id=?",
+                      (pid, uid())).fetchone()["c"]    # 本题练过几次，做题页给「查看本题记录」用
     return jsonify({"id": r["id"], "qtype": r["qtype"], "type_name": r["type_name"],
                     "stem": r["stem"], "full": r["full"],
                     "word_min": r["word_min"], "word_max": r["word_max"],
-                    "source": r["source"], "n_points": npt,
+                    "source": r["source"], "n_points": npt, "done": done,
                     "material_words": _sl_words(r["material"]),   # 给定资料总字数（像范文推荐那样显示）
                     "doctype": doctype,
                     "doctype_fmt": (GW_MAP.get(doctype, {}).get("fmt", "") if doctype else ""),
@@ -490,12 +545,21 @@ def find_grade():
 
 @bp.get("/api/find/records")
 def find_records_list():
-    """找点/写点的历史记录：每次批改留一条，可回看。贯彻执行题带内容/格式分。"""
+    """找点/写点的历史记录：每次批改留一条，可回看。贯彻执行题带内容/格式分。
+    带 ?paper_id=N 只看这道题的记录（题目内部按时间的多次留痕）；不带就是全局做题记录。
+    带 ?wrong=1 只看没拿满分的（错题记录）。三者都按时间倒序。"""
+    pid = request.args.get("paper_id")
+    wrong = request.args.get("wrong") == "1"
+    where, args = ["r.user_id=?"], [uid()]
+    if pid and str(pid).isdigit():
+        where.append("r.paper_id=?"); args.append(int(pid))
+    if wrong:
+        where.append("r.score < r.full")
     rows = get_db().execute(
         "SELECT r.id, r.paper_id, r.score, r.full, r.grade, r.created_at, "
         "p.qtype, p.type_name, p.stem, p.source "
         "FROM find_records r JOIN find_papers p ON p.id=r.paper_id "
-        "WHERE r.user_id=? ORDER BY r.id DESC LIMIT 80", (uid(),)).fetchall()
+        "WHERE " + " AND ".join(where) + " ORDER BY r.id DESC LIMIT 80", args).fetchall()
     out = []
     for r in rows:
         d = {"id": r["id"], "paper_id": r["paper_id"], "score": r["score"], "full": r["full"],
@@ -508,6 +572,8 @@ def find_records_list():
                 d.update(content_score=g.get("content_score"), content_full=g.get("content_full"),
                          format_score=fm.get("score"), format_full=fm.get("full"),
                          doctype=fm.get("doctype"), format_grade=fm.get("grade"))
+            # 漏掉的采分点数（错题记录里提示「这次漏了几个点」）
+            d["miss_n"] = sum(1 for it in (g.get("items") or []) if it.get("got") == "miss")
         except Exception:
             log.warning("find 记录的 grade JSON 解析失败，这条会少字段", exc_info=True)
         out.append(d)
@@ -516,19 +582,27 @@ def find_records_list():
 
 @bp.get("/api/find/record/<int:rid>")
 def find_record(rid):
-    """一条历史记录的详情：题干 + 完整批改（采分点/格式）+ 我写的答案。"""
+    """一条历史记录的详情：题干 + 我的找点过程（勾画/找漏找错）+ 完整批改（采分点/格式）+ 我写的答案。"""
     r = get_db().execute(
-        "SELECT r.id, r.paper_id, r.score, r.full, r.grade, r.answer, r.created_at, "
-        "p.qtype, p.type_name, p.stem, p.word_min, p.word_max, p.source "
+        "SELECT r.id, r.paper_id, r.score, r.full, r.grade, r.answer, r.marks, r.find_result, "
+        "r.created_at, p.qtype, p.type_name, p.stem, p.word_min, p.word_max, p.source "
         "FROM find_records r JOIN find_papers p ON p.id=r.paper_id "
         "WHERE r.id=? AND r.user_id=?", (rid, uid())).fetchone()
     if not r:
         return jsonify({"error": "记录不存在"}), 404
+
+    def _loads(s, default):
+        try:
+            return json.loads(s or "")
+        except Exception:
+            return default
     return jsonify({"id": r["id"], "paper_id": r["paper_id"], "score": r["score"], "full": r["full"],
                     "qtype": r["qtype"], "type_name": r["type_name"], "stem": r["stem"],
                     "word_min": r["word_min"], "word_max": r["word_max"], "source": r["source"] or "",
                     "answer": r["answer"] or "", "created_at": r["created_at"],
-                    "grade": json.loads(r["grade"] or "{}")})
+                    "marks": _loads(r["marks"], []),            # 我勾画的句子下标
+                    "find_result": _loads(r["find_result"], {}),  # 找点判定：找到几/漏几/错几/重几
+                    "grade": _loads(r["grade"], {})})
 
 
 @bp.post("/api/find/upload")

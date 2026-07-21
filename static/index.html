@@ -711,9 +711,22 @@
       </div>
       <div id="fd-msg" class="fd-msg"></div>
     </div>
+    <div id="fd-done-wrap" class="hidden">
+      <div class="sl-hist-head"><span>做过的题</span>
+        <span class="fd-sub">按最近练习排 · 点题卡一键重练</span></div>
+      <div id="fd-done" class="sl-hist"></div>
+    </div>
     <div class="sl-hist-head"><span>我的题</span>
-      <button class="btn tiny" id="fd-recs">📋 做题记录</button></div>
+      <span class="fd-headbtns">
+        <button class="btn tiny" id="fd-recs">📋 做题记录</button>
+        <button class="btn tiny" id="fd-wrong">❌ 错题记录</button>
+        <button class="btn tiny" id="fd-manage">🗑 管理</button>
+      </span></div>
     <div id="fd-list" class="sl-hist"></div>
+    <div id="fd-batchbar" class="fd-batchbar hidden">
+      <span id="fd-seln">已选 0</span>
+      <button class="btn danger tiny" id="fd-batchdel">删除选中</button>
+    </div>
   </section>
 
   <section id="view-findrun" class="view hidden">
@@ -724,6 +737,12 @@
 
   <section id="view-findrec" class="view hidden">
     <div id="frr-list" class="sl-hist"></div>
+  </section>
+
+  <section id="view-findwrong" class="view hidden">
+    <div class="pd-intro">这里是<b>没拿满分</b>的作答，按<b>做题时间</b>倒序排。照做题顺序回看，
+      点一条看当时的找点过程与批改，可再练这道。</div>
+    <div id="fdw-list" class="sl-hist"></div>
   </section>
 
   <section id="view-findrecd" class="view hidden">

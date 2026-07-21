@@ -2775,6 +2775,22 @@ body.dark .cki-from{background:#1c2a45;color:#7fb0ff;}
 .fd-bar input{flex:1;min-width:180px;}
 .fd-msg{margin-top:9px;font-size:12.5px;color:var(--muted);}
 .fd-done{font-size:11.5px;color:#1e8449;}
+/* 小题列表：做过的题区、错题/管理按钮、批量删除、单删 */
+.fd-sub{font-size:11.5px;color:var(--muted);font-weight:400;}
+.fd-headbtns{display:flex;gap:6px;align-items:center;}
+.fd-headbtns .btn.tiny{margin:0;}
+.fd-del,.fr-recdel{flex:0 0 auto;padding:2px 8px;font-size:12px;}
+.fd-chk{flex:0 0 auto;width:17px;height:17px;margin-right:2px;cursor:pointer;}
+.wr-day.fd-managing{cursor:pointer;}
+.fd-batchbar{display:flex;align-items:center;gap:12px;margin-top:10px;padding:9px 13px;
+  border:1px solid var(--line);border-radius:11px;background:var(--card);}
+.fd-batchbar #fd-seln{font-size:13px;color:var(--muted);margin-right:auto;}
+.fr-hist{margin-top:6px;}
+.fr-histgo{font-style:normal;color:#1a6fb5;cursor:pointer;font-size:12.5px;}
+.fr-histgo:hover{text-decoration:underline;}
+.fr-sec.fr-recap{background:#eef4fb;}
+body.dark .fd-batchbar{background:#141b29;}
+body.dark .fr-sec.fr-recap{background:#182234;}
 /* 做题页 */
 .fr-step{display:flex;gap:8px;font-size:12.5px;margin-bottom:10px;}
 .fr-step span{padding:3px 11px;border-radius:20px;background:#eef1f5;color:var(--muted);}
