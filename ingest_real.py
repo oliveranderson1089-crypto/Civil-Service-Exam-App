@@ -425,21 +425,62 @@ def cjk_len(s):
 
 # 题干里出现这些字眼 = 题目本体在图里或在材料里，光有这段文字做不了。
 # 图形推理的图、资料分析的表格都还没提取，这类题先入库、但标出来别发给人做。
-_ASSET_RE = re.compile(r"图形|问号处|下图|上图|如图|图中|所给的?图|"
-                       r"上述资料|以上资料|所给资料|根据(?:上述|以上|所给)|下列图|该表|上表")
+_ASSET_RE = re.compile(r"图形|问号处|[下上左右]图|如图|图中|所给的?图|展开图|"
+                       # 「根据上述」后面**必须跟资料/材料/表**：光写「根据上述」会把
+                       # 定义判断整类误伤 —— 「根据上述定义，下列属于…的是」，
+                       # 定义就写在题干里，是能做的（实测误锁 154 道）。
+                       r"上述资料|以上资料|所给资料|根据(?:上述|以上|所给)(?:资料|材料|统计|图|表)|"
+                       r"下列图|该表|上表")
+# 题干在**指代一段没跟过来的文字**。必须配合「题干很短」一起用：
+# 选词填空的题干本身就包含整段文字，里面出现「文中」「文段」是正常的，不是缺料。
+# 「作者」得带上后续词 —— 「《荷塘月色》的作者是」问的是书的作者，不是文段作者。
+_TEXT_REF = re.compile(r"文中|上文|下文|本文|原文|文段|这[篇段]|该[篇段]|横线|画线|划线|"
+                       r"作者(?:接下来|想|意在|旨在|认为|通过)")
+# 选项只剩「A/B/C/D」这种占位符 ⇒ 四个选项本身是图，没有图就无从选起。
+# **不能只看长度**：数量关系的选项「18/19/20/21」也很短，那是真内容；
+# 也不能放过组合项「①③④」，那说明题干里有①②③④四条表述，是能做的。
+_OPT_PH = re.compile(r"[\s.、．)）]*[A-DＡ-Ｄ①-④][\s.、．)）]*")
 
 
-def needs_asset(stem, is_generic, module=""):
+def needs_asset(stem, is_generic, module="", options=None):
     """这道题脱离图/材料还能不能做。宁可多标：标错了只是少发几道题，
        漏标了就是让人对着「能够从上述资料中推出的是：」四个选项干瞪眼。
 
     资料分析**整个模块**都要标：这个模块的定义就是「给一段材料再问几个问题」，
     题干里往往连「资料」两个字都不出现（「2011 年该省 GDP 同比增长约：」），
     靠题干措辞根本筛不出来，只能按模块一刀切。
+
+    **is_generic 不再单独作数**。它是**判重**用的信号（同一题干配过好几组选项），
+    被拿来当「缺资产」使会误伤一大片：「关于生活常识，下列说法错误的是」题干确实
+    通用，但四个选项本身就是完整内容，这题能做（实测误锁 322 道）。
+    题目本体真在图里的时候，选项会退化成 A/B/C/D 占位符 —— 那才是可靠的信号。
     """
     if module == "资料分析":
         return 1
-    return 1 if (is_generic or _ASSET_RE.search(stem or "")) else 0
+    s = stem or ""
+    if _ASSET_RE.search(s):
+        return 1
+    if cjk_len(s) < 40 and _TEXT_REF.search(s):
+        return 1               # 短题干 + 指代一段文字 ⇒ 那段文字丢了
+    opts = [str(o).strip() for o in (options or [])]
+    if opts and all(_OPT_PH.fullmatch(o) for o in opts):
+        return 1               # 选项是占位符 ⇒ 内容在图里
+    return 1 if (is_generic and not opts) else 0
+
+
+def _asset_flag(r, generic, old_na):
+    """重建时这道题的 needs_asset 该是几。
+
+    **规则只许解锁，不许上锁**。这里管的是「这题需不需要资产」（看题干和选项），
+    「资产够不够」归 ingest_figs / ingest_material 管 —— 那套标准在两个地方各写
+    一份迟早打架（实测打过）。所以：规则说不需要资产就直接放行；规则说需要，
+    就沿用资产脚本上次的裁决，没裁决过才按需要处理。
+    """
+    na = needs_asset(r["stem"], r["qhash"] in generic, r["module"],
+                     json.loads(r["options"]) if r["options"] else None)
+    if na == 0:
+        return 0
+    return old_na if old_na is not None else 1
 
 
 def dedup(con):
@@ -591,8 +632,7 @@ def dedup(con):
                  json.dumps([src], ensure_ascii=False), r["year"], r["year"],
                  1 if r["answer"] else 0,
                  # 这道题上一轮是什么判定就还是什么；全新的题才按题干算
-                 old_na if old_na is not None
-                 else needs_asset(r["stem"], r["qhash"] in generic, r["module"])))
+                 _asset_flag(r, generic, old_na)))
             qid = qid or cur.lastrowid
             used.add(qid)
             by_qo[qo] = qid
