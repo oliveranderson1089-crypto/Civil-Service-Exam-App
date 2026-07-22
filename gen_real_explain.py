@@ -66,6 +66,13 @@ CREATE TABLE IF NOT EXISTS real_explains(
     audit_ans TEXT DEFAULT '',   -- 核验模型独立作答的结果
     agree INTEGER DEFAULT 1,     -- 0 = 两个模型答案不一致，**不发给人做**
     flaw TEXT DEFAULT 'ok',
+    -- ★ 不变锚点：「哪份卷子的第几题」。**别拿 qid 当身份** ——
+    --   real_questions 是纯推导表，去重规则或解析器一改就整张重建、id 重发，
+    --   解析会静默挂到别的题上（真出过事故：答案一致率掉到 24%，等于随机）。
+    --   real_papers 是长期表、id 保得住，seq 是卷面印的题号，两者都不随解析器变。
+    --   ingest_real.relink_explains() 每次去重后靠这两列把解析挂回去。
+    anchor_paper INTEGER,
+    anchor_seq INTEGER,
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_rex_agree ON real_explains(agree);
@@ -303,6 +310,7 @@ def do_batch(rows, qtypes):
         if concl and concl != ans:
             out.append({
                 "qid": r["id"], "answer": ans, "src": "ai", "module": bad_mod, "qtype": bad_qt,
+                "anchor_paper": r["anchor_paper"], "anchor_seq": r["anchor_seq"],
                 "keypoint": (it.get("keypoint") or "").strip()[:120],
                 "steps": json.dumps(steps[:8], ensure_ascii=False),
                 "wrong": json.dumps(wrong, ensure_ascii=False),
@@ -323,6 +331,7 @@ def do_batch(rows, qtypes):
                 flaw = "ok" if agree else "disagree"
         out.append({
             "qid": r["id"], "answer": ans, "src": src, "module": bad_mod, "qtype": bad_qt,
+            "anchor_paper": r["anchor_paper"], "anchor_seq": r["anchor_seq"],
             "keypoint": (it.get("keypoint") or "").strip()[:120],
             "steps": json.dumps(steps[:8], ensure_ascii=False),
             "wrong": json.dumps(wrong, ensure_ascii=False),
@@ -381,7 +390,11 @@ def reaudit(con, workers=6, size=6):
 
 # ---------------------------------------------------------------- 主流程
 def pick(con, module, limit, redo):
-    """挑要处理的题：可练（不依赖图/材料）、还没生成过的。"""
+    """挑要处理的题：可练（不依赖图/材料）、还没生成过的。
+
+    顺带取出**锚点** (anchor_paper, anchor_seq) 一起存进解析里 —— 见 SCHEMA 里那段。
+    一道题可能出自多份卷子，取 MIN(paper_id) 那份，保证同一道题每次拿到同一个锚。
+    """
     where = ["q.needs_asset=0", "LENGTH(q.stem)>=10"]
     args = []
     if not redo:
@@ -389,8 +402,18 @@ def pick(con, module, limit, redo):
     if module:
         where.append("q.module=?")
         args.append(module)
-    sql = ("SELECT q.id, q.module, q.stem, q.options, q.answer FROM real_questions q "
-           "LEFT JOIN real_explains e ON e.qid=q.id WHERE " + " AND ".join(where) +
+    # 锚点用**一次窗口函数**算完，别写成两个相关子查询：那样每道题都要全扫一遍 real_raw
+    # 还各建一棵临时 B 树（7040 道 × 2 次），实测卡到几分钟出不来题。
+    sql = ("WITH anchor AS ("
+           "  SELECT qid, paper_id, seq, "
+           "         ROW_NUMBER() OVER (PARTITION BY qid ORDER BY paper_id, seq) rn "
+           "  FROM real_raw WHERE qid IS NOT NULL) "
+           "SELECT q.id, q.module, q.stem, q.options, q.answer, "
+           "  a.paper_id anchor_paper, a.seq anchor_seq "
+           "FROM real_questions q "
+           "LEFT JOIN real_explains e ON e.qid=q.id "
+           "LEFT JOIN anchor a ON a.qid=q.id AND a.rn=1 "
+           "WHERE " + " AND ".join(where) +
            " ORDER BY q.has_answer, q.id")     # 没答案的排前面：它们最缺
     if limit:
         sql += " LIMIT %d" % limit
@@ -453,12 +476,13 @@ def main():
             for rec in recs:
                 con.execute(
                     "INSERT OR REPLACE INTO real_explains(qid,answer,src,module,qtype,keypoint,"
-                    "steps,wrong,tip,model,audit_ans,agree,flaw) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "steps,wrong,tip,model,audit_ans,agree,flaw,anchor_paper,anchor_seq) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (rec["qid"], rec["answer"], rec["src"], rec["module"], rec["qtype"],
                      rec["keypoint"],
                      rec["steps"], rec["wrong"], rec["tip"], rec["model"],
-                     rec["audit_ans"], rec["agree"], rec["flaw"]))
+                     rec["audit_ans"], rec["agree"], rec["flaw"],
+                     rec["anchor_paper"], rec["anchor_seq"]))
                 ok += rec["agree"]
                 bad += 1 - rec["agree"]
             con.commit()

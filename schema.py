@@ -379,6 +379,10 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_raw_paper ON real_raw(paper_id);
+        -- 解析回指靠 (paper_id, seq) 定位；qid 那条给「这道题出自哪几份卷子」用
+        -- （gen_real_explain 算锚点、relink_explains 反查都要，缺了就退化成全表扫）
+        CREATE INDEX IF NOT EXISTS idx_raw_pseq ON real_raw(paper_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_raw_qid ON real_raw(qid);
         CREATE INDEX IF NOT EXISTS idx_raw_hash ON real_raw(qhash);
         CREATE INDEX IF NOT EXISTS idx_raw_ohash ON real_raw(ohash);
         -- 去重后的真题。qid 上**没有 UNIQUE**：图形推理那种通用题干天然会有很多条
@@ -404,6 +408,15 @@ def init_db():
             audit_ans TEXT DEFAULT '',
             agree INTEGER DEFAULT 1,      -- 0 = 双模型答案不一致，不发给人做
             flaw TEXT DEFAULT 'ok',
+            -- ★ 不变锚点：「哪份卷子的第几题」。**别拿 qid 当身份** ——
+            --   real_questions 是纯推导表，去重规则或解析器一改就整张重建、id 重发，
+            --   解析会静默挂到别的题上。真出过事故：原卷答案与解析答案的一致率
+            --   掉到 24~26%（四选一撞对就是 25%，等于随机），靠 agree=1 发出去的
+            --   233 道题答案全部来自别的题。real_papers 是长期表、id 保得住，
+            --   seq 是卷面印的题号，两者都不随解析器变。
+            --   ingest_real.relink_explains() 每次去重后靠这两列把解析挂回去。
+            anchor_paper INTEGER,
+            anchor_seq INTEGER,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_rex_agree ON real_explains(agree);

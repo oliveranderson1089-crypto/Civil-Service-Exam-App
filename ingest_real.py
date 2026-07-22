@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS real_raw(
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_raw_paper ON real_raw(paper_id);
+-- 解析回指靠 (paper_id, seq) 定位，光有 paper_id 要在卷内线性找；
+-- qid 那条给「这道题出自哪几份卷子」用（gen_real_explain 算锚点、relink 反查都要）
+CREATE INDEX IF NOT EXISTS idx_raw_pseq ON real_raw(paper_id, seq);
+CREATE INDEX IF NOT EXISTS idx_raw_qid ON real_raw(qid);
 CREATE INDEX IF NOT EXISTS idx_raw_hash ON real_raw(qhash);
 CREATE INDEX IF NOT EXISTS idx_raw_ohash ON real_raw(ohash);
 """
@@ -102,15 +106,83 @@ _ADDCOL = [("real_papers", "answers_ok", "INTEGER DEFAULT 1"),
            ("real_raw", "fighash", "TEXT DEFAULT ''"),
            ("real_questions", "fighash", "TEXT DEFAULT ''"),
            ("real_questions", "dkey", "TEXT"),
+           # ---- 解析的**不变锚点**，见下面 relink_explains 的整段说明 ----
+           ("real_explains", "anchor_paper", "INTEGER"),
+           ("real_explains", "anchor_seq", "INTEGER"),
            ]
 
 
 def migrate(con):
     for tab, col, decl in _ADDCOL:
-        cols = {r[1] for r in con.execute("PRAGMA table_info(%s)" % tab)}
+        try:
+            cols = {r[1] for r in con.execute("PRAGMA table_info(%s)" % tab)}
+        except sqlite3.OperationalError:
+            continue                     # 这张表还没建（real_explains 由 gen_real_explain 建）
+        if not cols:
+            continue                     # PRAGMA 对不存在的表返回空，不是报错
         if col not in cols:
             con.execute("ALTER TABLE %s ADD COLUMN %s %s" % (tab, col, decl))
     con.commit()
+
+
+def relink_explains(con):
+    """把解析**重新挂回它真正属于的那道题**。每次 dedup 之后必须跑。
+
+    这里修的是一次真实事故：解析靠 real_explains.qid → real_questions.id 关联，
+    而 real_questions 是**纯推导表**（见 SCHEMA_Q 上面那段），去重规则或解析器一改就整张重建，
+    id 跟着重发。dedup 里的 `keep` 只在 (qhash,ohash) 一模一样时才认得回旧 id ——
+    可我们前脚刚改过材料提取，题干指纹大面积变化，于是 id 大面积重发，
+    而解析这边没有任何机制跟着回指。
+
+    后果不是「有点乱」，是**答案发错**：实测原卷答案和解析答案的一致率掉到 24~26%
+    （四选一撞对就是 25%，等于完全随机），id=3004 那道「梳理百年党史」的言语题，
+    配的是「莲蓬是荷花的组成部分」——那是 id=3572 类比推理题的解析。
+    靠 agree=1 才可发的 233 道题，发出去的答案全部来自别的题。
+
+    所以解析不能挂在易变的 id 上，得挂在**不变的东西**上：
+    (paper_id, seq) —— 「哪份卷子的第几题」。real_papers 是长期表、id 保得住
+    （见 _save_paper 的注释），seq 是卷面印着的题号，解析器怎么改都不变。
+    """
+    cols = {r[1] for r in con.execute("PRAGMA table_info(real_explains)")}
+    if not cols or "anchor_paper" not in cols:
+        return {"relinked": 0, "orphan": 0, "noanchor": 0}
+    # 一道题可能来自多份卷子（副省级/地市级共题），锚点取其中之一即可：
+    # 只要那份卷子还在，就能把解析找回来。用 MIN 保证同一道题每次取到的是同一个锚。
+    rows = con.execute(
+        "SELECT e.rowid rid, e.qid, e.anchor_paper, e.anchor_seq, "
+        "  (SELECT rr.qid FROM real_raw rr "
+        "   WHERE rr.paper_id=e.anchor_paper AND rr.seq=e.anchor_seq AND rr.qid IS NOT NULL "
+        "   LIMIT 1) now_qid "
+        "FROM real_explains e WHERE e.anchor_paper IS NOT NULL").fetchall()
+    n_re = n_orphan = 0
+    for r in rows:
+        if r["now_qid"] is None:
+            n_orphan += 1               # 那份卷子这一题这轮没解析出来 → 解析暂时无主
+            continue
+        if r["now_qid"] != r["qid"]:
+            con.execute("UPDATE real_explains SET qid=? WHERE rowid=?", (r["now_qid"], r["rid"]))
+            n_re += 1
+    noanchor = con.execute(
+        "SELECT COUNT(*) FROM real_explains WHERE anchor_paper IS NULL").fetchone()[0]
+    con.commit()
+    return {"relinked": n_re, "orphan": n_orphan, "noanchor": noanchor}
+
+
+def explain_health(con):
+    """免费的对账：原卷答案 vs 解析答案的一致率。**掉下来就是挂错题了。**
+
+    正常应该接近 100%（原卷有答案的题，解析是照着原卷答案讲的，src='official'）。
+    掉到 25% 附近就是随机，说明解析和题已经对不上号 —— 这个信号不用人工看、不用花钱，
+    每次 ingest 完打一行就能把上面那种事故当场暴露出来，而不是等出题跑偏了才发现。
+    """
+    try:
+        r = con.execute(
+            "SELECT COUNT(*) n, SUM(q.answer=e.answer) same FROM real_questions q "
+            "JOIN real_explains e ON e.qid=q.id "
+            "WHERE q.has_answer=1 AND q.answer<>'' AND e.answer<>''").fetchone()
+    except sqlite3.OperationalError:
+        return None                      # 还没有解析表
+    return None if not r[0] else {"n": r[0], "same": r[1] or 0, "pct": (r[1] or 0) / r[0] * 100}
 
 
 def md5(s):
@@ -888,6 +960,20 @@ def main():
                   % (qid, a1, a2, src["exam"], src["year"], src["paper"], src["seq"]))
     else:
         print("✓ 答案对账：多来源的题，答案全部一致")
+
+    # dedup 重建了 real_questions，id 可能大面积重发 —— 解析必须跟着回指，
+    # 否则整张解析表会静默地挂到别的题上（这事故真发生过，见 relink_explains 的说明）
+    rl = relink_explains(con)
+    if rl["relinked"] or rl["orphan"] or rl["noanchor"]:
+        print("\n【解析回指】重新挂对 %d 条，暂时无主 %d 条，没有锚点 %d 条"
+              % (rl["relinked"], rl["orphan"], rl["noanchor"]))
+    h = explain_health(con)
+    if h:
+        # 这一行是这次事故唯一能免费、当场发现的信号，别删
+        flag = "✓" if h["pct"] >= 90 else "⚠️"
+        print("%s 解析对账：原卷答案与解析答案一致 %d/%d（%.1f%%）%s"
+              % (flag, h["same"], h["n"], h["pct"],
+                 "" if h["pct"] >= 90 else " ← 掉到随机水平(25%)就是解析挂错题了"))
     report(con)
     print("\n耗时 %.1f 分钟" % ((time.time() - t0) / 60))
     con.close()
