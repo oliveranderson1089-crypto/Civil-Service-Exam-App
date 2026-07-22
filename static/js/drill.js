@@ -8,7 +8,8 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, DT_L, api, back, c,
-   dtMaterial, esc, push, toast */
+   dtMaterial, esc, push, toast,
+   qtStart, qtStop, wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
 
 /* ============= 专项练（行测六大板块）=============
    资料分析 / 判断推理 / 数量关系 —— 题型固定、有套路、拼速度，**题由程序生成**，答案由构造保证。
@@ -17,7 +18,8 @@
    三档难度**真正改变题目**（不是贴个标签）；难度系数 = 预期得分率，做完告诉你比预期高还是低。
    两种模式：背题（选完即判 + 解析）/ 测试（做完交卷、服务端判分）。题量 5/10/15/20。
    每次做完**留一条完整记录**，可以回看每一题 —— 不是做完就丢。 */
-let drBoard = '', drType = '', drItems = [], drIdx = 0, drAns = [], drSec = [], drT0 = 0, drTimer = 0;
+/* 计时交给 js/qtimer.js（三个刷题模块共用），这儿不再自己养一个 setInterval */
+let drBoard = '', drType = '', drItems = [], drIdx = 0, drAns = [], drSec = [];
 let drLimit = 60, drLevel = 'mid', drN = 10, drMode = 'study', drToken = '', drCoef = 0.6, drLevels = [];
 /* 题源开关：ai=AI 出题（老行为）/ real=真题练习 / mix=真题优先、不够的 AI 补。
    真题模式**没有难度档**——真题不带难度标签，硬套是假的（原先「考场真实」那档发的
@@ -198,11 +200,12 @@ async function drStart(type) {
     if (d.short) toast(`题库这一格还差 ${d.short} 道，后台正在补，先做这 ${d.items.length} 道`);
     push({ view: 'drillrun', title: (type || '混合') + ' · 专项练' });
     drRender();
+    drScanWq();          // 按钮状态不挡首屏（见 drScanWq）
   } catch (e) { toast(e.message, true); }
 }
 
 function drRender() {
-  clearInterval(drTimer);
+  qtStop();
   if (drIdx >= drItems.length) { drResult(); return; }
   const it = drItems[drIdx];
   /* figs **有两种形状**：figgen 出的图形题是 {seq, opts}（内联 SVG），
@@ -215,7 +218,7 @@ function drRender() {
       <span class="dr-tag">${esc(it.qtype || '')}</span>
       ${it.src === 'real' ? '<span class="dr-tag dr-tsrc">真题</span>' : ''}
       <span class="dr-tag lv">${esc(lvName)}</span></div>
-    <div class="dr-clock" id="dr-clock">0 秒</div>`;
+    <div class="q-clock" id="dr-clock"></div>`;
   const chosen = drAns[drIdx];
   const opts = isFig
     ? it.figs.opts.map((svg, j) => `<button class="dt-opt dt-figo${chosen === DT_L[j] ? ' chosen' : ''}"
@@ -237,17 +240,25 @@ function drRender() {
     $('#dr-prev').onclick = () => { drStopTimer(); drIdx--; drRender(); };
     $('#dr-nextq').onclick = () => { drStopTimer(); drIdx++; drRender(); };
   }
-  drT0 = Date.now();
-  drTimer = setInterval(() => {
-    const s = Math.round((Date.now() - drT0) / 1000 + (drSec[drIdx] || 0));
-    const el = $('#dr-clock'); if (!el) { clearInterval(drTimer); return; }
-    el.textContent = s + ' 秒';
-    el.classList.toggle('over', s > drLimit);        // 超时只是提醒，不打断（考场上超时也得做完）
-  }, 500);
+  /* 倒计时按**这道题的题型**给（服务端算好在 it.sec 里），不是板块一刀切：
+     混合练一组里类比推理 25 秒、分析推理 70 秒，用同一个数就没意义了。
+     超时不打断，只转红记「超时 +12 秒」——考场上超时也得把题做完，
+     而超了多少秒才是这道题真实的成绩。 */
+  const already = drSec[drIdx] || 0;
+  if (drMode !== 'exam' && drAns[drIdx] !== undefined) {
+    // 背题模式下答过的题（点「上一题」翻回来）不重新起表，否则回看的时间会算进用时
+    const over = already > drQLimit(it);
+    $('#dr-clock').className = 'q-clock' + (over ? ' over' : '');
+    $('#dr-clock').textContent = `⏱ 用时 ${Math.round(already)} 秒`;
+  } else {
+    qtStart('#dr-clock', drQLimit(it), { used: already });
+  }
 }
+/* 这道题的限时：服务端按题型给的优先，老接口没带就退回板块基准 */
+function drQLimit(it) { return (it && it.sec) || drLimit; }
 function drStopTimer() {
-  clearInterval(drTimer);
-  drSec[drIdx] = (drSec[drIdx] || 0) + (Date.now() - drT0) / 1000;
+  const used = qtStop();
+  if (used) drSec[drIdx] = used;      // qtStart 已把之前用掉的秒数算进去了，这里直接覆盖
 }
 
 $('#dr-body').addEventListener('click', e => {
@@ -274,16 +285,42 @@ function drPick(letter) {
     if (b.dataset.dro === it.answer) b.classList.add('correct');
     else if (b.dataset.dro === letter) b.classList.add('wrong');
   });
-  const over = sec > drLimit;
+  const lim = drQLimit(it);
+  const over = sec > lim;
   const bold = (t) => esc(t || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
   $('#dr-exp').innerHTML = `
     <div class="dr-verdict ${ok ? 'ok' : 'no'}">${ok ? '✅ 对了' : '❌ 错了'}
-      · 用时 <b class="${over ? 'over' : ''}">${sec.toFixed(0)} 秒</b>${over ? `（限时 ${drLimit} 秒，慢了）` : ''}
+      · 用时 <b class="${over ? 'over' : ''}">${sec.toFixed(0)} 秒</b>${over ? `（限时 ${lim} 秒，慢了）` : ''}
       · 正确答案 <b>${esc(it.answer)}</b></div>
     <div class="dt-exp">${bold(it.explain)}</div>
     ${it.tip ? `<div class="dr-tip">⚡ <b>秒杀技巧</b>：${bold(it.tip)}</div>` : ''}
+    ${/* 做错的题服务端交卷时才自动收；这里给个当场的口子：补错因、或者把手滑点错的移出去 */''}
+    ${it.wq_key ? `<div class="dr-wql">${wqlBtnHtml(it.wq_kind || 'drill', it.wq_key)}</div>` : ''}
     <button class="btn primary" id="dr-next">${drIdx + 1 >= drItems.length ? '看结果' : '下一题 →'}</button>`;
 }
+
+/* 这一组里哪些题已经在错题本（第二遍练到同一道题时，按钮该是亮的）。
+   真题模式的题身份是 realq/真题 id，AI 题是 drill/题干指纹 —— 分两批问。
+   **不 await**：这是次要信息，挡在首屏前面会让人多等一个来回才看到题。 */
+function drScanWq() {
+  return Promise.all(['realq', 'drill'].map(k => {
+    const keys = drItems.filter(x => (x.wq_kind || 'drill') === k).map(x => x.wq_key);
+    return keys.length ? wqlScan(k, { keys }) : null;
+  })).then(() => wqlRefreshBtns('#dr-body'));
+}
+
+/* 错题本按钮（做题页 + 结果页共用）：内容从当前题里取，身份用服务端给的 wq_key。 */
+$('#dr-body').addEventListener('click', e => {
+  const b = e.target.closest('[data-wql]');
+  if (!b) return;
+  const it = drItems.find(x => x.wq_key === b.dataset.wql) || {};
+  wqlOpen(b.dataset.wqlkind, b.dataset.wql, {
+    board: it.module || drBoard, qtype: it.qtype || drType,
+    question: (it.q || '') + '\n' + (it.options || []).join('\n'),
+    answer: `正确答案 ${it.answer || ''}。${it.explain || ''}`,
+    note: '来自专项练',
+  }, () => wqlRefreshBtns('#dr-body'));
+});
 
 async function drResult() {
   drStopTimer();
@@ -299,7 +336,9 @@ async function drResult() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const avg = drSec.reduce((a, b) => a + b, 0) / (drSec.length || 1);
-    const slow = drSec.filter(s => s > drLimit).length;
+    // 超时要**逐题按各自的限时**算：混合练里 25 秒的类比推理和 80 秒的排列组合
+    // 拿板块基准一起比，慢的题被放过、快的题被冤枉
+    const slow = drItems.filter((it, i) => (drSec[i] || 0) > drQLimit(it)).length;
     const pct = Math.round(r.acc * 100), exp = Math.round(r.coef * 100);
     const good = r.vs >= 0;
     $('#dr-body').innerHTML = `
@@ -309,9 +348,16 @@ async function drResult() {
           正确率 <b>${pct}%</b> · 这个难度预期 ${exp}%
           → <b>${good ? '高出' : '低了'} ${Math.abs(Math.round(r.vs * 100))} 个点</b>
         </div>
-        <div class="dr-sub">平均用时 <b class="${avg > drLimit ? 'over' : ''}">${avg.toFixed(0)} 秒</b>
-          ${slow ? `· 有 ${slow} 题超时（限时 ${drLimit} 秒）` : `· 都在 ${drLimit} 秒内 👍`}</div>
+        <div class="dr-sub">平均用时 <b class="${slow ? 'over' : ''}">${avg.toFixed(0)} 秒</b>
+          ${slow ? `· 有 ${slow} 题超时（限时按题型给）` : '· 都在各自限时内 👍'}</div>
         ${r.wrong_added ? `<p class="dr-wq">错的 ${r.wrong_added} 题已自动进错题本</p>` : ''}
+        ${/* 逐题的错题按钮：做错的题在这儿一次过一遍，补错因比事后翻本子记得清 */''}
+        <div class="dr-wqlist">${drItems.map((it, i) => {
+      const res = (r.results || [])[i] || {};
+      if (res.correct || !it.wq_key) return '';
+      return `<div class="dr-wqrow"><span>第 ${i + 1} 题 ${esc((it.q || '').slice(0, 22))}…</span>
+        ${wqlBtnHtml(it.wq_kind || 'drill', it.wq_key)}</div>`;
+    }).join('')}</div>
         <div class="dr-acts">
           <button class="btn primary" id="dr-again">🔄 再来 ${drN} 题</button>
           <button class="btn" id="dr-see">📋 看每题详情</button>
@@ -321,6 +367,8 @@ async function drResult() {
     $('#dr-again').onclick = () => drStart(drType);
     $('#dr-see').onclick = () => openDrillRec(r.rid);
     $('#dr-back').onclick = () => { back(); loadDrillTypes(); };
+    // 交卷时服务端把做错的题收进了错题本，按钮状态得重新拉一遍（成绩已经画出来了，不用挡着）
+    drScanWq();
   } catch (e) { $('#dr-body').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 

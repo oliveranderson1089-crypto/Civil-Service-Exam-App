@@ -773,7 +773,18 @@
   <section id="view-realq" class="view hidden">
     <div id="rq-body"></div>
   </section>
+  <!-- 真题做题记录：列表 + 逐题回看（和专项练的 drillrec 一个形状） -->
+  <section id="view-realrec" class="view hidden">
+    <div id="rqr-list" class="sl-hist"></div>
+  </section>
+  <section id="view-realrecd" class="view hidden">
+    <div id="rqd-head" class="dr-head"></div>
+    <div id="rqd-body"></div>
+  </section>
+
   <section id="view-realrun" class="view hidden">
+    <!-- 整卷模考的大钟：只有模考才挂（按题型刷没有「整场时间」这回事） -->
+    <div id="rq-total" class="q-total hidden"></div>
     <div id="rq-head"></div>
     <div id="rq-mat" class="rq-mat"></div>
     <div id="rq-stem" class="rq-stem"></div>
@@ -1169,6 +1180,9 @@
   <!-- 每日巩固测试 -->
   <section id="view-dtest" class="view hidden">
     <div class="pd-intro">根据你今天学的常识 / 时政 / 成语 / 素材出的小测，检验掌握程度 · 每天一套</div>
+    <!-- 整份小测的倒计时。**必须放在 #dt-body 外面**：dt-body 每选一次答案就整段重画，
+         钟挂在里面的话引用会指向被换掉的旧节点，走着走着就停了。 -->
+    <div id="dt-total" class="q-total hidden"></div>
     <div id="dt-body"></div>
   </section>
 
@@ -1819,6 +1833,11 @@
      每个文件里都有顶层执行语句（合计 415 个事件绑定），它们依赖彼此的先后。
      加文件时想清楚它该插在哪一段，别图省事往末尾追。 -->
 <script src="js/core.js"></script>
+<!-- 这两个是**被依赖的工具**，所以紧跟 core：做题倒计时、错题本联动，
+     专项练/历年真题/巩固测试/题库四个刷题模块都调它们。顶层只定义函数、
+     不绑事件，插在这儿不会打乱后面那 415 个绑定的先后。 -->
+<script src="js/qtimer.js"></script>
+<script src="js/wqlink.js"></script>
 <script src="js/shell.js"></script>
 <script src="js/notes.js"></script>
 <script src="js/materials.js"></script>

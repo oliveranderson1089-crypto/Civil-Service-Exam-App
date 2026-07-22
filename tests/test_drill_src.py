@@ -172,9 +172,12 @@ class TestWrongq:
     """真题带**纯文本**材料时错题本会不会崩 —— 这条正是线上必现的 500。"""
 
     def _wq(self, db):
+        # src_kind/src_key 是错题的**来源身份**（做题界面靠它认出「这题已经收过了」），
+        # 桩表缺这两列的话 wq_upsert 直接 OperationalError —— 桩要跟着 schema 走
         db.execute("CREATE TABLE wrong_questions(id INTEGER PRIMARY KEY, user_id INT, board TEXT,"
                    "question TEXT, answer TEXT, qtype TEXT, points TEXT, method TEXT, skill TEXT,"
-                   "steps TEXT, note TEXT, starred INT, created_at TEXT, updated_at TEXT)")
+                   "steps TEXT, note TEXT, starred INT, src_kind TEXT, src_key TEXT,"
+                   "created_at TEXT, updated_at TEXT)")
 
     def test_文字材料的真题做错能进错题本(self, db):
         self._wq(db)

@@ -7,8 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, back, c, esc,
-   push, toast */
+/* global $, api, appConfirm, appPrompt, back, c, esc,
+   push, rqPractice, toast */
 
 /* ================= 错题本 ================= */
 const WQ_BOARDS = ['常识判断', '资料分析', '判断推理', '数量关系', '政治理论', '言语理解与表达', '申论'];
@@ -56,6 +56,7 @@ function renderWq(items, total) {
       <div class="wq-head">
         ${w.qtype ? `<span class="wq-type">${esc(w.qtype)}</span>` : ''}
         ${w.board ? `<span class="wq-board">${esc(w.board)}</span>` : ''}
+        ${w.src_name ? `<span class="wq-src">${esc(w.src_name)}</span>` : ''}
         <button class="cls-star ${w.starred ? 'on' : ''}" data-wqstar="${w.id}">${w.starred ? '★' : '☆'}</button>
       </div>
       <div class="wq-q">${esc((w.question || '（图片题）').slice(0, 80))}</div>
@@ -113,31 +114,60 @@ $('#wqa-go').onclick = async () => {
 
 /* 错题详情 */
 let wqData = null;
+/** 改一个（或几个）字段并拿回最新的这条错题。PUT 是覆盖式的，改什么存什么。 */
+async function wqSave(body) {
+  return api('/api/wrongq/' + wqData.id, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+}
 async function openWqDetail(id) {
   push({ view: 'wqdetail' });
   $('#wqd-wrap').innerHTML = '<p class="empty">加载中…</p>';
   try { wqData = await api('/api/wrongq/' + id); renderWqDetail(); } catch (e) { $('#wqd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
-function wqSec(t, v) { return v ? `<div class="cd-sec"><div class="cd-sec-t">${t}</div><div class="cd-sec-b">${esc(v).replace(/\n/g, '<br>')}</div></div>` : ''; }
+/* fld 传了就带一个「✏️ 改」——错题本原先只有笔记能改，题干答案抠错一个字
+   就只能删了重记（而删掉会连带把这题的收录状态、来源一起丢掉）。 */
+function wqSec(t, v, fld) {
+  if (!v && !fld) return '';
+  const edit = fld ? `<button class="wq-edit" data-wqedit="${fld}">✏️ 改</button>` : '';
+  return `<div class="cd-sec"><div class="cd-sec-t">${t}${edit}</div>
+    <div class="cd-sec-b">${v ? esc(v).replace(/\n/g, '<br>') : '<i class="wq-none">（空）</i>'}</div></div>`;
+}
 function renderWqDetail() {
   const w = wqData;
   $('#wqd-wrap').innerHTML = `
     <div class="wqd-head">
       ${w.qtype ? `<span class="wq-type">${esc(w.qtype)}</span>` : ''}
       ${w.board ? `<span class="wq-board">${esc(w.board)}</span>` : ''}
+      ${/* 来源：这道题是从哪个刷题模块收进来的。真题还能一键回去重做原题 ——
+           错题本里看解析和「在原题界面再做一遍」是两回事，后者才检验得出记住没 */''}
+      ${w.src_name ? `<span class="wq-src">来自${esc(w.src_name)}</span>` : ''}
       <button class="cls-star ${w.starred ? 'on' : ''}" id="wqd-star">${w.starred ? '★' : '☆'}</button>
     </div>
-    <div class="cd-sec"><div class="cd-sec-t">题目</div><div class="cd-sec-b wqd-q">${esc(w.question).replace(/\n/g, '<br>') || '（见图）'}</div>
+    <div class="cd-sec"><div class="cd-sec-t">题目
+      <button class="wq-edit" data-wqedit="question">✏️ 改</button></div>
+      <div class="cd-sec-b wqd-q">${esc(w.question).replace(/\n/g, '<br>') || '（见图）'}</div>
       ${w.image ? `<img class="wqd-img" src="${w.image}">` : ''}</div>
-    ${w.answer ? wqSec('我的答案 / 解析', w.answer) : ''}
-    ${wqSec('知识点', w.points)}
-    ${wqSec('公式 / 方法', w.method)}
-    ${wqSec('解题技巧', w.skill)}
-    ${wqSec('解题步骤', w.steps)}
+    ${wqSec('我的答案 / 解析', w.answer, 'answer')}
+    ${wqSec('知识点', w.points, 'points')}
+    ${wqSec('公式 / 方法', w.method, 'method')}
+    ${wqSec('解题技巧', w.skill, 'skill')}
+    ${wqSec('解题步骤', w.steps, 'steps')}
+    <div class="cd-sec"><div class="cd-sec-t">分类</div>
+      <div class="wqd-row">
+        <select id="wqd-board" class="wql-in">
+          <option value="">（未分类）</option>
+          ${WQ_BOARDS.map(b => `<option${b === w.board ? ' selected' : ''}>${b}</option>`).join('')}
+        </select>
+        <input id="wqd-type" class="wql-in" placeholder="题型" value="${esc(w.qtype || '')}">
+        <button class="btn tiny" id="wqd-savecat">保存</button>
+      </div></div>
     <div class="cd-sec"><div class="cd-sec-t">我的笔记</div>
       <textarea id="wqd-note" class="wqd-note" placeholder="记录易错点、复盘…">${esc(w.note)}</textarea>
       <button class="btn" id="wqd-savenote" style="margin-top:8px;">保存笔记</button></div>
     <div class="wqd-acts">
+      ${w.src_kind === 'realq' && w.src_key
+    ? '<button class="btn" id="wqd-redo">🔁 重做原题</button>' : ''}
       <button class="btn" id="wqd-reanalyze">🤖 重新分析</button>
       <button class="btn" id="wqd-del" style="color:#e0524d;border-color:#f0c9c6;">删除</button>
     </div>`;
@@ -150,6 +180,34 @@ $('#wqd-wrap').addEventListener('click', async e => {
   if (e.target.closest('#wqd-savenote')) {
     const note = $('#wqd-note').value;
     try { await api('/api/wrongq/' + wqData.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) }); wqData.note = note; toast('已保存'); } catch (err) { toast(err.message, true); } return;
+  }
+  if (e.target.closest('#wqd-savecat')) {
+    const body = { board: $('#wqd-board').value, qtype: $('#wqd-type').value.trim() };
+    try {
+      wqData = await wqSave(body);
+      toast('已保存'); renderWqDetail(); loadWqBoards();     // 板块变了，左边的分类计数要跟着变
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+  /* 逐字段编辑：题干、答案、知识点…原先只有笔记能改，其余字段抠错一个字
+     就只能删掉重记 —— 而删掉会连它的来源身份一起丢，做题界面那边就再也认不出这道题了。 */
+  const ed = e.target.closest('[data-wqedit]');
+  if (ed) {
+    const fld = ed.dataset.wqedit;
+    const name = { question: '题目', answer: '答案 / 解析', points: '知识点',
+      method: '公式 / 方法', skill: '解题技巧', steps: '解题步骤' }[fld] || fld;
+    const v = await appPrompt('修改' + name, '留空表示清掉这一段', wqData[fld] || '');
+    if (v === null) return;
+    try { wqData = await wqSave({ [fld]: v }); toast('已保存'); renderWqDetail(); }
+    catch (err) { toast(err.message, true); }
+    return;
+  }
+  if (e.target.closest('#wqd-redo')) {
+    /* 真的把这个题型的一组真题起起来，不是把人丢到真题首页让他自己找。
+       这道题做错过、且已经到期，会被 _pick 的排序顶到最前面。 */
+    back();                       // 先退回错题本列表，做完真题返回时不会落回这张详情页
+    rqPractice(wqData.qtype);
+    return;
   }
   const rb = e.target.closest('#wqd-reanalyze');
   if (rb) {

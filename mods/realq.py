@@ -19,8 +19,9 @@ import re
 from flask import Blueprint, abort, jsonify, request, send_file
 
 from core import UPLOADS, get_db, uid
-from mods import realref
+from mods import realref, timing
 from mods.review import REVIEW_INTERVALS
+from mods.wrongq import wq_upsert
 
 bp = Blueprint("realq", __name__)
 
@@ -56,8 +57,12 @@ def _figs_of(db, qids):
 
 def _pub(r, exam=False, figs=None):
     # qtype 优先用规则判出来的；规则判不出的那 44%，用 AI 顺手判的那个补上
+    qt = (r["qtype"] or "").strip() or (r["ai_qtype"] or "").strip()
     d = {"id": r["id"], "module": r["module"] or "",
-         "qtype": (r["qtype"] or "").strip() or (r["ai_qtype"] or "").strip(),
+         "qtype": qt,
+         # 这道题该给多少秒（按题型，见 mods/timing.py）。整卷模考的总时长
+         # 也是这些数加出来的，所以口径必须是同一份。
+         "sec": timing.limit_of(r["module"] or "", qt),
          # 资料分析的题干本身没信息量（「2019 年该省 GDP 同比增长约：」），
          # 真正的题在材料里 —— 材料和表格图都得给，不然这道题没法做
          "material": (r["material"] or "") if "material" in r.keys() else "",
@@ -179,7 +184,12 @@ def _pick(db, u, mode, n, module="", qtype="", pkey=""):
 def real_quiz():
     d = request.get_json(silent=True) or {}
     mode = d.get("mode") if d.get("mode") in ("smart", "type", "paper") else "smart"
-    n = max(1, min(140, int(d.get("n") or 10)))
+    # 题量由前端选（5/10/20/30/50，和专项练一个交互）。整卷模考传 140 = 整份卷子。
+    # 上限仍卡在 140：再多也不是一次能做完的量，而且 _pick 要全表排序。
+    try:
+        n = max(1, min(140, int(d.get("n") or 10)))
+    except (TypeError, ValueError):
+        n = 10
     exam_mode = bool(d.get("exam"))
     items = _pick(get_db(), uid(), mode, n,
                   module=(d.get("module") or "").strip(), qtype=(d.get("qtype") or "").strip(),
@@ -189,8 +199,12 @@ def real_quiz():
     # 测试模式下答案和解析都不下发（_pub 会剥掉），交卷时由服务端按库里的答案判分 ——
     # 所以不需要另外把答案暂存一份给自己看。
     figs = _figs_of(get_db(), [r["id"] for r in items])
-    return jsonify({"mode": mode, "exam": exam_mode, "n": len(items),
-                    "items": [_pub(r, exam_mode, figs) for r in items]})
+    pub = [_pub(r, exam_mode, figs) for r in items]
+    return jsonify({"mode": mode, "exam": exam_mode, "n": len(pub), "items": pub,
+                    # 整卷模考的总时长 = 各题建议用时之和（130 道的行测卷算出来
+                    # 一小时五十几分，和真实的 120 分钟对得上）。不写死 120 分钟：
+                    # 只挑了一个模块的 40 题卷会白给一小时，倒计时就成了摆设。
+                    "total_sec": sum(x["sec"] for x in pub)})
 
 
 @bp.post("/api/real/done")
@@ -251,29 +265,137 @@ def real_done():
                     "explain": _explain_of(r)})
 
     added = _to_wrongq(db, [rows[i] for i in wrong_ids if i in rows])
+    rid = _save_record(db, u, d, rows, res, secs)
     db.commit()
     return jsonify({"ok": ok_n, "total": len(res), "results": res, "wrong_added": added,
-                    "acc": round(ok_n / max(1, len(res)), 2)})
+                    "rid": rid, "acc": round(ok_n / max(1, len(res)), 2)})
+
+
+REC_KEEP = 60          # 每人保留多少条回看记录（列表也只显示这么多）
+
+
+def _save_record(db, u, d, rows, res, secs):
+    """整组留一条记录，和专项练的 drill_records 一个形状。
+
+    real_attempts 是逐题流水，回看不了「那一组」：智能刷抽的是哪十道、模考里
+    哪几道超时，只有整组存下来才看得见。
+
+    **只存瘦身后的作答，不存材料和解析**：那两样才是大头 —— 130 道的整卷里，
+    资料分析的材料按题存会把同一篇材料抄 5 遍，加上原卷解析，一条记录就能到
+    几百 KB 甚至 1MB，一天一套、永不清理，库很快就被这个功能撑起来。
+    材料/图/解析都能按 qid 从真题库现查（见 real_record），回看照样是全的。
+    """
+    items = []
+    for r in res:
+        q = rows.get(r["id"])
+        if not q:
+            continue
+        qt = (q["qtype"] or "").strip() or (q["ai_qtype"] or "").strip()
+        items.append({"id": r["id"], "module": q["module"] or "", "qtype": qt,
+                      "answer": r["answer"], "your": r["your"], "correct": r["correct"],
+                      "seconds": float(secs.get(str(r["id"])) or secs.get(r["id"]) or 0),
+                      "sec": timing.limit_of(q["module"] or "", qt)})
+    mode = d.get("mode") if d.get("mode") in ("smart", "type", "paper") else "smart"
+    scope = (d.get("scope") or d.get("qtype") or "").strip() or {
+        "smart": "智能刷", "type": "按题型", "paper": "整卷模考"}[mode]
+    cur = db.execute(
+        "INSERT INTO real_records(user_id,mode,scope,exam,total,correct,seconds,items,answers) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (u, mode, scope[:60], 1 if d.get("exam") else 0, len(items),
+         sum(1 for x in items if x["correct"]), sum(x["seconds"] for x in items),
+         json.dumps(items, ensure_ascii=False), ""))
+    # 只留最近 REC_KEEP 条：列表本来也只显示这么多，再往前翻不如看「薄弱题型」统计。
+    # 不清的话这张表只增不减 —— 一天一组，一年就是三百多条谁也不会回看的记录。
+    db.execute("DELETE FROM real_records WHERE user_id=? AND id NOT IN "
+               "(SELECT id FROM real_records WHERE user_id=? ORDER BY id DESC LIMIT ?)",
+               (u, u, REC_KEEP))
+    return cur.lastrowid
+
+
+@bp.get("/api/real/records")
+def real_records():
+    """做题记录列表。60 条封顶 —— 再往前翻不如去看「薄弱题型」统计。"""
+    rows = get_db().execute(
+        "SELECT id,mode,scope,exam,total,correct,seconds,created_at FROM real_records "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 60", (uid(),)).fetchall()
+    name = {"smart": "智能刷", "type": "按题型", "paper": "整卷模考"}
+    return jsonify({"items": [dict(r, mode_name=name.get(r["mode"], r["mode"] or ""))
+                              for r in rows]})
+
+
+@bp.get("/api/real/record/<int:rid>")
+def real_record(rid):
+    """回看某一组：作答从记录里取，题面/材料/图/解析**现查真题库**。
+
+    存的时候只留了作答（见 _save_record 为什么不存题面）。回看时按 qid 一次性
+    把题捞回来补上 —— 一条 IN 查询的事，换来的是记录表不再按 MB 涨。
+    """
+    db = get_db()
+    r = db.execute("SELECT * FROM real_records WHERE id=? AND user_id=?",
+                   (rid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "记录不存在"}), 404
+    d = dict(r)
+    items = json.loads(d["items"] or "[]")
+    qids = [x["id"] for x in items if x.get("id")]
+    qs, figs = {}, {}
+    if qids:
+        qs = {q["id"]: q for q in db.execute(
+            "SELECT q.*, e.answer AS ai_answer, e.qtype AS ai_qtype, e.keypoint, e.steps, "
+            "  e.wrong, e.tip, e.src FROM real_questions q "
+            "LEFT JOIN real_explains e ON e.qid=q.id WHERE q.id IN (%s)"
+            % ",".join("?" * len(qids)), qids)}
+        figs = _figs_of(db, qids)
+    for x in items:
+        q = qs.get(x.get("id"))
+        if not q:
+            # 题被重导时换了 id：作答还在，题面没了。说清楚，别显示成一道空题。
+            x["stem"] = x.get("stem") or "（这道题已不在题库里，只剩作答记录）"
+            x.setdefault("options", [])
+            continue
+        x["stem"] = q["stem"]
+        x["options"] = json.loads(q["options"] or "[]")
+        x["material"] = (q["material"] or "") if "material" in q.keys() else ""
+        x["figs"] = figs.get(q["id"], [])
+        x["explain"] = _explain_of(q)
+        if not x.get("qtype"):
+            x["qtype"] = (q["qtype"] or "").strip() or (q["ai_qtype"] or "").strip()
+    d["items"] = items
+    d.pop("answers", None)      # 逐题结果已经并进 items 了，别再发一份重的
+    return jsonify(d)
+
+
+@bp.delete("/api/real/record/<int:rid>")
+def real_record_del(rid):
+    db = get_db()
+    if not db.execute("SELECT 1 FROM real_records WHERE id=? AND user_id=?",
+                      (rid, uid())).fetchone():
+        return jsonify({"error": "记录不存在"}), 404
+    # 只删这条回看记录。real_attempts 的流水**不动** —— 那是进度和遗忘曲线的依据，
+    # 跟着删的话「这题做过没」会倒退，智能刷又把做过的题当新题推给你。
+    db.execute("DELETE FROM real_records WHERE id=? AND user_id=?", (rid, uid()))
+    db.commit()
+    return jsonify({"ok": True})
 
 
 def _to_wrongq(db, rows):
-    """做错的真题进错题本。和专项练走同一张表，错题本不分来源。"""
+    """做错的真题进错题本。和专项练走同一张表、同一个 upsert。
+
+    身份用 **真题 id**（src_kind='realq'）：同一道题在这儿做错、在专项练的真题模式
+    也做错，收的是同一条；做题界面据此认出「这题已经在本子里」，就地能改能删。
+    """
     n = 0
     for r in rows:
         opts = "\n".join(json.loads(r["options"]))
         text = ("【真题】" + r["stem"] + "\n" + opts)[:2000]
-        if db.execute("SELECT 1 FROM wrong_questions WHERE user_id=? AND question=?",
-                      (uid(), text)).fetchone():
-            continue
         ex = _explain_of(r)
         note = ex.get("keypoint") or (ex.get("official") or "")[:200]
         qt = (r["qtype"] or "").strip() or (r["ai_qtype"] or "").strip()
-        db.execute("INSERT INTO wrong_questions(user_id,board,question,answer,qtype,points,note) "
-                   "VALUES(?,?,?,?,?,?,?)",
-                   (uid(), r["module"] or "行测", text,
-                    "正确答案 %s。%s" % (r["answer"] or r["ai_answer"] or "", note),
-                    qt, qt, "来自真题练习"))
-        n += 1
+        _, created = wq_upsert(db, uid(), "realq", str(r["id"]), {
+            "board": r["module"] or "行测", "question": text,
+            "answer": "正确答案 %s。%s" % (r["answer"] or r["ai_answer"] or "", note),
+            "qtype": qt, "points": qt, "note": "来自真题练习"})
+        n += created
     return n
 
 

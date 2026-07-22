@@ -359,6 +359,19 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_rat_user ON real_attempts(user_id, qid);
+        -- 一次真题练习的完整记录（题目 + 我的作答 + 用时），和 drill_records 一个形状。
+        -- real_attempts 是**逐题流水**，回看不了「那一组我是怎么做的」：智能刷抽的十道
+        -- 题是哪十道、模考交卷时哪几道超时，只有整组存下来才看得见。
+        CREATE TABLE IF NOT EXISTS real_records(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+            mode TEXT,                       -- smart / type / paper
+            scope TEXT,                      -- 题型名或卷名，列表上一眼认出是哪组
+            exam INTEGER DEFAULT 0,          -- 是不是模考（做完才判）
+            total INTEGER, correct INTEGER, seconds REAL,
+            items TEXT, answers TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_realrec ON real_records(user_id, id DESC);
         -- 真题库三张表。**必须建在这儿**，哪怕内容全靠 ingest_real.py 灌：
         -- /api/real/* 会直接查它们，没跑过导入脚本的新库上就是 500
         -- （schema.py 开头那段警告说的 changkao_items.freq / news_items.board 就是这么崩的）。
@@ -825,6 +838,16 @@ def init_db():
     # 专项练加了难度档，统计要按难度分开（不然入门刷出来的高正确率会盖住真实水平）
     if "level" not in _cols(con, "drill_log"):
         con.execute("ALTER TABLE drill_log ADD COLUMN level TEXT DEFAULT 'mid'")
+    # 错题的**来源身份**：(src_kind, src_key) = 「这条错题对应哪个刷题模块的哪道题」。
+    # 有了它，刷题界面才能问出「这道题在错题本里吗」，也才能在刷题端就地改/删同一条；
+    # 原先只能靠 question 全文相等去重 —— 题干改一个标点就成了两条，反向也定位不回原题。
+    #   realq  → real_questions.id      drill/dtest/quiz → 题干规范化后的 sha1 前 16 位
+    #   manual → 空（手动录入的没有来源，UNIQUE 里 NULL 互不相等，不会互相挤掉）
+    for col in ("src_kind", "src_key"):
+        if col not in _cols(con, "wrong_questions"):
+            con.execute("ALTER TABLE wrong_questions ADD COLUMN %s TEXT" % col)
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_wq_src "
+                "ON wrong_questions(user_id, src_kind, src_key)")
     # AI 出的题要过**第二个模型的独立核验**才能发给人做（实测抽检：单模型出题一致率只有 89%，
     # 也就是每 9 道就有 1 道值得怀疑；而且真抓到过事实错误 —— 「山水林田湖草沙」那道就是错的）。
     for col, dflt in (("checked", "0"), ("agree", "0"), ("audit_ans", "''"),

@@ -26,10 +26,10 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from core import get_db, log, uid
-from mods import realprofile
+from mods import realprofile, timing
 from mods.ai import _ai_call_or_error
 from mods.drill import (_assemble_items, _audit_items, _dtest_to_wrongq,
-                        _real_examples, _parse_items)
+                        _real_examples, _parse_items, wrong_ref)
 
 bp = Blueprint("dailytest", __name__)
 
@@ -291,12 +291,22 @@ def _dtest_ok_material(m):
 
 
 def _dtest_public(items, exam):
-    """服务端判分模式(exam)下，发到前端的题目去掉答案与解析，交卷才由服务端判（板块标签保留）。"""
-    if not exam:
-        return items
+    """服务端判分模式(exam)下，发到前端的题目去掉答案与解析，交卷才由服务端判（板块标签保留）。
+
+    两种模式都补一个 sec（这道题该给多少秒，见 mods/timing.py）——
+    巩固测试一份卷里五个板块混着出，用板块一刀切的话，30 秒的常识和 70 秒的
+    数量关系会拿到同一个倒计时，那个钟就没人看了。
+    """
     out = []
     for it in items:
-        x = {"q": it.get("q", ""), "options": it.get("options") or [], "module": it.get("module", "")}
+        sec = timing.limit_of(it.get("module") or "", it.get("qtype") or it.get("source") or "")
+        # 错题本身份和限时一样，**服务端算好再发**（见 drill.wrong_ref 的说明）
+        kind, key = wrong_ref(it, "dtest")
+        if not exam:
+            out.append(dict(it, sec=sec, wq_kind=kind, wq_key=key))
+            continue
+        x = {"q": it.get("q", ""), "options": it.get("options") or [],
+             "module": it.get("module", ""), "sec": sec, "wq_kind": kind, "wq_key": key}
         if it.get("material"):
             x["material"] = it["material"]        # 资料分析的表格/图表要看得见
         if it.get("figs"):

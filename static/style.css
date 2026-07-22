@@ -3458,3 +3458,91 @@ body.dark .rq-figs img{background:#e8ecf3;}
 .dt-rfig { max-width: 100%; display: block; margin: 8px auto; border-radius: 6px; }
 /* 真题的材料是一段纯文本，不是表格/图表 */
 .dt-mat.dt-mtxt { white-space: normal; line-height: 1.8; font-size: 15px; }
+
+/* ==== 做题倒计时 + 错题本联动（三个刷题模块共用，见 js/qtimer.js、js/wqlink.js）==== */
+/* 每题的小钟。等宽数字（tabular-nums）是关键：不定宽的话秒数一变整行都在抖 */
+.q-clock{font-variant-numeric:tabular-nums;font-size:15px;font-weight:700;color:var(--muted);
+  white-space:nowrap;}
+.q-clock.warn{color:#b45309;}
+.q-clock.over{color:#c2410c;}
+/* 整卷模考/整份小测的大钟：吸顶，翻到第 80 题也看得见还剩多久 */
+.q-total{position:sticky;top:0;z-index:20;margin:-4px -16px 10px;padding:8px 16px;
+  background:var(--card);border-bottom:1px solid var(--line);
+  font-variant-numeric:tabular-nums;font-size:16px;font-weight:700;color:var(--blue);
+  text-align:center;}
+.q-total.warn{color:#b45309;background:#fffbeb;}
+.q-total.over{color:#fff;background:#c2410c;}
+.q-total.hidden{display:none;}
+
+/* 错题本按钮：亮着=这题已在本子里，点开可改可删 */
+.wql-btn{border:1.5px solid var(--line);background:#fff;color:var(--muted);
+  padding:5px 11px;border-radius:16px;font-size:13px;cursor:pointer;transition:.15s;}
+.wql-btn:hover{border-color:#c9a227;color:#8a5a00;}
+.wql-btn.on{background:#fff8e6;border-color:#e8c766;color:#8a5a00;font-weight:600;}
+.rq-wql,.dr-wql{margin:10px 0 4px;}
+.dr-wqlist{margin:14px 0 4px;text-align:left;}
+.dr-wqrow{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:6px 0;border-top:1px dashed var(--line);font-size:13px;color:var(--muted);}
+.dr-wqrow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* 就地编辑面板（底部弹层） */
+.wql-sheet{position:fixed;inset:0;z-index:120;background:rgba(15,23,42,.45);
+  display:flex;align-items:flex-end;justify-content:center;}
+.wql-sheet.hidden{display:none;}
+.wql-panel{width:100%;max-width:640px;max-height:88vh;overflow:auto;background:var(--card);
+  border-radius:18px 18px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom));
+  box-shadow:0 -8px 30px rgba(20,40,80,.18);}
+.wql-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.wql-head b{font-size:16px;}
+.wql-src{font-size:12px;color:var(--muted);background:var(--bg);padding:2px 8px;border-radius:10px;}
+.wql-x{margin-left:auto;border:none;background:none;font-size:18px;color:var(--muted);cursor:pointer;}
+.wql-l{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px;}
+.wql-ta{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:9px 11px;
+  font-size:14px;line-height:1.7;font-family:inherit;resize:vertical;outline:none;}
+.wql-ta:focus{border-color:var(--blue);}
+.wql-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;}
+.wql-in{flex:1;min-width:120px;border:1.5px solid var(--line);border-radius:10px;
+  padding:8px 10px;font-size:14px;font-family:inherit;outline:none;background:#fff;}
+.wql-star{border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;
+  font-size:14px;color:var(--muted);cursor:pointer;white-space:nowrap;}
+.wql-star.on{background:#fff8e6;border-color:#e8c766;color:#8a5a00;}
+.wql-acts{display:flex;gap:10px;margin-top:16px;}
+.wql-acts .btn{flex:1;}
+.wql-del{color:#c2410c;border-color:#f0c9c6;}
+
+/* 错题本：来源标签 + 逐字段编辑 */
+.wq-src{font-size:11px;color:var(--muted);background:var(--bg);padding:2px 7px;border-radius:9px;}
+.wq-edit{margin-left:auto;border:none;background:none;color:var(--blue);font-size:12px;cursor:pointer;}
+.wq-none{color:var(--muted);font-style:normal;}
+.cd-sec-t{display:flex;align-items:center;gap:8px;}
+.wqd-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+
+/* 历年真题：题量选择 / 记录列表 / 回看 */
+.rq-cfg{display:flex;align-items:center;gap:10px;margin:14px 0 6px;flex-wrap:wrap;}
+.rq-cfg label{font-size:13px;color:var(--muted);}
+.rq-cfg .chip-row{display:flex;gap:8px;flex-wrap:wrap;}
+.rq-hint.sub{font-size:12px;line-height:1.7;}
+.rq-done-acts{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap;}
+.rq-sub{font-size:13px;color:var(--muted);margin-top:6px;}
+.rq-sub .over{color:#c2410c;}
+.rq-rv-sec{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;}
+.rq-rv-sec.over{color:#c2410c;font-weight:600;}
+.rq-rv-opts{margin:8px 0 4px;display:grid;gap:6px;}
+.rq-rv-o{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;}
+.rq-rv-o.right{border-color:#8fd0a8;background:#f2fbf5;}
+.rq-rv-o.wrong{border-color:#f0b3ac;background:#fdf4f3;}
+.drr-row{background:var(--card);border-radius:12px;box-shadow:var(--shadow);padding:12px 14px;
+  margin-bottom:10px;cursor:pointer;position:relative;}
+.drr-main{display:flex;align-items:center;gap:8px;}
+.drr-main b{font-size:15px;}
+.drr-tag{font-size:11px;color:var(--muted);background:var(--bg);padding:2px 8px;border-radius:9px;}
+.drr-meta{font-size:12px;color:var(--muted);margin-top:5px;}
+.drr-meta .ok{color:#1e8449;}
+.drr-meta .bad{color:#c2410c;}
+.drr-go{position:absolute;right:14px;top:50%;transform:translateY(-50%);
+  font-size:12px;color:var(--muted);}
+
+/* 巩固测试：每题的建议用时 */
+.dt-sec{margin-left:8px;font-size:11px;color:var(--muted);background:var(--bg);
+  padding:2px 7px;border-radius:9px;font-weight:400;white-space:nowrap;}
+.dt-score-sub{display:block;font-size:12px;color:var(--muted);font-weight:400;margin-top:4px;}

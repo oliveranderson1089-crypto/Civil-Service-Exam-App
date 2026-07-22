@@ -41,7 +41,8 @@ def db(monkeypatch):
         CREATE TABLE news_items(id INTEGER PRIMARY KEY, title TEXT, ai_summary TEXT,
             date TEXT, created_at TEXT);
         CREATE TABLE wrong_questions(id INTEGER PRIMARY KEY, user_id INT, board TEXT,
-            qtype TEXT, question TEXT, points TEXT);
+            qtype TEXT, question TEXT, points TEXT, answer TEXT, note TEXT,
+            src_kind TEXT, src_key TEXT);
     """)
     return con
 

@@ -11,7 +11,9 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, PL_MOD_COLOR, api, appConfirm, dtMaterial,
-   esc, lsGet, lsSet, push, toast */
+   esc, lsGet, lsSet, push, toast,
+   qtFmt, qtTotalStart, qtTotalStop, wqlBtnHtml, wqlMark, wqlOpen,
+   wqlRefreshBtns, wqlScan */
 
 /* ---------------- 每日巩固测试（按当天学的内容 AI 出小测） ---------------- */
 $('#dt-open').onclick = () => openDtest();
@@ -23,6 +25,33 @@ let dtCount = (+lsGet('dtCount') === 15) ? 15 : 10;   // 题量 10 / 15
 const DT_L = ['A', 'B', 'C', 'D', 'E', 'F'];
 function dtIsTest() { return dtMode === 'test'; }
 function dtRevealedAt(i) { return dtIsTest() ? dtSubmitted : !!dtRevealed[i]; }
+
+/* 巩固测试是**一屏列全部题**，不像专项练一题一屏 —— 所以计时器给的是「整份」的：
+   总时长 = 各题按题型的限时之和（服务端在 it.sec 里给，见 mods/timing.py），
+   每道题旁边再标一句「建议 30 秒」。一份小测里常识 30 秒、数量 70 秒混着出，
+   拿一个板块基准套所有题的话，那个钟没人会看。
+   到点不打断：转红记超时，题接着做。 */
+function dtTotalSec() { return dtItems.reduce((s, it) => s + (it.sec || 40), 0); }
+/* 这份卷子的身份。qtTotalStart 拿它判「还是不是同一份」：是就接着走，不是才重开。
+   没有它的话，离开页面再回来（或每次 loadDtest）钟都从满格重来 ——
+   退出去再进来就能无限续时，这个限时等于没有。 */
+function dtClockTag() { return 'dt' + dtItems.length + ':' + (dtItems[0] || {}).wq_key; }
+function dtClockStart() {
+  if (!dtItems.length || dtSubmitted) return;
+  qtTotalStart('#dt-total', dtTotalSec(), dtClockTag());
+}
+function dtClockStop() {
+  qtTotalStop();
+  const el = $('#dt-total');
+  if (el) { el.textContent = ''; el.className = 'q-total hidden'; }
+}
+/* 这一份里哪些题已经在错题本（背题模式选错时服务端会自动收，按钮状态要跟得上）。
+   **不 await**：题先画出来，按钮状态随后补 —— 挡在前面只是让人多等一个来回。 */
+function dtScanWq() {
+  const keys = dtItems.map(x => x.wq_key).filter(Boolean);
+  if (!keys.length) return Promise.resolve();
+  return wqlScan('dtest', { keys }).then(() => wqlRefreshBtns('#dt-body'));
+}
 function dtModeBar() {
   return `<div class="dt-bar">
     <div class="dt-modes">
@@ -43,7 +72,10 @@ async function loadDtest() {
   try {
     const d = await api('/api/dtest' + (dtIsTest() ? '?exam=1' : ''));
     dtItems = d.items || []; dtChosen = {}; dtRevealed = {}; dtSubmitted = false; dtResults = null;
+    /* 这儿**不无条件停表**：loadDtest 每次进页面都会跑，停了就等于每次进来都重新计时。
+       换没换卷子由 dtClockTag() 认（见 dtClockStart），同一份就接着走。 */
     if (!dtItems.length) {
+      dtClockStop();                   // 没题了（还没生成），钟没有意义
       $('#dt-body').innerHTML = dtModeBar() +
         `<div class="dt-empty">今天还没生成测试。选好模式和题量，AI 会按你今天学的内容出题。</div>
         <button class="btn primary" id="dt-gen">✨ 生成今日巩固测试</button>`;
@@ -52,6 +84,7 @@ async function loadDtest() {
       return;
     }
     renderDtest();
+    dtScanWq();
   } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
 function bindBar() {
@@ -88,7 +121,9 @@ async function dtGen(force) {
   try {
     const d = await api('/api/dtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: !!force, exam: dtIsTest(), count: dtCount }) });
     dtItems = d.items || []; dtChosen = {}; dtRevealed = {}; dtSubmitted = false; dtResults = null;
+    dtClockStop();                     // 新的一套：卷子换了，钟必须从头起
     renderDtest();
+    dtScanWq();
   } catch (e) {
     $('#dt-body').innerHTML = `<div class="dt-empty">${esc(e.message)}</div><button class="btn" id="dt-retry">重试</button>`;
     $('#dt-retry').onclick = () => dtGen(force);
@@ -127,16 +162,23 @@ function renderDtest() {
         return `<button class="${cls}" data-dtq="${i}" data-dtl="${L}" ${revealed ? 'disabled' : ''}>${esc(o)}</button>`;
       }).join('');
     const e = dtExp(i);
-    const exp = revealed ? `<div class="dt-exp"><b>正确答案 ${esc(dtAns(i))}</b>${e.explain ? ' · ' + esc(e.explain) : ''}${e.source ? ` <span class="dt-src">${esc(e.source)}</span>` : ''}</div>` : '';
+    const wrong = revealed && (dtAns(i) || '').toUpperCase() !== dtChosen[i];
+    const exp = revealed ? `<div class="dt-exp"><b>正确答案 ${esc(dtAns(i))}</b>${e.explain ? ' · ' + esc(e.explain) : ''}${e.source ? ` <span class="dt-src">${esc(e.source)}</span>` : ''}
+      ${/* 做错的题服务端已自动收进错题本，这儿让人当场补一句错因、或把手滑点错的移出去 */''}
+      ${wrong && it.wq_key ? `<div class="dr-wql">${wqlBtnHtml(it.wq_kind || 'dtest', it.wq_key)}</div>` : ''}</div>` : '';
     const mod = it.module ? `<span class="dt-mod" style="background:${PL_MOD_COLOR[it.module] || '#6b7280'}">${esc(it.module)}</span>` : '';
     const mat = dtMaterial(it.material, i, i ? dtItems[i - 1].material : null);
     const seq = isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : '';
-    return `<div class="dt-q">${mat}<div class="dt-qt">${mod}${i + 1}. ${esc(it.q)}</div>${seq}
+    // 每题标出这个**题型**该花多久 —— 顶上的总倒计时就是这些数加起来的，
+    // 看到「这题建议 30 秒」才知道该不该在这儿耗着
+    const secTag = it.sec ? `<span class="dt-sec">建议 ${it.sec} 秒</span>` : '';
+    return `<div class="dt-q">${mat}<div class="dt-qt">${mod}${i + 1}. ${esc(it.q)}${secTag}</div>${seq}
       <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>${exp}</div>`;
   }).join('');
   let foot;
   if (dtSubmitted) {
-    foot = `<div class="dt-score">得分 ${dtScore()} / ${dtItems.length}</div>
+    foot = `<div class="dt-score">得分 ${dtScore()} / ${dtItems.length}
+       <span class="dt-score-sub">全套建议用时 ${qtFmt(dtTotalSec())}</span></div>
        <button class="btn" id="dt-again">🔄 换一套新题</button>`;
   } else if (dtIsTest()) {
     foot = `<button class="btn primary" id="dt-submit">交卷看结果</button>`;
@@ -146,9 +188,30 @@ function renderDtest() {
       (done === dtItems.length ? `<button class="btn primary" id="dt-finish">看结果并记录</button>` : '');
   }
   $('#dt-body').innerHTML = (dtSubmitted ? '' : dtModeBar()) + `<div class="dt-list">${qs}</div><div class="dt-foot">${foot}</div>`;
-  if (dtSubmitted) $('#dt-again').onclick = async () => { if (await appConfirm('重新出一套？当前作答会清空。')) dtGen(true); };
-  else { const s = $('#dt-submit'); if (s) s.onclick = dtSubmit; const f = $('#dt-finish'); if (f) f.onclick = dtFinish; bindBar(); }
+  if (dtSubmitted) {
+    dtClockStop();                    // 交完卷钟就该收，别在成绩页上继续跳
+    $('#dt-again').onclick = async () => { if (await appConfirm('重新出一套？当前作答会清空。')) dtGen(true); };
+  } else {
+    const s = $('#dt-submit'); if (s) s.onclick = dtSubmit;
+    const f = $('#dt-finish'); if (f) f.onclick = dtFinish;
+    bindBar();
+    dtClockStart();                   // 已经在走的话是空操作（见 dtClockStart）
+  }
 }
+
+/* 错题本按钮：巩固测试是一屏列全部题，按钮散在各题的解析里，统一在这儿接。 */
+$('#dt-body').addEventListener('click', e => {
+  const b = e.target.closest('[data-wql]');
+  if (!b) return;
+  const i = dtItems.findIndex(x => x.wq_key === b.dataset.wql);
+  const it = dtItems[i] || {};
+  wqlOpen(b.dataset.wqlkind, b.dataset.wql, {
+    board: it.module || '', qtype: it.qtype || it.source || '',
+    question: (it.q || '') + '\n' + (it.options || []).join('\n'),
+    answer: `正确答案 ${dtAns(i) || ''}。${(dtExp(i) || {}).explain || ''}`,
+    note: '来自巩固测试',
+  }, () => wqlRefreshBtns('#dt-body'));
+});
 async function dtRecord() {
   // 把本次作答交给服务端判分并留档
   try {
@@ -186,10 +249,19 @@ $('#dt-body').addEventListener('click', e => {
   if (!dtIsTest()) {
     dtRevealed[i] = true;                   // 背题模式：选完立刻揭晓这题
     if ((dtAns(i) || '').toUpperCase() !== dtChosen[i]) {   // 选错了 → 自动进错题本
+      /* 做错了**自动**进错题本 —— 这条链路是这个模块的核心，别动。
+         服务端收完，本地状态跟着记一笔、就地把那一个按钮点亮就行：
+         再打一次 lookup + 整屏重画（十几道题连图形 SVG 一起重建）纯属浪费，
+         重画那一下还会把正在点下一题的手指弹开。 */
       api('/api/dtest/wrong', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idx: i, choice: dtChosen[i] }),
-      }).then(d => { if (d.added) toast('这题错了，已收进错题本'); }).catch(() => {});
+      }).then(d => {
+        if (d.added) toast('这题错了，已收进错题本');
+        // d.ok=false 表示服务端压根没收（今天没这份卷子/题号对不上），那就别把按钮点亮
+        const key = d.ok ? (dtItems[i] || {}).wq_key : '';
+        if (key) { wqlMark('dtest', key); wqlRefreshBtns('#dt-body'); }
+      }).catch(() => {});
     }
   }
   renderDtest();

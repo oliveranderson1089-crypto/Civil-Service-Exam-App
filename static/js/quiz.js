@@ -106,17 +106,21 @@ $('#qzr-wrap').addEventListener('click', async e => {
       const d = await api('/api/quiz/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qid: q.id, choice: opt.dataset.opt }) });
       q.my_choice = opt.dataset.opt; q.answer = d.answer; q.explanation = d.explanation;
       renderQuiz();
-      // 答错自动收进错题本
+      // 答错自动收进错题本。走 /api/wrongq/sync（不是人工录入那个口子）：
+      // 带上来源身份 quiz/题目 id，同一道题重复做错只留一条，错题本那边改了、
+      // 删了，回到这儿看到的也是改后的状态。
       if (!d.correct) {
         try {
-          const fd = new FormData();
-          fd.append('board', q.module === '申论' ? '申论' : q.module);
-          fd.append('question', q.question + '\n' + (q.options || []).join('\n'));
-          fd.append('answer', d.answer);
-          fd.append('qtype', q.qtype || q.module);
-          fd.append('points', ''); fd.append('note', '来自题库：' + qz.set.name);
-          fd.append('analyze', '0');
-          await api('/api/wrongq', { method: 'POST', body: fd });
+          await api('/api/wrongq/sync', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              kind: 'quiz', key: String(q.id),
+              board: q.module === '申论' ? '申论' : q.module,
+              question: q.question + '\n' + (q.options || []).join('\n'),
+              answer: d.answer, qtype: q.qtype || q.module,
+              note: '来自题库：' + qz.set.name,
+            }),
+          });
           toast('已答错，这题自动收进错题本');
         } catch (e) {
           // 这是「自动」收错题：成功时会 toast，失败却一声不响的话，用户会以为收进去了

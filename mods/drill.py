@@ -23,8 +23,9 @@ from flask import Blueprint, jsonify, request
 
 from core import DB, get_db, log, uid
 from figgen import _gen_figure_q, _gen_math_q, _gen_ziliao
-from mods import realprofile, realref
+from mods import realprofile, realref, timing
 from mods.ai import _ai_call_or_error, _vision_conf
+from mods.wrongq import wq_key, wq_upsert
 
 bp = Blueprint("drill", __name__)
 
@@ -32,8 +33,9 @@ bp = Blueprint("drill", __name__)
 # 这三块和常识不一样：**题型固定、有套路、拼速度**。所以按题型分开刷、每题计时、
 # 做完给这一类的秒杀技巧，并统计「哪个题型最弱、平均要多久」——弱的排前面。
 # 题都是**程序化生成**的（figgen.py），答案由构造保证；AI 出这类题会算错，不用它。
-DRILL_LIMIT = {"资料分析": 60, "判断推理": 45, "数量关系": 70,
-               "常识判断": 30, "政治理论": 30, "言语理解与表达": 50}   # 每题限时（秒），按真题节奏
+# 限时表在 mods/timing.py —— 真题、巩固测试也吃同一份，别在这儿另写一份板块基准：
+# 同一道「比较大小」在两个入口给的秒数不一样的话，练出来的速度感是假的。
+DRILL_LIMIT = timing.BOARD_SEC          # 板块基准（秒/题）；题型级用 timing.limit_of
 
 # ---- 难度：三档，**真正改变题目**（程序化的三块由 figgen 按 level 造，AI 的三块写进提示词）----
 # 「难度系数」在公考里就是**得分率**（0~1，越高越简单）。这里给每个板块一个真实基准，
@@ -1084,6 +1086,9 @@ def drill_types():
         n_real = real_cnt.get(k, 0)
         items.append({"type": k, "desc": desc, "eng": eng, "ord": i, "n": n, "acc": acc,
                       "sec": round(st.get("sec") or 0) if n else None,
+                      # 这个题型的限时（秒）。**按题型给，不是板块一刀切**：同是判断推理，
+                      # 类比推理 25 秒该出手，分析推理给 70 秒也不亏。前端拿它做倒计时。
+                      "limit": timing.limit_of(board, k),
                       "tip": DRILL_TIP.get(k, ""),
                       "bank_ok": bk.get("ok") or 0,          # 过了双模型核验的
                       "bank_all": bk.get("c") or 0,
@@ -1181,6 +1186,13 @@ def drill_quiz():
     pub = []
     for it in items:
         x = dict(it)
+        # 每题自带限时：混合练一组里题型是混着的，用板块基准的话，
+        # 类比推理和分析推理会拿到同一个 45 秒，倒计时就没意义了。
+        x["sec"] = timing.limit_of(board, x.get("qtype") or qtype)
+        # 错题本身份**由服务端给**：题干怎么拼成错题（图形题/材料题各有前缀）
+        # 只有 wrong_text 知道，前端复刻一份迟早对不上，表现是收过的题
+        # 在做题界面显示成没收过、再点一次收出第二条。
+        x["wq_kind"], x["wq_key"] = wrong_ref(it, "drill")
         if exam:
             x.pop("answer", None)
             x.pop("explain", None)
@@ -1274,7 +1286,7 @@ def drill_done():
                         "explain": it.get("explain") or "", "tip": it.get("tip") or ""})
     for it, r in zip(items, results):
         it["your"], it["seconds"] = r["your"], 0
-    added = _dtest_to_wrongq(db, items, results)
+    added = _dtest_to_wrongq(db, items, results, kind="drill")
     ok_n = sum(1 for r in results if r["correct"])
     cur = db.execute(
         "INSERT INTO drill_records(user_id,board,qtype,level,mode,total,correct,seconds,items,answers) "
@@ -1313,38 +1325,61 @@ def drill_record(rid):
     return jsonify(d)
 
 
-def _dtest_to_wrongq(db, items, results):
+def wrong_text(it):
+    """这道题存进错题本时长什么样。
+
+    **出题下发和交卷入库必须调同一个函数**：下发时用它算错题指纹（wqkey）发给前端，
+    做题界面才认得出「这题已经在本子里了」；两边各拼一遍的话，改一处漏一处不会报错，
+    只会让按钮一直显示成未收录，点一次收出第二条。
+    """
+    opts = "\n".join(it.get("options") or [])
+    q = (it.get("q") or "").strip()
+    # ⚠️ 这两个字段**有两种形状**，按形状分，别只判真假：
+    #    figgen 出的图形题 figs 是 {seq, opts}（内联 SVG）、material 是
+    #    {type:'table', headers, rows}；而真题的 figs 是文件名数组、material 是纯文本。
+    #    原先 `m.get("title")` 碰上真题的字符串材料直接 AttributeError，
+    #    /api/drill/done 整个 500，本次成绩和作答记录全丢（实测必现）。
+    if isinstance(it.get("figs"), dict) and it["figs"].get("seq"):
+        q = "【图形推理】" + q + "\n（图形题：%s。到「巩固测试记录」里可回看原图）" % (it.get("source") or "")
+    elif it.get("material"):
+        m = it["material"]
+        title = m.get("title") if isinstance(m, dict) else ""
+        body = "" if isinstance(m, dict) else str(m)[:600]
+        q = "【材料题】材料：%s\n%s\n%s" % (title or "", body, q)
+    return (q + ("\n" + opts if opts else ""))[:2000]
+
+
+def wrong_ref(it, kind):
+    """这道题在错题本里的身份 (src_kind, src_key)。
+
+    真题模式做的题按**真题 id** 认 —— 这样在专项练里收的错题，和从「历年真题」
+    那边收的是同一条，不会两个入口各存一份、改了这条那条还在。
+    """
+    if it.get("real_id"):
+        return "realq", str(it["real_id"])
+    return kind, wq_key(wrong_text(it))
+
+
+def _dtest_to_wrongq(db, items, results, kind="dtest"):
     """巩固测试做错的题自动进错题本：带题干、选项、正确答案、解析和板块。
-       图形推理的题干是图，没法存成文字，改存一句说明 + 考点（错题本只认文字/图片）。"""
+       图形推理的题干是图，没法存成文字，改存一句说明 + 考点（错题本只认文字/图片）。
+
+       kind 决定错题上记的来源（drill=专项练 / dtest=巩固测试）——
+       刷题界面靠 (kind, key) 认出「这道题已经在错题本里了」，两边才改得到同一条。"""
     n = 0
     for it, r in zip(items, results):
         if r.get("correct") or not r.get("your"):     # 答对的、没作答的都不收
             continue
-        opts = "\n".join(it.get("options") or [])
-        q = (it.get("q") or "").strip()
-        # ⚠️ 这两个字段**有两种形状**，按形状分，别只判真假：
-        #    figgen 出的图形题 figs 是 {seq, opts}（内联 SVG）、material 是
-        #    {type:'table', headers, rows}；而真题的 figs 是文件名数组、material 是纯文本。
-        #    原先 `m.get("title")` 碰上真题的字符串材料直接 AttributeError，
-        #    /api/drill/done 整个 500，本次成绩和作答记录全丢（实测必现）。
-        if isinstance(it.get("figs"), dict) and it["figs"].get("seq"):
-            q = "【图形推理】" + q + "\n（图形题：%s。到「巩固测试记录」里可回看原图）" % (it.get("source") or "")
-        elif it.get("material"):
-            m = it["material"]
-            title = m.get("title") if isinstance(m, dict) else ""
-            body = "" if isinstance(m, dict) else str(m)[:600]
-            q = "【材料题】材料：%s\n%s\n%s" % (title or "", body, q)
-        text = (q + ("\n" + opts if opts else ""))[:2000]
+        text = wrong_text(it)
         board = it.get("module") or "行测"
-        # 同一道题别重复收
-        dup = db.execute("SELECT 1 FROM wrong_questions WHERE user_id=? AND question=?", (uid(), text)).fetchone()
-        if dup:
-            continue
-        db.execute("INSERT INTO wrong_questions(user_id,board,question,answer,qtype,points,note) "
-                   "VALUES(?,?,?,?,?,?,?)",
-                   (uid(), board, text,
-                    "正确答案 %s。%s" % (r.get("answer") or "", it.get("explain") or ""),
-                    it.get("source") or board, (it.get("source") or "").split("-")[-1],
-                    "来自巩固测试（我选了 %s）" % (r.get("your") or "")))
-        n += 1
+        # 同一道题别重复收：靠 (来源, 题干指纹) 认，改一个标点也还是同一道题
+        src_kind, src_key = wrong_ref(it, kind)
+        _, created = wq_upsert(db, uid(), src_kind, src_key, {
+            "board": board, "question": text,
+            "answer": "正确答案 %s。%s" % (r.get("answer") or "", it.get("explain") or ""),
+            "qtype": it.get("qtype") or it.get("source") or board,
+            "points": (it.get("source") or "").split("-")[-1],
+            "note": "来自%s（我选了 %s）" % ("专项练" if kind == "drill" else "巩固测试",
+                                            r.get("your") or "")})
+        n += created
     return n

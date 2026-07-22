@@ -2,6 +2,7 @@ Reader
 __bmView
 __dvShow
 __hwNative
+__mkView
 __onDownloaded
 __onDragLeave
 __onDragOver
