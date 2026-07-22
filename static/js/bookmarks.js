@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DOC, TITLES, api, ckBoard, csBoard,
+/* global $, DOC, IS_MOBILE, TITLES, api, ckBoard, csBoard,
    esc, matBoard, nwCur, stack */
 
 /* ================= 书签：看到哪了 =================
@@ -16,7 +16,10 @@
 /* 书签：任何会滚动的页面都记「看到哪了」——长文如此，长列表（如 894 条成语）更需要。
    ref 用「视图 + 这一页的子标识」拼出来（板块名 / 文章 id / 分类…），换个板块就是另一条书签。 */
 const BM_SKIP = new Set(['home', 'account', 'search', 'slgrade', 'quizrun', 'dtest', 'notify']);
-let bmCur = null, bmT = null;
+let bmCur = null, bmT = null, bmHideT = null;
+// 这条提示只有「要不要跳回去」一个用处，问完就该走：3 秒不点就自己消失（两端一致）
+const BM_AUTOHIDE = 3000;
+function bmHide() { clearTimeout(bmHideT); bmHideT = null; $('#bm-tip').classList.add('hidden'); }
 
 function bmRef() {
   const st = stack[stack.length - 1];
@@ -55,27 +58,35 @@ addEventListener('scroll', () => {
 }, { passive: true });
 
 async function bmRestore() {             // 进阅读页时问一句：上次看到哪了
+  bmHide();                              // 换页先收起来：上一页的提示不能跟着跑到这一页
   const r = bmRef();
-  if (!r) { $('#bm-tip').classList.add('hidden'); return; }
+  if (!r) return;
   try {
     const d = await api('/api/bookmarks');
     const b = (d.items || []).find(x => x.kind === r.kind && x.ref === r.ref);
     const el = document.scrollingElement || document.documentElement;
     const px = b ? b.pos * (el.scrollHeight - el.clientHeight) : 0;
-    if (!b || px < 260) { $('#bm-tip').classList.add('hidden'); return; }
+    if (!b || px < 260) return;
+    /* 和划重点结果条抢位置时让它：重点条是用户自己点出来的、还要用，这条 3 秒就走。
+       但只在真会挡住的时候让 —— 手机端两者都钉在屏幕下方，必撞；电脑端这条在下方、
+       结果条默认在顶部，只有被拖到下面那一带才撞，凭「结果条在」就吞掉提示没道理。 */
+    const mkBar = $('#mk-bar');
+    if (!mkBar.classList.contains('hidden')
+        && (IS_MOBILE || mkBar.getBoundingClientRect().bottom > innerHeight - 120)) return;
     bmCur = b;
     $('#bm-tip').innerHTML = `🔖 上次看到 <b>${Math.round(b.pos * 100)}%</b> 处 · <i>${(b.updated_at || '').slice(5, 16)}</i>
       <button class="btn tiny" id="bm-go">跳回去</button>
       <button class="bm-x" id="bm-hide">✕</button>`;
     $('#bm-tip').classList.remove('hidden');
+    bmHideT = setTimeout(bmHide, BM_AUTOHIDE);
   } catch (_) { /* 取不到书签就不显示「跳回去」，不影响正常阅读 */ }
 }
 document.addEventListener('click', e => {
   if (e.target.closest('#bm-go')) {
     const el = document.scrollingElement || document.documentElement;
     el.scrollTo({ top: bmCur.pos * (el.scrollHeight - el.clientHeight), behavior: 'smooth' });
-    $('#bm-tip').classList.add('hidden');
-  } else if (e.target.closest('#bm-hide')) $('#bm-tip').classList.add('hidden');
+    bmHide();
+  } else if (e.target.closest('#bm-hide')) bmHide();
 });
 window.__bmView = () => setTimeout(bmRestore, 700);   // 内容渲染完再问
 

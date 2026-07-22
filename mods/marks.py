@@ -16,6 +16,13 @@ from mods.ai import _ai_call_or_error
 bp = Blueprint("marks", __name__)
 
 
+# 议论文里「总论点」必须和「分论点」分开标：总论点统摄全文、只有一句（多在首段末或标题句），
+# 分论点是各主体段用来承接它的。混成一类，划出来的结构就是错的 —— 学范文恰恰是学这个结构。
+_MK_ESSAY_SPLIT = (
+    "**总论点和分论点是两类，别混**：统摄全文、只有一句的是总论点（多在首段末尾或标题句）；"
+    "各主体段开头承接总论点的才是分论点。全文最多标一处总论点。"
+)
+
 MK_PROFILES = {
     "newsd": ("每日时政", [
         ("提法", "新表述/新概念，常识判断爱考"),
@@ -55,17 +62,19 @@ MK_PROFILES = {
         ("出处", "哪次会议/哪份文件提出的"),
     ], "术语题就考「完整表述」和「出处」，短语要连着划，别割裂。"),
     "essayd": ("范文", [
-        ("分论点", "每段的论点句 —— 学的就是这个句式"),
+        ("总论点", "统摄全文的中心论点，多在首段末尾/标题句，全文只有一句"),
+        ("分论点", "各主体段开头的论点句 —— 学的就是这个句式"),
         ("论证", "怎么把素材和论点扣上的那句话"),
         ("素材", "可以搬走复用的事例/数据"),
         ("表达", "亮点句式、衔接、结尾升华"),
-    ], "看范文不是看内容，是**看它怎么写的**。要划的是可以搬走复用的「结构件」。"),
+    ], "看范文不是看内容，是**看它怎么写的**。要划的是可以搬走复用的「结构件」。" + _MK_ESSAY_SPLIT),
     "writed": ("成文", [
-        ("分论点", "每段的论点句"),
+        ("总论点", "统摄全文的中心论点，多在首段末尾，全文只有一句"),
+        ("分论点", "各主体段的论点句"),
         ("论证", "素材和论点怎么扣上的"),
         ("素材", "用进去的事例/理论/金句"),
         ("衔接", "段与段之间的过渡表达"),
-    ], "这是用你自己的素材写的文章，要看清**素材是怎么被用进去的**。"),
+    ], "这是用你自己的素材写的文章，要看清**素材是怎么被用进去的**。" + _MK_ESSAY_SPLIT),
     "wqdetail": ("错题", [
         ("陷阱", "题目在哪里下的套（你就是在这栽的）"),
         ("正解", "正确的思路是什么"),
@@ -109,6 +118,12 @@ MK_PROFILES = {
         ("易错", "提醒注意的地方"),
     ], ""),
 }
+# 「范文精读」（人民时评那套）和「范文」是同一种文章，画像照抄一份 ——
+# 之前它没配画像，落到通用兜底上，划出来是「提法/数据/结论/金句」，跟议论文不沾边。
+# kinds 要**复制一份**再放进去：直接引用的话两个 key 共用同一个 list，
+# 将来谁原地改一下「范文」的类型清单，「范文精读」会跟着无声变掉。
+MK_PROFILES["fanwend"] = ("范文精读", list(MK_PROFILES["essayd"][1]), MK_PROFILES["essayd"][2])
+
 _MK_FALLBACK = ("备考材料", [
     ("提法", "新表述/新概念、关键定义"),
     ("数据", "具体数字/时间"),
@@ -119,6 +134,16 @@ _MK_FALLBACK = ("备考材料", [
 
 def mk_profile(scope):
     return MK_PROFILES.get(scope, _MK_FALLBACK)
+
+
+def mk_profile_sig(scope):
+    """画像的指纹，进缓存 key。
+
+    画像一改（加了「总论点」、改了某类的定义），旧结果就该作废：不然同一篇范文再打开，
+    返回的还是按旧类型划的那一份，改了等于没改（缓存是按内容哈希存的，内容没变）。
+    """
+    return hashlib.md5(
+        json.dumps(mk_profile(scope), ensure_ascii=False).encode("utf-8")).hexdigest()[:8]
 
 
 def _mark_text(content, scope=""):
@@ -188,17 +213,23 @@ def marks_any():
     # 缓存 key 要带 scope：同一段文字在不同模块划法不一样（常识划定义、错题划陷阱），
     # 只按文字哈希会串味
     ref = hashlib.md5((scope + "\x00" + text).encode("utf-8")).hexdigest()
+    # 画像指纹存在**值**里、不进 key：改了类型清单要的是「这一行作废、重算后覆盖它」，
+    # 掺进 key 的话老行就永远读不到也删不掉，一篇文章会按画像版本堆出好几行垃圾。
+    sig = mk_profile_sig(scope)
     db = get_db()
     if not d.get("force"):
         r = db.execute("SELECT data_json FROM marks_cache WHERE ref=?", (ref,)).fetchone()
         if r:
-            return jsonify({"marks": json.loads(r["data_json"]), "cached": True})
+            got = json.loads(r["data_json"])
+            # 老格式是一个裸 list（没有指纹），一律当过期处理，重算一次换成新格式
+            if isinstance(got, dict) and got.get("sig") == sig and got.get("marks"):
+                return jsonify({"marks": got["marks"], "cached": True})
     marks, err = _mark_text(text, scope)
     if marks is None:
         return err if isinstance(err, tuple) else (jsonify({"error": err}), 502)
     if not marks:
         return jsonify({"error": err or "没能划出重点"}), 502
     db.execute("INSERT OR REPLACE INTO marks_cache(ref,scope,data_json) VALUES(?,?,?)",
-               (ref, scope, json.dumps(marks, ensure_ascii=False)))
+               (ref, scope, json.dumps({"sig": sig, "marks": marks}, ensure_ascii=False)))
     db.commit()
     return jsonify({"marks": marks})

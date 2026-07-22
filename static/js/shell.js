@@ -32,6 +32,8 @@ function render() {
     const p2 = $('#chat-2pane');
     if (p2 && IS_MOBILE) p2.classList.toggle('show-room', !!st.room);
   }
+  // 当前是哪个视图，给 CSS 用：屏幕下方住着谁（小记的悬浮条…）只有它知道
+  document.body.dataset.view = st.view;
   $('#top-title').textContent = st.title || TITLES[st.view] || '公考助手';
   $('#nav-back').classList.toggle('hidden', stack.length <= 1);
   // 文档编辑器自带顶栏，隐藏全局顶栏
@@ -45,6 +47,8 @@ function render() {
   if (st.view !== 'docqa' && dqPoll) { clearInterval(dqPoll); dqPoll = null; }
   if (window.__padView) window.__padView(st.view);        // 做题页才出现草稿纸按钮
   if (window.__bmView) window.__bmView();                 // 阅读页：上次看到哪了
+  // 划重点的结果条/清单是 fixed 的顶层元素，换页或返回时先收走（回到原页会在 mkInject 里接回来）
+  if (window.__mkView) window.__mkView();
   // 有划重点的模块，在正文顶部长出那张卡（内容是异步渲染的，等一拍再注入）
   if (window.mkInject) setTimeout(() => mkInject(), 260);
   if (st.view !== 'slgrade' && matInited && !$('#matpad').classList.contains('hidden')) matClose();

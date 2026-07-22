@@ -104,6 +104,8 @@ window.Reader = {
   },
   ui() {
     $('#read-ctrl').classList.toggle('hidden', !this.playing);
+    // 朗读控制条占着手机端屏幕下方那一格，书签提示/划重点结果条得给它让位（见 style.css 的 --mkbot）
+    document.body.classList.toggle('reading', this.playing);
     $('#read-rate').textContent = this.rate().toFixed(1) + '×';
   },
 };

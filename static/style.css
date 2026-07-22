@@ -2670,8 +2670,10 @@ body.dark .matpad{background:#151b27;}
 .hy-story{color:var(--text);}
 .hy-point{padding:7px 10px;border-radius:8px;background:rgba(26,111,181,.07);}
 body.dark .hy-point{background:rgba(63,146,214,.13);}
-/* 书签提示条 */
-.bm-tip{position:fixed;left:50%;transform:translateX(-50%);top:calc(66px + env(safe-area-inset-top));
+/* 书签提示条：两端都钉在屏幕下方（顶部那一片是标题栏和正文开头，压上去正好挡住要读的第一段）。
+   离底边多高由 --mkbot 说了算 —— 下方还住着朗读控制条这些人，见「划重点」那一节。 */
+.bm-tip{position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--mkbot, 18px) + env(safe-area-inset-bottom));
   z-index:59;display:flex;align-items:center;gap:8px;padding:7px 10px 7px 13px;
   background:var(--card);border:1px solid var(--line);border-radius:22px;
   box-shadow:0 6px 22px rgba(20,40,80,.14);font-size:13px;}
@@ -2758,6 +2760,34 @@ body.dark .mk-card-t{color:#7fb0ff;border-left-color:#3a6ad0;}
 .mk-list.hidden{display:none;}
 .mk-lt{font-size:13.5px;font-weight:700;margin-bottom:6px;}
 body.dark .mk-bar,body.dark .mk-list{background:#1b2231;}
+/* 电脑端：按住结果条空白处可以拖走，位置记在 localStorage 里。
+   .mk-moved 时 left/top 由 JS 写成内联样式，这里只负责把居中用的 translateX 撤掉。 */
+body:not(.mobile-ui) .mk-bar{cursor:grab;}
+body:not(.mobile-ui) .mk-bar.dragging{cursor:grabbing;}
+.mk-bar{user-select:none;-webkit-user-select:none;}
+.mk-bar button{cursor:pointer;}
+.mk-bar.mk-moved,.mk-list.mk-moved{transform:none;}
+/* 手机端：书签提示条和划重点结果条都挪到屏幕下方 —— 顶部那一片是标题栏和正文开头，
+   条子压在上面正好挡住刚要读的第一段。清单则从结果条上方往上展开（位置由 mkPlaceList
+   按条子实测高度算，这里的 bottom 只是它测出来之前的初值）。
+
+   --mkbot = 离屏幕底边多高（书签提示条也用它，那条两端都在下方）。屏幕下方本来就住着人，
+   它们一露面就得往上让：
+     · 朗读控制条 .read-ctrl（z-70，会把条子整条盖住）—— body.reading 由 tts.js 打，两端都有
+     · 小记/知识库的悬浮条 .notes-pill（搜索/+/AI 三个主按钮）—— 只在手机端出现，按 data-view 认
+   left:50% 的写法在窄屏上还有个暗坑：定位块只剩右半屏，条子最宽就是半个屏幕，
+   「划出 12 处重点 · 缓存」会被挤成三行。改成左右都贴边 + margin auto 居中，
+   宽度按内容走、最多不超过屏宽。 */
+body{--mkbot:18px;}
+body.reading{--mkbot:76px;}
+body.mobile-ui[data-view="notes"],body.mobile-ui[data-view="notebook"]{--mkbot:86px;}
+body.mobile-ui.reading[data-view="notes"],
+body.mobile-ui.reading[data-view="notebook"]{--mkbot:140px;}   /* 两个都在，摞起来 */
+body.mobile-ui .bm-tip,body.mobile-ui .mk-bar{top:auto;
+  bottom:calc(var(--mkbot) + env(safe-area-inset-bottom));
+  left:0;right:0;transform:none;width:max-content;max-width:calc(100vw - 24px);margin:0 auto;}
+body.mobile-ui .mk-list{top:auto;bottom:calc(var(--mkbot) + 46px + env(safe-area-inset-bottom));
+  max-height:56vh;}
 body.mk-open .fab{display:none;}     /* 重点清单铺开时，悬浮球让位 */
 /* 常考成语/实词：收藏进「成语词语积累」 */
 .cki-star{float:right;border:none;background:none;cursor:pointer;font-size:19px;line-height:1;

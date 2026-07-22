@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, NW_KIND, api, c, esc, push,
+/* global $, IS_MOBILE, NW_KIND, api, c, esc, lsGet, lsSet, push,
    stack, toast */
 
 /* ================= 通用「划重点」（悬浮球 → 🖍） =================
@@ -71,7 +71,7 @@ function mkNodes(root, skip, sep) {
 function mkWrapOne(root, hit) {
   // 每次重新取一遍节点表：上一处标注会改变 DOM，偏移必须重算
   const nodes = mkNodes(root);
-  const k = NW_KIND[hit.kind] || NW_KIND['提法'];
+  const col = mkColor(hit.kind);
   for (let i = nodes.length - 1; i >= 0; i--) {
     const { n, start } = nodes[i];
     const end = start + n.nodeValue.length;
@@ -82,7 +82,7 @@ function mkWrapOne(root, hit) {
     r.setStart(n, s); r.setEnd(n, e);
     const mk = document.createElement('mark');
     mk.className = 'nw-mk gk-mk';
-    mk.style.setProperty('--mk', k.c);
+    mk.style.setProperty('--mk', col);
     mk.dataset.gkm = hit.i;
     mk.title = hit.kind + '：' + (hit.why || '');
     try { r.surroundContents(mk); } catch (_) { r.detach && r.detach(); continue; }
@@ -117,9 +117,10 @@ function mkClear() {
     p.normalize();
   });
   mkMarks = [];
+  mkBarState = null;
+  mkUnwatch();
   $('#mk-bar').classList.add('hidden');
-  $('#mk-list').classList.add('hidden');
-  document.body.classList.remove('mk-open');
+  mkHideList();
   if (window.mkInject) setTimeout(() => mkInject(), 60);   // 清完了，把「帮我划重点」的卡片长回来
 }
 /* 划重点：**按模块**做，不是一个全局按钮套所有页面。
@@ -129,6 +130,15 @@ function mkClear() {
    入口是各模块页顶部自动长出来的一张卡片（和时政那张一样），不在悬浮球里。 */
 const MK_COLORS = ['#c4661f', '#1e8449', '#1a6fb5', '#7a5cc0', '#b23b2e'];
 let mkProf = null, mkProfScope = '';
+
+/* 正文里的 <mark>、清单、图例，颜色必须出自同一处。
+   以前正文那一层查的是时政的 NW_KIND（只有 提法/数据/政策/金句 四类），范文的
+   「分论点/素材/论证/衔接」一个都查不到、全落到 NW_KIND['提法'] 的橙色上——
+   于是清单里五颜六色、正文里清一色橙。要先查本模块 profile 的颜色。 */
+function mkColor(kind) {
+  return (mkProf && mkProf.color && mkProf.color[kind])
+    || (NW_KIND[kind] && NW_KIND[kind].c) || MK_COLORS[0];
+}
 
 // 哪些页面配划重点：服务端有 profile 的都算（问一次缓存住）
 async function mkGetProf(scope) {
@@ -149,8 +159,9 @@ async function mkInject() {
   if (old) old.remove();
   if (!st || !MK_VIEWS.includes(st.view)) return;
   const root = mkPageRoot();
-  if (!root || mkText(root).replace(/\s+/g, ' ').trim().length < 120) return;   // 正文太短不值当
-  if (root.querySelector('mark.gk-mk')) return;                                  // 已经划过了
+  if (!root) return;
+  if (root.querySelector('mark.gk-mk')) return;                        // 已经划过了（结果条归 mkSyncBar 管）
+  if (mkText(root).replace(/\s+/g, ' ').trim().length < 120) return;   // 正文太短不值当
   let p;
   try { p = await mkGetProf(st.view); } catch (_) { return; }
   const card = document.createElement('div');
@@ -189,6 +200,7 @@ async function markPage(force) {
     if (!n) { toast('这页的正文和 AI 挑的句子对不上，换个页面试试', true); return; }
     const c = document.getElementById('mk-card'); if (c) c.remove();
     mkRenderBar(n, !!d.cached);
+    mkWatch();          // 这一屏的正文一旦被换掉，结果条自己收（见 mkSyncBar）
     toast('划出 ' + n + ' 处重点' + (d.cached ? '（缓存）' : ''));
   } catch (e) {
     toast(e.message, true);
@@ -197,25 +209,155 @@ async function markPage(force) {
 }
 function mkRenderBar(n, cached) {
   const p = mkProf || { name: '', kinds: [], color: {} };
-  const col = (k) => p.color[k] || (NW_KIND[k] && NW_KIND[k].c) || MK_COLORS[0];
+  /* profile 也一起记着：中途逛过别的模块，mkProf 已经被换成人家的了，
+     回来重建这张清单不能拿错颜色和类型名。
+     st 记的是**当时的导航栈顶对象**：视图名认不出「换了一篇文章」（两篇成文都是
+     writed），但 push 进来的是一个新对象、back 回去的还是原来那个 —— 对象身份
+     恰好就是「还是不是这一屏」。 */
+  mkBarState = { n, cached, prof: mkProf, scope: mkProfScope, st: stack[stack.length - 1] };
   $('#mk-bar').innerHTML = `🖍 划出 <b>${n}</b> 处重点${cached ? ' <i>· 缓存</i>' : ''}
     <button class="btn tiny" id="mk-toggle">看清单</button>
     <button class="mk-x" id="mk-clear" title="清除">✕</button>`;
-  $('#mk-bar').classList.remove('hidden');
   $('#mk-list').innerHTML = `<div class="mk-lt">🖍 ${esc(p.name)} · 重点考点（${mkMarks.length} 处）</div>
-    ${mkMarks.map((m, i) => `<div class="nw-m" data-mkgo="${i}" style="--mk:${col(m.kind)}">
+    ${mkMarks.map((m, i) => `<div class="nw-m" data-mkgo="${i}" style="--mk:${mkColor(m.kind)}">
         <span class="nw-k">${esc(m.kind)}</span>
         <span class="nw-q">${esc(m.quote)}</span>
         <span class="nw-w">${esc(m.why || '')}</span></div>`).join('')}
     <div class="nw-legend">${p.kinds.map(k =>
-      `<span style="--mk:${col(k.k)}"><i></i>${esc(k.k)}：${esc(k.d)}</span>`).join('')}</div>`;
+      `<span style="--mk:${mkColor(k.k)}"><i></i>${esc(k.k)}：${esc(k.d)}</span>`).join('')}</div>`;
+  mkShowBar();
 }
+/* ---- 结果条摆哪儿：手机端钉在屏幕下方，电脑端可以拖、拖到哪下次还在哪 ---- */
+const MK_POS_KEY = 'gk.mkbar.pos';
+let mkBarState = null;      // 结果条现在显示的内容（换页收起后原样接回来）
+let mkPos = null;           // 电脑端拖到的位置 {x,y}（左上角 px）
+
+function mkLoadPos() {
+  if (mkPos) return mkPos;
+  try { mkPos = JSON.parse(lsGet(MK_POS_KEY, 'null')); } catch (_) { mkPos = null; }
+  return mkPos;
+}
+// 贴回记住的位置，并夹回视口内 —— 上次拖到右下角、这次窗口小了，不能让它跑到屏幕外面去
+function mkApplyPos() {
+  const bar = $('#mk-bar');
+  const p = IS_MOBILE ? null : mkLoadPos();
+  if (!p) { bar.classList.remove('mk-moved'); bar.style.left = bar.style.top = ''; return; }
+  bar.classList.add('mk-moved');
+  bar.style.left = Math.min(Math.max(8, p.x), Math.max(8, innerWidth - bar.offsetWidth - 8)) + 'px';
+  bar.style.top = Math.min(Math.max(8, p.y), Math.max(8, innerHeight - bar.offsetHeight - 8)) + 'px';
+}
+// 清单跟着结果条走：下面放不下就翻到上面去
+function mkPlaceList() {
+  const list = $('#mk-list'), bar = $('#mk-bar');
+  const reset = () => { list.classList.remove('mk-moved'); list.style.left = list.style.top = ''; };
+  if (IS_MOBILE) {
+    /* 手机端：结果条钉在屏幕下方，清单贴着它往上展开。条子多高**实测**——
+       写死一个 bottom 常数的话，条子一换行（窄屏 + 长模块名）就被清单压住，
+       「看清单」按钮点都点不到。 */
+    reset();
+    list.style.bottom = Math.round(innerHeight - bar.getBoundingClientRect().top + 10) + 'px';
+    return;
+  }
+  list.style.bottom = '';
+  if (!bar.classList.contains('mk-moved')) { reset(); return; }
+  list.classList.add('mk-moved');
+  const b = bar.getBoundingClientRect(), lw = list.offsetWidth, lh = list.offsetHeight;
+  list.style.left = Math.min(Math.max(8, b.left + b.width / 2 - lw / 2),
+    Math.max(8, innerWidth - lw - 8)) + 'px';
+  list.style.top = (b.bottom + 8 + lh <= innerHeight - 8 ? b.bottom + 8
+    : Math.max(8, b.top - lh - 8)) + 'px';
+}
+function mkShowBar() { $('#mk-bar').classList.remove('hidden'); mkApplyPos(); }
+function mkHideList() {
+  $('#mk-list').classList.add('hidden');
+  document.body.classList.remove('mk-open');
+  const t = $('#mk-toggle'); if (t) t.textContent = '看清单';
+}
+
+/* ---- 结果条什么时候在：只有一条规矩 ----
+   **它描述的那些 <mark> 还在眼前这一屏上**，它才在。别的判断都靠不住：
+   结果条和清单是 position:fixed 的顶层元素，页面切走了自己不会消失；而「切走了没有」
+   既不能靠视图名认（同一个 writed 下有无数篇成文），也不能靠定时器猜（正文是异步渲染的，
+   在成文里 fetch 期间旧正文还挂着，等 260ms 再看就会把上一篇的结果条接到这一篇头上）。
+   所以：位置变化（render）和内容变化（MutationObserver）都来这儿复核一遍。 */
+function mkOnPage() {
+  if (!mkBarState) return false;
+  if (stack[stack.length - 1] !== mkBarState.st) return false;   // 换了一屏（新 push 的是另一个对象）
+  const root = mkPageRoot();                                     // 视图藏起来时它返回 null
+  return !!(root && root.querySelector('mark.gk-mk'));
+}
+function mkSyncBar() {
+  if (mkOnPage()) {
+    if (!$('#mk-bar').classList.contains('hidden')) return;      // 已经在了，别重画（清单可能正开着）
+    mkProf = mkBarState.prof; mkProfScope = mkBarState.scope;    // 换回这一页的 profile
+    mkRenderBar(mkBarState.n, mkBarState.cached);
+    return;
+  }
+  $('#mk-bar').classList.add('hidden');
+  mkHideList();
+}
+window.__mkView = mkSyncBar;      // shell.js 的 render() 每次换页都叫一声
+
+/* 正文被换掉（同一屏里重画、或者打开了另一篇）时，那些 <mark> 就没了 —— 结果条得跟着收。
+   DOM 变化是唯一可靠的信号，靠延时猜时机迟早猜错。整份卷子/长文的 childList 变动不算频繁，
+   再加 120ms 合并，代价可以忽略。 */
+let mkObs = null, mkSyncT = 0;
+function mkWatch() {
+  if (mkObs) { mkObs.disconnect(); mkObs = null; }
+  const root = mkPageRoot();
+  const box = root && root.closest('.view');
+  if (!box || !window.MutationObserver) return;
+  mkObs = new MutationObserver(() => {
+    clearTimeout(mkSyncT);
+    mkSyncT = setTimeout(mkSyncBar, 120);
+  });
+  mkObs.observe(box, { childList: true, subtree: true });
+}
+function mkUnwatch() {
+  if (mkObs) { mkObs.disconnect(); mkObs = null; }
+  clearTimeout(mkSyncT);
+}
+
+// 电脑端：按住结果条空白处拖（按在按钮上不算拖），松手记住位置
+$('#mk-bar').addEventListener('pointerdown', e => {
+  if (IS_MOBILE || e.target.closest('button')) return;
+  const bar = $('#mk-bar'), r = bar.getBoundingClientRect();
+  const dx = e.clientX - r.left, dy = e.clientY - r.top;
+  let moved = false;
+  const move = (ev) => {
+    // 挪够 4px 才算拖：手一抖就跑位的话，点「看清单」都点不准
+    if (!moved && Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) < 4) return;
+    moved = true;
+    bar.classList.add('mk-moved', 'dragging');
+    mkPos = { x: ev.clientX - dx, y: ev.clientY - dy };
+    mkApplyPos();
+    if (!$('#mk-list').classList.contains('hidden')) mkPlaceList();
+  };
+  const up = () => {
+    bar.removeEventListener('pointermove', move);
+    bar.removeEventListener('pointerup', up);
+    bar.removeEventListener('pointercancel', up);
+    bar.classList.remove('dragging');
+    if (moved) lsSet(MK_POS_KEY, JSON.stringify(mkPos));
+  };
+  try { bar.setPointerCapture(e.pointerId); } catch (_) { /* 捕获不到就按普通 move 走 */ }
+  bar.addEventListener('pointermove', move);
+  bar.addEventListener('pointerup', up);
+  bar.addEventListener('pointercancel', up);
+});
+addEventListener('resize', () => {
+  if ($('#mk-bar').classList.contains('hidden')) return;
+  mkApplyPos();
+  if (!$('#mk-list').classList.contains('hidden')) mkPlaceList();
+});
+
 document.addEventListener('click', e => {
   if (e.target.closest('#mk-clear')) { mkClear(); return; }
   if (e.target.closest('#mk-toggle')) {
     const on = $('#mk-list').classList.toggle('hidden');
     $('#mk-toggle').textContent = on ? '看清单' : '收起清单';
     document.body.classList.toggle('mk-open', !on);   // 清单铺开时把悬浮球收起来，别互相挡
+    if (!on) mkPlaceList();
     return;
   }
   const go = e.target.closest('[data-mkgo]');
