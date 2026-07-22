@@ -17,7 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import mods.dailytest as DT  # noqa: E402
-from mods.drill import assemble_items  # noqa: E402
+from mods.drill import _assemble_items  # noqa: E402
 
 TODAY = "2026-07-22"
 
@@ -128,7 +128,7 @@ class TestGlobalPlacement:
 
     def test_整卷答案不会全落在同一个字母(self, db):
         raws = [self._raw(i, "常识判断") for i in range(12)]
-        got = assemble_items(raws, len(raws), None)
+        got = _assemble_items(raws, None)[0]
         letters = Counter(a for _it, _q, a, _o in got)
         assert len(letters) == 4, "一整份卷子只用到了 %s" % dict(letters)
         assert max(letters.values()) - min(letters.values()) <= 1, dict(letters)
@@ -136,11 +136,11 @@ class TestGlobalPlacement:
     def test_板块标签跟着题目走(self, db):
         """全局重排不能把 module 弄丢——丢了配额统计和排序就全乱。"""
         raws = [self._raw(i, m) for i, m in enumerate(["言语理解", "判断推理", "常识判断"])]
-        got = assemble_items(raws, len(raws), None)
+        got = _assemble_items(raws, None)[0]
         assert [it.get("module") for it, _q, _a, _o in got] == ["言语理解", "判断推理", "常识判断"]
 
     def test_解析字母跟着最终位置走(self, db):
-        got = assemble_items([self._raw(1, "常识判断")], 1, None)
+        got = _assemble_items([self._raw(1, "常识判断")], None)[0]
         it, _q, ans, _o = got[0]
         assert it["explain"].startswith("正确答案 %s：" % ans)
 
@@ -166,7 +166,7 @@ def test_json可序列化(db):
     """题目要存进 daily_quiz 的 questions_json，带不进去的字段会当场炸。"""
     raws = [{"q": "题", "right": "对", "wrong": ["a", "b", "c"],
              "why_right": "r", "why_wrong": ["x", "y", "z"], "module": "常识判断"}]
-    got = assemble_items(raws, 1, None)
+    got = _assemble_items(raws, None)[0]
     it, q, ans, opts = got[0]
     json.dumps({"q": q, "options": opts, "answer": ans, "explain": it["explain"]},
                ensure_ascii=False)

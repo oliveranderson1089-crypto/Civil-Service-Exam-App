@@ -582,19 +582,22 @@ def _assemble_items(got, prof, stat=None):
         if not q or not right or len(wrong) != 3:
             stat["bad"] = stat.get("bad", 0) + 1
             continue
-        # 老格式（options+answer）的解析里带字母引用，一重排就全指错，只能保持原位。
-        # 注意：**只有入选的题才从 slots 取一张牌** —— 被拒的题不该消耗名额，
-        # 否则一批里刷掉一半时，剩下那半的字母分布又会失衡（正是要修的毛病）。
+        # 先用**规范顺序**把关，再抽牌。两项检查（选项互不相同、篇幅像不像真题）
+        # 都与选项顺序无关，所以可以提前做 —— 这样**只有入选的题才消耗一张牌**。
+        # 顺序反过来的话，被护栏拒掉的题也会吃掉名额，一批里刷掉一半时剩下那半的
+        # 字母分布又会失衡（正是这段代码要修的毛病）。
+        cand = [right] + wrong
+        if len(set(cand)) != 4 or not all(cand):
+            stat["bad"] = stat.get("bad", 0) + 1
+            continue
+        if not _style_ok(prof, q, cand):
+            stat["style"] = stat.get("style", 0) + 1
+            continue
+        # 老格式（options+answer）的解析里带字母引用，一重排就全指错，只能保持原位
         pos = "ABCD".index(next(slots)) if can_place else 0
         body = wrong[:pos] + [right] + wrong[pos:]
         ans = "ABCD"[pos]
-        if len(set(body)) != 4 or not all(body):
-            stat["bad"] = stat.get("bad", 0) + 1
-            continue
         it = dict(it, explain=_compose_explain(ans, why_r, why_w, wrong, body))
-        if not _style_ok(prof, q, body):
-            stat["style"] = stat.get("style", 0) + 1
-            continue
         ready.append((it, q, ans, ["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)]))
     return ready, stat
 
@@ -859,26 +862,23 @@ def _bank_take(db, board, qtype, level, n):
 _REAL_SRC_MIN = 5          # 少于这么多道就别开真题模式了，刷两轮就重复
 
 
-def _real_count(db, board, qtype):
-    """这个(板块,题型)有多少道能发的真题 —— 前端据此决定要不要把「真题练习」置灰。"""
-    try:
-        return db.execute(
-            "SELECT COUNT(*) FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
-            "WHERE " + _REAL_OK, _real_args(board, qtype)).fetchone()[0]
-    except sqlite3.Error:
-        return 0               # 真题库还没导入（新库）
+def _real_counts(db, board, year_min=0):
+    """整个板块每个题型有多少道能发的真题 —— **一次 GROUP BY**，别逐题型各查一次。
 
-
-def _real_counts(db, board):
-    """整个板块每个题型有多少道能发的真题 —— 一次 GROUP BY，别逐题型查。
-       前端据此决定要不要把「真题练习」这个题源置灰。"""
+    ⚠️ 必须跟着年份筛一起算。不筛的话，前端切到「近 3 年」后卡片上仍写着全量道数
+    （语境分析全量 334 道、2021 年后只剩 74 道、2023 年后更少），
+    用户按 334 这个数以为够刷，点进去可能直接 404 —— 数字不能撒谎。
+    """
+    where = [realref.servable("rq", "re"), "rq.module=?"]
+    args = [realref.board_module(board)]
+    if year_min:
+        where.append("rq.year_max>=?")
+        args.append(year_min)
     try:
         return {r[0]: r[1] for r in db.execute(
             "SELECT %s t, COUNT(*) FROM real_questions rq "
-            "LEFT JOIN real_explains re ON re.qid=rq.id "
-            "WHERE %s AND rq.module=? GROUP BY 1"
-            % (realref.qtype_expr("rq", "re"), realref.servable("rq", "re")),
-            (realref.board_module(board),))}
+            "LEFT JOIN real_explains re ON re.qid=rq.id WHERE %s GROUP BY 1"
+            % (realref.qtype_expr("rq", "re"), " AND ".join(where)), args)}
     except sqlite3.Error:
         return {}              # 真题库还没导入（新库）
 
@@ -1021,6 +1021,8 @@ def drill_types():
     """题型清单 + 我在每个题型上的正确率和平均用时。弱的排前面 —— 该练哪个不用自己想。"""
     board = (request.args.get("board") or "").strip()
     level = (request.args.get("level") or "mid").strip()
+    ys = (request.args.get("year_min") or "").strip()
+    year_min = int(ys) if ys.isdigit() else 0
     if board not in DRILL_TYPES:
         return jsonify({"error": "这个板块没有专项练"}), 400
     db = get_db()
@@ -1033,7 +1035,7 @@ def drill_types():
         "WHERE board=? AND level=? GROUP BY qtype", (board, level))}
     # 整个板块的真题存量**一次 GROUP BY 算完**，别每个题型各查一次：
     # 一个板块最多 14 个题型，这里是专项练首页的同步路径。
-    real_cnt = _real_counts(db, board)
+    real_cnt = _real_counts(db, board, year_min)
     items = []
     for i, (k, desc, eng) in enumerate(DRILL_TYPES[board]):
         st = stat.get(k) or {}
@@ -1093,6 +1095,15 @@ def drill_quiz():
     # 而这是参数问题，该说清楚，不该崩。
     ys = str(d.get("year_min") or "").strip()
     year_min = max(0, min(2030, int(ys))) if ys.isdigit() else 0
+    if src == "real" and qtype:
+        # real_ok 这个契约得由服务端兑现。只在 /api/drill/types 里算给前端置灰的话，
+        # 桌面端/安卓端或旧缓存的页面绕过 UI 就能在只有 2 道真题的题型上开真题模式，
+        # 拿到一份两道题的「练习」。
+        n_real = _real_counts(get_db(), board, year_min).get(qtype, 0)
+        if n_real < _REAL_SRC_MIN:
+            return jsonify({"error": "「%s · %s」可用真题只有 %d 道（少于 %d 道就别单练了，"
+                                     "刷两轮全是重复），换「AI 出题」或放宽年份吧。"
+                                     % (board, qtype, n_real, _REAL_SRC_MIN)}), 404
     items = _drill_gen(get_db(), board, qtype, n, level, src, year_min)
     if not items:
         if src == "real":
@@ -1101,12 +1112,13 @@ def drill_quiz():
             # 混合练时 qtype 是空的，按**板块**统计——原先直接给 0，会说成
             # 「真题库里没有这个题型的题」，可该板块明明有两千道，只是被年份筛没了
             # 或者都做完了。提示不能撒谎，否则用户按提示去放宽年份也不对症。
+            cnt = _real_counts(get_db(), board, year_min)   # 一次 GROUP BY，别逐题型查
             if qtype:
-                n_real = _real_count(get_db(), board, qtype)
+                n_real = cnt.get(qtype, 0)
                 why = ("这个题型真题库里只有 %d 道" % n_real) if n_real \
                     else "真题库里没有这个题型的题"
             else:
-                n_real = sum(_real_count(get_db(), board, t[0]) for t in DRILL_TYPES[board])
+                n_real = sum(cnt.get(t[0], 0) for t in DRILL_TYPES[board])
                 why = ("这个板块 %d 道真题你都做过了" % n_real) if n_real \
                     else "真题库里还没有这个板块的题"
             if year_min:
@@ -1207,7 +1219,11 @@ def drill_done():
     cur = db.execute(
         "INSERT INTO drill_records(user_id,board,qtype,level,mode,total,correct,seconds,items,answers) "
         "VALUES(?,?,?,?,?,?,?,?,?,?)",
-        (uid(), board, (d.get("type") or "").strip(), level, mode, len(items), ok_n,
+        # 难度取**题目自己的**，和上面 drill_log 同一个口径 —— 两处不一致的话，
+        # 同一次真题练习会在记录列表里显示成「进阶」、在正确率统计里归到「real」档，
+        # 排查时无从对账。整批题的 level 是一致的，取第一道即可。
+        (uid(), board, (d.get("type") or "").strip(),
+         (items[0].get("level") if items else None) or level, mode, len(items), ok_n,
          sum(secs), json.dumps(items, ensure_ascii=False), json.dumps(results, ensure_ascii=False)))
     db.commit()
     acc = ok_n / len(items) if items else 0

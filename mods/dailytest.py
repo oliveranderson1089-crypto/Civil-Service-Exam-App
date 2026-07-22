@@ -28,8 +28,8 @@ from flask import Blueprint, jsonify, request
 from core import get_db, log, uid
 from mods import realprofile
 from mods.ai import _ai_call_or_error
-from mods.drill import (_dtest_to_wrongq, _real_examples, assemble_items,
-                        audit_items, parse_items)
+from mods.drill import (_assemble_items, _audit_items, _dtest_to_wrongq,
+                        _real_examples, _parse_items)
 
 bp = Blueprint("dailytest", __name__)
 
@@ -180,14 +180,17 @@ def _dtest_one(module, k, mat, prof, examples):
     if err:
         log.warning("每日测试 %s 出题失败：%s", module, err)
         return []
-    ready = assemble_items(parse_items(rep, "每日测试 " + module), want, prof)
+    # 位置分配和题数**已经解耦**（drill._slot_letters 每发完一副 ABCD 重洗一副），
+    # 所以这里不用再把 want 传进去 —— 早先按题数铺固定表时，每个板块才 1~4 道，
+    # want=1 会让整块的答案全是 A。
+    ready, _st = _assemble_items(_parse_items(rep, "每日测试 " + module), prof)
     if not ready:
         return []
     # ★ 双模型核验：这是全站最后一个裸奔的出题入口。答案不一致的**直接丢** ——
     #   和专项练不同，每日测试没有题库可以留存回查，存疑的题留着没用，只会误人。
     board, qtype = _PROF_QTYPE.get(module, (module, ""))
     out = []
-    for (it, q, ans, opts), au in zip(ready, audit_items(ready, board, qtype)):
+    for (it, q, ans, opts), au in zip(ready, _audit_items(ready, board, qtype), strict=True):
         if not au or au[0] != ans or au[1] != "ok":
             continue
         # ⚠️ 这里**先不定答案位置**，把模型交的原始 right/wrong/why_* 原样带回去。
@@ -248,7 +251,7 @@ def _gen_dtest(db, today, n=10):
     #   分板块各放各的时每块才 2~3 道，均衡不了 —— 实测出过一份 B 53% / D 0% 的卷子。
     random.shuffle(uniq)                              # 先打散板块，免得同一块的题挤在相邻位置
     ai_final = []
-    for it, q, ans, opts in assemble_items(uniq, len(uniq), None):
+    for it, q, ans, opts in _assemble_items(uniq, None)[0]:
         ai_final.append({"q": q, "options": opts, "answer": ans,
                          "explain": it.get("explain") or "", "module": it.get("module") or "",
                          "source": (it.get("source") or "").strip()[:60]})

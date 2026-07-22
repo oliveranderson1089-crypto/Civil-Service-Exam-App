@@ -126,7 +126,7 @@ class TestPayload:
         con = sqlite3.connect(":memory:")
         con.row_factory = sqlite3.Row
         assert D._real_take(con, "言语理解与表达", "语境分析", 4) == []
-        assert D._real_count(con, "言语理解与表达", "语境分析") == 0
+        assert D._real_counts(con, "言语理解与表达") == {}
 
 
 class TestCount:
@@ -135,8 +135,15 @@ class TestCount:
            这种就该明说「没有」，不该假装有。"""
         for i in range(3):
             _real(db, i + 1)
-        assert D._real_count(db, "言语理解与表达", "语境分析") == 3
+        assert D._real_counts(db, "言语理解与表达").get("语境分析") == 3
         assert 3 < D._REAL_SRC_MIN, "阈值定得太低，两三道题刷两轮就重复了"
+
+    def test_存量要跟着年份筛(self, db):
+        """前端切到「近 3 年」后，卡片上不能还写着全量道数——数字不能撒谎。"""
+        _real(db, 1, year=2018)
+        _real(db, 2, year=2024)
+        assert D._real_counts(db, "言语理解与表达").get("语境分析") == 2
+        assert D._real_counts(db, "言语理解与表达", 2021).get("语境分析") == 1
 
 
 class TestExplain:
@@ -188,3 +195,52 @@ class TestWrongq:
         D._dtest_to_wrongq(db, [it], [{"correct": False, "your": "B", "answer": "A"}])
         got = db.execute("SELECT question FROM wrong_questions").fetchone()[0]
         assert "图形推理" not in got, got[:60]
+
+
+class TestAssemble:
+    """一批题的答案字母分布 —— 用户点名要求过：一次出题不能所有题都选同一个选项。"""
+
+    @staticmethod
+    def _mk(i):
+        return {"q": "题干" + "X" * 80, "right": "对%d" % i,
+                "wrong": ["a%d" % i, "b%d" % i, "c%d" % i],
+                "why_right": "因为", "why_wrong": ["甲错", "乙错", "丙错"]}
+
+    def test_四道题就该用满四个字母(self):
+        for _ in range(20):                       # 洗牌有随机性，多跑几轮
+            ready, _st = D._assemble_items([self._mk(i) for i in range(4)], None)
+            assert len(set(r[2] for r in ready)) == 4
+
+    def test_题数少于四道也不会永远是A(self):
+        """原先按题数铺固定表，1 道时整批全是 A（实测 8 道喂进去全 A）。"""
+        seen = set()
+        for _ in range(40):
+            ready, _st = D._assemble_items([self._mk(0)], None)
+            seen.add(ready[0][2])
+        assert len(seen) == 4, "单道题的答案位置不是随机的：%s" % seen
+
+    def test_连续两副牌不构成固定循环(self):
+        """按题数铺表时 want=4 会得到 DBACDBAC，前四道之后完全可预测。"""
+        same = 0
+        for _ in range(40):
+            ready, _st = D._assemble_items([self._mk(i) for i in range(8)], None)
+            L = [r[2] for r in ready]
+            if L[:4] == L[4:]:
+                same += 1
+        assert same < 20, "前后两副牌总是一样，能背下来蒙"
+
+    def test_被拒的题不占位置名额(self):
+        """一批里刷掉一半时，剩下那半的字母分布不能失衡。"""
+        bad = {"q": "太短", "right": "对", "wrong": ["a", "b", "c"],
+               "why_right": "因", "why_wrong": ["x", "y", "z"]}
+        got = []
+        for i in range(4):
+            got += [bad, self._mk(i)]             # 好坏交替
+        prof = {"med": 100, "stem": (80, 200), "opt": (1, 40)}
+        ready, st = D._assemble_items(got, prof)
+        assert st["style"] == 4 and len(ready) == 4
+        assert len(set(r[2] for r in ready)) == 4, "被拒的题吃掉了位置名额"
+
+    def test_计数一并返回而不是只靠改写入参(self):
+        ready, st = D._assemble_items([{"q": "x"}], None)
+        assert ready == [] and st["bad"] == 1

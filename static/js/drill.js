@@ -29,11 +29,24 @@ function openDrill(board) {
   push({ view: 'drill', title: board + ' · 专项练' });
   loadDrillTypes();
 }
+let drTypesData = null;      // 上一次拉到的题型清单；切题源时只重渲染，不重拉
 async function loadDrillTypes() {
   const box = $('#dr-types');
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
-    const d = await api(`/api/drill/types?board=${encodeURIComponent(drBoard)}&level=${drLevel}`);
+    /* 真题存量要跟着年份筛一起算：不传的话，切到「近 3 年」后卡片上还写着全量道数
+       （语境分析全量 334 道、2021 年后只剩 74 道），用户按 334 以为够刷，点进去 404。 */
+    const yq = drSrc === 'real' && drYear ? `&year_min=${drYear}` : '';
+    const d = await api(`/api/drill/types?board=${encodeURIComponent(drBoard)}&level=${drLevel}${yq}`);
+    drTypesData = d;
+    renderDrillTypes();
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+}
+function renderDrillTypes() {
+  const box = $('#dr-types');
+  const d = drTypesData;
+  if (!d) return;
+  {
     drLimit = d.limit; drLevels = d.levels; drCoef = d.coef;
     $('#dr-intro').innerHTML = d.ai
       ? `这一块考的是<b>知识</b>，题由 AI 按考试标准出，<b>并且必须过第二个模型的独立核验</b>
@@ -72,9 +85,17 @@ async function loadDrillTypes() {
              ${t.real_n ? `📄 真题 ${t.real_n} 道` : '📄 无真题'}</span>`}
           ${done ? `做过 ${t.n} 题 · 平均 ${t.sec} 秒${t.sec > drLimit ? '（超时）' : ''}` : `限时 ${drLimit} 秒/题`}</div>
       </div>`;
-    }).join('') + `<div class="dr-card dr-all" data-drt=""><div class="dr-card-h"><b>🎲 混合练</b></div>
-      <p class="dr-desc">所有题型随机出，模拟真实考场</p><div class="dr-meta">限时 ${drLimit} 秒/题</div></div>`;
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+    }).join('') + (() => {
+      /* 混合练也要跟着置灰。它原先是拼在后面的字符串常量、没参与上面的 noReal 判断，
+         于是政治理论那种四个题型全灰的板块，混合练还亮着，点了必撞 404。 */
+      const tot = (d.types || []).reduce((a, t) => a + (t.real_n || 0), 0);
+      const off = drSrc === 'real' && tot < 5;
+      return `<div class="dr-card dr-all${off ? ' dr-off' : ''}" data-drt=""${off ? ' data-droff="1"' : ''}>
+        <div class="dr-card-h"><b>🎲 混合练</b></div>
+        <p class="dr-desc">所有题型随机出，模拟真实考场</p>
+        <div class="dr-meta">${drSrc === 'ai' ? '' : `<span class="dr-real${tot >= 5 ? '' : ' none'}">📄 真题 ${tot} 道</span> · `}限时 ${drLimit} 秒/题</div></div>`;
+    })();
+  }
 }
 function drCoefTip() {
   const l = drLevels.find(x => x.k === drLevel) || {};
@@ -88,12 +109,15 @@ $('#dr-srcs').addEventListener('click', e => {
   drSrc = b.dataset.drs;
   document.querySelectorAll('#dr-srcs .chip').forEach(x => x.classList.toggle('active', x === b));
   drSrcTip();
-  loadDrillTypes();          // 题源变了，卡片上的存量/置灰也要跟着变
+  // 存量/置灰都来自已经拿到的那份响应，重渲染就够。只有从 ai 切到 real 且带着
+  // 年份筛选时才需要重拉（存量要按年份算）。
+  if (drSrc === 'real' && drYear) loadDrillTypes(); else renderDrillTypes();
 });
 $('#dr-years').addEventListener('click', e => {
   const b = e.target.closest('[data-dry]'); if (!b) return;
   drYear = +b.dataset.dry;
   document.querySelectorAll('#dr-years .chip').forEach(x => x.classList.toggle('active', x === b));
+  loadDrillTypes();          // 存量是按年份算的，换年份必须重拉
 });
 function drSrcTip() {
   const real = drSrc === 'real';
