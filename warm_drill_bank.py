@@ -84,7 +84,13 @@ def main():
         rounds = 0
         while have < a.target and rounds < a.max_rounds:
             rounds += 1
-            want = min(12, max(6, (a.target - have) * 2))   # 核验会刷掉一部分，多出一些
+            # ×4 且按 4 的倍数取，和 mods/drill.py 的 _bank_take 同一个口径：
+            # 接了真题画像、护栏按真题 10% 分位收紧之后，一批要被刷掉一半以上
+            # （实测词语辨析 10 道只留 2 道）。按老的 ×2、上限 12 补，一轮出 2~7 道，
+            # max_rounds 用完还是填不满 target，夜间补库跑完题库依旧缺。
+            # 取 4 的倍数是因为出题时正确答案的位置表按 want 均匀铺（见 _bank_fill），
+            # 不是 4 的倍数就会有某个字母分得少。
+            want = min(16, max(8, ((a.target - have) * 4 + 3) // 4 * 4))
             try:
                 s = _bank_fill(con, b, t, lv, want=want)
             except Exception as e:

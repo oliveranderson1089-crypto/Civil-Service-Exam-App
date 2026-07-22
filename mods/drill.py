@@ -360,9 +360,68 @@ def _salvage_items(rep):
             except Exception:
                 continue
             # 只收长得像题目的：外层的 {"items":…} 和解析里嵌的小对象都会走到这儿
-            if isinstance(o, dict) and o.get("q") and o.get("options"):
+            # 新格式是 q + right + wrong，老格式是 q + options —— 两种都要认，
+            # 只认老的话，截断时新格式一道也捞不回来
+            if isinstance(o, dict) and o.get("q") and (o.get("right") or o.get("options")):
                 out.append(o)
     return out
+
+
+def _split_rw(it):
+    """把模型交的一道题拆成 (正确项, 三个干扰项, 为什么对, 三条为什么错, 能不能重排)。
+
+    新格式是 right/wrong/why_right/why_wrong —— **字母一个都不出现**，
+    这样正确项排第几位完全由我们说了算（见 _bank_fill 里那段）。
+    仍然认老格式（options + answer + explain），因为：
+      · 模型偶尔会退回去按老样子输出；
+      · _salvage_items 从截断的 JSON 里捞出来的可能是任一种。
+    老格式下解析里带着字母引用，所以**位置只能照它自己排的来**，不重排。
+    """
+    right = (it.get("right") or "").strip()
+    wrong = [str(x).strip() for x in (it.get("wrong") or []) if str(x).strip()]
+    if right and len(wrong) == 3:
+        why_w = [str(x).strip() for x in (it.get("why_wrong") or [])]
+        return right, wrong, (it.get("why_right") or "").strip(), why_w, True
+
+    # 老格式兜底：从 options + answer 还原
+    opts = it.get("options") or []
+    ans = (it.get("answer") or "").strip().upper()[:1]
+    if len(opts) != 4 or ans not in "ABCD":
+        return "", [], "", [], False
+    body = [re.sub(r"^[A-D][.、．)]\s*", "", str(o)).strip() for o in opts]
+    i = "ABCD".index(ans)
+    # ⚠️ 最后那个 False = **不许重排**。老格式的解析正文里带着字母引用
+    #    （「故 D 错误」「A、B、C 均为…」），一重排就全对不上号了。
+    #    这类题只能保持模型自己排的顺序，代价是它们仍然偏 A —— 但那也远好过解析指错选项。
+    return body[i], body[:i] + body[i + 1:], (it.get("explain") or "").strip(), [], False
+
+
+def _compose_explain(ans, why_right, why_wrong, wrong, body):
+    """按**最终排好的位置**拼解析文字。
+
+    为什么要自己拼：模型不写字母，我们才敢重排选项；重排之后解析里的字母当然也得由我们填。
+    反过来说，如果直接拿模型写好的带字母解析去重排选项，就得回头改写解析正文，
+    而正文里还有「A股」「DNA」「B超」这类不能动的字母 —— 那条路比字母倾斜更危险。
+
+    why_wrong 是空的（老格式兜底）就把原解析原样返回，不硬拼。
+    """
+    if not why_wrong:
+        return why_right
+
+    def clean(t):
+        # 模型每条都自带句号，直接用「；」拼会拼出「…符合语境。；B 项错在…」
+        return str(t).strip().rstrip("。；;，,")
+
+    parts = ["正确答案 %s：%s" % (ans, clean(why_right))] if why_right else []
+    for w, why in zip(wrong, why_wrong):
+        if not clean(why):
+            continue
+        try:
+            letter = "ABCD"[body.index(w)]
+        except ValueError:
+            continue                     # 干扰项文本对不上（模型改了写法），跳过这条
+        parts.append("%s 项错在：%s" % (letter, clean(why)))
+    return "；".join(parts) + "。" if parts else ""
 
 
 def _bank_avoid(db, board, qtype, n=25):
@@ -456,16 +515,7 @@ def _real_examples(db, board, qtype, n=3):
     return out
 
 
-def _real_style(db, board, qtype):
-    """真题在这个题型上的体量画像。**统计逻辑在 mods/realprofile.py**，这里只是取。
-
-    每日巩固测试（P5）要用同一份画像，所以不能留在 drill 里各算各的。
-    样本不足返回 None —— 调用方按「不卡篇幅」处理：没有约束好过用错模块的约束。
-    """
-    return realprofile.get(db, board, qtype)
-
-
-def _style_ok(style, q, opts):
+def _style_ok(prof, q, opts):
     """生成的题在不在真题的体量范围里。
 
     ⚠️ **下限不能留太多余量**。原先写的是 `p10 × 0.4`，意思是「只拦离谱的」——
@@ -480,12 +530,12 @@ def _style_ok(style, q, opts):
     提示词那边给的是**中位数**（更高），两者配合：告诉模型往中位数写，按 p10 收。
     上限仍然宽松：写长了不像真题，但至少是道能做的题，危害小得多。
     """
-    if not style:
+    if not prof:
         return True
-    lo, hi = style["stem"]
+    lo, hi = prof["stem"]
     if not (lo <= len(q) <= hi * 2.0 + 40):
         return False
-    olo, ohi = style["opt"]
+    olo, ohi = prof["opt"]
     avg = sum(len(o) for o in opts) / 4.0
     return olo * 0.3 <= avg <= ohi * 2.5 + 20
 
@@ -501,7 +551,7 @@ def _bank_fill(db, board, qtype, level, want=8):
     stat = {"ok": 0, "dup": 0, "bad": 0, "flaw": 0, "style": 0}
     mat = _bank_material(db, board, qtype)
     examples = _real_examples(db, board, qtype)
-    style = _real_style(db, board, qtype)
+    prof = realprofile.get(db, board, qtype)   # 真题画像：篇幅/惯用问法/空数，样本不足时是 None
     tip = DRILL_TIP.get(qtype, "")
     spec = _AI_SPEC.get(qtype, "")
     extra = ""
@@ -531,20 +581,22 @@ def _bank_fill(db, board, qtype, level, want=8):
         "【难度】%s\n\n"
         "【每道题】\n"
         "· q：题干（题型要求见上；片段阅读/文章阅读要把**文段原文写进题干**）\n"
-        "· options：四个选项，形如 \"A. …\"\n"
-        "· answer：正确选项字母\n"
-        "· explain：解析，讲清**为什么对、为什么其他三个错**（不是只说答案）。"
-        "**控制在 150 字以内** —— 别把推理过程一步步全枚举出来，写太长会把整批输出撑爆、"
-        "后面的题一道都收不到。\n"
-        "· source：这题考的具体考点（如「人文常识-唐宋八大家」「词语辨析-一蹴而就」）\n\n"
+        "· right：**正确选项的内容**（只写内容，前面不要加 A/B/C/D，也不要提任何字母）\n"
+        "· wrong：三个干扰项的内容，数组（同样只写内容、不带字母）\n"
+        "· why_right：这一项为什么对（不要出现字母）\n"
+        "· why_wrong：三个干扰项各自错在哪，数组，**顺序和 wrong 一一对应**（不要出现字母）\n"
+        "· source：这题考的具体考点（如「人文常识-唐宋八大家」「词语辨析-一蹴而就」）\n"
+        "⚠️ 解析合计**控制在 150 字以内** —— 写太长会把整批输出撑爆、后面的题一道都收不到。\n\n"
         "【硬要求】\n"
         "1. 答案**唯一且经得起推敲**，不能出现两个都对或都说得通的选项。\n"
         "2. 四个选项**互不相同**、长度相当（别让正确项特别长，那等于送分）。\n"
         "3. 一道题**围绕一个考点**。四个选项可以是关于同一事物的四种说法（这很常见），"
         "但**不能横跨四个不相干的知识点**——那是在考运气，不是考掌握。\n"
         "4. **必须真的是「%s」这个题型**，不要出成别的题型。\n\n"
-        '只输出 JSON：{"items":[{"q":"","options":["A. …","B. …","C. …","D. …"],'
-        '"answer":"A","explain":"","source":""}]}'
+        "5. **通篇不要出现 A/B/C/D 这样的选项字母**，正确项写进 right、干扰项写进 wrong 就行 —— "
+        "选项排到第几位、答案是哪个字母，由我来定。\n\n"
+        '只输出 JSON：{"items":[{"q":"","right":"","wrong":["","",""],'
+        '"why_right":"","why_wrong":["","",""],"source":""}]}'
         % (want, board, qtype, spec or "按这个题型的常规考法出",
            _LV_PROMPT.get(level, ""), qtype)) + extra
 
@@ -555,19 +607,8 @@ def _bank_fill(db, board, qtype, level, want=8):
     #    实测语境分析真题中位数 123 字，AI 出 54~63 字，旧题库 116 道里只有 9%
     #    落在真题区间、91% 偏短。改成给**中位数**这个具体数 + 明确的不合格线，
     #    再要求照真题的惯用问法收尾，一次调用出的 4 道全部达标（命中率 0%→100%）。
-    prompt += realprofile.prompt_lines(style)
+    prompt += realprofile.prompt_lines(prof)
 
-    # ★ 指定每道题正确答案放哪个位置。模型自己出题时正确项**严重偏向前面**：
-    #   实测题库里 A 39.3% / B 28.6% / C 24.8% / D **7.4%**，真题则是各占四分之一
-    #   （22.9/25.4/27.2/24.5）。蒙 A 的期望正确率有 39%，练久了练出来的是蒙题习惯。
-    #   为什么不入库后打乱选项：**68% 的解析用字母指代选项**（「故 D 错误」「A、B、C 均为…」），
-    #   打乱就得连解析正文一起改写，而正文里还有「A股」「DNA」「B超」这类不能动的字母，
-    #   改错了比字母倾斜更糟。让模型按指定位置写，解析天然是自洽的。
-    slots = [c for c in "ABCD" for _ in range((want + 3) // 4)][:want]
-    random.shuffle(slots)
-    prompt += ("\n\n【正确答案的位置由我指定】第 %s 题。"
-               "**必须照这个位置放**，解析也要跟着这个位置写。"
-               % "、".join("%d 题放 %s" % (i, c) for i, c in enumerate(slots, 1)))
     if examples:
         prompt += ("\n\n【下面是这个题型的**真题**，照着这个路子出新题】\n"
                    + "\n\n".join(
@@ -590,9 +631,11 @@ def _bank_fill(db, board, qtype, level, want=8):
         [{"role": "system", "content": "你是四川省考命题老师。答案唯一、干扰项讲究，"
                                        "解析要说清其他三个为什么错。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
-        # max_tokens 跟着画像一起提上来：接了真题画像之后题干按中位数写（选词填空 123 字、
-        # 判断意图 211 字，都比原来长一倍多），8 道题加解析在 4096 里放不下，
-        # 后半批会被截断 —— 表现是 _salvage_items 一直在抢救，产出白白少一半。
+        # 接了真题画像之后题干按中位数写（选词填空 123 字、判断意图 211 字，都比原来长
+        # 一倍多），8 道题加解析在 4096 里放不下，后半批会被截断 —— 表现是
+        # _salvage_items 一直在抢救，产出白白少一半。所以提到 8000。
+        # 上限依据：deepseek-chat 单次输出上限 8192，留一点余量。**换模型前先确认它的上限**，
+        # 超了不是截断而是整批 400，日志只会显示「+0 可用」，看不出是参数越界。
         temperature=0.6, max_tokens=8000, timeout=180, json_mode=True)
     if err:
         return stat
@@ -604,26 +647,47 @@ def _bank_fill(db, board, qtype, level, want=8):
             return stat
         log.info("题库补充 %s·%s/%s：JSON 截断，抢救回 %d 道", board, qtype, level, len(got))
 
+    # ★ 正确项放哪个位置**由我们定**，不问模型。
+    #   模型自己排的话正确项严重偏前：实测题库 A 39.3% / B 28.6% / C 24.8% / D **7.4%**，
+    #   真题则是各占四分之一。试过在提示词里逐题指定位置，**实测无效**——
+    #   照做之后 A 反而升到 45%、D 仍是 8.3%，它根本不听。
+    #   所以改成让它只交「正确项内容 + 三个干扰项内容」，字母一个都不写，
+    #   由这里把正确项插到指定位置、自己拼字母、自己拼解析。这是构造性保证，
+    #   和模型听不听话无关，也不用去改写解析里的字母引用。
+    #   位置表**先按 want 均匀铺满再洗牌**，绝不能先生成再截断 ——
+    #   `[c for c in "ABCD" for _ in range((want+3)//4)][:want]` 那种写法在
+    #   want=6 时是 A×2 B×2 C×2 D×0，want=10 时 D×1，反而加重了要修的偏斜。
+    slots = ["ABCD"[i % 4] for i in range(max(1, want))]
+    random.shuffle(slots)
+
     # 先把明显不合格的筛掉，再统一送核验 —— 核验是网络往返，一道 5~40 秒，
     # **串行**做 8 道就能拖到十分钟以上（这是「点了出题没反应」的主因之一）。
     ready = []
+    placed = 0                           # 已经**入选**几道 —— 位置按入选顺序发，不按模型交的顺序
     for it in got:
         q = (it.get("q") or "").strip()
-        opts = it.get("options") or []
-        ans = (it.get("answer") or "").strip().upper()[:1]
-        # 逐条把关：四选项、答案字母合法、选项不重复 —— AI 这三样都会翻车
-        if not q or len(opts) != 4 or ans not in "ABCD":
+        right, wrong, why_r, why_w, can_place = _split_rw(it)
+        if not q or not right or len(wrong) != 3:
             stat["bad"] += 1
             continue
-        body = [re.sub(r"^[A-D][.、．)]\s*", "", str(o)).strip() for o in opts]
+        if can_place:                    # 新格式：正确项插到本题分到的位置上
+            pos = "ABCD".index(slots[placed % len(slots)])
+        else:                            # 老格式：解析里有字母引用，只能保持原位
+            pos = 0
+        body = wrong[:pos] + [right] + wrong[pos:]
+        ans = "ABCD"[pos]
         if len(set(body)) != 4 or not all(body):
             stat["bad"] += 1
             continue
+        it = dict(it, explain=_compose_explain(ans, why_r, why_w, wrong, body))
         # 风格护栏：体量离真题太远的直接不要（把选词填空写成小作文那种）
-        if not _style_ok(style, q, body):
+        if not _style_ok(prof, q, body):
             stat["style"] += 1
             continue
         ready.append((it, q, ans, ["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)]))
+        # 只有真正入选才推进指针：被拒的题不该占掉一个位置名额，
+        # 否则一批里刷掉一半时，剩下那半的字母分布又会失衡（正是要修的毛病）
+        placed += 1
     if not ready:
         return stat
     # ★ 双模型核验：另一家模型独立做一遍。**并发**跑，总耗时从「道数 × 单道」压到「单道」量级。

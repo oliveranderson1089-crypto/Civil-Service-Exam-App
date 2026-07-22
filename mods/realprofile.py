@@ -24,9 +24,6 @@ import time
 
 from mods import realref
 
-# 样本少于这个数就不出画像：分位数和频次都不可信，宁可不给约束也别给错的
-MIN_N = realref.STYLE_MIN
-
 # 画像只随真题库变，而真题库是离线重导的 —— 每小时重算一次足够，
 # 免得每次补库都把几百行题干拉出来算一遍
 _TTL = 3600
@@ -54,10 +51,14 @@ def _ask_forms(stems, top=3):
         if len(tail) < 6 or not re.search(r"[一-龥]{4}", tail):
             continue
         cnt[tail] += 1
-    if not cnt:
+    tot = sum(cnt.values())
+    if not tot:
         return []
     most = cnt.most_common(top)
-    if sum(n for _f, n in most) < len(stems) * 0.25:
+    # ⚠️ 分母必须是**真正计入统计的行数**，不是全部样本。用 len(stems) 的话，
+    #    某题型若有一半题干以占位符结尾（真题库里这类确实存在），分子最多只能到 50%，
+    #    再要求 ≥25% 等于把有效阈值悄悄抬到 50%，本来有惯用问法的题型会拿不到提示。
+    if sum(n for _f, n in most) < tot * 0.25:
         return []                        # 太分散，这个题型没有惯用问法
     return [f for f, n in most if n >= 2]
 
@@ -93,17 +94,23 @@ def _blank_dist(opts_list):
 
 
 def build(db, board, qtype):
-    """算一次画像。样本不足返回 None —— 调用方按「不卡」处理。"""
-    try:
-        rows = db.execute(
-            "SELECT rq.stem, COALESCE(NULLIF(rq.material,'None'),'') mat, rq.options "
-            "FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
-            "WHERE %s AND %s=? AND rq.module=?"
-            % (realref.servable("rq", "re"), realref.qtype_expr("rq", "re")),
-            (qtype, realref.board_module(board))).fetchall()
-    except sqlite3.Error:
-        return None                      # 真题库还没导入（新库）
-    if len(rows) < MIN_N:
+    """算一次画像。样本不足返回 None —— 调用方按「不卡」处理。
+
+    ⚠️ 这里**故意**把整列 stem/material/options 拉进内存，撤销了之前「长度交给 SQLite 算」
+    那版优化（drill.py 的 _REAL_LEN 现在只剩 _real_examples 一个用户）。原因是
+    ask/blanks 这两项必须看原文，SQL 算不出来；长度顺带一起算，不额外多取一次。
+    代价（定义判断一次约 223 KB）由 _TTL 缓存兜住 —— 每个题型每小时最多算一次。
+
+    DB 出错时**抛出去**，不返回 None：调用方 get() 要能分清「样本不够」（可以缓存）
+    和「库暂时读不到」（绝不能缓存，否则一锁就锁掉一小时的护栏）。
+    """
+    rows = db.execute(
+        "SELECT rq.stem, COALESCE(NULLIF(rq.material,'None'),'') mat, rq.options "
+        "FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
+        "WHERE %s AND %s=? AND rq.module=?"
+        % (realref.servable("rq", "re"), realref.qtype_expr("rq", "re")),
+        (qtype, realref.board_module(board))).fetchall()
+    if len(rows) < realref.STYLE_MIN:   # 样本太少，分位和频次都不可信，宁可不给约束
         return None
 
     # 长度按**材料+题干**算：片段阅读的文段存在 material 列，只量 stem 会把中位数
@@ -113,15 +120,20 @@ def build(db, board, qtype):
     # 每个题型自适应，不用逐个调参数。剔完不够样本就不剔。
     floor = lens[len(lens) // 2] / realref.SHORT_FRAC
     kept = [x for x in lens if x >= floor]
-    if len(kept) >= MIN_N:
+    if len(kept) >= realref.STYLE_MIN:
         lens = kept
 
     opts_list = []
     for r in rows:
         try:
-            opts_list.append(json.loads(r["options"]))
+            got = json.loads(r["options"])
         except (ValueError, TypeError):
-            pass                         # 个别行 options 存坏了，跳过就是，别让整张画像算不出来
+            continue                     # 个别行 options 存坏了，跳过就是，别让整张画像算不出来
+        # 解析成功不等于形状对：库里存过 "[1,2,3,4]" 这种，后面 len(o) 会抛 TypeError，
+        # 一路冒到 _bank_warm 的宽 except 里，日志只剩一句「题库补充失败」——
+        # 表现是这个题型从此再也补不进题，而完全看不出是画像挂了。
+        if isinstance(got, list) and all(isinstance(o, str) for o in got):
+            opts_list.append(got)
     olens = sorted(len(o) for opts in opts_list for o in opts)
 
     return {
@@ -135,13 +147,22 @@ def build(db, board, qtype):
 
 
 def get(db, board, qtype):
-    """带缓存的画像。画像只随真题库变（离线重导），每小时重算一次足够。"""
+    """带缓存的画像。画像只随真题库变（离线重导），每小时重算一次足够。
+
+    ⚠️ **库读不到时绝不能把 None 缓存下来。** _style_ok 遇到 None 是直接放行的
+    （`if not style: return True`），所以一次 "database is locked" 如果被缓存，
+    这个题型接下来一小时**完全没有篇幅护栏**，任意长度的题都会入库 ——
+    正是这套画像要堵的洞。真题库还没导入（表不存在）也走这条路：不缓存，下次再试。
+    """
     key = (board, qtype)
     hit = _CACHE.get(key)
     if hit and time.time() - hit[0] < _TTL:
         return hit[1]
-    prof = build(db, board, qtype)
-    _CACHE[key] = (time.time(), prof)
+    try:
+        prof = build(db, board, qtype)
+    except sqlite3.Error:
+        return None                      # 不写缓存
+    _CACHE[key] = (time.time(), prof)     # 样本不够算出的 None 可以缓存，那是稳定结论
     return prof
 
 
@@ -154,7 +175,10 @@ def prompt_lines(prof):
     """把画像翻译成**写进提示词的硬指标**。给区间模型就往下限以下写，得给具体数。"""
     if not prof:
         return ""
-    lo = int(prof["med"] * 0.8)
+    # 不合格线取「中位数×0.8」和「护栏真实下限（p10）」里更大的那个。
+    # 只用前者的话，右偏分布下会算出比 p10 还低的数（如 p10=100、med=110 → 88），
+    # 于是模型按 88 字写、再被 100 的护栏成批拦掉，产出崩掉而日志只显示「体量不像真题」。
+    lo = max(int(prof["med"] * 0.8), prof["stem"][0])
     out = ["\n\n【篇幅按真题来 —— 这是硬指标，不是建议】",
            "题干**必须写到 %d 字上下**（同题型真题的中位数就是这个数），"
            "**少于 %d 字一律判不合格**。片段阅读要给完整文段，选词填空要把上下文的呼应关系写足。"

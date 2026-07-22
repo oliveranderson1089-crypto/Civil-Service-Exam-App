@@ -139,11 +139,27 @@ class TestBlanks:
 class TestPromptLines:
     def test_给中位数而不是区间(self):
         con = _db()
-        for i in range(20):
-            _add(con, i + 1, "语" * 150)
-        txt = realprofile.prompt_lines(realprofile.get(con, "言语理解与表达", "语境分析"))
-        assert "150 字上下" in txt, txt
-        assert "120 字一律判不合格" in txt, "缺少不合格线，模型会一路往短里写"
+        for i in range(20):                       # 100~290 字，中位数 200、p10 约 110
+            _add(con, i + 1, "语" * (100 + i * 10))
+        p = realprofile.get(con, "言语理解与表达", "语境分析")
+        txt = realprofile.prompt_lines(p)
+        assert "%d 字上下" % p["med"] in txt, txt
+        assert "%d 字一律判不合格" % int(p["med"] * 0.8) in txt, "缺少不合格线，模型会一路往短里写"
+
+    def test_不合格线不能低于护栏真实下限(self):
+        """提示词说的线和 _style_ok 收的线必须同向。
+
+        右偏分布下 med×0.8 会算出比 p10 还低的数，模型照着写就会被护栏成批拦掉，
+        产出崩掉而日志只显示「体量不像真题」—— 白白烧一次 AI 调用。
+        """
+        con = _db()
+        for i in range(19):                       # 挤在 100 字：p10=100
+            _add(con, i + 1, "语" * 100)
+        _add(con, 99, "语" * 900)                  # 一条超长的把中位数往上拽
+        p = realprofile.get(con, "言语理解与表达", "语境分析")
+        txt = realprofile.prompt_lines(p)
+        assert "%d 字一律判不合格" % max(int(p["med"] * 0.8), p["stem"][0]) in txt
+        assert p["stem"][0] <= max(int(p["med"] * 0.8), p["stem"][0]), "不合格线低于护栏下限"
 
     def test_没画像就不加任何指标(self):
         assert realprofile.prompt_lines(None) == ""

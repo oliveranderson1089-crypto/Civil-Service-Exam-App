@@ -12,9 +12,28 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mods.drill import _real_examples, _real_style  # noqa: E402
+from mods import realprofile  # noqa: E402
+from mods.drill import _real_examples  # noqa: E402
+
+# 篇幅画像走 realprofile（带进程级缓存），这里直接用它，别再包一层
+_real_style = realprofile.get
+
+
+@pytest.fixture(autouse=True)
+def _no_cache():
+    """画像缓存是进程级的，键只有 (板块, 题型)，不含库 —— 不清就会跨用例串。
+
+    实测：预先往 _CACHE 塞一条假画像，TestStyleSample 当场失败。
+    现在全绿只是因为 pytest 按文件名排序恰好让本文件先跑，
+    加 -p randomly 或 xdist 分片就会变成偶发失败。
+    """
+    realprofile.clear()
+    yield
+    realprofile.clear()
 
 OPTS = json.dumps(["甲说法", "乙说法", "丙说法", "丁说法"], ensure_ascii=False)
 
