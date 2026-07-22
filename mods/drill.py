@@ -580,7 +580,7 @@ def _bank_fill(db, board, qtype, level, want=8):
         "【这个题型怎么出】%s\n\n"
         "【难度】%s\n\n"
         "【每道题】\n"
-        "· q：题干（题型要求见上；片段阅读/文章阅读要把**文段原文写进题干**）\n"
+        "· q：题干%s（题型要求见上；片段阅读/文章阅读要把**文段原文写进题干**）\n"
         "· right：**正确选项的内容**（只写内容，前面不要加 A/B/C/D，也不要提任何字母）\n"
         "· wrong：三个干扰项的内容，数组（同样只写内容、不带字母）\n"
         "· why_right：这一项为什么对（不要出现字母）\n"
@@ -598,7 +598,10 @@ def _bank_fill(db, board, qtype, level, want=8):
         '只输出 JSON：{"items":[{"q":"","right":"","wrong":["","",""],'
         '"why_right":"","why_wrong":["","",""],"source":""}]}'
         % (want, board, qtype, spec or "按这个题型的常规考法出",
-           _LV_PROMPT.get(level, ""), qtype)) + extra
+           _LV_PROMPT.get(level, ""),
+           # 篇幅要求**贴在 q 这一行**再说一遍。后面的【篇幅按真题来】那段离得远，
+           # 模型写 q 的时候未必还记着；实测削弱论证写 78~86 字，而下限是 96。
+           realprofile.q_hint(prof), qtype)) + extra
 
     # ★ 以真题为基准：把同题型的真题原样摆出来，让它照着这个路子出。
     #   比在提示词里描述「要像真题」有效得多 —— 风格是看会的，不是讲会的。

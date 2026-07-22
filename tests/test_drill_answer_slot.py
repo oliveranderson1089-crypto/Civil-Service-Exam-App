@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mods.drill import _compose_explain, _split_rw  # noqa: E402
+from mods.realprofile import q_hint  # noqa: E402
 
 NEW = {"q": "题干", "right": "对的那项", "wrong": ["错一", "错二", "错三"],
        "why_right": "因为它对", "why_wrong": ["错一的毛病", "错二的毛病", "错三的毛病"],
@@ -102,3 +103,13 @@ class TestComposeExplain:
         txt = _compose_explain("A", "它对。", ["甲", "乙"], ["甲错。", "乙错。"],
                                ["它对。", "甲", "乙"])
         assert "。；" not in txt and txt.endswith("。")
+
+
+class TestQHint:
+    def test_把字数钉在q字段旁边(self):
+        """完整的【篇幅按真题来】那段离 q 的字段说明隔了十几行，模型写 q 时未必还记着。
+           实测削弱论证要求 144 字，它写 78~86 字（下限 96）。"""
+        assert "144" in q_hint({"med": 144})
+
+    def test_没画像就不加(self):
+        assert q_hint(None) == ""

@@ -40,7 +40,12 @@ def _ask_forms(stems, top=3):
     只在**够集中**时才返回 —— 常识判断那种设问五花八门的题型，硬给几个「高频句式」
     等于让模型照抄某一种问法，反而更不像真题。
     """
-    cnt = collections.Counter()
+    # 按**问法开头**归组，不按整串精确计数。削弱论证的问法只在末尾名词上变
+    #（「…最能削弱上述结论 / 上述论证 / 上述观点」「…最能质疑上述结论」），
+    # 精确计数会把它打散成 9+8+6+5 四小堆，集中度算下来只有 12%，直接被判「太分散」
+    # 而拿不到提示 —— 可它明明有惯用问法。取前 12 字当组键就并到一起了。
+    # 组内仍然报**完整的那句**当范例：给模型看半截问法它照抄半截，反而更糟。
+    groups = collections.defaultdict(collections.Counter)
     for s in stems:
         parts = [x for x in re.split(r"[。？?！!；;]", re.sub(r"\s+", "", s)) if x.strip()]
         if not parts:
@@ -50,11 +55,12 @@ def _ask_forms(stems, top=3):
         # 要求里面真有汉字，且不是短到没信息量的残段。
         if len(tail) < 6 or not re.search(r"[一-龥]{4}", tail):
             continue
-        cnt[tail] += 1
+        groups[tail[:12]][tail] += 1
+    cnt = collections.Counter({k: sum(v.values()) for k, v in groups.items()})
     tot = sum(cnt.values())
     if not tot:
         return []
-    most = cnt.most_common(top)
+    most = [(groups[k].most_common(1)[0][0], n) for k, n in cnt.most_common(top)]
     # ⚠️ 分母必须是**真正计入统计的行数**，不是全部样本。用 len(stems) 的话，
     #    某题型若有一半题干以占位符结尾（真题库里这类确实存在），分子最多只能到 50%，
     #    再要求 ≥25% 等于把有效阈值悄悄抬到 50%，本来有惯用问法的题型会拿不到提示。
@@ -191,3 +197,13 @@ def prompt_lines(prof):
         out.append("空数按真题的实际比例来：%s。"
                    % "、".join("%d 空占 %d%%" % (k, v) for k, v in prof["blanks"].items()))
     return "\n".join(out)
+
+
+def q_hint(prof):
+    """贴在提示词 q 字段那一行的短提示。
+
+    完整的【篇幅按真题来】那段在后面，离 q 的字段说明隔了十几行；模型写 q 的时候
+    未必还记着那个数 —— 实测削弱论证要求 144 字，它写 78~86 字（下限 96）。
+    所以在字段旁边再钉一次，只说最关键的那个数字，不重复整段。
+    """
+    return "" if not prof else "（**写足 %d 字左右**）" % prof["med"]
