@@ -518,12 +518,12 @@ function mdToHtml(src) {
     if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
       flushPara(); closeList();
       const cells = r => r.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
-      html += '<table class="md-table"><thead><tr>' + cells(line).map(c => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>';
+      html += '<div class="md-tablewrap"><table class="md-table"><thead><tr>' + cells(line).map(c => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>';
       i += 2;
       while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
         html += '<tr>' + cells(lines[i]).map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>'; i++;
       }
-      i--; html += '</tbody></table>';
+      i--; html += '</tbody></table></div>';
       continue;
     }
     if (/^\s*$/.test(line)) { flushPara(); closeList(); continue; }

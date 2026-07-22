@@ -527,9 +527,12 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
 .reader .md-code code{background:none;color:inherit;padding:0;font-size:.86em;line-height:1.6;}
 .reader hr{border:none;border-top:1px solid #e2e2e2;margin:1.4em 0;}
 .reader a{color:var(--blue);word-break:break-all;}
-.reader .md-table{border-collapse:collapse;width:100%;margin:.8em 0;font-size:.94em;}
-.reader .md-table th,.reader .md-table td{border:1px solid #dfe3ea;padding:7px 10px;text-align:left;}
-.reader .md-table th{background:#f2f5f9;}
+/* 表格样式别挂在 .reader 下 —— mdToHtml 的表格还会出现在 AI 聊天气泡（.ai-msg）和
+   各板块 AI 解读（.cd-sec-b）里，限定祖先会让那些地方只剩裸文字、没有边框和表头底色。 */
+.md-tablewrap{overflow-x:auto;margin:.8em 0;}      /* 窄屏/聊天气泡里列多时横向滚动，别撑破布局 */
+.md-table{border-collapse:collapse;width:100%;font-size:.94em;}
+.md-table th,.md-table td{border:1px solid #dfe3ea;padding:7px 10px;text-align:left;}
+.md-table th{background:#f2f5f9;font-weight:700;}
 .reader.sepia .md-table th{background:#ece0c4;}
 .reader.sepia .md-table th,.reader.sepia .md-table td{border-color:#d8c9a4;}
 .reader-pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;margin:0;}
@@ -1733,10 +1736,11 @@ body.dark .item-note,body.dark .pv-ai,body.dark .pd-recite-btn,body.dark .blk.se
 body.dark .blk.table td,body.dark .sc-ex,body.dark .ckb-n{
   background:#182338 !important;color:#dbe3f0 !important;border-color:#31405c !important;}
 body.dark .gk-sent{border-left-color:var(--blue) !important;}
-body.dark .reader code,body.dark .ai-msg.assistant code,body.dark .reader .md-table th,
+body.dark .reader code,body.dark .ai-msg.assistant code,body.dark .md-table th,
 body.dark .item-cat,body.dark .hc-count,body.dark #aih-pcount,
 body.dark .reader-tools button,body.dark .iconbtn,body.dark .dtb,body.dark .doc-iconbtn{
   background:#232c3d !important;color:#cfd6e2 !important;}
+body.dark .md-table th,body.dark .md-table td{border-color:#31405c;}   /* 深底上别留浅色边框 */
 /* 诗句/常考/理论 卡片内文字 */
 body.dark .cls-title,body.dark .cls-line,body.dark .cki-t,body.dark .cki-c,
 body.dark .th-tname,body.dark .thb-title,body.dark .gk-sent{
