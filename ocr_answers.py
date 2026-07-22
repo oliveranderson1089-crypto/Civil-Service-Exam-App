@@ -189,7 +189,12 @@ def tess_answers(pdf, tmp, first=0, last=0, deadline=0):
     # **synth 要往上传，不能在这儿丢掉**：题号按顺序编的结果并不是垃圾，
     # 它要交给入库时那道「解析块数必须等于本卷最大题号」的闸去判 ——
     # 对得上就是完全可用的整卷答案（A0 那几份 34 页大卷正是这种）。
-    return {k: v[0] for k, v in ans.items()}, synth, raw
+    #
+    # **解析正文也要一起带上**，别只留答案字母：入库时给答案卷找题目卷、
+    # 以及判断整卷有没有错开一格，靠的都是「题干 ↔ 解析」的词汇重合度。
+    # 只存字母的话，扫描件出来的答案卷永远量不了，配不上题目卷就白识别了
+    # （实测 2024 国考那两份、2022 四川那份，共 346 道题卡在这）。
+    return ({k: [v[0], v[1][:600]] for k, v in ans.items()}, synth, raw)
 
 
 def pages_of(pdf, tmp):
@@ -216,7 +221,10 @@ def _reparse(con):
     print("有识别原文可重解析的：%d 份" % len(rows))
     for r in rows:
         ans, synth = R.parse_answers(r["ocr_text"])
-        got = {k: v[0] for k, v in ans.items()}
+        # 和 tess_answers 存成同一种形状：[答案字母, 解析正文]。
+        # 只存字母的话，入库时没法量「题干 ↔ 解析」重合度，扫描件出来的答案卷
+        # 就永远配不上题目卷（这条路径漏改过一次，所以在这儿写明白）。
+        got = {k: [v[0], v[1][:600]] for k, v in ans.items()}
         if len(got) <= r["n_item"]:
             continue          # 只准越改越好，重解析不该让识别量倒退
         con.execute("UPDATE real_ocr SET synth=?, n_item=?, ans_json=? WHERE file_id=?",
@@ -346,7 +354,9 @@ def main():
                         for f in as_completed({pool.submit(ocr_page, q): q for q in pngs}):
                             vis.update(f.result() or {})
                     if len(vis) > len(got):
-                        got, synth, how = vis, False, V_MODEL
+                        # 视觉模型只回答案字母，没有解析正文 —— 补成同一种形状
+                        got = {k: [v, ""] for k, v in vis.items()}
+                        synth, how = False, V_MODEL
             # 状态沿用既有的 ok/empty，不新造 'ocr' —— report() 的人工复核清单只认
             # ('answers_bad','failed','empty','thin')，新值会让 OCR 只识出三五条的
             # 那种明显失败的卷子在报告里彻底隐身

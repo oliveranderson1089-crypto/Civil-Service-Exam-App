@@ -191,13 +191,56 @@ def _ocr_answers(con, file_id):
     if not row or not row["ans_json"]:
         return {}, False
     try:
-        return ({int(k): (v, "") for k, v in json.loads(row["ans_json"]).items()},
-                bool(row["synth"]))
+        # 兼容两种存法：老的只存字母（"B"），新的连解析正文一起存（["B", "解析…"]）
+        got = {}
+        for k, v in json.loads(row["ans_json"]).items():
+            got[int(k)] = (v[0], v[1]) if isinstance(v, (list, tuple)) else (v, "")
+        return got, bool(row["synth"])
     except Exception:
         return {}, False
 
 
-def _find_answer(answers, name, meta):
+def _match_by_content(answers, meta, qs, floor=0.20, margin=2.0):
+    """名字配不上时**按内容配**：拿答案卷的解析和本卷题干量词汇重合度。
+
+    命名习惯五花八门，怎么归一化都会漏：同一场考试，题目卷叫「2022 上半年四川…」、
+    答案卷叫「2022年0326四川…」（0326 就是上半年那场）；2024 国考的文件名还带着
+    「3-」「4-」这种序号前缀。但**内容不会骗人** —— 实测配对的那份重合度 0.36，
+    同年同考试的另一份只有 0.09，差 4 倍。
+
+    只在量得出决定性差距时才认，两处细节都是必需的：
+      · 候选先按卷子归组 —— 同一份答案卷的 docx / pdf 两个格式不能算成两个候选，
+        否则「次优」永远等于「最优」，margin 那道闸永远过不了；
+      · 分数不够高（floor）或没甩开次优（margin）就一律不认 —— 挂错答案比没答案更糟。
+    """
+    def bigrams(s):
+        return {s[i:i + 2] for i in range(len(s) - 1)}
+
+    stems = [(q["seq"], bigrams(q.get("stem") or "")) for q in qs
+             if len(q.get("stem") or "") > 8]
+    if len(stems) < 15:
+        return None
+    best = {}                       # 答案卷 pair_key -> (重合度, 答案条目)
+    for v in answers.values():
+        a, _synth, aname, exam, year = v
+        if exam != meta["exam"] or year != meta["year"]:
+            continue
+        sc = [len(sb & bigrams(a[seq][1])) / len(sb) for seq, sb in stems
+              if sb and seq in a and len(a[seq][1]) >= 20]
+        if len(sc) < 15:
+            continue                # 解析正文太少，量不出来（OCR 出来的答案就是这样）
+        g = R.pair_key(aname)
+        if sum(sc) / len(sc) > best.get(g, (0, None))[0]:
+            best[g] = (sum(sc) / len(sc), v)
+    ranked = sorted(best.values(), key=lambda x: -x[0])
+    if not ranked or ranked[0][0] < floor:
+        return None
+    if len(ranked) > 1 and ranked[0][0] < ranked[1][0] * margin:
+        return None
+    return ranked[0][1]
+
+
+def _find_answer(answers, name, meta, qs=()):
     """给一份题目卷找它的答案卷。
 
     先按规范化文件名精确配；配不上再在**同考试、同年份、卷别令牌完全相同**的范围内
@@ -214,12 +257,12 @@ def _find_answer(answers, name, meta):
         (difflib.SequenceMatcher(None, key[0], k[0]).ratio(), k)
         for k, v in answers.items()
         if k[1] == key[1] and v[3] == meta["exam"] and v[4] == meta["year"])
-    if not ranked or ranked[-1][0] < 0.85:
-        return None
     # 两个候选咬得太紧就谁也不选：宁可这卷没答案，也不能挂错
-    if len(ranked) > 1 and ranked[-1][0] - ranked[-2][0] < 0.05:
-        return None
-    return answers[ranked[-1][1]]
+    if (ranked and ranked[-1][0] >= 0.85
+            and not (len(ranked) > 1 and ranked[-1][0] - ranked[-2][0] < 0.05)):
+        return answers[ranked[-1][1]]
+    # 名字这条路走不通，改用内容对（实测 14 份答案卷因为命名不同而配不上题目卷）
+    return _match_by_content(answers, meta, qs)
 
 
 def _best_offset(qs, a, span=5, floor=0.15, margin=2.0):
@@ -353,7 +396,7 @@ def extract_all(con, exts, force=False):
             traceback.print_exc()
             continue
 
-        ent = _find_answer(answers, r["name"], meta)
+        ent = _find_answer(answers, r["name"], meta, qs)
         ans, why = _match_answers(qs, ent)
         # **一个题号对上两道题时，那个号的答案不能用**。老卷子（2002 国考 A/B 卷、
         # 2007 四川招警）分部分各自从 1 开始编号，或者解析时把某行误当成题头，

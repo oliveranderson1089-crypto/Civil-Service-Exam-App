@@ -338,3 +338,53 @@ def test_asset_flag_规则只许解锁不许上锁():
               "options": _j.dumps(["A", "B", "C", "D"])}
     assert I._asset_flag(图形题, set(), 0) == 0, "资产脚本已放行的，规则不该把它锁回去"
     assert I._asset_flag(图形题, set(), None) == 1, "没人裁决过的图形题，默认锁"
+
+
+# ---- 名字配不上时按内容配对 ------------------------------------------------
+
+def _answers_from(qs, noise=""):
+    """按题干造一份「解析抄了题干用字」的答案卷，用来量重合度。"""
+    return {q["seq"]: ("A", "本题考查%s%s，因此选择 A 选项。" % (q["stem"][4:24], noise))
+            for q in qs}
+
+
+def test_按内容配对_能认出改了名的答案卷():
+    """同一场考试的两个叫法：题目卷「2022 上半年四川…」、答案卷「2022年0326四川…」。
+
+    按名字怎么归一化都会漏，内容却不会骗人 —— 配对的那份重合度 0.36，
+    同年同考试的另一份只有 0.09。
+    """
+    qs, _a = _fake_pair()
+    对的 = _answers_from(qs)
+    别的卷子 = {i: ("B", "完全无关的解析零一二三四五六七八九十甲乙丙丁") for i in range(1, 41)}
+    answers = {("名字对不上的键", frozenset()): (对的, False, "0326答案卷", "省考", 2022),
+               ("另一份", frozenset()): (别的卷子, False, "另一份答案卷", "省考", 2022)}
+    got = I._match_by_content(answers, {"exam": "省考", "year": 2022}, qs)
+    assert got is not None and got[2] == "0326答案卷", got
+
+
+def test_按内容配对_两份都像就谁也不选():
+    """量不出决定性差距时宁可这卷没答案 —— 挂错答案比没答案更糟。"""
+    qs, _a = _fake_pair()
+    a1, a2 = _answers_from(qs), _answers_from(qs)
+    answers = {("k1", frozenset()): (a1, False, "甲卷答案", "国考", 2020),
+               ("k2", frozenset()): (a2, False, "乙卷答案", "国考", 2020)}
+    assert I._match_by_content(answers, {"exam": "国考", "year": 2020}, qs) is None
+
+
+def test_按内容配对_同一份卷子的两种格式不算两个候选():
+    """docx 和 pdf 是同一份答案卷。不按卷子归组的话，「次优」永远等于「最优」，
+    margin 那道闸永远过不了，内容配对就等于没做。"""
+    qs, _a = _fake_pair()
+    a = _answers_from(qs)
+    answers = {("k1", frozenset()): (a, False, "2009年四川下半年答案及解析.docx", "省考", 2009),
+               ("k2", frozenset()): (dict(a), False, "2009年四川下半年答案及解析.pdf", "省考", 2009)}
+    got = I._match_by_content(answers, {"exam": "省考", "year": 2009}, qs)
+    assert got is not None, "同一份卷子的两个格式被当成了两个候选"
+
+
+def test_按内容配对_重合度太低就不认():
+    qs, _a = _fake_pair()
+    无关 = {i: ("C", "完全无关的解析零一二三四五六七八九十甲乙丙丁戊己庚辛") for i in range(1, 41)}
+    answers = {("k", frozenset()): (无关, False, "张冠李戴的答案卷", "国考", 2020)}
+    assert I._match_by_content(answers, {"exam": "国考", "year": 2020}, qs) is None
