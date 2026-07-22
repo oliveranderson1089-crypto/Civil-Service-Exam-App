@@ -511,3 +511,54 @@ def test_ans_inline_冒号被ocr认成逗号():
                   for i, v in want.items())
     ans, _synth = R.parse_answers(t)
     assert {k: v[0] for k, v in ans.items()} == want, len(ans)
+
+
+def _make_docx(tmp_path, paras):
+    """造一个最小 docx。paras 里每项是 ("文字", 有没有图)。"""
+    import zipfile
+    body = []
+    for txt, has_fig in paras:
+        pic = ('<w:r><w:drawing><a:blip r:embed="rId9"/></w:drawing></w:r>'
+               if has_fig else "")
+        body.append("<w:p><w:r><w:t>%s</w:t></w:r>%s</w:p>" % (txt, pic))
+    fp = tmp_path / "t.docx"
+    with zipfile.ZipFile(fp, "w") as z:
+        z.writestr("word/document.xml",
+                   '<?xml version="1.0"?><w:document><w:body>%s</w:body></w:document>'
+                   % "".join(body))
+        z.writestr("word/_rels/document.xml.rels",
+                   '<?xml version="1.0"?><Relationships>'
+                   '<Relationship Id="rId9" Target="media/image1.png"/></Relationships>')
+        z.writestr("word/media/image1.png", b"\x89PNG\r\n\x1a\n" + b"x" * 600)
+    return str(fp)
+
+
+def test_docx图的段落号和正文行号必须对得上(tmp_path):
+    """图靠段落号找它属于哪道题 —— 两边的编号只要错开一位，图就全挂到别的题上。
+
+    这是本项目栽过不止一次的坑：docx_text 曾经在末尾把连续空行压掉
+    （`\n{3,}` → `\n\n`），docx_figures 没压，2023 国考行政执法卷整整偏了 131 行，
+    资料分析在卷末，于是整段的表格图全配错（题问纺织品出口，配了张集成电路产量的表）。
+    **一连串空行是这个 bug 的触发条件**，所以这里必须造出来。
+    """
+    paras = ([("正文%d" % i, False) for i in range(3)]
+             + [("", False)] * 5                      # ← 连续空段落，压空行的话就在这儿丢
+             + [("第79题 把下面的六个图形分为两类", False), ("", True)]
+             + [("", False)] * 4
+             + [("第80题 另一道图形题", False), ("", True)])
+    path = _make_docx(tmp_path, paras)
+    lines = R.docx_text(path).split("\n")
+    figs = R.docx_figures(path)
+    assert len(figs) == 2, figs
+    for para, _blob, _ext in figs:
+        assert para < len(lines), "图的段落号 %d 超出正文行数 %d" % (para, len(lines))
+    # 每张图的前一行都应该是对应的题目
+    assert "第79题" in lines[figs[0][0] - 1], lines[max(0, figs[0][0] - 3):figs[0][0] + 1]
+    assert "第80题" in lines[figs[1][0] - 1], lines[max(0, figs[1][0] - 3):figs[1][0] + 1]
+
+
+def test_docx正文与段落切分同源(tmp_path):
+    """行数必须**恰好**等于段落数 —— 不是「差不多」，差一位就够错位了。"""
+    paras = [("a", False), ("", False), ("", False), ("", False), ("b", False)]
+    path = _make_docx(tmp_path, paras)
+    assert len(R.docx_text(path).split("\n")) == len(R._docx_paras(path))

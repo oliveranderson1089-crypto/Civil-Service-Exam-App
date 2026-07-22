@@ -59,16 +59,34 @@ def norm(s):
 
 
 # ---------------------------------------------------------------- 取文字
-def docx_text(path):
-    """docx 直接读 XML。段落边界要保住（题号靠行首识别），所以先把 </w:p> 换成换行。"""
+def _docx_paras(path):
+    """把 docx 切成段落列表。docx_text 和 docx_figures **必须都从这里取**。
+
+    两边各切一次的话，只要有一边多做一步，行号就会整体错开 —— 而且是**累积**的，
+    越往后偏得越多。原先 docx_text 末尾压了一下连续空行（`\n{3,}` → `\n\n`），
+    docx_figures 没压，实测 2023 国考行政执法卷偏了 131 行：资料分析在卷末，
+    于是整段的表格图全挂到了别的材料上（题问纺织品出口，配了张集成电路产量的表）。
+    这类「两个列表靠下标关联」的地方，本项目已经栽过不止一次，
+    所以这里不靠「两边写得一样」，而是**只切一次**。
+    """
     with zipfile.ZipFile(path) as z:
         xml = z.read("word/document.xml").decode("utf-8", "ignore")
     xml = re.sub(r"<w:br[^>]*/>", "\n", xml)
-    xml = re.sub(r"</w:p>", "\n", xml)
-    txt = re.sub(r"<[^>]+>", "", xml)
-    txt = (txt.replace("&lt;", "<").replace("&gt;", ">")
-              .replace("&quot;", '"').replace("&apos;", "'").replace("&amp;", "&"))
-    return re.sub(r"\n{3,}", "\n\n", txt)
+    return re.sub(r"</w:p>", "\n", xml).split("\n")
+
+
+def _para_text(para):
+    txt = re.sub(r"<[^>]+>", "", para)
+    return (txt.replace("&lt;", "<").replace("&gt;", ">")
+               .replace("&quot;", '"').replace("&apos;", "'").replace("&amp;", "&"))
+
+
+def docx_text(path):
+    """docx 直接读 XML。段落边界要保住（题号靠行首识别）。
+
+    **不在这里压空行**：压掉的每一行都会让 docx_figures 的段落号往后错一位。
+    """
+    return "\n".join(_para_text(p) for p in _docx_paras(path))
 
 
 # ---- 题目里的图 -------------------------------------------------------------
@@ -86,17 +104,17 @@ def docx_figures(path):
     按体积一刀切会切出「题干图在、D 选项图没了」的半截题，而调用方还不知道少了图。
     要滤请调用方自己滤，并且滤了要记一笔。
 
-    两边必须用**同一套段落切分**（都以 </w:p> 为界），否则图和题对不上号 ——
-    这类「两个列表用下标关联」的地方是错位事故的高发区，所以这里直接复用同一个正则。
+    段落号和 docx_text 的行号对得上，是因为两边**共用 _docx_paras 这一次切分** ——
+    不是「两边写得一样」。写得一样是守不住的：docx_text 曾经在末尾多压了一下空行，
+    两边就整体错开 131 行，图全挂到别的题上，而且谁都没报错。
     """
     out = []
     try:
+        paras = _docx_paras(path)
         with zipfile.ZipFile(path) as z:
             rels = dict(_REL.findall(
                 z.read("word/_rels/document.xml.rels").decode("utf-8", "ignore")))
-            xml = z.read("word/document.xml").decode("utf-8", "ignore")
-            xml = re.sub(r"<w:br[^>]*/>", "\n", xml)
-            for i, para in enumerate(re.sub(r"</w:p>", "\n", xml).split("\n")):
+            for i, para in enumerate(paras):
                 for rid in _EMBED.findall(para):
                     tgt = rels.get(rid, "")
                     if not tgt or "media/" not in tgt:

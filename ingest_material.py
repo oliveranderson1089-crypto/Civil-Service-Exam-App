@@ -38,7 +38,9 @@ import tempfile
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
-import realbank as R                                       # noqa: E402
+import realbank as R
+from ingest_figs_pdf import _page_image, page_words
+from ingest_figs_pdf import _QNO as _PDF_QNO                                       # noqa: E402
 
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
@@ -54,10 +56,18 @@ FIGDIR = os.path.join(UPLOADS, "realfig")
 # （「图1 …」「图2 …」连着两行），当成材料头就会把一份材料从中间劈成两半，
 # 前半段分不到题号被丢弃、图也跟着丢，用户拿到残缺的材料。
 # 所以分两级：本卷能认出明确材料头就只用它们，认不出才退到图表标题。
+# 材料头后面的编号**可以没有**：2023 国考三卷和 2012 四川都直接写「(材料)」
+# 独占一行（13 份卷子）。所以编号那段用 * 而不是 +。
+# 「根据以下资料」前面**常带一个序号**：「（一）根据以下资料，完成各题。」（2010 国考）、
+# 「一、根据以下材料，回答 111—115 题。」（2024 国考）。原先要求「根据」顶在行首，
+# 这两类整份卷子一个材料头都认不出来（实测 89 份缺材料的卷子里有 23 份栽在这）。
+# 中间那个「以下/下列/下面/所给」**必须要**：写成可选的话，正文里的
+# 「根据材料可知…」也会被当成材料头，把一份材料从中间劈开。
 _MAT_HEAD = re.compile(
-    r"^[\s　]*[（(]?\s*材料\s*[一二三四五六七八九十\d]+\s*[）)]?[\s　:：]*$"
+    r"^[\s　]*[（(]?\s*材料\s*[一二三四五六七八九十\d]*\s*[）)]?[\s　:：]*$"
     r"|^[\s　]*[（(]\s*[一二三四五六七八九十]\s*[）)][\s　]*$"
-    r"|^[\s　]*根据(?:以下|下列|下面)(?:资料|材料)"
+    r"|^[\s　]*(?:[（(]?\s*[一二三四五六七八九十\d]+\s*[）)、.．]\s*)?"
+    r"根据(?:以下|下列|下面|所给)(?:资料|材料|图表|统计)"
     r"|^[\s　]*(?:以下|下列|下面)(?:资料|材料)[^\n]{0,12}$")
 _MAT_HEAD_WEAK = re.compile(r"^[\s　]*[图表]\s*\d+[\s　]")
 _MIN_MAT = 20          # 太短的不算材料（多半是个孤零零的小标题）
@@ -72,6 +82,121 @@ def find_path(stored):
         if os.path.exists(p):
             return p
     return None
+
+
+def pdf_materials(pdf, seq_module, tmp):
+    """PDF 版的材料：正文按坐标抠文字，表格**按坐标裁成图**。
+
+    word 版的表是嵌进去的独立图片，docx_figures 能直接取；PDF 版的表是印在页面上的，
+    只能连同它所在的那块页面一起裁下来。区间 = 材料头那行的顶 → 本材料第一道题那行的顶。
+
+    seq_module 是这份卷子 {题号: 模块}。定边界光靠正则不行 —— 材料正文里全是数字，
+    「投诉 55. 6 万件」和「55.」题头长得一模一样，表格单元格里的「2」「27」也是。
+    所以要三重约束：题号得**真实存在**、得是**连续的一段**（资料分析的材料总是管
+    连着的 4~6 道题）、而且这批题得**确实属于资料分析**。
+    """
+    pages = page_words(pdf)
+    if not pages:
+        return []
+    flat = []              # (页码, 页高, y, 文字)：页内排成阅读顺序
+    for pno, h, words in pages:
+        for y, t in _reading_order(words):
+            flat.append((pno, h, y, t))
+    heads = [i for i, f in enumerate(flat) if _MAT_HEAD.match(f[3])]
+    if not heads:
+        return []
+    out = []
+    for k, hi in enumerate(heads):
+        end = heads[k + 1] if k + 1 < len(heads) else len(flat)
+        cand = [(i, int(m.group(1))) for i in range(hi + 1, end)
+                for m in [_PDF_QNO.match(flat[i][3])] if m and int(m.group(1)) in seq_module]
+        qs = _consecutive_run(cand)
+        if len(qs) < 3:
+            continue                     # 连不成一段 = 匹配到的是表格里的数字，不是题号
+        mods = [seq_module[seq] for _i, seq in qs]
+        if sum(1 for m in mods if m == "资料分析") < len(mods) * 0.6:
+            continue                     # 这份材料主要不归资料分析管，交给别的脚本
+        body = R.norm(" ".join(flat[i][3] for i in range(hi + 1, qs[0][0])))
+        imgs = [x for x in _crop_region(pdf, flat, hi, qs[0][0], tmp) if len(x[0]) > 2000]
+        if not imgs and len(body) < _MIN_MAT:
+            continue
+        out.append((body[:4000], imgs, {seq for _i, seq in qs}))
+    return out
+
+
+def _consecutive_run(cand):
+    """从候选题号里取出**连续递增**的那一段（资料分析的材料总是管连着的几道题）。
+
+    表格单元格、页码都会被题号正则匹配上，但它们连不成 111、112、113 这样的序列。
+    """
+    run = []
+    for i, seq in cand:
+        if not run:
+            run = [(i, seq)]
+        elif seq == run[-1][1] + 1:
+            run.append((i, seq))
+        elif len(run) < 3:
+            run = [(i, seq)]             # 前面那截太短，多半是噪声，从这儿重来
+        else:
+            break
+    return run
+
+
+def _reading_order(words):
+    """把一页的词排成人读的顺序：先分行，行内再按 x 从左到右。
+
+    **不能按 yMin 直接排**，也不能简单量化：同一行里数字和汉字用的字体不同，
+    yMin 会差一两磅，量化到固定档位时会掉进相邻档，于是
+    「2022年，京津冀地区生产总值合计10.0万亿元」被排成
+    「2022 10.0 年，京津冀地区生产总值合计 万亿元」，读都读不通。
+    改成按**纵向重叠**聚行：字高的一半以内算同一行，这个尺度随字号自适应。
+    """
+    lines = []                       # [(基准 y, 该行字高, [(x, 文字)])]
+    for y, x, fh, t in sorted(words, key=lambda w: w[0]):
+        tol = max(fh, 1.0) * 0.5
+        if lines and abs(y - lines[-1][0]) <= tol:
+            lines[-1][2].append((x, t))
+        else:
+            lines.append((y, fh, [(x, t)]))
+    return [(y, " ".join(t for _x, t in sorted(items)))
+            for y, _fh, items in lines]
+
+
+def _crop_region(pdf, flat, i0, i1, tmp, max_imgs=3):
+    """把 flat[i0]（材料头）到 flat[i1]（第一道题）之间那块页面裁出来。
+
+    跨页的材料要裁成好几张：头所在页裁到页底，中间整页，末页从页顶裁到题号。
+    """
+    p0, h0, y0, _ = flat[i0]
+    p1, _h1, y1, _ = flat[i1]
+    spans = []
+    if p0 == p1:
+        spans.append((p0, y0, y1))
+    else:
+        spans.append((p0, y0, h0))
+        for pno in range(p0 + 1, min(p1, p0 + max_imgs)):
+            spans.append((pno, 0, None))
+        spans.append((p1, 0, y1))
+    out = []
+    for pno, a, b in spans[:max_imgs]:
+        im = _page_image(pdf, pno, tmp)
+        if im is None:
+            continue
+        try:
+            ph = next(h for p, h, _y, _t in flat if p == pno)
+            sc = im.height / ph
+            top = max(0, int(a * sc) - 4)
+            bot = im.height if b is None else min(im.height, int(b * sc) + 4)
+            if bot - top < 60:          # 太薄 = 材料头和题号挨着，中间没有表
+                continue
+            piece = im.crop((0, top, im.width, bot))
+            fp = os.path.join(tmp, "mat_%d_%d.png" % (pno, top))
+            piece.save(fp, optimize=True)
+            with open(fp, "rb") as f:
+                out.append((f.read(), ".png"))
+        except Exception:
+            continue
+    return out
 
 
 def split_materials(text, figs_by_para):
@@ -137,9 +262,9 @@ def main():
     papers = con.execute(
         "SELECT p.id, p.name, p.ext, d.stored_name FROM real_papers p "
         "JOIN drive_files d ON d.id=p.file_id "
-        "WHERE p.role='q' AND p.ext IN ('.docx','.doc') AND p.n_item>0 "
+        "WHERE p.role='q' AND p.ext IN ('.docx','.doc','.pdf') AND p.n_item>0 "
         "ORDER BY p.year DESC").fetchall()
-    print("扫 %d 份 word 版题目卷" % len(papers))
+    print("扫 %d 份题目卷（word 版抠嵌入图，PDF 版按坐标裁页）" % len(papers))
 
     n_mat = n_q = 0
     seen_sha = set()          # 按**内容**计数：同一张表挂给材料下的每道题，不该算成很多张
@@ -147,27 +272,35 @@ def main():
         path = find_path(p["stored_name"])
         if not path:
             continue
-        try:
-            if p["ext"] == ".doc":
-                path = R.doc_to_docx(path, tmp)
-            text = R.docx_text(path)
-            figs = R.docx_figures(path)
-        except Exception:
-            continue
-        figs_by_para = {}
-        for para, blob, ext in figs:
-            figs_by_para.setdefault(para, []).append((blob, ext))
-        mats = split_materials(text, figs_by_para)
-        if not mats:
-            continue
         seq2qid = {r["seq"]: r["qid"] for r in con.execute(
             "SELECT seq, qid FROM real_raw WHERE paper_id=? AND qid IS NOT NULL", (p["id"],))}
+        try:
+            if p["ext"] == ".pdf":
+                # PDF 版的表是**印在页面上**的，没有嵌入图片可取，只能按坐标裁页
+                seq_module = {r["seq"]: (r["module"] or "") for r in con.execute(
+                    "SELECT rr.seq, q.module FROM real_raw rr "
+                    "LEFT JOIN real_questions q ON q.id=rr.qid WHERE rr.paper_id=?", (p["id"],))}
+                mats = pdf_materials(path, seq_module, tmp)
+            else:
+                if p["ext"] == ".doc":
+                    path = R.doc_to_docx(path, tmp)
+                text = R.docx_text(path)
+                figs_by_para = {}
+                for para, blob, ext in R.docx_figures(path):
+                    figs_by_para.setdefault(para, []).append((blob, ext))
+                mats = [(body,
+                         [x for para in sorted(paras) for x in figs_by_para.get(para, [])],
+                         seqs)
+                        for body, paras, seqs in split_materials(text, figs_by_para)]
+        except Exception:
+            continue
+        if not mats:
+            continue
         hit = 0
-        for body, paras, seqs in mats:
+        for body, mat_figs, seqs in mats:
             qids = [seq2qid[s] for s in seqs if s in seq2qid]
             if not qids:
                 continue
-            mat_figs = [x for para in sorted(paras) for x in figs_by_para.get(para, [])]
             if a.plan:
                 n_mat += 1
                 n_q += len(qids)
@@ -176,6 +309,14 @@ def main():
             for qid in qids:
                 con.execute("UPDATE real_questions SET material=? WHERE id=? "
                             "AND (material IS NULL OR material='')", (body, qid))
+                # **正文和图必须来自同一份卷子**。同一道题常常在两份卷子里都出现
+                # （2023 国考副省级第 132 题 = 行政执法卷第 127 题，去重后是一道题），
+                # 而正文只认先到的那份（上面那句 WHERE material IS NULL），
+                # 图却每份卷子都往上追加 —— 于是正文是 A 卷的、图混着 A+B 两卷的，
+                # 用户看到一张风马牛不相及的表（实测：题问纺织品出口，配了张宽带用户数的表）。
+                if (con.execute("SELECT material FROM real_questions WHERE id=?",
+                                (qid,)).fetchone()[0] or "") != body:
+                    continue
                 # 材料图挂到**这份材料下的每一道题**上：做题时得能直接看到表
                 base = con.execute("SELECT COALESCE(MAX(ord),-1)+1 FROM real_figs WHERE qid=?",
                                    (qid,)).fetchone()[0]

@@ -42,7 +42,7 @@ _PAGE = re.compile(r'<page width="([\d.]+)" height="([\d.]+)">(.*?)</page>', re.
 # **必须用 word 级坐标，不能用 line 级**：实测有的 PDF 里 <line> 的 yMin 大量重复
 # （整页几十行全是 42.0，只有个位数的不同取值），拿它切出来的「题条」就是整页；
 # 而同一份 PDF 的 <word> yMin 有 35 种取值、分布正常。
-_WORD = re.compile(r'<word xMin="[\d.]+" yMin="([\d.]+)" xMax="[\d.]+" yMax="[\d.]+">([^<]*)</word>')
+_WORD = re.compile(r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="[\d.]+" yMax="([\d.]+)">([^<]*)</word>')
 # 题号：和 realbank._Q_HEAD 一个路子，但这里匹配的是**一行的合并文字**
 _QNO = re.compile(r"^[\s　]*(\d{1,3})[\s　]*[、.．：:]")
 
@@ -56,7 +56,17 @@ def find_path(stored):
 
 
 def page_lines(pdf):
-    """[(页码, 页高, [(yMin, 文字), ...]), ...]"""
+    """[(页码, 页高, [(yMin, 文字), ...]), ...] —— 只关心纵坐标的调用方用这个。"""
+    return [(pno, h, [(y, t) for y, _x, _fh, t in ws]) for pno, h, ws in page_words(pdf)]
+
+
+def page_words(pdf):
+    """[(页码, 页高, [(yMin, xMin, 字高, 文字), ...]), ...]
+
+    **x 坐标不能丢**：pdftotext 把一行拆成好几个 word，只按 y 排的话同一行内部
+    是乱的 —— 「2022年，S省各级12315工作机构共接收诉求220.4万件」会变成
+    「2022 12315 220.4 年，S 省各级 工作机构共接收诉求 万件」，读都读不通。
+    """
     try:
         out = subprocess.run(["pdftotext", "-bbox-layout", pdf, "-"],
                              capture_output=True, timeout=300)
@@ -66,8 +76,9 @@ def page_lines(pdf):
     pages = []
     for i, m in enumerate(_PAGE.finditer(xml), 1):
         h = float(m.group(2))
-        lines = [(float(y), t) for y, t in _WORD.findall(m.group(3))]
-        pages.append((i, h, lines))
+        ws = [(float(y), float(x), float(y2) - float(y), t)
+              for x, y, y2, t in _WORD.findall(m.group(3))]
+        pages.append((i, h, ws))
     return pages
 
 
