@@ -804,13 +804,99 @@ def _bank_take(db, board, qtype, level, n):
     for r in got:
         out.append({"q": r["q"], "options": json.loads(r["options"]), "answer": r["answer"],
                     "explain": r["explain"], "tip": r["tip"], "module": board,
-                    "source": r["source"], "qtype": qtype, "level": level})
+                    "source": r["source"], "qtype": qtype, "level": level, "src": "ai"})
     return out
 
 
-def _drill_gen(db, board, qtype, n, level="mid"):
-    """出 n 道题。**按题型决定用哪个引擎** —— 判断推理是混合的：
-       图形推理能构造（prog），定义/类比/逻辑判断只能让 AI 出（ai）。"""
+# ---- 题源之一：真题本身 --------------------------------------------------------
+# 「真题练习」和「AI 出题」是同一个板块下的两个**题源**，不是两套功能：
+#   real —— 答案权威、风格 100% 真实，但**就那么几千道，做完不会再有**
+#   ai   —— 无限量、考点可控，风格靠 realprofile 那套画像往真题上对齐
+# 真题模式下**没有 easy/mid/real 三档**：真题没有难度标签，硬套是假的
+# （原先「考场真实」这一档发的其实是 AI 题，名不副实）。改成按年份筛。
+_REAL_SRC_MIN = 5          # 少于这么多道就别开真题模式了，刷两轮就重复
+
+
+def _real_count(db, board, qtype):
+    """这个(板块,题型)有多少道能发的真题 —— 前端据此决定要不要把「真题练习」置灰。"""
+    try:
+        return db.execute(
+            "SELECT COUNT(*) FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
+            "WHERE " + _REAL_OK, _real_args(board, qtype)).fetchone()[0]
+    except sqlite3.Error:
+        return 0               # 真题库还没导入（新库）
+
+
+def _real_take(db, board, qtype, n, year_min=0):
+    """从真题库取 n 道，转成专项练的题目格式。
+
+    排序**就是这个模式的价值所在**，不是随便抽（和 realq 同一套思路）：
+    没做过的 > 做错过的 > 做对过的。随机抽的话，刷三遍等于把第一遍重刷三次。
+    每次作答都会写进 real_attempts，所以**和「历年真题」模块的进度是通的** ——
+    在专项练里做过的题，去真题模块不会再当新题推给你。
+    """
+    where, args = [_REAL_OK], list(_real_args(board, qtype))
+    if year_min:
+        where.append("rq.year_max>=?")
+        args.append(year_min)
+    try:
+        rows = [dict(r) for r in db.execute(
+            "SELECT rq.id, rq.stem, rq.material, rq.options, rq.answer, rq.module, "
+            "  re.answer AS ai_answer, re.keypoint, re.steps, re.tip, "
+            "  (SELECT COUNT(*) FROM real_attempts a WHERE a.qid=rq.id AND a.user_id=?) tries, "
+            "  (SELECT a.correct FROM real_attempts a WHERE a.qid=rq.id AND a.user_id=? "
+            "   ORDER BY a.id DESC LIMIT 1) last_ok "
+            "FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
+            "WHERE " + " AND ".join(where), [uid(), uid()] + args)]
+    except sqlite3.Error:
+        return []
+    # 0 没做过 → 1 做错过 → 2 做对了。同档内随机，免得每次都是同一批
+    rows.sort(key=lambda r: (0 if not r["tries"] else (1 if not r["last_ok"] else 2),
+                             random.random()))
+    figs = _real_figs(db, [r["id"] for r in rows[:n]])
+    out = []
+    for r in rows[:n]:
+        mat = (r["material"] or "").strip()
+        out.append({
+            "q": r["stem"], "options": json.loads(r["options"]),
+            "answer": (r["answer"] or r["ai_answer"] or "").strip().upper()[:1],
+            "explain": r["keypoint"] or "", "tip": r["tip"] or DRILL_TIP.get(qtype, ""),
+            "module": board, "qtype": qtype, "level": "real", "src": "real",
+            "real_id": r["id"],            # 交卷时靠它写 real_attempts，和真题模块共享进度
+            "material": "" if mat in ("", "None") else mat,
+            "figs": figs.get(r["id"], []),
+            "source": "真题 · %s" % qtype,
+        })
+    return out
+
+
+def _real_figs(db, qids):
+    """真题带的图。**和程序化出的图形题不是一回事**：那边是内联 SVG（figs.seq/figs.opts），
+       这边是从 docx 里提出来的图片文件名，前端要走 /api/real/fig/<name> 取。"""
+    if not qids:
+        return {}
+    out = {}
+    try:
+        for f in db.execute("SELECT qid, sha, ext FROM real_figs WHERE qid IN (%s) ORDER BY qid, ord"
+                            % ",".join("?" * len(qids)), list(qids)):
+            out.setdefault(f["qid"], []).append(f["sha"] + f["ext"])
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e):   # 只放过「没跑过提图脚本」这一种
+            raise
+    return out
+
+
+def _drill_gen(db, board, qtype, n, level="mid", src="ai", year_min=0):
+    """出 n 道题。
+
+    src 是**题源开关**（这是 P3 的核心）：
+      real —— 全部发真题。答案权威、风格 100% 真实，但题量有限、做完不会再有
+      ai   —— 老路子：AI 题库（_bank_take）或程序化构造（figgen）
+      mix  —— 真题优先填，不够的用 ai 补。默认给 mix 之外的老行为留 ai
+
+    src=ai 时仍然**按题型决定引擎** —— 判断推理是混合的：图形推理能构造（prog），
+    定义/类比/逻辑判断只能让 AI 出（ai）。
+    """
     types = [t[0] for t in DRILL_TYPES[board]]
     if not qtype:                                  # 混合练：题型轮着来，但**每个题型一次取够**
         # 原先是逐题递归（一道题调一次 _drill_gen），10 道题就可能触发 10 轮补库；
@@ -821,14 +907,25 @@ def _drill_gen(db, board, qtype, n, level="mid"):
             need[t] = need.get(t, 0) + 1
         out = []
         for t, k in need.items():
-            out += _drill_gen(db, board, t, k, level)
+            out += _drill_gen(db, board, t, k, level, src, year_min)
         random.shuffle(out)                        # 混合练就该乱序，别一坨一坨按题型来
         return out[:n]
     if qtype not in types:
         return []
+
+    got = []
+    if src in ("real", "mix"):
+        got = _real_take(db, board, qtype, n, year_min)
+        if src == "real" or len(got) >= n:
+            return got[:n]
+        # mix：真题不够（这个题型本来就没几道，或者都做过了），剩下的名额交给 AI/程序化。
+        # **不静默降级**——调用方能从 item 的 src 字段看出每道题是哪来的。
+
+    need_n = n - len(got)
     eng = DRILL_ENGINE.get((board, qtype), "ai")
     if eng == "ai":
-        return _bank_take(db, board, qtype, level, n)
+        return got + _bank_take(db, board, qtype, level, need_n)
+    n = need_n
 
     out = []
     for _ in range(n):
@@ -845,8 +942,9 @@ def _drill_gen(db, board, qtype, n, level="mid"):
         q["qtype"] = qtype                         # 统计要按「目录里的题型名」记，不是生成器的细目
         q.setdefault("tip", DRILL_TIP.get(qtype, ""))
         q["level"] = level
+        q["src"] = "prog"
         out.append(q)
-    return out
+    return got + out
 
 
 @bp.get("/api/drill/types")
@@ -870,11 +968,17 @@ def drill_types():
         bk = bank.get(k) or {}
         n = st.get("n") or 0
         acc = round(100.0 * (st.get("ok") or 0) / n) if n else None
+        n_real = _real_count(db, board, k)
         items.append({"type": k, "desc": desc, "eng": eng, "ord": i, "n": n, "acc": acc,
                       "sec": round(st.get("sec") or 0) if n else None,
                       "tip": DRILL_TIP.get(k, ""),
                       "bank_ok": bk.get("ok") or 0,          # 过了双模型核验的
-                      "bank_all": bk.get("c") or 0})
+                      "bank_all": bk.get("c") or 0,
+                      # 真题存量：前端据此决定「真题练习」这个题源要不要置灰。
+                      # 政治理论四个题型真题只有个位数、文章阅读一道都没有，
+                      # 这种就该明说「没有」，不该假装有。
+                      "real_n": n_real,
+                      "real_ok": n_real >= _REAL_SRC_MIN})
     # 默认按**讲义目录顺序**（循序渐进）；练过之后，薄弱的（低于该难度预期得分率）才提到前面
     exp = round(drill_coef(board, level) * 100)
     items.sort(key=lambda x: (0 if (x["acc"] is not None and x["acc"] < exp) else 1,
@@ -911,8 +1015,20 @@ def drill_quiz():
     level = d.get("level") if d.get("level") in ("easy", "mid", "real") else "mid"
     n = max(1, min(30, int(d.get("n") or 5)))
     exam = bool(d.get("exam"))                    # 测试模式：答案不下发
-    items = _drill_gen(get_db(), board, qtype, n, level)
+    src = d.get("src") if d.get("src") in ("real", "ai", "mix") else "ai"
+    # 真题模式没有难度档（真题不带难度标签，硬套是假的），改成按年份筛
+    year_min = max(0, min(2030, int(d.get("year_min") or 0)))
+    items = _drill_gen(get_db(), board, qtype, n, level, src, year_min)
     if not items:
+        if src == "real":
+            # 真题模式取不到 ≠ 题库没预热。**别混用下面那句**——那句承诺「后台正在出题，
+            # 过两分钟再来」，而真题是死的，等一辈子也不会多出来。
+            n_real = _real_count(get_db(), board, qtype) if qtype else 0
+            why = ("这个题型真题库里只有 %d 道" % n_real) if n_real else "真题库里没有这个题型的题"
+            if year_min:
+                why += "（还限定了 %d 年以后）" % year_min
+            return jsonify({"error": "「%s · %s」%s，换「AI 出题」或放宽年份吧。"
+                                     % (board, qtype or "混合练", why)}), 404
         # 走到这儿说明这一格题库是空的。**绝不在请求里现场调 AI 补**——那要几分钟，
         # 前端只会表现为「点了没反应」。_bank_take 已经把补库排进后台了，这里只管说清楚。
         lv = DRILL_LV_NAME.get(level, level)
@@ -929,6 +1045,7 @@ def drill_quiz():
             x.pop("tip", None)
         pub.append(x)
     return jsonify({"board": board, "type": qtype, "level": level, "exam": exam,
+                    "src": src, "year_min": year_min,
                     "coef": drill_coef(board, level),
                     "limit": DRILL_LIMIT.get(board, 60), "items": pub,
                     # 要 n 道只凑出 len(items) 道 = 题库这一格还没满，后台正在补。
@@ -974,6 +1091,16 @@ def drill_done():
         secs.append(sec)
         db.execute("INSERT INTO drill_log(user_id,board,qtype,level,correct,seconds) VALUES(?,?,?,?,?,?)",
                    (uid(), board, it.get("qtype") or "", level, 1 if ok else 0, sec))
+        # 真题模式做的题**同时记进 real_attempts**，这样专项练和「历年真题」模块的进度是通的：
+        # 在这边做过的题，去那边不会再当没做过推给你，反过来也一样。
+        # 不这么记的话，同一道题会在两个入口各刷一遍，而「智能刷」最该练的题反而遇不上。
+        if it.get("real_id") and your:
+            try:
+                db.execute("INSERT INTO real_attempts(user_id,qid,choice,correct,seconds) "
+                           "VALUES(?,?,?,?,?)", (uid(), int(it["real_id"]), your,
+                                                 1 if ok else 0, sec))
+            except sqlite3.Error:
+                pass                       # 真题表还没建（新库）；专项练本身不该因此失败
         results.append({"correct": ok, "your": your, "answer": it.get("answer") or "",
                         "explain": it.get("explain") or "", "tip": it.get("tip") or ""})
     for it, r in zip(items, results):

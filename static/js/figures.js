@@ -88,6 +88,13 @@ function dtMaterial(m, i, prev) {
   if (!m) return '';
   if (prev && JSON.stringify(prev) === JSON.stringify(m))
     return '<div class="dt-same">↑ 根据上面这份材料作答</div>';  // 两题共用一份材料，不重复渲染
+  /* 真题的材料是**一段纯文本**（片段阅读的文段、资料分析的文字资料），
+     不是 figgen 那种 {type:'table', headers, rows} 结构体。不特判的话会掉进下面
+     的图表分支：m.labels 是 undefined，渲染出一张空图 + 一个空的「看数据表」。 */
+  if (typeof m === 'string') {
+    const t = m.trim();
+    return t ? `<div class="dt-mat dt-mtxt">${esc(t).replace(/\n+/g, '<br>')}</div>` : '';
+  }
   const head = `<div class="dt-mt">${esc(m.title || '根据下列资料，回答问题')}${m.unit ? `<span>单位：${esc(m.unit)}</span>` : ''}</div>`;
   if (m.type === 'table') return `<div class="dt-mat">${head}${dtTable(m)}</div>`;
   // 图表另附「看数据表」，方便核对数字（也是无障碍要求：不能只靠图形）
