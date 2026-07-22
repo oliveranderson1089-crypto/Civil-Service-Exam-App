@@ -17,11 +17,13 @@ import threading
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 
 from flask import Blueprint, jsonify, request
 
 from core import DB, get_db, log, uid
 from figgen import _gen_figure_q, _gen_math_q, _gen_ziliao
+from mods import realref
 from mods.ai import _ai_call_or_error, _vision_conf
 
 bp = Blueprint("drill", __name__)
@@ -390,63 +392,64 @@ def _bank_avoid(db, board, qtype, n=25):
 # 判成了「语境分析」，于是它会作为「选词填空真题范例」喂给出题模型。
 # 跑 audit_qtype.py 量过：不卡模块的话，捞到的 5325 道里只有 68.7% 是对模块的，
 # 语境分析 46%、查找细节 58% 都是脏的。这种脏数据不报错也不崩，只让题一点点跑偏。
-_REAL_OK = ("rq.needs_asset=0 AND (rq.has_answer=1 OR re.agree=1) "
-            "AND COALESCE(NULLIF(rq.qtype,''), re.qtype, '')=? AND rq.module=?")
+_REAL_OK = (realref.servable("rq", "re")
+            + " AND " + realref.qtype_expr("rq", "re") + "=? AND rq.module=?")
 
-# 板块 → 真题卷面上的模块名。政治理论**在卷面上不是独立模块**，它的题混在常识判断里
-# （gen_real_explain.py 归类时也是这么并的），不映射过去就一道范例都取不到。
-_BOARD_MODULE = {"资料分析": "资料分析", "言语理解与表达": "言语理解与表达",
-                 "判断推理": "判断推理", "数量关系": "数量关系",
-                 "常识判断": "常识判断", "政治理论": "常识判断"}
+# ⚠️ **module 为空的真题（实测 156 道有题型标签但没模块）就此不参与范例和分位统计。**
+# 这是有意的：不知道属于哪个模块的题，正是标签最不可信的那批。代价要认：
+# 政治理论·习近平思想因此少 4 道（原池才 7 道）、语境分析少 34 道。P1 回填模块后自然恢复。
+#
+# 「这道真题让人读多少字」= 材料 + 题干，**必须合起来算**。
+# 只量 stem 是不对的：片段阅读/文章阅读的文段存在 material 列里，题干只剩
+# 「根据文章，下列说法正确的是：」14 个字，拿它算分位会把篇幅下限压到 20 上下，
+# 而出题提示词和 _style_ok 都吃这个数 —— 那道「别把片段阅读压成一句话」的护栏，
+# 就变成了**放行一句话的题**。出题时要求模型把文段写进题干，两边口径必须一致。
+# ⚠️ material 这列**存过字符串 'None'**（早期入库把 Python 的 None 直接格式化进去了）。
+_REAL_TEXT = "COALESCE(NULLIF(rq.material,'None'),'')"
+_REAL_LEN = "(LENGTH(%s) + LENGTH(rq.stem))" % _REAL_TEXT
 
 
 def _real_args(board, qtype):
     """_REAL_OK 里两个 ? 的实参，顺序不能反。"""
-    return (qtype, _BOARD_MODULE.get(board, board))
-
-
-def _material_of(r):
-    """题干前面那段材料（片段阅读的文段、资料分析的表）。
-
-    ⚠️ 这列**存过字符串 'None'**（早期入库时把 Python 的 None 直接格式化进去了），
-    不特判的话会把「None」四个字当成材料喂给模型。
-    """
-    m = (r["material"] or "").strip() if "material" in r.keys() else ""
-    return "" if m in ("", "None") else m
-
-
-def _real_len(r):
-    """这道真题**让人读多少字** = 材料 + 题干。
-
-    只量 stem 是不对的：片段阅读/文章阅读的文段存在 material 列里，题干只剩
-    「根据文章，下列说法正确的是：」14 个字。拿这个去算分位数，会把篇幅下限
-    压到 20 上下，而出题提示词和 _style_ok 都吃这个数 —— 那道「别把片段阅读
-    压成一句话」的护栏，就变成了**放行一句话的题**。
-    出题时是要求模型把文段写进题干的，所以这里也必须按合并后的长度量，两边口径才一致。
-    """
-    return len(_material_of(r)) + len(r["stem"] or "")
+    return (qtype, realref.board_module(board))
 
 
 def _real_examples(db, board, qtype, n=3):
-    """抽 n 道**同模块同题型**的真题当范例。近年的优先 —— 出题风格是会变的。"""
+    """抽 n 道**同模块同题型**的真题当范例。近年的优先 —— 出题风格是会变的。
+
+    ⚠️ 别退回 `ORDER BY year_max DESC LIMIT n*4`：那样 RANDOM() 只在同一年内洗牌，
+    取到的永远是最新的那十几道。实测定义判断连跑 8 轮，617 道里只出现过 17 道不同的题
+    —— 「以真题为基准」长期锚在十来道上，模型反复看同几道，风格多样性根本拿不到。
+    改成**近 5 年优先、年段内整体随机**，既保住「近年优先」又把池子放开。
+    """
     try:
         rows = db.execute(
-            "SELECT rq.stem, rq.material, rq.options, rq.answer, re.answer AS ai_answer "
+            "SELECT rq.stem, %s AS mat, rq.options, rq.answer, re.answer AS ai_answer "
             "FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
-            "WHERE " + _REAL_OK + " AND LENGTH(rq.stem) BETWEEN 8 AND 600 "
-            "ORDER BY rq.year_max DESC, RANDOM() LIMIT ?",
-            _real_args(board, qtype) + (n * 4,)).fetchall()
+            "WHERE %s AND %s BETWEEN ? AND ? "
+            # 上限是给提示词兜底的：文章阅读的原文能有一千多字，三道范例就把提示词撑得很大。
+            # 长度闸**写在 SQL 里**，别一半在 SQL 一半在 Python —— 两道闸口径不一致时，
+            # 取回来又被丢掉的行会白占 LIMIT 名额，最终范例数不足 n 且没有任何日志。
+            "ORDER BY (rq.year_max >= ?) DESC, RANDOM() LIMIT ?"
+            % (_REAL_TEXT, _REAL_OK, _REAL_LEN),
+            _real_args(board, qtype) + (20, 1800, date.today().year - 5, n * 4)).fetchall()
     except sqlite3.Error:
         return []                       # 真题库还没导入（新库），照老路子出题
-    out, seen = [], set()
+    # 去重要**分开认材料和设问**：文章阅读是一篇文章配多问，这些行 material 完全相同，
+    # 拿合并后的前缀当键会把它们全判成同一道题（前缀取到的是材料开头）。
+    # 同一篇材料只留一道是对的（三道同文章的范例没有价值），但要显式表达，
+    # 别靠前缀碰撞顺带实现 —— 否则范例数会悄悄少于 n 且没有任何日志。
+    out, seen_mat, seen_stem = [], set(), set()
     for r in rows:
         # 材料要一起给：范例的价值就在文段怎么写、设问怎么问，只给设问等于没给
-        q = ("%s\n%s" % (_material_of(r), r["stem"])).strip()
-        # 上限是给提示词兜底的：文章阅读的原文能有一千多字，三道范例就把提示词撑得很大
-        if q[:20] in seen or not (20 <= len(q) <= 1800):
+        mat = r["mat"] or ""
+        stem_key = (r["stem"] or "")[:20]
+        if (mat and mat[:40] in seen_mat) or stem_key in seen_stem:
             continue
-        seen.add(q[:20])
-        out.append({"q": q, "options": json.loads(r["options"]),
+        seen_mat.add(mat[:40])
+        seen_stem.add(stem_key)
+        out.append({"q": ("%s\n%s" % (mat, r["stem"])).strip(),
+                    "options": json.loads(r["options"]),
                     "answer": r["answer"] or r["ai_answer"] or ""})
         if len(out) >= n:
             break
@@ -460,20 +463,31 @@ def _real_style(db, board, qtype):
     压成一句话 —— 内容看着没错，但**一眼就不像真题**，练它没有意义。
     取 10%~90% 分位而不是极值，免得被个别超长题带跑。
 
+    长度由 SQLite 算（见 _REAL_LEN）：原先把整列 stem+material 拉进内存只为求 len()，
+    定义判断一次要搬 223 KB，而每次补库都会调一遍。
+
     卡模块之后政治理论那四个题型会掉到样本线以下（真题库里合计才个位数），
     于是这里返回 None、不卡篇幅 —— 这是对的：**没有范例好过拿错模块的范例**，
     宁可不卡，也别拿常识判断的体量去要求马原题。补齐要等 P1 把题型标签填完。
     """
     try:
         rows = db.execute(
-            "SELECT rq.stem, rq.material, rq.options FROM real_questions rq "
-            "LEFT JOIN real_explains re ON re.qid=rq.id WHERE " + _REAL_OK,
+            "SELECT %s AS n, rq.options FROM real_questions rq "
+            "LEFT JOIN real_explains re ON re.qid=rq.id WHERE %s" % (_REAL_LEN, _REAL_OK),
             _real_args(board, qtype)).fetchall()
     except sqlite3.Error:
         return None
-    if len(rows) < 12:                  # 样本太少，分位数不可信，不卡
+    if len(rows) < realref.STYLE_MIN:   # 样本太少，分位数不可信，不卡
         return None
-    stems = sorted(_real_len(r) for r in rows)
+    stems = sorted(r["n"] for r in rows)
+    # ★ 先剔残题再取分位。片段阅读有一批题入库时材料没跟过来，只剩光秃秃一句设问
+    #   （实测查找细节有 7 道只有 17~27 字，紧接着就跳到 76 字）。57 道里混 7 道残题，
+    #   10% 分位就落在残题堆里（25 字），_style_ok 再乘 0.4 → 10 字的假片段阅读照样过。
+    #   按「中位数的几分之一」剔而不是写死字数，每个题型自适应，不必逐个调参。
+    floor = stems[len(stems) // 2] / realref.SHORT_FRAC
+    kept = [x for x in stems if x >= floor]
+    if len(kept) >= realref.STYLE_MIN:  # 剔完还够样本才用剔过的，否则宁可不剔
+        stems = kept
     opts = sorted(len(o) for r in rows for o in json.loads(r["options"]))
     def pct(a, p):
         return a[min(len(a) - 1, int(len(a) * p))]

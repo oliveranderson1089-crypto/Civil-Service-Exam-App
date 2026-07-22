@@ -29,12 +29,12 @@ def _db():
     return con
 
 
-def _add(con, qid, module, qtype, stem, *, material="", ai_qtype=None,
+def _add(con, qid, module, qtype, stem, *, material="", ai_qtype=None, agree=1,
          has_answer=1, needs_asset=0, year=2024):
     con.execute("INSERT INTO real_questions VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (qid, module, qtype, stem, material, OPTS, "A", has_answer, needs_asset, year))
     if ai_qtype is not None:
-        con.execute("INSERT INTO real_explains VALUES(?,?,?,?)", (qid, "A", ai_qtype, 1))
+        con.execute("INSERT INTO real_explains VALUES(?,?,?,?)", (qid, "A", ai_qtype, agree))
 
 
 class TestModuleFilter:
@@ -111,6 +111,17 @@ class TestMaterial:
         got = _real_examples(con, "言语理解与表达", "概括主旨", n=3)
         assert "None" not in got[0]["q"]
 
+    def test_同一篇材料的多道题只留一道范例(self):
+        """文章阅读是一篇文章配多问，这些行 material 完全相同。
+           三道同文章的范例没有价值，但去重要显式按材料认，别靠前缀碰撞顺带实现。"""
+        con = _db()
+        for i in range(6):
+            _add(con, i + 1, "言语理解与表达", "文章阅读", "第%d问，下列说法正确的是：" % i,
+                 material=self.PASSAGE)
+        _add(con, 99, "言语理解与表达", "文章阅读", "另一篇的问题：", material="另" * 400)
+        got = _real_examples(con, "言语理解与表达", "文章阅读", n=3)
+        assert len(got) == 2, "同一篇材料出了 %d 道范例" % len(got)
+
     def test_篇幅分位按材料加题干算(self):
         """短题干 + 长材料的题，不能被当成「这类题很短」。
 
@@ -125,10 +136,33 @@ class TestMaterial:
         assert st["stem"][0] > 300, "材料没算进篇幅，下限被短题干拉到了 %d" % st["stem"][0]
 
 
-def test_答案存疑和缺图的题不当范例():
-    """SERVABLE 口径：原卷没答案且没过双模核验的、缺图的，都不能拿来当范例。"""
-    con = _db()
-    _add(con, 1, "判断推理", "定义判断", "根据上述定义，下列属于……的是：" + "定" * 40,
-         has_answer=0, ai_qtype=None)                      # 没答案又没解析
-    _add(con, 2, "判断推理", "定义判断", "缺图的那道" + "图" * 40, needs_asset=1)
-    assert _real_examples(con, "判断推理", "定义判断", n=5) == []
+class TestServable:
+    """SERVABLE 口径：答案靠不住的题绝不当范例——拿去学错的答案比不学还糟。"""
+
+    def test_没答案也没解析的不要(self):
+        con = _db()
+        _add(con, 1, "判断推理", "定义判断", "根据上述定义，下列属于……的是：" + "定" * 40,
+             has_answer=0, ai_qtype=None)
+        assert _real_examples(con, "判断推理", "定义判断", n=5) == []
+
+    def test_缺图的不要(self):
+        con = _db()
+        _add(con, 1, "判断推理", "定义判断", "缺图的那道" + "图" * 40, needs_asset=1)
+        assert _real_examples(con, "判断推理", "定义判断", n=5) == []
+
+    def test_双模核验不一致的不要(self):
+        """有解析行但 agree=0 —— 两个模型答案对不上，这题存疑。
+
+        这条是 `has_answer=1 OR agree=1` 里最容易写错的一支：写成
+        `agree IS NOT NULL` 的话，核验判为不一致的题会照发不误。
+        """
+        con = _db()
+        _add(con, 1, "判断推理", "定义判断", "存疑的那道" + "疑" * 40,
+             has_answer=0, ai_qtype="定义判断", agree=0)
+        assert _real_examples(con, "判断推理", "定义判断", n=5) == []
+
+    def test_原卷有答案就行不必等核验(self):
+        con = _db()
+        _add(con, 1, "判断推理", "定义判断", "原卷带答案的" + "答" * 40,
+             has_answer=1, ai_qtype="定义判断", agree=0)
+        assert len(_real_examples(con, "判断推理", "定义判断", n=5)) == 1

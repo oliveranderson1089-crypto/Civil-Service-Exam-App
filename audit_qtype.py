@@ -21,38 +21,41 @@ import sqlite3
 import sys
 
 from core import DB
+from mods import realref
 from mods.drill import DRILL_TYPES
 
-try:
-    from mods.drill import _BOARD_MODULE
-except ImportError:                      # 还没打 P0 那个补丁时也要能跑，好拿到「改之前」的基线
-    _BOARD_MODULE = {"政治理论": "常识判断"}
-
-# 「这道真题能不能拿来用」——和 realq.SERVABLE 同一个口径，别在这儿另立一套
-SERVABLE = "rq.needs_asset=0 AND (rq.has_answer=1 OR re.agree=1)"
+# 口径一律从 mods/realref.py 取，别在这儿另立一套 —— 审计脚本存在的全部意义
+# 就是当那个唯一可信的数字，它自己和线上跑的判定不一致就彻底没用了
+SERVABLE = realref.servable("rq", "re")
 _JOIN = "FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id"
-_QTYPE = "COALESCE(NULLIF(rq.qtype,''), re.qtype, '')"
-# _real_style 的样本下限：少于这个数就不算分位数、直接放弃篇幅约束
-STYLE_MIN = 12
+_QTYPE = realref.qtype_expr("rq", "re")
 
 
 def audit(con, only_board=""):
-    """返回 [(板块, 题型, 现在捞到几道, 其中模块相符几道, 相符的里面有几道是 rq.qtype 判的)]"""
+    """返回 [(板块, 题型, 现在捞到几道, 其中模块相符几道, 相符的里面有几道是 rq.qtype 判的)]
+
+    一条 GROUP BY 统计完再在内存里配 —— 原先每个题型各跑一次全表 JOIN，
+    28 个题型就是 28 遍 7606 行的扫描。这脚本是要进「改完自查」循环的，跑得慢就会被跳过。
+    """
+    stat = {}
+    for r in con.execute(
+            "SELECT COALESCE(rq.module,'') m, %s t, COUNT(*) n, "
+            "  SUM(CASE WHEN COALESCE(rq.qtype,'')<>'' THEN 1 ELSE 0 END) byrule "
+            "%s WHERE %s AND %s<>'' GROUP BY 1, 2" % (_QTYPE, _JOIN, SERVABLE, _QTYPE)):
+        stat[(r["m"], r["t"])] = (r["n"], r["byrule"])
+
     rows = []
     for board, types in DRILL_TYPES.items():
         if only_board and board != only_board:
             continue
-        module = _BOARD_MODULE.get(board, board)
+        module = realref.board_module(board)
         for qtype, _desc, engine in types:
             if engine != "ai":           # 程序化出的题不看真题范例，不在这套机制里
                 continue
-            got = con.execute(
-                "SELECT rq.module, rq.qtype FROM real_questions rq "
-                "LEFT JOIN real_explains re ON re.qid=rq.id "
-                "WHERE %s AND %s=?" % (SERVABLE, _QTYPE), (qtype,)).fetchall()
-            fit = [r for r in got if (r["module"] or "") == module]
-            byrule = sum(1 for r in fit if (r["qtype"] or "").strip())
-            rows.append((board, qtype, len(got), len(fit), byrule))
+            # 「捞到」= 不卡模块时按题型能命中的全部（含别的模块的），「相符」= 只算本模块的
+            got = sum(n for (m, t), (n, _b) in stat.items() if t == qtype)
+            fit, byrule = stat.get((module, qtype), (0, 0))
+            rows.append((board, qtype, got, fit, byrule))
     return rows
 
 
@@ -76,6 +79,12 @@ def main():
     con = sqlite3.connect(a.db)
     con.row_factory = sqlite3.Row
     rows = audit(con, a.board)
+    if not rows:
+        # 板块名拼错时**必须在这儿死掉**：再往下走 tot 会是 0，pct 算出 0.0，
+        # --check 于是报「相符率 0%」的红灯 —— 把「传参写错」伪装成「数据烂透了」
+        print("--board %r 没匹配到任何 AI 出题的板块，可选：%s"
+              % (a.board, "、".join(DRILL_TYPES)), file=sys.stderr)
+        return 2
 
     print("=" * 78)
     print("真题范例的模块相符率（按题型捞出来的真题，有几道真是这个模块的）")
@@ -87,7 +96,7 @@ def main():
         tot += n
         fit_tot += fit
         note = []
-        if fit < STYLE_MIN:
+        if fit < realref.STYLE_MIN:
             # 样本不足 _real_style 会返回 None：不卡篇幅了。这不是 bug，是它该有的保守行为，
             # 但要说出来 —— 这些题型的「像不像真题」目前完全没人管
             note.append("样本不足→不卡篇幅")
@@ -103,7 +112,7 @@ def main():
     print("合计：捞到 %d 道，模块相符 %d 道，**相符率 %.1f%%**（污染 %.1f%%）"
           % (tot, fit_tot, pct, 100 - pct))
     if thin:
-        print("样本不足 %d 道的题型共 %d 个：%s" % (STYLE_MIN, len(thin), "、".join(thin)))
+        print("样本不足 %d 道的题型共 %d 个：%s" % (realref.STYLE_MIN, len(thin), "、".join(thin)))
 
     print()
     print("=" * 78)

@@ -20,12 +20,15 @@ import sqlite3
 from flask import Blueprint, abort, jsonify, request, send_file
 
 from core import UPLOADS, get_db, uid
+from mods import realref
 from mods.review import REVIEW_INTERVALS
 
 bp = Blueprint("realq", __name__)
 
-# 「这道题能不能发给人做」——整个模块只认这一个口径，别处不许再写一份
-SERVABLE = ("q.needs_asset=0 AND (q.has_answer=1 OR e.agree=1)")
+# 「这道题能不能发给人做」——**全站只有 mods/realref.py 一份口径**，这儿只是取个短名字。
+# 别在任何地方重新写一遍字符串：drill.py 出题、audit_qtype.py 体检都吃同一个判定，
+# 各写一份的话改口径必须同步三处，漏一处的表现是审计数字和线上实际发的题对不上。
+SERVABLE = realref.servable("q", "e")
 _JOIN = ("FROM real_questions q LEFT JOIN real_explains e ON e.qid=q.id")
 
 

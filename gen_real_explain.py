@@ -431,10 +431,12 @@ def main():
               % (calls, (n_noans + 5) // 6))
         return
 
+    from mods import realref
     from mods.drill import DRILL_TYPES
-    qtypes = {b: [t[0] for t in ts] for b, ts in DRILL_TYPES.items()}
-    # 常识判断的卷面里混着大量时政/理论题，光给常识那七类会硬塞进不合适的桶
-    qtypes["常识判断"] = qtypes.get("常识判断", []) + qtypes.get("政治理论", [])
+    # 常识判断的卷面里混着大量时政/理论题，光给常识那七类会硬塞进不合适的桶。
+    # 「政治理论并进常识判断」这条映射由 realref 统一持有 —— 这里和 drill.py 取范例时
+    # 必须同源，否则哪天改了归属，drill 那边会静默地一道范例都取不到。
+    qtypes = realref.merged_qtypes({b: [t[0] for t in ts] for b, ts in DRILL_TYPES.items()})
 
     batches = [rows[i:i + a.batch] for i in range(0, len(rows), a.batch)]
     t0, done, ok, bad = time.time(), 0, 0, 0
