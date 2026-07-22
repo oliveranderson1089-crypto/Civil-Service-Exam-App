@@ -15,7 +15,6 @@
 import json
 import os
 import re
-import sqlite3
 
 from flask import Blueprint, abort, jsonify, request, send_file
 
@@ -50,22 +49,9 @@ def _explain_of(r):
 
 
 def _figs_of(db, qids):
-    """哪些题带图（图形推理的图从 docx 里提出来的，见 ingest_figs.py）。
-       一次查完，别在渲染每道题时各查一次。"""
-    if not qids:
-        return {}
-    out = {}
-    try:
-        for f in db.execute(
-                "SELECT qid, sha, ext FROM real_figs WHERE qid IN (%s) ORDER BY qid, ord"
-                % ",".join("?" * len(qids)), list(qids)):
-            out.setdefault(f["qid"], []).append(f["sha"] + f["ext"])
-    except sqlite3.OperationalError as e:
-        # 只放过「表还没建」这一种（没跑过提图脚本的库）。裸 except 会把 JSON 损坏、
-        # 磁盘错误、SQL 写错一起吞掉，表现是「图突然全没了」而日志里一个字都没有。
-        if "no such table" not in str(e):
-            raise
-    return out
+    """哪些题带图。实现在 mods/realref.py —— 专项练的真题题源要用同一份，
+       各写一份的话「改了这边没改那边」不会报错，只会静默发出错图。"""
+    return realref.figs_of(db, qids)
 
 
 def _pub(r, exam=False, figs=None):

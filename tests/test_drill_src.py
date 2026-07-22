@@ -29,8 +29,8 @@ def db(monkeypatch):
     con.row_factory = sqlite3.Row
     con.executescript("""
         CREATE TABLE real_questions(id INTEGER PRIMARY KEY, module TEXT, qtype TEXT,
-            stem TEXT, material TEXT, options TEXT, answer TEXT, has_answer INT,
-            needs_asset INT, year_max INT);
+            stem TEXT, material TEXT, options TEXT, answer TEXT, explain TEXT,
+            has_answer INT, needs_asset INT, year_max INT);
         CREATE TABLE real_explains(qid INT, answer TEXT, qtype TEXT, agree INT,
             keypoint TEXT, steps TEXT, tip TEXT);
         CREATE TABLE real_attempts(id INTEGER PRIMARY KEY, user_id INT, qid INT,
@@ -43,9 +43,10 @@ def db(monkeypatch):
     return con
 
 
-def _real(con, qid, qtype="语境分析", module="言语理解与表达", year=2024, material=""):
-    con.execute("INSERT INTO real_questions VALUES(?,?,?,?,?,?,'A',1,0,?)",
-                (qid, module, qtype, "真题题干%d" % qid, material, OPTS, year))
+def _real(con, qid, qtype="语境分析", module="言语理解与表达", year=2024, material="",
+          answer="A", explain=""):
+    con.execute("INSERT INTO real_questions VALUES(?,?,?,?,?,?,?,?,1,0,?)",
+                (qid, module, qtype, "真题题干%d" % qid, material, OPTS, answer, explain, year))
 
 
 def _bank(con, board, qtype, n, level="mid"):
@@ -136,3 +137,54 @@ class TestCount:
             _real(db, i + 1)
         assert D._real_count(db, "言语理解与表达", "语境分析") == 3
         assert 3 < D._REAL_SRC_MIN, "阈值定得太低，两三道题刷两轮就重复了"
+
+
+class TestExplain:
+    def test_解析别缩水成一句keypoint(self, db):
+        """实测定义判断 628 道里 562 道带完整原卷解析，re.steps 也有。
+           只发 keypoint 的话，同一道题在真题模块是完整解析、在专项练里只剩一句。"""
+        _real(db, 1)
+        db.execute("INSERT INTO real_explains(qid,answer,agree,keypoint,steps) "
+                   "VALUES(1,'A',1,'抓住定义要件',?)",
+                   (json.dumps(["第一步：找主体", "第二步：比对行为"], ensure_ascii=False),))
+        ex = D._drill_gen(db, "言语理解与表达", "语境分析", 1, "mid", "real")[0]["explain"]
+        assert "抓住定义要件" in ex and "第一步：找主体" in ex and "第二步：比对行为" in ex
+
+    def test_没有结构化解析就用原卷那段兜底(self, db):
+        _real(db, 1, explain="第一步，看提问方式，本题属于选非题。")
+        assert "选非题" in D._drill_gen(db, "言语理解与表达", "语境分析", 1, "mid", "real")[0]["explain"]
+
+    def test_答案取不出ABCD的题不发(self, db):
+        """drill_done 判分时 your == "" 恒为 False，用户做对也算错还要进错题本。"""
+        _real(db, 1, answer="")
+        db.execute("INSERT INTO real_explains(qid,answer,agree) VALUES(1,'',1)")
+        assert D._drill_gen(db, "言语理解与表达", "语境分析", 1, "mid", "real") == []
+
+
+class TestWrongq:
+    """真题带**纯文本**材料时错题本会不会崩 —— 这条正是线上必现的 500。"""
+
+    def _wq(self, db):
+        db.execute("CREATE TABLE wrong_questions(id INTEGER PRIMARY KEY, user_id INT, board TEXT,"
+                   "question TEXT, answer TEXT, qtype TEXT, points TEXT, method TEXT, skill TEXT,"
+                   "steps TEXT, note TEXT, starred INT, created_at TEXT, updated_at TEXT)")
+
+    def test_文字材料的真题做错能进错题本(self, db):
+        self._wq(db)
+        it = {"q": "比重约为：", "options": ["A. 甲", "B. 乙", "C. 丙", "D. 丁"], "answer": "A",
+              "material": "2009年1-11月，全国规模以上工业企业……", "module": "资料分析",
+              "qtype": "比重", "src": "real", "real_id": 1}
+        n = D._dtest_to_wrongq(db, [it], [{"correct": False, "your": "B", "answer": "A"}])
+        assert n == 1
+        got = db.execute("SELECT question FROM wrong_questions").fetchone()[0]
+        assert "2009年1-11月" in got, "材料没进错题本"
+
+    def test_真题的图不该被当成图形推理(self, db):
+        """真题的 figs 是文件名数组，figgen 的才是 {seq, opts}。
+           只判真假的话，带统计图的资料分析题会被标成「图形推理」。"""
+        self._wq(db)
+        it = {"q": "增速最快的是：", "options": ["A. 甲", "B. 乙", "C. 丙", "D. 丁"], "answer": "A",
+              "figs": ["abc123.png"], "module": "资料分析", "qtype": "增长率", "real_id": 2}
+        D._dtest_to_wrongq(db, [it], [{"correct": False, "your": "B", "answer": "A"}])
+        got = db.execute("SELECT question FROM wrong_questions").fetchone()[0]
+        assert "图形推理" not in got, got[:60]

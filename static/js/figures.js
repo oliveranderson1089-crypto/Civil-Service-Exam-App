@@ -93,7 +93,11 @@ function dtMaterial(m, i, prev) {
      的图表分支：m.labels 是 undefined，渲染出一张空图 + 一个空的「看数据表」。 */
   if (typeof m === 'string') {
     const t = m.trim();
-    return t ? `<div class="dt-mat dt-mtxt">${esc(t).replace(/\n+/g, '<br>')}</div>` : '';
+    if (!t) return '';
+    /* 分段要保住：资料分析的文字资料常有多个自然段（「一、…\n\n二、…」），
+       把 \n+ 一律压成单个 <br> 会渲染成一大坨。空行分段、单换行才是软换行。 */
+    const html = esc(t).split(/\n\s*\n/).map(x => `<p>${x.replace(/\n/g, '<br>')}</p>`).join('');
+    return `<div class="dt-mat dt-mtxt">${html}</div>`;
   }
   const head = `<div class="dt-mt">${esc(m.title || '根据下列资料，回答问题')}${m.unit ? `<span>单位：${esc(m.unit)}</span>` : ''}</div>`;
   if (m.type === 'table') return `<div class="dt-mat">${head}${dtTable(m)}</div>`;

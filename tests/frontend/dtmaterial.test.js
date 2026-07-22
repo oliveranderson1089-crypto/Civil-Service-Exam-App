@@ -66,3 +66,42 @@ test('折叠只认「相邻」：A、B、A 三题，第三题的 A 不该因为�
   assert.ok(!folded(outs[1]), '第二题 B（与 A 不同）');
   assert.ok(!folded(outs[2]), '第三题 A：紧邻的上一题是 B，不该折叠 —— 折叠语义只看相邻');
 });
+
+/* ---- 真题的材料是**纯文本**，不是 figgen 那种结构体（P3 题源开关引入） ---- */
+
+test('字符串材料要渲染成文字，不能掉进图表分支', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const dtMaterial = h.run('dtMaterial');
+  const out = dtMaterial('2023 年甲市地区生产总值 1000 亿元，同比增长 5.2%。', 0, null);
+  assert.match(out, /1000 亿元/, '文字材料没渲染出来');
+  assert.ok(!out.includes('<svg'), '掉进图表分支了，会画出一张空图');
+  assert.ok(!out.includes('看数据表'), '空的「看数据表」按钮不该出现');
+});
+
+test('文字材料要保住自然段，别压成一坨', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const dtMaterial = h.run('dtMaterial');
+  const out = dtMaterial('一、工业情况。\n产值增长。\n\n二、农业情况。', 0, null);
+  assert.equal((out.match(/<p>/g) || []).length, 2, '空行分段没生效');
+  assert.match(out, /<br>/, '段内的单换行该是软换行');
+});
+
+test('文字材料也要转义，别把材料里的尖括号当标签', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const dtMaterial = h.run('dtMaterial');
+  const out = dtMaterial('增速 <script>alert(1)</script> 如上', 0, null);
+  assert.ok(!out.includes('<script>'), 'XSS：材料里的标签被原样输出了');
+});
+
+test('空白字符串材料当没有材料', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const dtMaterial = h.run('dtMaterial');
+  assert.equal(dtMaterial('   \n  ', 0, null), '');
+});
+
+test('相邻两题共用同一段文字材料也要折叠', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const dtMaterial = h.run('dtMaterial');
+  const s = '同一份文字资料';
+  assert.ok(folded(dtMaterial(s, 1, s)), '文字材料没走折叠，长材料会重复渲染两遍');
+});

@@ -3382,3 +3382,17 @@ body.dark .rq-figs img{background:#e8ecf3;}
 .rq-mat-t{font-size:12px;color:var(--muted);padding:6px 12px;background:var(--line);}
 .rq-mat-b{padding:10px 12px;font-size:14px;line-height:1.85;white-space:pre-wrap;
   max-height:38vh;overflow:auto;}
+
+/* ---- 专项练·题源开关（P3）---------------------------------------------- */
+/* 真题存量不足的题型置灰：政治理论那四个题型真题只有个位数、文章阅读一道都没有，
+   点进去只会撞 404，不如一眼看见 */
+.dr-card.dr-off { opacity: .45; cursor: not-allowed; }
+.dr-card.dr-off:hover { transform: none; box-shadow: none; }
+.dr-real { color: var(--muted); font-size: 12px; }
+.dr-real.none { color: #c0392b; }
+.dr-tsrc { background: #2d6a4f; color: #fff; }
+.dr-srctip { font-size: 13px; color: var(--muted); line-height: 1.7; margin: 4px 0 10px; }
+/* 真题的配图（从原卷 docx 里提出来的位图），和程序化图形题的内联 SVG 不是一回事 */
+.dt-rfig { max-width: 100%; display: block; margin: 8px auto; border-radius: 6px; }
+/* 真题的材料是一段纯文本，不是表格/图表 */
+.dt-mat.dt-mtxt { white-space: normal; line-height: 1.8; font-size: 15px; }

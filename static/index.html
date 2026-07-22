@@ -788,8 +788,22 @@
   <section id="view-drill" class="view hidden">
     <div class="pd-intro" id="dr-intro"></div>
     <div class="dr-cfg">
-      <div class="dr-cfg-row"><label>难度</label><div id="dr-levels" class="dr-lvs"></div></div>
+      <div class="dr-cfg-row"><label>题源</label><div id="dr-srcs" class="chip-row">
+        <button class="chip active" data-drs="ai">AI 出题</button>
+        <button class="chip" data-drs="real">真题练习</button>
+        <button class="chip" data-drs="mix">混合</button>
+      </div></div>
+      <div class="dr-srctip" id="dr-srctip"></div>
+      <div class="dr-cfg-row" id="dr-lvrow"><label>难度</label><div id="dr-levels" class="dr-lvs"></div></div>
       <div class="dr-coef" id="dr-coef"></div>
+      <!-- 真题模式没有难度档（真题不带难度标签），换成年份筛选 -->
+      <div class="dr-cfg-row hidden" id="dr-yrrow"><label>年份</label>
+        <div id="dr-years" class="chip-row">
+          <button class="chip active" data-dry="0">不限</button>
+          <button class="chip" data-dry="2018">2018 年起</button>
+          <button class="chip" data-dry="2021">近 5 年</button>
+          <button class="chip" data-dry="2023">近 3 年</button>
+        </div></div>
       <div class="dr-cfg-row"><label>题量</label>
         <div id="dr-ns" class="chip-row">
           <button class="chip" data-drn="5">5 题</button>

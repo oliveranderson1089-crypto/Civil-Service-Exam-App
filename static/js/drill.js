@@ -19,6 +19,10 @@
    每次做完**留一条完整记录**，可以回看每一题 —— 不是做完就丢。 */
 let drBoard = '', drType = '', drItems = [], drIdx = 0, drAns = [], drSec = [], drT0 = 0, drTimer = 0;
 let drLimit = 60, drLevel = 'mid', drN = 10, drMode = 'study', drToken = '', drCoef = 0.6, drLevels = [];
+/* 题源开关：ai=AI 出题（老行为）/ real=真题练习 / mix=真题优先、不够的 AI 补。
+   真题模式**没有难度档**——真题不带难度标签，硬套是假的（原先「考场真实」那档发的
+   其实就是 AI 题）。所以切到 real 时把难度行换成年份行。 */
+let drSrc = 'ai', drYear = 0;
 
 function openDrill(board) {
   drBoard = board;
@@ -49,7 +53,11 @@ async function loadDrillTypes() {
     box.innerHTML = d.types.map((t, i) => {
       const done = t.n > 0;
       const weak = done && t.acc < Math.round(drCoef * 100);   // 低于这个难度的预期得分率 = 薄弱
-      return `<div class="dr-card${weak ? ' weak' : ''}" data-drt="${esc(t.type)}">
+      /* 真题模式下存量不够的题型**置灰**，别假装有：政治理论那四个题型真题只有
+         个位数、文章阅读一道都没有。点进去只会撞一个 404，不如一眼看见。 */
+      const noReal = drSrc === 'real' && !t.real_ok;
+      return `<div class="dr-card${weak ? ' weak' : ''}${noReal ? ' dr-off' : ''}"
+        data-drt="${noReal ? '' : esc(t.type)}"${noReal ? ' data-droff="1"' : ''}>
         <div class="dr-card-h">
           <b><span class="dr-no">${t.ord + 1}</span>${esc(t.type)}</b>
           ${done ? `<span class="dr-acc${weak ? ' bad' : ''}">${t.acc}%</span>` : '<span class="dr-new">没练过</span>'}
@@ -60,6 +68,8 @@ async function loadDrillTypes() {
           ${t.eng === 'ai' && t.bank_all
             ? `<span class="dr-bank" title="AI 出的题要过第二个模型的独立核验才发给你做；答案不一致的不出">
                  ✓ ${t.bank_ok} 道已核验${t.bank_all > t.bank_ok ? `（筛掉 ${t.bank_all - t.bank_ok}）` : ''}</span>` : ''}
+          ${drSrc === 'ai' ? '' : `<span class="dr-real${t.real_ok ? '' : ' none'}">
+             ${t.real_n ? `📄 真题 ${t.real_n} 道` : '📄 无真题'}</span>`}
           ${done ? `做过 ${t.n} 题 · 平均 ${t.sec} 秒${t.sec > drLimit ? '（超时）' : ''}` : `限时 ${drLimit} 秒/题`}</div>
       </div>`;
     }).join('') + `<div class="dr-card dr-all" data-drt=""><div class="dr-card-h"><b>🎲 混合练</b></div>
@@ -73,6 +83,31 @@ function drCoefTip() {
     <span>= 这个难度下<b>预期能做对 ${Math.round((l.coef || 0) * 100)}%</b>。${esc(l.desc || '')}。
     做完会告诉你<b>比预期高还是低</b>，心里有数。</span>`;
 }
+$('#dr-srcs').addEventListener('click', e => {
+  const b = e.target.closest('[data-drs]'); if (!b) return;
+  drSrc = b.dataset.drs;
+  document.querySelectorAll('#dr-srcs .chip').forEach(x => x.classList.toggle('active', x === b));
+  drSrcTip();
+  loadDrillTypes();          // 题源变了，卡片上的存量/置灰也要跟着变
+});
+$('#dr-years').addEventListener('click', e => {
+  const b = e.target.closest('[data-dry]'); if (!b) return;
+  drYear = +b.dataset.dry;
+  document.querySelectorAll('#dr-years .chip').forEach(x => x.classList.toggle('active', x === b));
+});
+function drSrcTip() {
+  const real = drSrc === 'real';
+  /* 难度行和年份行**互斥**：真题没有难度可调，AI 题没有年份可筛 */
+  $('#dr-lvrow').classList.toggle('hidden', real);
+  $('#dr-coef').classList.toggle('hidden', real);
+  $('#dr-yrrow').classList.toggle('hidden', !real);
+  $('#dr-srctip').innerHTML = {
+    ai: '题由 AI 按真题画像出（篇幅、设问措辞、干扰项都对着真题来），<b>必须过第二个模型的独立核验</b>才发给你。量大管够。',
+    real: '直接做<b>历年真题</b>，答案来自原卷、最权威。<b>题量有限、做完不会再有</b>，所以按「没做过 &gt; 做错过 &gt; 做对过」的顺序给你。<br>在这儿做过的题，「历年真题」模块不会再当新题推给你 —— 两边进度是通的。',
+    mix: '<b>真题优先</b>，这个题型的真题不够了（或都做过了）才用 AI 出的补。每道题上都标着来源。',
+  }[drSrc];
+}
+drSrcTip();
 $('#dr-levels').addEventListener('click', e => {
   const b = e.target.closest('[data-drl]'); if (!b) return;
   drLevel = b.dataset.drl;
@@ -97,6 +132,10 @@ function drModeTip() {
 drModeTip();
 $('#dr-types').addEventListener('click', e => {
   const c = e.target.closest('[data-drt]'); if (!c) return;
+  if (c.dataset.droff) {         // 置灰的别静默吞掉点击，说清楚为什么
+    toast('这个题型真题太少，换「AI 出题」吧');
+    return;
+  }
   drStart(c.dataset.drt);
 });
 $('#dr-recs').onclick = () => openDrillRecs();
@@ -109,7 +148,8 @@ async function drStart(type) {
        超过 20 秒一定是哪里不对，宁可报错也别让人对着没反应的按钮干等。 */
     const d = await api('/api/drill/quiz', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, timeoutMs: 20000,
-      body: JSON.stringify({ board: drBoard, type, n: drN, level: drLevel, exam: drMode === 'exam' }),
+      body: JSON.stringify({ board: drBoard, type, n: drN, level: drLevel,
+        exam: drMode === 'exam', src: drSrc, year_min: drSrc === 'real' ? drYear : 0 }),
     });
     drItems = d.items; drLimit = d.limit; drCoef = d.coef; drToken = d.token || '';
     drIdx = 0; drAns = []; drSec = [];
@@ -123,11 +163,15 @@ function drRender() {
   clearInterval(drTimer);
   if (drIdx >= drItems.length) { drResult(); return; }
   const it = drItems[drIdx];
+  /* figs **有两种形状**：figgen 出的图形题是 {seq, opts}（内联 SVG），
+     真题的是文件名数组（走 /api/real/fig/<name> 取）。只判真假会把真题的图整个丢掉。 */
   const isFig = !!(it.figs && it.figs.seq);
+  const realFigs = Array.isArray(it.figs) ? it.figs : [];
   const lvName = (drLevels.find(x => x.k === drLevel) || {}).name || '';
   $('#dr-head').innerHTML = `
     <div class="dr-prog">第 <b>${drIdx + 1}</b> / ${drItems.length} 题
       <span class="dr-tag">${esc(it.qtype || '')}</span>
+      ${it.src === 'real' ? '<span class="dr-tag dr-tsrc">真题</span>' : ''}
       <span class="dr-tag lv">${esc(lvName)}</span></div>
     <div class="dr-clock" id="dr-clock">0 秒</div>`;
   const chosen = drAns[drIdx];
@@ -143,6 +187,7 @@ function drRender() {
       <button class="btn primary" id="dr-nextq">${drIdx + 1 >= drItems.length ? '交卷看结果' : '下一题 →'}</button>
     </div>` : '';
   $('#dr-body').innerHTML = `<div class="dt-q">${dtMaterial(it.material, drIdx)}
+    ${realFigs.map(f => `<img class="dt-rfig" src="/api/real/fig/${encodeURIComponent(f)}" alt="题目配图">`).join('')}
     <div class="dt-qt">${esc(it.q)}</div>${seq}
     <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>
     <div id="dr-exp"></div>${nav}</div>`;
@@ -276,12 +321,14 @@ async function openDrillRec(rid) {
     $('#drd-body').innerHTML = d.items.map((it, i) => {
       const r = d.answers[i] || {};
       const isFig = !!(it.figs && it.figs.seq);
+      const rfg = Array.isArray(it.figs) ? it.figs : [];
       const cls = (L) => (L === it.answer ? ' correct' : (L === r.your ? ' wrong' : ''));
       const opts = isFig
         ? it.figs.opts.map((svg, j) => `<button class="dt-opt dt-figo${cls(DT_L[j])}" disabled>
             <span class="dt-figl">${DT_L[j]}</span>${svg}</button>`).join('')
         : (it.options || []).map((o, j) => `<button class="dt-opt${cls(DT_L[j])}" disabled>${esc(o)}</button>`).join('');
       return `<div class="dt-q">${dtMaterial(it.material, i, i ? d.items[i - 1].material : null)}
+        ${rfg.map(f => `<img class="dt-rfig" src="/api/real/fig/${encodeURIComponent(f)}" alt="题目配图">`).join('')}
         <div class="dt-qt">${r.correct ? '✅' : '❌'} ${i + 1}. ${esc(it.q)}</div>
         ${isFig ? `<div class="dt-seq">${it.figs.seq.join('')}<span class="dt-qm">?</span></div>` : ''}
         <div class="dt-opts${isFig ? ' dt-figs' : ''}">${opts}</div>

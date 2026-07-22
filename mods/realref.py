@@ -7,6 +7,7 @@
 原先三处各写各的（还各用各的表别名），改口径就得同步三处。漏一处的表现是
 **审计数字和线上实际取到的题对不上** —— 而审计脚本存在的全部意义就是当那个唯一可信的数字。
 """
+import sqlite3
 
 # 表别名各处不一样（realq 用 q/e，drill 和审计用 rq/re），所以口径写成按别名拼的函数，
 # 不写成裸字符串常量 —— 常量只能服务一种别名，于是必然被复制第二份。
@@ -68,3 +69,30 @@ STYLE_MIN = 12
 # 10% 分位就落在残题堆里（实测 25 字），_style_ok 再乘 0.4 → 10 字的假片段阅读照过。
 # 用「中位数的几分之一」而不是写死字数，是为了让每个题型自适应，不必逐个调参。
 SHORT_FRAC = 4
+
+
+def figs_of(db, qids):
+    """哪些真题带图（从 docx 里提出来的，见 ingest_figs.py）。一次查完，别逐题查。
+
+    ⚠️ 返回的是**图片文件名列表**，前端走 /api/real/fig/<name> 取 ——
+    和 figgen 程序化出的图形题**不是一回事**（那边是内联 SVG 的 {seq, opts} 结构体）。
+    渲染方要按形状分，别只判真假。
+
+    realq（真题模块）和 drill（专项练的真题题源）都要用，所以放这儿共用：
+    哪天配图的存储方式变了（比如加 kind 过滤），改一处就够，不会出现
+    「真题模块改了、专项练还在发旧图」这种静默不一致。
+    """
+    if not qids:
+        return {}
+    out = {}
+    try:
+        for f in db.execute(
+                "SELECT qid, sha, ext FROM real_figs WHERE qid IN (%s) ORDER BY qid, ord"
+                % ",".join("?" * len(qids)), list(qids)):
+            out.setdefault(f["qid"], []).append(f["sha"] + f["ext"])
+    except sqlite3.OperationalError as e:
+        # 只放过「表还没建」这一种（没跑过提图脚本的库）。裸 except 会把 JSON 损坏、
+        # 磁盘错误、SQL 写错一起吞掉，表现是「图突然全没了」而日志里一个字都没有。
+        if "no such table" not in str(e):
+            raise
+    return out
