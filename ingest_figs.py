@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS real_figs(
     sha TEXT NOT NULL,           -- 内容指纹，同时也是文件名
     ext TEXT,
     big INTEGER DEFAULT 0,       -- 1 = 单张大图，多半是把整道题画在一起，一张就够
+    -- kind='mat' = 资料分析的材料图（经过材料归属那条路挂上来的）；
+    -- 空 = 按段落邻近挂给单题的图。两者不能混：材料齐不齐只能看前者。
+    kind TEXT DEFAULT '',
     UNIQUE(qid, sha)
 );
 CREATE INDEX IF NOT EXISTS idx_rfig_q ON real_figs(qid);

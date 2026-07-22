@@ -90,6 +90,50 @@ def find_path(stored):
     return None
 
 
+# 排版噪声：材料正文里不该混进这些
+_NOISE = re.compile(r"^[\s　]*(?:第[一二三四五六七八九十]部分|资料分析|请开始答题|"
+                    r"所给出的[图表]|[（(]共\s*\d+\s*题)")
+_OPT_LINE = re.compile(r"^[\s　]*[ABCD][\s　]*[、.．)）]?[\s　]*\S")
+
+
+def gap_materials(lines, figs_by_para, qmark, zl_seqs):
+    """**没有任何文字材料头**时的兜底：靠「题与题之间的空隙」找材料。
+
+    2004 国考那种卷子，资料分析部分连一句「根据以下资料」都没有，材料就是一张
+    统计表图片，最多配一行表标题；2022 国考更干脆，图前面什么字都没有。
+    但排版顺序是死的：[上一题题号][题干][选项][材料][下一题题号]。
+    所以从下一道题的题号行往回走，一路收到撞上上一题的最后一个选项行为止，
+    收到的就是材料 —— 图和文字一起收，两者有其一就算一份材料。
+
+    **不能只认图**：实测同一份卷子里，有的材料是图、有的是纯文字段落
+    （2004 A 卷第 97~101 题那份是 602 字的文字材料，一张图都没有）。
+    只按图分组的话，那 5 道题会被并进上一份材料，整组配错表。
+    """
+    qs = [(i, s) for i, s in qmark if s in zl_seqs]
+    if len(qs) < 4:
+        return []
+    out, cur = [], None
+    for k, (i, seq) in enumerate(qs):
+        # 下界要**取到**：首题前面没有「上一题」，往回最多看 40 行，
+        # 而循环是 j > lo，所以 lo 要再减 1，否则第 0 行那张图永远扫不到。
+        lo = qs[k - 1][0] if k else max(0, i - 40) - 1
+        txt, paras = [], []
+        j = i - 1
+        while j > lo and not _OPT_LINE.match(lines[j]):
+            if lines[j].strip() and not _NOISE.match(lines[j]):
+                txt.insert(0, lines[j].strip())
+            if j in figs_by_para:
+                paras.insert(0, j)
+            j -= 1
+        body = R.norm(" ".join(txt))
+        if len(body) >= _MIN_MAT or paras:          # 这儿开始一份新材料
+            cur = [body[:4000], [x for pa in paras for x in figs_by_para[pa]], set()]
+            out.append(cur)
+        if cur is not None:
+            cur[2].add(seq)
+    return [(b, f, sq) for b, f, sq in out if sq]
+
+
 def pdf_materials(pdf, seq_module, tmp):
     """PDF 版的材料：正文按坐标抠文字，表格**按坐标裁成图**。
 
@@ -262,6 +306,9 @@ def main():
     if "material" not in {r[1] for r in con.execute("PRAGMA table_info(real_questions)")}:
         con.execute("ALTER TABLE real_questions ADD COLUMN material TEXT")
         con.commit()
+    if "kind" not in {r[1] for r in con.execute("PRAGMA table_info(real_figs)")}:
+        con.execute("ALTER TABLE real_figs ADD COLUMN kind TEXT DEFAULT ''")
+        con.commit()
     os.makedirs(FIGDIR, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="realmat-")
 
@@ -294,10 +341,19 @@ def main():
                 figs_by_para = {}
                 for para, blob, ext in R.docx_figures(path):
                     figs_by_para.setdefault(para, []).append((blob, ext))
+                lines = text.split("\n")
                 mats = [(body,
                          [x for para in sorted(paras) for x in figs_by_para.get(para, [])],
                          seqs)
                         for body, paras, seqs in split_materials(text, figs_by_para)]
+                if not mats:
+                    # 本卷一个文字材料头都没有 —— 退到「靠题与题之间的空隙找材料」
+                    qmark = [(i, int(m.group(1))) for i, ln in enumerate(lines)
+                             for m in [R._Q_HEAD.match(ln)] if m]
+                    zl = {r["seq"] for r in con.execute(
+                        "SELECT rr.seq FROM real_raw rr JOIN real_questions q ON q.id=rr.qid "
+                        "WHERE rr.paper_id=? AND q.module='资料分析'", (p["id"],))}
+                    mats = gap_materials(lines, figs_by_para, qmark, zl)
         except Exception:
             continue
         if not mats:
@@ -344,7 +400,11 @@ def main():
                         with open(fp, "wb") as f:
                             f.write(blob)
                     con.execute(
-                        "INSERT OR IGNORE INTO real_figs(qid,ord,sha,ext,big) VALUES(?,?,?,?,1)",
+                        # kind='mat' 是材料图的标记。**必须和题目图区分开**：
+                        # ingest_figs 会按段落邻近给资料分析题也挂上图（实测 178 道），
+                        # 那些图没经过材料归属验证，不能拿来当「材料齐了」的凭据。
+                        "INSERT OR IGNORE INTO real_figs(qid,ord,sha,ext,big,kind) "
+                        "VALUES(?,?,?,?,1,'mat')",
                         (qid, k, sha, ext))
                     seen_sha.add(sha)
             n_mat += 1
@@ -371,8 +431,11 @@ def main():
     # ⚠️ 一律用 COALESCE，别写 `material IS NOT NULL AND …`：
     #    material 为 NULL 时 `NOT (NULL AND x)` 在 SQL 三值逻辑里求值成 **NULL 而不是 TRUE**，
     #    锁回那条 UPDATE 就匹配不到这些行 —— 实测漏了 88 道「解封了却没有材料」的题。
+    # 图表型材料常常一个字都没有（2022 国考副省级那几份，图前面连表标题都没有），
+    # 所以「有材料图」这一条不能再附加「正文非空」——只要图是**材料图**（kind='mat'，
+    # 经过材料归属的那条路挂上去的）就算数。
     ok_cond = ("(LENGTH(COALESCE(material,'')) >= %d "
-               " OR (COALESCE(material,'')<>'' AND id IN (SELECT qid FROM real_figs)))"
+               " OR id IN (SELECT qid FROM real_figs WHERE kind='mat'))"
                % _SELF_CONTAINED)
     freed = con.execute("UPDATE real_questions SET needs_asset=0 "
                         "WHERE needs_asset=1 AND module='资料分析' AND " + ok_cond).rowcount

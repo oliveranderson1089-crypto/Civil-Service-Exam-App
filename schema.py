@@ -414,6 +414,9 @@ def init_db():
             qid INTEGER NOT NULL, ord INTEGER DEFAULT 0,
             sha TEXT NOT NULL, ext TEXT,
             big INTEGER DEFAULT 0,     -- 1 = 单张大图，多半是整题画在一起
+            -- kind='mat' = 资料分析的材料图（经过材料归属那条路挂上来的）；
+            -- 空 = 按段落邻近挂给单题的图。两者不能混：材料齐不齐只能看前者。
+            kind TEXT DEFAULT '',
             UNIQUE(qid, sha)
         );
         CREATE INDEX IF NOT EXISTS idx_rfig_q ON real_figs(qid);
