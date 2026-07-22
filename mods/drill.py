@@ -23,7 +23,7 @@ from flask import Blueprint, jsonify, request
 
 from core import DB, get_db, log, uid
 from figgen import _gen_figure_q, _gen_math_q, _gen_ziliao
-from mods import realref
+from mods import realprofile, realref
 from mods.ai import _ai_call_or_error, _vision_conf
 
 bp = Blueprint("drill", __name__)
@@ -457,50 +457,33 @@ def _real_examples(db, board, qtype, n=3):
 
 
 def _real_style(db, board, qtype):
-    """真题在这个题型上的体量：题干多长、单个选项多长。用来卡住跑偏的生成结果。
+    """真题在这个题型上的体量画像。**统计逻辑在 mods/realprofile.py**，这里只是取。
 
-    为什么要卡：模型很容易把选词填空写成一段两百字的小作文，或者把片段阅读
-    压成一句话 —— 内容看着没错，但**一眼就不像真题**，练它没有意义。
-    取 10%~90% 分位而不是极值，免得被个别超长题带跑。
-
-    长度由 SQLite 算（见 _REAL_LEN）：原先把整列 stem+material 拉进内存只为求 len()，
-    定义判断一次要搬 223 KB，而每次补库都会调一遍。
-
-    卡模块之后政治理论那四个题型会掉到样本线以下（真题库里合计才个位数），
-    于是这里返回 None、不卡篇幅 —— 这是对的：**没有范例好过拿错模块的范例**，
-    宁可不卡，也别拿常识判断的体量去要求马原题。补齐要等 P1 把题型标签填完。
+    每日巩固测试（P5）要用同一份画像，所以不能留在 drill 里各算各的。
+    样本不足返回 None —— 调用方按「不卡篇幅」处理：没有约束好过用错模块的约束。
     """
-    try:
-        rows = db.execute(
-            "SELECT %s AS n, rq.options FROM real_questions rq "
-            "LEFT JOIN real_explains re ON re.qid=rq.id WHERE %s" % (_REAL_LEN, _REAL_OK),
-            _real_args(board, qtype)).fetchall()
-    except sqlite3.Error:
-        return None
-    if len(rows) < realref.STYLE_MIN:   # 样本太少，分位数不可信，不卡
-        return None
-    stems = sorted(r["n"] for r in rows)
-    # ★ 先剔残题再取分位。片段阅读有一批题入库时材料没跟过来，只剩光秃秃一句设问
-    #   （实测查找细节有 7 道只有 17~27 字，紧接着就跳到 76 字）。57 道里混 7 道残题，
-    #   10% 分位就落在残题堆里（25 字），_style_ok 再乘 0.4 → 10 字的假片段阅读照样过。
-    #   按「中位数的几分之一」剔而不是写死字数，每个题型自适应，不必逐个调参。
-    floor = stems[len(stems) // 2] / realref.SHORT_FRAC
-    kept = [x for x in stems if x >= floor]
-    if len(kept) >= realref.STYLE_MIN:  # 剔完还够样本才用剔过的，否则宁可不剔
-        stems = kept
-    opts = sorted(len(o) for r in rows for o in json.loads(r["options"]))
-    def pct(a, p):
-        return a[min(len(a) - 1, int(len(a) * p))]
-    return {"stem": (pct(stems, .1), pct(stems, .9)),
-            "opt": (pct(opts, .1), pct(opts, .9))}
+    return realprofile.get(db, board, qtype)
 
 
 def _style_ok(style, q, opts):
-    """生成的题在不在真题的体量区间里。上下都留一倍余量 —— 是拦离谱的，不是拦风格差异。"""
+    """生成的题在不在真题的体量范围里。
+
+    ⚠️ **下限不能留太多余量**。原先写的是 `p10 × 0.4`，意思是「只拦离谱的」——
+    可实测下来，AI 出的题**系统性地往短里写**，根本不是偶发离谱：
+    语境分析真题中位数 123 字，AI 出 54~63 字；而 76×0.4=30，护栏一道都拦不下，
+    旧题库里 116 道语境分析只有 9% 落在真题区间，91% 偏短。
+
+    下限就用**真题的 10% 分位本身**，不乘系数。这个数自带校准含义 ——
+    「只有一成真题比这还短」，低于它就不该叫这个题型的题了。
+    试过用「中位数 × 0.7」，结果削弱论证的下限算成 101 字，比它自己的 10% 分位（96）
+    还高，把 97 字、100 字的题也拦了 —— 那是在拒绝比一成真题还长的题，纯属过严。
+    提示词那边给的是**中位数**（更高），两者配合：告诉模型往中位数写，按 p10 收。
+    上限仍然宽松：写长了不像真题，但至少是道能做的题，危害小得多。
+    """
     if not style:
         return True
     lo, hi = style["stem"]
-    if not (lo * 0.4 <= len(q) <= hi * 2.0 + 40):
+    if not (lo <= len(q) <= hi * 2.0 + 40):
         return False
     olo, ohi = style["opt"]
     avg = sum(len(o) for o in opts) / 4.0
@@ -567,14 +550,24 @@ def _bank_fill(db, board, qtype, level, want=8):
 
     # ★ 以真题为基准：把同题型的真题原样摆出来，让它照着这个路子出。
     #   比在提示词里描述「要像真题」有效得多 —— 风格是看会的，不是讲会的。
-    if style:
-        # 把真题的体量**当成硬指标写进去**，不能只在事后拦：
-        # 实测 AI 写的选词填空题干只有真题的三分之一（真题 87~166 字、含完整语境），
-        # 光靠护栏拦的话这个题型永远填不满，得先告诉它该写多长。
-        prompt += ("\n\n【篇幅按真题来】题干 **%d~%d 字**（这是这个题型真题的实际长度），"
-                   "每个选项 %d~%d 字。写太短就不像真题了 —— "
-                   "选词填空要把上下文的呼应关系写足，片段阅读要给完整的文段。"
-                   % (style["stem"][0], style["stem"][1], style["opt"][0], style["opt"][1]))
+    # 把真题画像**当成硬指标写进去**，不能只在事后拦。
+    # ⚠️ 给区间没用：原先写的是「题干 76~226 字」，模型一律往下限以下写 ——
+    #    实测语境分析真题中位数 123 字，AI 出 54~63 字，旧题库 116 道里只有 9%
+    #    落在真题区间、91% 偏短。改成给**中位数**这个具体数 + 明确的不合格线，
+    #    再要求照真题的惯用问法收尾，一次调用出的 4 道全部达标（命中率 0%→100%）。
+    prompt += realprofile.prompt_lines(style)
+
+    # ★ 指定每道题正确答案放哪个位置。模型自己出题时正确项**严重偏向前面**：
+    #   实测题库里 A 39.3% / B 28.6% / C 24.8% / D **7.4%**，真题则是各占四分之一
+    #   （22.9/25.4/27.2/24.5）。蒙 A 的期望正确率有 39%，练久了练出来的是蒙题习惯。
+    #   为什么不入库后打乱选项：**68% 的解析用字母指代选项**（「故 D 错误」「A、B、C 均为…」），
+    #   打乱就得连解析正文一起改写，而正文里还有「A股」「DNA」「B超」这类不能动的字母，
+    #   改错了比字母倾斜更糟。让模型按指定位置写，解析天然是自洽的。
+    slots = [c for c in "ABCD" for _ in range((want + 3) // 4)][:want]
+    random.shuffle(slots)
+    prompt += ("\n\n【正确答案的位置由我指定】第 %s 题。"
+               "**必须照这个位置放**，解析也要跟着这个位置写。"
+               % "、".join("%d 题放 %s" % (i, c) for i, c in enumerate(slots, 1)))
     if examples:
         prompt += ("\n\n【下面是这个题型的**真题**，照着这个路子出新题】\n"
                    + "\n\n".join(
@@ -597,7 +590,10 @@ def _bank_fill(db, board, qtype, level, want=8):
         [{"role": "system", "content": "你是四川省考命题老师。答案唯一、干扰项讲究，"
                                        "解析要说清其他三个为什么错。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
-        temperature=0.6, max_tokens=4096, timeout=120, json_mode=True)
+        # max_tokens 跟着画像一起提上来：接了真题画像之后题干按中位数写（选词填空 123 字、
+        # 判断意图 211 字，都比原来长一倍多），8 道题加解析在 4096 里放不下，
+        # 后半批会被截断 —— 表现是 _salvage_items 一直在抢救，产出白白少一半。
+        temperature=0.6, max_tokens=8000, timeout=180, json_mode=True)
     if err:
         return stat
     try:
@@ -733,7 +729,10 @@ def _bank_take(db, board, qtype, level, n):
         "SELECT * FROM drill_bank WHERE board=? AND qtype=? AND level=? AND agree='1' "
         "ORDER BY RANDOM() LIMIT ?", (board, qtype, level, n))]
     if len(got) < n:                      # 核验会刷掉一部分，所以多补一些
-        _bank_warm(board, qtype, level, want=max(12, (n - len(got)) * 2))
+        # ×4 而不是 ×2：接了真题画像、护栏按真题 10% 分位收紧之后，一批里有一半
+        # 会因为「写太短」或没过双模核验被刷掉（实测词语辨析 10 道只留下 2 道）。
+        # 按老的 ×2 排队，补一轮还是填不满，用户就会一直看到「题库还没预热好」。
+        _bank_warm(board, qtype, level, want=max(12, (n - len(got)) * 4))
     out = []
     for r in got:
         out.append({"q": r["q"], "options": json.loads(r["options"]), "answer": r["answer"],
