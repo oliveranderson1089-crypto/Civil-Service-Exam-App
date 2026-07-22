@@ -12,6 +12,7 @@ from flask import jsonify
 
 from core import log
 from mods.ai import _ai_call_or_error
+from mods.align import align
 
 
 WRITE_MIN, WRITE_MAX = 1000, 1200      # 省考大作文常规字数
@@ -271,6 +272,11 @@ def _write_gen(db, mode, date):
               "【要求】\n"
               "1. 标题：8~16 字，观点鲜明，不要「浅谈」「论」这种套话开头。\n"
               "2. 结构：开头（引材料+亮总论点）→ 三个分论点（每段：分论点句+素材论证+回扣）→ 结尾升华。\n"
+              "   ⚠️ **outline 里的每一句，必须在正文里逐字找得到**，这是硬要求：\n"
+              "   · 分论点句**原样当那一段的第一句**——不许拿名句、古语、衔接表达开头再绕回论点，\n"
+              "     那样读的人对着提纲在正文里一句都对不上，提纲就废了；\n"
+              "   · 总论点句原样出现在开头段（一般是最后一句）。\n"
+              "   写完请自己回头核一遍：提纲那 4 句，是不是都能在正文里原样找到。\n"
               "3. 每个分论点段**必须实打实用上面素材里的事例或理论**，写清是谁、做了什么、说明什么；"
               "不要写「某地某人」这种空壳。\n"
               "4. 段落之间**必须使用上面给的衔接表达**，不要自己造「首先其次最后」这种口水过渡。\n"
@@ -317,6 +323,8 @@ def _write_gen(db, mode, date):
               "\n\n【你的文章】\n" + content +
               "\n\n请在**不打乱原有结构和论点**的前提下改好上面每一条：该补的素材织进对应段落里"
               "（要自然，不是硬贴一句）。\n"
+              "⚠️ **每段的第一句（分论点句）和开头段的总论点句，一个字都不许动、不许换位置**——"
+              "补素材时最容易顺手把段首改成新引的名句，一改提纲就对不上正文了。\n"
               "⚠️ 补内容会撑长篇幅——**补一句就删一句冗余的**，全文仍要控制在 %d~%d 字，"
               "不许为了塞素材把字数写超。\n"
               '只输出 JSON：{"content":"改好的正文全文","used":[序号,...]}'
@@ -332,6 +340,12 @@ def _write_gen(db, mode, date):
         if not c2 or len(_write_lack(p, c2)) >= len(lack):
             break                       # 没改好就别越改越乱，保住上一版
         content, d["used"] = c2, f.get("used") or d.get("used")
+
+    # 提纲和正文对齐。**必须在这儿、在补素材循环之后**——那个循环只回写 content 不回写 outline，
+    # 补一轮正文就和提纲差一轮，这正是「提纲的分论点在正文里找不到」的根子。
+    # 提示词里已经硬要求过一遍了，但模型对这种结构性要求一贯不敏感，所以入库前真去核一遍。
+    outline = d.get("outline") or []
+    content, outline, arep = align(content, outline)
 
     words = len(re.sub(r"\s", "", content))
 
@@ -354,15 +368,16 @@ def _write_gen(db, mode, date):
         if _used_hit(text, content):
             used.append({"sec": sec, "text": text})
     e = {"mode": mode, "date": date, "topic": (d.get("topic") or "").strip(),
-         "title": (d.get("title") or "").strip(), "outline": json.dumps(d.get("outline") or [],
-                                                                        ensure_ascii=False),
+         "title": (d.get("title") or "").strip(),
+         "outline": json.dumps(outline, ensure_ascii=False),
          "content": content, "words": words,
-         "used": json.dumps(used, ensure_ascii=False), "note": (d.get("note") or "").strip()}
+         "used": json.dumps(used, ensure_ascii=False), "note": (d.get("note") or "").strip(),
+         "align": json.dumps(arep.get("items") or [], ensure_ascii=False)}
     db.execute("INSERT OR REPLACE INTO daily_essays"
-               "(id,mode,date,topic,title,outline,content,words,used,note) VALUES("
-               "(SELECT id FROM daily_essays WHERE mode=? AND date=?),?,?,?,?,?,?,?,?,?)",
+               "(id,mode,date,topic,title,outline,content,words,used,note,align) VALUES("
+               "(SELECT id FROM daily_essays WHERE mode=? AND date=?),?,?,?,?,?,?,?,?,?,?)",
                (mode, date, mode, date, e["topic"], e["title"], e["outline"],
-                e["content"], e["words"], e["used"], e["note"]))
+                e["content"], e["words"], e["used"], e["note"], e["align"]))
     db.commit()
     e["id"] = db.execute("SELECT id FROM daily_essays WHERE mode=? AND date=?",
                          (mode, date)).fetchone()[0]
@@ -371,7 +386,8 @@ def _write_gen(db, mode, date):
 
 def _e_row(r):
     d = dict(r)
-    for k in ("outline", "used"):        # 应用文的 outline 存的是逐段批注 segs
+    # align：议论文的「提纲 ↔ 正文」对照（提纲每条落在哪段、正文里的原句是哪句），见 mods/align
+    for k in ("outline", "used", "align"):   # 应用文的 outline 存的是逐段批注 segs
         try:
             d[k] = json.loads(d.get(k) or "[]")
         except Exception:

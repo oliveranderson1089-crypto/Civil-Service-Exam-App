@@ -911,6 +911,10 @@
 
   <section id="view-writed" class="view hidden">
     <div id="wd-head" class="wd-head"></div>
+    <div class="wd-acts" id="wd-acts">
+      <button class="btn wd-act" id="wd-edit">✏️ 编辑</button>
+      <button class="btn wd-act hidden" id="wd-align" title="让提纲上的每条论点，在正文段首真的找得到">🧭 对齐提纲</button>
+    </div>
     <div class="tk-tabs" id="wd-tabs">
       <button class="tk-tab active" data-wd="text">📄 全文</button>
       <button class="tk-tab" data-wd="used">📎 用到的素材</button>
@@ -919,6 +923,24 @@
     <div id="wd-text" class="wd-pane wd-body"></div>
     <div id="wd-used" class="wd-pane hidden"></div>
     <div id="wd-outline" class="wd-pane hidden"></div>
+    <!-- 编辑态：AI 写的总有改不到位的地方，自己动手比重生成一篇快得多 -->
+    <div id="wd-editor" class="wd-editor hidden">
+      <div class="wd-ed-row"><label>标题</label><input id="wd-ed-title" type="text" maxlength="80"></div>
+      <div class="wd-ed-row" id="wd-ed-topicrow"><label>话题</label><input id="wd-ed-topic" type="text" maxlength="40"></div>
+      <div class="wd-ed-row" id="wd-ed-olrow">
+        <label>提纲 <span class="wd-ed-hint">一行一条，第一行是总论点</span></label>
+        <textarea id="wd-ed-outline" rows="5"></textarea>
+      </div>
+      <div class="wd-ed-row"><label>正文 <span class="wd-ed-hint">一行一段，别加空行</span></label>
+        <textarea id="wd-ed-content" rows="20"></textarea>
+      </div>
+      <div class="wd-ed-row"><label>说明</label><input id="wd-ed-note" type="text" maxlength="200"></div>
+      <p class="wd-ed-warn">💡 改完正文后，「用到的素材」会重新逐条核对，正文里已经找不到的会自动摘掉。</p>
+      <div class="wd-ed-btns">
+        <button class="btn primary" id="wd-ed-save">💾 保存</button>
+        <button class="btn" id="wd-ed-cancel">取消</button>
+      </div>
+    </div>
   </section>
 
   <!-- ===== 议论文 · 素材积累 / 衔接表达 ===== -->

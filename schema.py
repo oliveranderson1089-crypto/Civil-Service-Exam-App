@@ -814,6 +814,11 @@ def init_db():
     # 应用文比大作文多一层：得先有「文种 + 发文场景 + 我是谁 + 写给谁」才谈得上选素材
     if "spec" not in _cols(con, "daily_essays"):
         con.execute("ALTER TABLE daily_essays ADD COLUMN spec TEXT")
+    # 议论文的「提纲 ↔ 正文」对齐报告（mods/align）：提纲每一条落在正文哪一段、原句是哪句。
+    # 单放一列而不是塞进 outline，是因为 outline 是 list[str]、前端直接当条目渲染，改形状会连累
+    # 已有的几处消费方；对照关系是**旁注**，不该混进提纲正文本身。
+    if "align" not in _cols(con, "daily_essays"):
+        con.execute("ALTER TABLE daily_essays ADD COLUMN align TEXT")
     # 每日复习量：一天能背多少是因人而异的，原来写死 120 条（只能改环境变量），堆起来就不想背了
     if "rv_limits" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN rv_limits TEXT")

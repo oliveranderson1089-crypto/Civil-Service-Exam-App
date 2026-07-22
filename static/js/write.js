@@ -37,6 +37,17 @@ function wrSwitch(k) {
 $('#wr-tabs').addEventListener('click', e => {
   const b = e.target.closest('.tk-tab'); if (b) wrSwitch(b.dataset.wk);
 });
+// 「一键补齐往期」的按钮状态。**没什么可补时不能让它凭空消失** ——
+// 议论文和应用文现在都每天自动生成，undone 常年是 0，一藏这个入口就等于没了，
+// 人打开只会以为功能坏了。留在原地、置灰、把话说明白，才分得清「没得补」和「坏了」。
+function wrBfState(undone) {
+  const b = $('#wr-backfill');
+  b.classList.remove('hidden');
+  b.classList.toggle('primary', !!undone);   // 有活干才用高亮主按钮
+  b.disabled = !undone;
+  b.textContent = undone ? `⚡ 一键补齐往期（还差 ${undone} 天）` : '✅ 往期都写齐了';
+}
+
 async function loadWrDays() {
   if (wrApp) return loadYyDays();          // 应用文：走「每日一道应用文题」
   const box = $('#wr-days');
@@ -44,9 +55,7 @@ async function loadWrDays() {
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/write/days');
-    const undone = d.days.filter(x => !x.eid).length;
-    $('#wr-backfill').classList.toggle('hidden', !undone);
-    $('#wr-backfill').textContent = `⚡ 一键补齐往期（还差 ${undone} 天）`;
+    wrBfState(d.days.filter(x => !x.eid).length);
     if (!d.days.length) { box.innerHTML = '<p class="empty">还没有素材，每天 08:00 自动更新～</p>'; return; }
     box.innerHTML = d.days.map(x => x.eid ? `
       <div class="wr-day done" data-weid="${x.eid}">
@@ -70,9 +79,7 @@ async function loadYyDays() {
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/write/yingyong/days');
-    const undone = d.days.filter(x => !x.eid).length;
-    $('#wr-backfill').classList.toggle('hidden', !undone);
-    $('#wr-backfill').textContent = `⚡ 一键补齐往期（还差 ${undone} 天）`;
+    wrBfState(d.days.filter(x => !x.eid).length);
     const band = x => `${YY_POS_LABEL[x.pos] || ''} · ${x.wmin}~${x.wmax}字`;
     box.innerHTML = d.days.map(x => x.eid ? `
       <div class="wr-day done" data-weid="${x.eid}">
@@ -305,10 +312,17 @@ async function openWrited(id) {
   wrCur = null;
   push({ view: 'writed', title: '成文' });
   $('#wd-head').innerHTML = '<p class="empty">加载中…</p>';
+  $('#wd-editor').classList.add('hidden');     // 上一篇开着编辑态就走了的话，别带到这一篇
+  $('#wd-acts').classList.remove('hidden');
   try {
     wrCur = await api('/api/write/' + id);
     renderWrited();
-  } catch (e) { $('#wd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+    wrSwitchPane('text');
+  } catch (e) {
+    // 没加载出来就把工具条收掉：wrCur 还是 null，这时点「编辑」会读 null.title 直接炸
+    $('#wd-acts').classList.add('hidden');
+    $('#wd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`;
+  }
 }
 // 应用文范文排版：首行标题不重复（头部已显示）、称谓顶格、落款机关+日期右对齐，其余正常段落
 function fmtGwBody(content, title) {
@@ -394,9 +408,33 @@ function renderWrited() {
       : '<p class="empty">没有批注。</p>';
   } else {
     $('#wd-outline').innerHTML = (d.outline || []).length
-      ? `<ol class="wd-ol">${d.outline.map(x => `<li>${esc(x)}</li>`).join('')}</ol>`
+      ? `<ol class="wd-ol">${d.outline.map((x, i) => `<li>${esc(x)}${olMatch(d, i)}</li>`).join('')}</ol>`
       : '<p class="empty">没有提纲。</p>';
   }
+  $('#wd-align').classList.toggle('hidden', gw || !(d.outline || []).length);
+}
+// 提纲每一条，在正文里落在哪、原句是哪句（后端 mods/align 算好存在 align 列里）。
+// 同一个论点，提纲写得直白、正文写得文气，两种写法都值得学 —— 所以并排摆出来，而不是二选一。
+const WD_AL = {
+  exact: ['', ''],                                    // 段首就是这句，没什么好说的
+  same: ['换了说法', 'ok'],
+  woven: ['已补进段首', 'fix'],
+  rewritten: ['原提纲跑题，已照正文重拟', 'fix'],
+  unsure: ['待对齐', 'warn'],
+  nopara: ['正文里没有对应段落', 'warn'],
+};
+function olMatch(d, i) {
+  // 认后端给的 oi（这条在提纲数组里的下标），别在这儿按「第一条是总论点」自己推算 ——
+  // 提纲只有分论点时那个假设就不成立，一推整份对照错一格，比不显示更误导。
+  const it = (d.align || []).find(x => x.oi === i);
+  if (!it || it.state === 'exact') return '';
+  const [lbl, cls] = WD_AL[it.state] || ['', ''];
+  if (!lbl) return '';
+  // 段号取 qpara（引文实际所在段）：总论点常在结尾段回扣，和它归属的开头段不是一回事
+  const p = it.qpara == null ? it.para : it.qpara;
+  const q = it.quote && p != null
+    ? `<div class="wd-mq">正文第 ${p + 1} 段：${esc(it.quote)}</div>` : '';
+  return `<span class="wd-mb ${cls}">${lbl}</span>${q}`;
 }
 $('#wd-tabs').addEventListener('click', e => {
   const b = e.target.closest('.tk-tab'); if (!b) return;
@@ -404,6 +442,61 @@ $('#wd-tabs').addEventListener('click', e => {
   ['text', 'used', 'outline'].forEach(k => $('#wd-' + k).classList.toggle('hidden', k !== b.dataset.wd));
   if (typeof inkRekey === 'function') inkRekey();   // 批注层开着就换成这个 tab 的笔迹，别串到别的 tab（需求四）
 });
+
+/* ---- 手改这一篇：AI 写的总有改不到位的地方，自己动手比重生成一篇快得多 ---- */
+function wdEdit(on) {
+  const gw = /^yingyong/.test((wrCur || {}).mode || '');
+  $('#wd-editor').classList.toggle('hidden', !on);
+  ['#wd-tabs', '#wd-text', '#wd-used', '#wd-outline'].forEach(s => $(s).classList.add('hidden'));
+  $('#wd-acts').classList.toggle('hidden', on);
+  if (!on) { renderWrited(); wrSwitchPane('text'); return; }
+  // 应用文的提纲位存的是逐段批注（结构化的），不在这儿改；正文一改会自动重核，对不上的批注摘掉
+  $('#wd-ed-olrow').classList.toggle('hidden', gw);
+  $('#wd-ed-topicrow').classList.toggle('hidden', gw);
+  $('#wd-ed-title').value = wrCur.title || '';
+  $('#wd-ed-topic').value = wrCur.topic || '';
+  $('#wd-ed-outline').value = gw ? '' : (wrCur.outline || []).join('\n');
+  $('#wd-ed-content').value = wrCur.content || '';
+  $('#wd-ed-note').value = wrCur.note || '';
+}
+function wrSwitchPane(k) {
+  document.querySelectorAll('#wd-tabs .tk-tab').forEach(x => x.classList.toggle('active', x.dataset.wd === k));
+  ['text', 'used', 'outline'].forEach(x => $('#wd-' + x).classList.toggle('hidden', x !== k));
+  $('#wd-tabs').classList.remove('hidden');
+}
+$('#wd-edit').onclick = () => wdEdit(true);
+$('#wd-ed-cancel').onclick = () => wdEdit(false);
+$('#wd-ed-save').onclick = async () => {
+  const b = $('#wd-ed-save');
+  if (!$('#wd-ed-content').value.trim()) { toast('正文不能为空', true); return; }
+  b.disabled = true; b.textContent = '保存中…';
+  try {
+    wrCur = await api('/api/write/' + wrCur.id, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: $('#wd-ed-title').value, topic: $('#wd-ed-topic').value,
+        outline: $('#wd-ed-outline').value, content: $('#wd-ed-content').value,
+        note: $('#wd-ed-note').value,
+      }),
+    });
+    wdEdit(false); toast('改好了');
+  } catch (e) { toast(e.message, true); }
+  b.disabled = false; b.textContent = '💾 保存';
+};
+$('#wd-align').onclick = async () => {
+  if (!await appConfirm('让 AI 逐段核一遍：提纲上的每条论点，正文段首到底亮出来没有。\n\n'
+    + '段首已经是论点句、只是换了说法的 —— 两边都不动，只标出正文里对应的那一句；\n'
+    + '段首只有引言、论点真没亮的 —— 把提纲那句补进段首。')) return;
+  const b = $('#wd-align');
+  b.disabled = true; b.textContent = '对齐中…';
+  try {
+    const d = await api('/api/write/' + wrCur.id + '/align', { method: 'POST', timeoutMs: 300000 });
+    const log = d.align_log || [];
+    wrCur = d; renderWrited();
+    toast(log.length ? '对好了：' + log.join('；') : '本来就对得上，没改动');
+  } catch (e) { toast(e.message, true); }
+  b.disabled = false; b.textContent = '🧭 对齐提纲';
+};
 
 /* ============= 议论文 · 素材积累 / 衔接表达（与微信 08:00 推送同源） ============= */
 let scKind = '全部';

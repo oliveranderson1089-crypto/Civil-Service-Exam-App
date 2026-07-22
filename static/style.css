@@ -1511,8 +1511,36 @@ body.dark .wd-timu-b p{color:#c2cbd8;}
 .wd-ug-t{font-size:12.5px;font-weight:700;color:#1a6fb5;margin-bottom:6px;}
 .wd-ui{padding:8px 11px;border-left:3px solid #cfe0f2;background:#f7fafd;border-radius:0 8px 8px 0;
   margin-bottom:6px;font-size:13.2px;line-height:1.7;}
+/* 「往期都写齐了」的置灰态：按钮留在原地才看得出功能还在，只是这会儿没活干 */
+#wr-backfill:disabled{opacity:.55;cursor:default;}
+#wr-backfill:disabled:hover{transform:none;border-color:var(--line);color:var(--text);}
 .wd-ol{padding-left:22px;line-height:1.9;font-size:14px;}
 .wd-ol li{margin-bottom:8px;}
+/* 提纲 ↔ 正文 的对照：同一个论点，提纲写得直白、正文写得文气，两种写法都值得学，所以并排摆 */
+.wd-acts{display:flex;gap:8px;margin:0 0 10px;}
+.btn.wd-act{padding:6px 12px;font-size:13px;border-radius:9px;}
+.wd-mb{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:6px;
+  font-size:11.5px;font-weight:700;vertical-align:middle;background:#eef4fb;color:#1a6fb5;}
+.wd-mb.fix{background:#e8f5ec;color:#1d7a44;}
+.wd-mb.warn{background:#fff8e6;color:#8a5a00;}
+.wd-mq{margin:5px 0 2px;padding:7px 11px;border-left:3px solid #cfe0f2;background:#f7fafd;
+  border-radius:0 8px 8px 0;font-size:13px;line-height:1.75;color:var(--muted);}
+/* 编辑态 */
+.wd-editor{padding:4px 0 20px;}
+.wd-ed-row{margin-bottom:12px;}
+.wd-ed-row label{display:block;font-size:13px;font-weight:700;margin-bottom:5px;}
+.wd-ed-hint{font-weight:400;font-size:12px;color:var(--muted);}
+.wd-ed-row input,.wd-ed-row textarea{width:100%;padding:9px 11px;border:1.5px solid var(--line);
+  border-radius:9px;font-size:14px;line-height:1.85;background:#fff;color:var(--text);
+  font-family:inherit;resize:vertical;box-sizing:border-box;}
+.wd-ed-warn{margin:0 0 12px;padding:8px 11px;border-radius:9px;background:#fff8e6;color:#8a5a00;
+  font-size:12.5px;line-height:1.7;}
+.wd-ed-btns{display:flex;gap:10px;}
+body.dark .wd-mq{background:#141b29;border-left-color:#33507a;}
+body.dark .wd-mb{background:#1c2a45;color:#7fb0ff;}
+body.dark .wd-mb.fix{background:#16301f;color:#68c48c;}
+body.dark .wd-mb.warn,body.dark .wd-ed-warn{background:#2a2312;color:#d8b25f;}
+body.dark .wd-ed-row input,body.dark .wd-ed-row textarea{background:#141b29;}
 body.dark .wr-day{background:#141b29;}
 body.dark .wr-day.done:hover{background:#1a2434;}
 body.dark .wr-tag{background:#1c2a45;color:#7fb0ff;}

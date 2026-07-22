@@ -14,8 +14,9 @@ from flask import Blueprint, current_app, jsonify, request
 
 from core import DB, bg_new, bg_set, get_db, log, uid
 from mods.ai import _ai_call_or_error
+from mods.align import align, quick_report
 from mods.sucai import _sucai_import
-from mods.write import _e_row, _write_gen
+from mods.write import _e_row, _used_hit, _write_gen
 
 bp = Blueprint("gongwen", __name__)
 
@@ -698,6 +699,104 @@ def write_del(eid):
     db.execute("DELETE FROM daily_essays WHERE id=?", (eid,))
     db.commit()
     return jsonify({"ok": True})
+
+
+def _recheck(r, content):
+    """正文换了以后，那些**指向正文的东西**得跟着重新核一遍，不然就是过期的假信息：
+       · used —— 「用到的素材」清单，被删掉的素材不能还挂在那儿；
+       · segs —— 应用文的逐段批注，text 对不上正文就点不过去了（和生成时同一把尺子）。
+       返回 (used_json, outline_json 或 None)。"""
+    e = _e_row(r)
+    used = [u for u in e["used"]
+            if isinstance(u, dict) and _used_hit(u.get("text") or "", content)]
+    segs = None
+    if (r["mode"] or "").startswith("yingyong"):
+        flat = re.sub(r"\s", "", content)
+        segs = [s for s in e["outline"]
+                if isinstance(s, dict) and re.sub(r"\s", "", s.get("text") or "") in flat]
+    return (json.dumps(used, ensure_ascii=False),
+            json.dumps(segs, ensure_ascii=False) if segs is not None else None)
+
+
+@bp.put("/api/write/<int:eid>")
+def write_edit(eid):
+    """手改这篇。AI 写的东西总有改不到位的地方，自己动手比重生成一篇快得多。
+
+    议论文能改标题 / 话题 / 正文 / 提纲 / 说明；应用文的 outline 是逐段批注（结构化的），
+    不在这儿改，但正文一改就会重新核对批注，对不上的自动摘掉 —— 留着指不到正文的批注更糟。"""
+    db = get_db()
+    r = db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()
+    if not r:
+        return jsonify({"error": "文章不存在"}), 404
+    d = request.get_json(silent=True) or {}
+    gw = (r["mode"] or "").startswith("yingyong")
+    content = (d.get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "正文不能为空"}), 400
+
+    # **只改传了的字段**：漏传和「显式改成空」得分开，否则一个只想改正文的调用
+    # （PUT {"content": ...}）会把标题、话题、说明一起抹成空串 —— 应用文的 topic 存的
+    # 是文种名，抹掉连文种大全的分组都会掉一档。
+    sets = {"content": content, "words": len(re.sub(r"\s", "", content))}
+    for k, cap in (("title", 80), ("topic", 40), ("note", 200)):
+        if k in d:
+            sets[k] = (d.get(k) or "").strip()[:cap]
+    used_json, segs_json = _recheck(r, content)
+    sets["used"] = used_json
+    if gw:
+        if segs_json is not None:
+            sets["outline"] = segs_json
+    else:
+        # 议论文：提纲按行收（前端就是个 textarea），空行忽略
+        ol = d.get("outline")
+        if isinstance(ol, str):
+            ol = [x.strip() for x in ol.split("\n") if x.strip()]
+        if isinstance(ol, list):
+            ol = [str(x).strip() for x in ol if str(x).strip()][:8]
+            sets["outline"] = json.dumps(ol, ensure_ascii=False)
+        else:
+            ol = _e_row(r)["outline"]        # 没传提纲就沿用库里的
+        # 对照里存的是**段号**，正文一改段号就可能挪位，所以不管提纲传没传都要重算，
+        # 否则提纲页会指着「正文第 3 段」，而那句其实已经跑到第 4 段去了。
+        # 只按字面算，不调 AI（改一次正文就调一次太贵）；判不准的标 unsure，要准的再点「对齐提纲」。
+        sets["align"] = json.dumps(quick_report(content, ol), ensure_ascii=False)
+
+    db.execute("UPDATE daily_essays SET %s WHERE id=?" % ",".join(k + "=?" for k in sets),
+               list(sets.values()) + [eid])
+    db.commit()
+    return jsonify(_e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()))
+
+
+def _align_one(db, eid):
+    """对齐一篇议论文：提纲的每条论点，在正文段首落没落地。返回 (报告, 错误) 。"""
+    r = db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()
+    if not r:
+        return None, (jsonify({"error": "文章不存在"}), 404)
+    if (r["mode"] or "").startswith("yingyong"):
+        return None, (jsonify({"error": "应用文没有分论点，不用对齐"}), 400)
+    e = _e_row(r)
+    content, outline, rep = align(e["content"], e["outline"])
+    db.execute("UPDATE daily_essays SET content=?,outline=?,words=?,used=?,align=? WHERE id=?",
+               (content, json.dumps(outline, ensure_ascii=False),
+                len(re.sub(r"\s", "", content)), _recheck(r, content)[0],
+                json.dumps(rep.get("items") or [], ensure_ascii=False), eid))
+    db.commit()
+    return rep, None
+
+
+@bp.post("/api/write/<int:eid>/align")
+def write_align(eid):
+    db = get_db()
+    rep, err = _align_one(db, eid)
+    if err:
+        return err
+    out = _e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone())
+    out["align_log"] = rep.get("log") or []
+    return jsonify(out)
+
+
+# 存量文章要整批对一遍时走命令行 `gen_write.py --align-all`：那是一次性的补齐，
+# 生成时已经自带对齐、平时不会再攒出偏差，为它单挂一条后台任务链路不值当。
 
 
 # ---- 应用文上位词 ----
