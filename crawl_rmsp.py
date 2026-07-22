@@ -5,7 +5,7 @@
 为什么是「人民时评」：它篇篇都是「提出问题→分析问题→给对策」的完整议论文，
 900~1500 字，还带可直接借鉴的过渡句和金句，是申论大作文最好的临摹对象。
 
-怎么抓（都是实测出来的，见 README）：
+怎么抓（都是实测出来的，见 docs/README-full.md）：
   paper.people.com.cn 的版式很规整，一天分好几个版：
     1) 版面导航   /rmrb/pc/layout/YYYYMM/DD/node_01.html   ← 列出「05版：评论」这样的标签
     2) 评论版页面 /rmrb/pc/layout/YYYYMM/DD/node_05.html   ← 文章标题带栏目名「（人民时评）」

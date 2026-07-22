@@ -308,7 +308,7 @@ class Gongkao(Gtk.Application):
         """收下一串路径 → 后台线程里遍历 + 读盘 + 分批送进网页。
 
         os.walk 也放进线程里：目录树深/在网络盘上时，遍历本身就是长阻塞，留在主线程
-        照样冻界面（README 第 3 条）。主线程这边只负责立刻给个「正在读取」的提示。
+        照样冻界面（docs/README-full.md 第 3 条）。主线程这边只负责立刻给个「正在读取」的提示。
         """
         if getattr(self, "_pumping", False):
             self._toast("上一批还在传，等它传完再来")   # 两个 pump 会互相抢 _ack
@@ -337,7 +337,7 @@ class Gongkao(Gtk.Application):
         两件事必须做对，否则真实目录（实测「公考」= 497 个文件 / 816MB）会把壳搞死：
 
         ① **不能在主线程上读**。读几百 MB + base64 是长阻塞，GTK 主线程一堵界面就冻住
-           （README 第 3 条：主线程上一个阻塞调用都不能有）。所以读盘（连同 os.walk）
+           （docs/README-full.md 第 3 条：主线程上一个阻塞调用都不能有）。所以读盘（连同 os.walk）
            都在后台线程，只把 run_javascript 用 idle_add 丢回主线程。
         ② **要有背压**。一口气把 136 批塞进网页，浏览器那边同时开一百多个上传、
            base64 字符串全堆在内存里。所以每批送完等网页回一句 batchdone 再送下一批。

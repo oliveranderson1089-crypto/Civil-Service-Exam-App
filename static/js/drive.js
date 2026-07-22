@@ -309,7 +309,7 @@ $('#dv-bdel').onclick = async () => {
   if (!(await appConfirm('删除选中的 ' + dvSel.size + ' 项？（文件夹会连里面一起删）'))) return;
   let fail = 0;
   for (const id of [...dvSel]) {
-    // 别把原因吞掉：只报个数字的话，用户既不知道是哪一项、也不知道为什么（见 README 第 1 条）
+    // 别把原因吞掉：只报个数字的话，用户既不知道是哪一项、也不知道为什么（见 docs/README-full.md 第 1 条）
     try { await api('/api/drive/' + id, { method: 'DELETE' }); }
     catch (err) { fail++; toast(err.message, true); }
   }
