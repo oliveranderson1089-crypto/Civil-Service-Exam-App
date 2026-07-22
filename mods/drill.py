@@ -540,6 +540,91 @@ def _style_ok(prof, q, opts):
     return olo * 0.3 <= avg <= ohi * 2.5 + 20
 
 
+def _slot_letters():
+    """源源不断地给出正确答案该放的位置：**每发完一副 ABCD 就重新洗一副**。
+
+    ⚠️ 别按题数铺一张固定表。原先写的 `["ABCD"[i % 4] for i in range(max(1, want))]`
+    再整体洗牌，在 want < 4 时会塌掉：实测 want=1 喂 8 道题 → 答案**全是 A**；
+    want=2 → BABABABA（只用两个字母且严格交替）；want=4 → DBACDBAC，
+    前四道之后完全可预测，背下来就能蒙。
+    每日巩固测试是按模块分配名额的（资料分析 1 道、数量关系 1 道…），
+    P5 接进来就必然踩到 want=1 那一档。改成无界发牌，与题数彻底解耦。
+    """
+    while True:
+        deck = list("ABCD")
+        random.shuffle(deck)
+        for c in deck:
+            yield c
+
+
+def _assemble_items(got, prof, stat=None):
+    """把模型交的原始 items 变成可发的题：拆右/错 → **按均衡位置放正确项** → 拼解析 → 过篇幅护栏。
+
+    抽出来是**为 P5 让每日巩固测试复用**（那边现在完全没有双模核验和答案均衡）；
+    在 P5 落地之前，唯一调用方仍是 _bank_fill —— 别照着 docstring 以为两边已经打通了。
+
+    返回 (ready, stat)：ready 是 [(item, q, ans, options)]，item 的 explain 已按最终位置拼好；
+    stat 是 bad/style 计数（调用方要能分清「格式不合格」和「体量不像真题」）。
+    **计数一并返回而不是只靠改写入参** —— 只靠副作用的话，调用方忘了传 stat 就会
+    静默丢题，而日志里 bad/style 恒为 0，「产出为什么这么低」正好查不出来。
+    """
+    stat = stat if stat is not None else {}
+    # ★ 正确项放哪个位置**由我们定**，不问模型。模型自己排的话正确项严重偏前：
+    #   实测专项练题库 A 39.3% / D 7.4%，真题则是各占四分之一。
+    #   试过在提示词里逐题指定位置，**实测无效** —— 照做之后 A 反而升到 45%。
+    #   所以让模型只交「正确项 + 三个干扰项」、字母一个不写，这里插到指定位置、
+    #   自己拼字母和解析。构造性保证，和模型听不听话无关。
+    slots = _slot_letters()
+    ready = []
+    for it in got:
+        q = (it.get("q") or "").strip()
+        right, wrong, why_r, why_w, can_place = _split_rw(it)
+        if not q or not right or len(wrong) != 3:
+            stat["bad"] = stat.get("bad", 0) + 1
+            continue
+        # 老格式（options+answer）的解析里带字母引用，一重排就全指错，只能保持原位。
+        # 注意：**只有入选的题才从 slots 取一张牌** —— 被拒的题不该消耗名额，
+        # 否则一批里刷掉一半时，剩下那半的字母分布又会失衡（正是要修的毛病）。
+        pos = "ABCD".index(next(slots)) if can_place else 0
+        body = wrong[:pos] + [right] + wrong[pos:]
+        ans = "ABCD"[pos]
+        if len(set(body)) != 4 or not all(body):
+            stat["bad"] = stat.get("bad", 0) + 1
+            continue
+        it = dict(it, explain=_compose_explain(ans, why_r, why_w, wrong, body))
+        if not _style_ok(prof, q, body):
+            stat["style"] = stat.get("style", 0) + 1
+            continue
+        ready.append((it, q, ans, ["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)]))
+    return ready, stat
+
+
+def _audit_items(ready, board, qtype):
+    """双模型核验：另一家模型**独立作答**一遍。返回和 ready 等长的结果列表。
+
+    **并发**跑 —— 核验是网络往返，一道 5~40 秒，串行做 8 道能拖到十分钟以上。
+    """
+    if not ready:
+        return []
+    with ThreadPoolExecutor(max_workers=min(6, len(ready))) as pool:
+        return list(pool.map(lambda r: _audit_q(r[1], r[3], board, qtype), ready))
+
+
+def _parse_items(rep, tag=""):
+    """解析模型返回的 JSON；被 max_tokens 截断时把写完整的那几道抢救回来。
+
+    名字带下划线是**故意**的：gen_real_explain.py 里另有一个同名的 parse_items，
+    两者对截断和字段的处理并不一样，同名公开会让人 import 错了也不报错。
+    """
+    try:
+        return json.loads(rep).get("items") or []
+    except Exception:
+        got = _salvage_items(rep)
+        if got and tag:
+            log.info("%s：JSON 截断，抢救回 %d 道", tag, len(got))
+        return got
+
+
 def _bank_fill(db, board, qtype, level, want=8):
     """题库不够了就补一批。返回 {"ok":可用, "dup":撞已有题, "bad":格式不合格, "flaw":没过核验}。
 
@@ -642,62 +727,19 @@ def _bank_fill(db, board, qtype, level, want=8):
         temperature=0.6, max_tokens=8000, timeout=180, json_mode=True)
     if err:
         return stat
-    try:
-        got = json.loads(rep).get("items") or []
-    except Exception:
-        got = _salvage_items(rep)      # 被 max_tokens 截断：把写完整的那几道捞回来
-        if not got:
-            return stat
-        log.info("题库补充 %s·%s/%s：JSON 截断，抢救回 %d 道", board, qtype, level, len(got))
+    got = _parse_items(rep, "题库补充 %s·%s/%s" % (board, qtype, level))
+    if not got:
+        return stat
 
-    # ★ 正确项放哪个位置**由我们定**，不问模型。
-    #   模型自己排的话正确项严重偏前：实测题库 A 39.3% / B 28.6% / C 24.8% / D **7.4%**，
-    #   真题则是各占四分之一。试过在提示词里逐题指定位置，**实测无效**——
-    #   照做之后 A 反而升到 45%、D 仍是 8.3%，它根本不听。
-    #   所以改成让它只交「正确项内容 + 三个干扰项内容」，字母一个都不写，
-    #   由这里把正确项插到指定位置、自己拼字母、自己拼解析。这是构造性保证，
-    #   和模型听不听话无关，也不用去改写解析里的字母引用。
-    #   位置表**先按 want 均匀铺满再洗牌**，绝不能先生成再截断 ——
-    #   `[c for c in "ABCD" for _ in range((want+3)//4)][:want]` 那种写法在
-    #   want=6 时是 A×2 B×2 C×2 D×0，want=10 时 D×1，反而加重了要修的偏斜。
-    slots = ["ABCD"[i % 4] for i in range(max(1, want))]
-    random.shuffle(slots)
-
-    # 先把明显不合格的筛掉，再统一送核验 —— 核验是网络往返，一道 5~40 秒，
-    # **串行**做 8 道就能拖到十分钟以上（这是「点了出题没反应」的主因之一）。
-    ready = []
-    placed = 0                           # 已经**入选**几道 —— 位置按入选顺序发，不按模型交的顺序
-    for it in got:
-        q = (it.get("q") or "").strip()
-        right, wrong, why_r, why_w, can_place = _split_rw(it)
-        if not q or not right or len(wrong) != 3:
-            stat["bad"] += 1
-            continue
-        if can_place:                    # 新格式：正确项插到本题分到的位置上
-            pos = "ABCD".index(slots[placed % len(slots)])
-        else:                            # 老格式：解析里有字母引用，只能保持原位
-            pos = 0
-        body = wrong[:pos] + [right] + wrong[pos:]
-        ans = "ABCD"[pos]
-        if len(set(body)) != 4 or not all(body):
-            stat["bad"] += 1
-            continue
-        it = dict(it, explain=_compose_explain(ans, why_r, why_w, wrong, body))
-        # 风格护栏：体量离真题太远的直接不要（把选词填空写成小作文那种）
-        if not _style_ok(prof, q, body):
-            stat["style"] += 1
-            continue
-        ready.append((it, q, ans, ["%s. %s" % ("ABCD"[i], body[i]) for i in range(4)]))
-        # 只有真正入选才推进指针：被拒的题不该占掉一个位置名额，
-        # 否则一批里刷掉一半时，剩下那半的字母分布又会失衡（正是要修的毛病）
-        placed += 1
+    ready, stat = _assemble_items(got, prof, stat)
     if not ready:
         return stat
-    # ★ 双模型核验：另一家模型独立做一遍。**并发**跑，总耗时从「道数 × 单道」压到「单道」量级。
-    with ThreadPoolExecutor(max_workers=min(6, len(ready))) as pool:
-        audits = list(pool.map(lambda r: _audit_q(r[1], r[3], board, qtype), ready))
+    audits = _audit_items(ready, board, qtype)
 
-    for (it, q, ans, opts_std), au in zip(ready, audits):
+    # strict=True：两边长度不一致就当场抛，别静默截断。
+    # 不加的话，audits 短一截只表现为「这批出了 8 道、入库只有 5 道」，
+    # 而 stat 里三个计数加起来对不上 8，查起来毫无线索。
+    for (it, q, ans, opts_std), au in zip(ready, audits, strict=True):
         # 答案不一致 → **入库但标为存疑，不发给人做**。
         # （不直接丢弃：存疑的题本身是有价值的数据，可以回查；但绝不能让人拿去背。）
         if au is None:
