@@ -251,7 +251,8 @@ def _gen_dtest(db, today, n=10):
     #   分板块各放各的时每块才 2~3 道，均衡不了 —— 实测出过一份 B 53% / D 0% 的卷子。
     random.shuffle(uniq)                              # 先打散板块，免得同一块的题挤在相邻位置
     ai_final = []
-    for it, q, ans, opts in _assemble_items(uniq, None)[0]:
+    ai_ready, _st = _assemble_items(uniq, None)      # 解包，别写 [0]——那看着像在取第一道题
+    for it, q, ans, opts in ai_ready:
         ai_final.append({"q": q, "options": opts, "answer": ans,
                          "explain": it.get("explain") or "", "module": it.get("module") or "",
                          "source": (it.get("source") or "").strip()[:60]})

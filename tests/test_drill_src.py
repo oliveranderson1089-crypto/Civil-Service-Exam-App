@@ -244,3 +244,57 @@ class TestAssemble:
     def test_计数一并返回而不是只靠改写入参(self):
         ready, st = D._assemble_items([{"q": "x"}], None)
         assert ready == [] and st["bad"] == 1
+
+
+class TestSrcBlock:
+    """真题模式的门槛：既不能放行两道题的「练习」，也不能误伤本来出得来的。"""
+
+    def test_存量够门槛就放行(self):
+        assert D._real_src_block("言语理解与表达", "语境分析", {"语境分析": 30}, 10) == ""
+
+    def test_存量不够但请求数够就放行(self):
+        """库里 4 道、他只要 3 道，完全出得来 —— 一刀切会误伤。"""
+        assert D._real_src_block("言语理解与表达", "语境分析", {"语境分析": 4}, 3) == ""
+
+    def test_存量和请求数都不够才拦(self):
+        msg = D._real_src_block("言语理解与表达", "语境分析", {"语境分析": 2}, 10)
+        assert msg and "2 道" in msg
+
+    def test_混合练看够刷的题型数不看总量(self):
+        """10 个题型各 3 道，总量 30 看着很多，但逐题型分名额时每型都出不满。"""
+        cnt = {t[0]: 3 for t in D.DRILL_TYPES["言语理解与表达"]}
+        assert D._real_src_block("言语理解与表达", "", cnt, 10), "按总量放行了"
+        cnt[D.DRILL_TYPES["言语理解与表达"][0][0]] = 50
+        assert D._real_src_block("言语理解与表达", "", cnt, 10), "只有一个题型够也不算混合练"
+        cnt[D.DRILL_TYPES["言语理解与表达"][1][0]] = 50
+        assert D._real_src_block("言语理解与表达", "", cnt, 10) == ""
+
+
+class TestSessionLevel:
+    def test_整场一致就记那个难度(self):
+        assert D._session_level([{"level": "real"}, {"level": "real"}], "mid") == "real"
+
+    def test_混着就记mix别拿第一道冒充(self):
+        """实测 mix 出的 6 道是 2 real + 4 mid，取 items[0] 会记成 real。"""
+        items = [{"level": "real"}, {"level": "real"}] + [{"level": "mid"}] * 4
+        assert D._session_level(items, "mid") == "mix"
+
+    def test_题上没有level就用请求参数兜底(self):
+        assert D._session_level([{}, {}], "easy") == "easy"
+
+
+class TestYearArg:
+    def test_两个入口同一个口径(self):
+        assert D._year_arg("2021") == 2021
+        assert D._year_arg("2021年") == 0          # 非纯数字：当没筛，别 500
+        assert D._year_arg(None) == 0
+        assert D._year_arg("99999999999") == 2030  # 钳住，别让存量全变 0
+
+
+class TestSlotLetters:
+    def test_给了n就只发n张(self):
+        assert len(list(D._slot_letters(6))) == 6
+
+    def test_无限模式只能next(self):
+        g = D._slot_letters()
+        assert len({next(g) for _ in range(40)}) == 4

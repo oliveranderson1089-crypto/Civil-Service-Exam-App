@@ -540,8 +540,11 @@ def _style_ok(prof, q, opts):
     return olo * 0.3 <= avg <= ohi * 2.5 + 20
 
 
-def _slot_letters():
-    """源源不断地给出正确答案该放的位置：**每发完一副 ABCD 就重新洗一副**。
+def _slot_letters(n=None):
+    """**无限生成器**（n 为 None 时），只能 next()，别 list() —— 会一直涨到 OOM。
+    给了 n 就只发 n 张，方便测试和以后按题数取。
+
+    源源不断地给出正确答案该放的位置：**每发完一副 ABCD 就重新洗一副**。
 
     ⚠️ 别按题数铺一张固定表。原先写的 `["ABCD"[i % 4] for i in range(max(1, want))]`
     再整体洗牌，在 want < 4 时会塌掉：实测 want=1 喂 8 道题 → 答案**全是 A**；
@@ -550,10 +553,14 @@ def _slot_letters():
     每日巩固测试是按模块分配名额的（资料分析 1 道、数量关系 1 道…），
     P5 接进来就必然踩到 want=1 那一档。改成无界发牌，与题数彻底解耦。
     """
-    while True:
+    sent = 0
+    while n is None or sent < n:
         deck = list("ABCD")
         random.shuffle(deck)
         for c in deck:
+            if n is not None and sent >= n:
+                return
+            sent += 1
             yield c
 
 
@@ -860,6 +867,16 @@ def _bank_take(db, board, qtype, level, n):
 # 真题模式下**没有 easy/mid/real 三档**：真题没有难度标签，硬套是假的
 # （原先「考场真实」这一档发的其实是 AI 题，名不副实）。改成按年份筛。
 _REAL_SRC_MIN = 5          # 少于这么多道就别开真题模式了，刷两轮就重复
+# 混合练要「混」得起来，至少得有两个题型撑得住 —— 只有一个题型有真题的话，
+# 逐题型分配名额的结果就是全从那一个题型出，那不叫混合练
+_REAL_MIX_TYPES = 2
+
+
+def _year_arg(v):
+    """年份参数的**唯一**口径。两个入口（types / quiz）各写一份的话，
+       一处钳到 0~2030、另一处不钳，就会出现「前端显示没真题、后端却能出题」。"""
+    ys = str(v or "").strip()
+    return max(0, min(2030, int(ys))) if ys.isdigit() else 0
 
 
 def _real_counts(db, board, year_min=0):
@@ -881,6 +898,29 @@ def _real_counts(db, board, year_min=0):
             % (realref.qtype_expr("rq", "re"), " AND ".join(where)), args)}
     except sqlite3.Error:
         return {}              # 真题库还没导入（新库）
+
+
+def _real_src_block(board, qtype, cnt, n):
+    """真题模式该不该拦下来。拦就返回一句话，不拦返回 ""。
+
+    ⚠️ 两个口径都别想当然：
+    · **单题型**：存量少于门槛就拦，但**请求的题数已经够了就放行** ——
+      库里有 4 道、他只要 3 道，完全出得来，一刀切会误伤。
+    · **混合练**（qtype 为空）：不能拿「板块总量」判。混合练是**逐题型平均分配名额**的，
+      10 个题型各 3 道时总量 30 看着很多，实际每型只出得了 3 道以下、还全挤在少数几型。
+      所以看的是「有几个题型撑得住」。
+    """
+    if qtype:
+        n_real = cnt.get(qtype, 0)
+        if n_real >= _REAL_SRC_MIN or n_real >= n:
+            return ""
+        return ("「%s · %s」可用真题只有 %d 道（少于 %d 道就别单练了，刷两轮全是重复），"
+                "换「AI 出题」或放宽年份吧。" % (board, qtype, n_real, _REAL_SRC_MIN))
+    ok_types = sum(1 for t in DRILL_TYPES[board] if cnt.get(t[0], 0) >= _REAL_SRC_MIN)
+    if ok_types >= _REAL_MIX_TYPES:
+        return ""
+    return ("「%s · 混合练」只有 %d 个题型的真题够刷（要 %d 个才混得起来），"
+            "换「AI 出题」或放宽年份吧。" % (board, ok_types, _REAL_MIX_TYPES))
 
 
 def _real_take(db, board, qtype, n, year_min=0):
@@ -1021,8 +1061,7 @@ def drill_types():
     """题型清单 + 我在每个题型上的正确率和平均用时。弱的排前面 —— 该练哪个不用自己想。"""
     board = (request.args.get("board") or "").strip()
     level = (request.args.get("level") or "mid").strip()
-    ys = (request.args.get("year_min") or "").strip()
-    year_min = int(ys) if ys.isdigit() else 0
+    year_min = _year_arg(request.args.get("year_min"))
     if board not in DRILL_TYPES:
         return jsonify({"error": "这个板块没有专项练"}), 400
     db = get_db()
@@ -1058,7 +1097,15 @@ def drill_types():
     items.sort(key=lambda x: (0 if (x["acc"] is not None and x["acc"] < exp) else 1,
                               x["acc"] if x["acc"] is not None else 999, x["ord"]))
     coef = drill_coef(board, level)
+    # 门槛和板块级判定**由服务端给**：前端自己写死 5 的话，改门槛要同步三处，
+    # 漏掉前端就会出现「卡片没置灰、点了却收到 404」。
+    ok_types = sum(1 for t in DRILL_TYPES[board] if real_cnt.get(t[0], 0) >= _REAL_SRC_MIN)
     return jsonify({"board": board, "limit": DRILL_LIMIT.get(board, 60), "types": items,
+                    "real_min": _REAL_SRC_MIN,
+                    "real_total": sum(real_cnt.get(t[0], 0) for t in DRILL_TYPES[board]),
+                    "real_types_ok": ok_types,
+                    "real_mix_ok": ok_types >= _REAL_MIX_TYPES,   # 混合练能不能开
+                    "year_min": year_min,
                     "levels": drill_levels(board),
                     "level": level, "coef": coef, "base": DRILL_BASE.get(board, 0.6),
                     "ai": board in AI_BOARDS,
@@ -1093,17 +1140,15 @@ def drill_quiz():
     # 真题模式没有难度档（真题不带难度标签，硬套是假的），改成按年份筛。
     # 用 str+isdigit 而不是裸 int()：前端年份选择器传个「2021年」就 500，
     # 而这是参数问题，该说清楚，不该崩。
-    ys = str(d.get("year_min") or "").strip()
-    year_min = max(0, min(2030, int(ys))) if ys.isdigit() else 0
-    if src == "real" and qtype:
-        # real_ok 这个契约得由服务端兑现。只在 /api/drill/types 里算给前端置灰的话，
-        # 桌面端/安卓端或旧缓存的页面绕过 UI 就能在只有 2 道真题的题型上开真题模式，
-        # 拿到一份两道题的「练习」。
-        n_real = _real_counts(get_db(), board, year_min).get(qtype, 0)
-        if n_real < _REAL_SRC_MIN:
-            return jsonify({"error": "「%s · %s」可用真题只有 %d 道（少于 %d 道就别单练了，"
-                                     "刷两轮全是重复），换「AI 出题」或放宽年份吧。"
-                                     % (board, qtype, n_real, _REAL_SRC_MIN)}), 404
+    year_min = _year_arg(d.get("year_min"))
+    cnt = None
+    if src == "real":
+        # real_ok 这个契约得由**服务端**兑现。只在 /api/drill/types 里算给前端置灰的话，
+        # 桌面端/安卓端或旧缓存的页面绕过 UI 就能开起来，拿到一份两道题的「练习」。
+        cnt = _real_counts(get_db(), board, year_min)      # 这一份下面 404 分支还要用，别查两遍
+        err = _real_src_block(board, qtype, cnt, n)
+        if err:
+            return jsonify({"error": err}), 404
     items = _drill_gen(get_db(), board, qtype, n, level, src, year_min)
     if not items:
         if src == "real":
@@ -1112,7 +1157,8 @@ def drill_quiz():
             # 混合练时 qtype 是空的，按**板块**统计——原先直接给 0，会说成
             # 「真题库里没有这个题型的题」，可该板块明明有两千道，只是被年份筛没了
             # 或者都做完了。提示不能撒谎，否则用户按提示去放宽年份也不对症。
-            cnt = _real_counts(get_db(), board, year_min)   # 一次 GROUP BY，别逐题型查
+            if cnt is None:                                # 上面没查过才查
+                cnt = _real_counts(get_db(), board, year_min)
             if qtype:
                 n_real = cnt.get(qtype, 0)
                 why = ("这个题型真题库里只有 %d 道" % n_real) if n_real \
@@ -1162,6 +1208,20 @@ def _drill_stash(items):
         for k in list(_DRILL_STASH)[:100]:
             _DRILL_STASH.pop(k, None)
     return tok
+
+
+def _session_level(items, fallback):
+    """这一场记成什么难度。
+
+    ⚠️ **别拿 items[0] 冒充整场**。mix 题源下同一场就是真题和 AI 题混着 ——
+    实测 6 道里 2 道 real + 4 道 mid，取第一道会记成 real；混合练还先 shuffle 过，
+    同一份配置刷两次能记出两个不同的难度。整场不统一时老老实实记 "mix"，
+    别让记录列表和按 level 算的正确率各说各话。
+    """
+    lv = {(it.get("level") or fallback) for it in items}
+    if len(lv) == 1:
+        return lv.pop()
+    return "mix"
 
 
 @bp.post("/api/drill/done")
@@ -1219,11 +1279,8 @@ def drill_done():
     cur = db.execute(
         "INSERT INTO drill_records(user_id,board,qtype,level,mode,total,correct,seconds,items,answers) "
         "VALUES(?,?,?,?,?,?,?,?,?,?)",
-        # 难度取**题目自己的**，和上面 drill_log 同一个口径 —— 两处不一致的话，
-        # 同一次真题练习会在记录列表里显示成「进阶」、在正确率统计里归到「real」档，
-        # 排查时无从对账。整批题的 level 是一致的，取第一道即可。
-        (uid(), board, (d.get("type") or "").strip(),
-         (items[0].get("level") if items else None) or level, mode, len(items), ok_n,
+        (uid(), board, (d.get("type") or "").strip(), _session_level(items, level),
+         mode, len(items), ok_n,
          sum(secs), json.dumps(items, ensure_ascii=False), json.dumps(results, ensure_ascii=False)))
     db.commit()
     acc = ok_n / len(items) if items else 0

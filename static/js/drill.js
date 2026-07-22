@@ -29,24 +29,37 @@ function openDrill(board) {
   push({ view: 'drill', title: board + ' · 专项练' });
   loadDrillTypes();
 }
-let drTypesData = null;      // 上一次拉到的题型清单；切题源时只重渲染，不重拉
+let drTypesData = null;      // 上一次拉到的题型清单
+let drTypesKey = '';         // 那一次是按 板块|难度|年份 哪一组拉的
+/* 只有真题模式才带年份筛（drStart 里 `year_min: drSrc === 'real' ? drYear : 0`），
+   所以「这次该按哪个年份看存量」由这一个函数说了算，前后端口径才对得上。 */
+function drNeedYear() { return drSrc === 'real' ? drYear : 0; }
+
+/* 存量数字必须和**将要发出的请求**同口径，否则就是在撒谎：
+   · 不带年份拉、却按「近 3 年」出题 → 多报（语境分析显示 334、实际只有 74）
+   · 带年份拉、却切到混合模式出题   → 少报（显示 74、实际按 334 取）
+   两个方向都出过，所以缓存要连「按哪个年份拉的」一起记，对不上就重拉。 */
 async function loadDrillTypes() {
+  const y = drNeedYear();
+  /* 缓存键必须**三样都带上**：板块换了、难度换了，响应内容都会变
+     （每个题型的正确率/做题数是按 level 统计的）。只比年份的话，
+     换板块会直接短路、把上一个板块的题型渲染出来。 */
+  const key = `${drBoard}|${drLevel}|${y}`;
+  if (drTypesData && drTypesKey === key) { renderDrillTypes(); return; }
   const box = $('#dr-types');
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
-    /* 真题存量要跟着年份筛一起算：不传的话，切到「近 3 年」后卡片上还写着全量道数
-       （语境分析全量 334 道、2021 年后只剩 74 道），用户按 334 以为够刷，点进去 404。 */
-    const yq = drSrc === 'real' && drYear ? `&year_min=${drYear}` : '';
+    const yq = y ? `&year_min=${y}` : '';
     const d = await api(`/api/drill/types?board=${encodeURIComponent(drBoard)}&level=${drLevel}${yq}`);
-    drTypesData = d;
+    drTypesData = d; drTypesKey = key;
     renderDrillTypes();
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { drTypesData = null; drTypesKey = ''; box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 function renderDrillTypes() {
   const box = $('#dr-types');
   const d = drTypesData;
   if (!d) return;
-  {
+  try {
     drLimit = d.limit; drLevels = d.levels; drCoef = d.coef;
     $('#dr-intro').innerHTML = d.ai
       ? `这一块考的是<b>知识</b>，题由 AI 按考试标准出，<b>并且必须过第二个模型的独立核验</b>
@@ -87,14 +100,20 @@ function renderDrillTypes() {
       </div>`;
     }).join('') + (() => {
       /* 混合练也要跟着置灰。它原先是拼在后面的字符串常量、没参与上面的 noReal 判断，
-         于是政治理论那种四个题型全灰的板块，混合练还亮着，点了必撞 404。 */
-      const tot = (d.types || []).reduce((a, t) => a + (t.real_n || 0), 0);
-      const off = drSrc === 'real' && tot < 5;
+         于是政治理论那种四个题型全灰的板块，混合练还亮着，点了必撞 404。
+         能不能开**由服务端算**（real_mix_ok）：混合练是逐题型分名额的，
+         「板块总量」判不了——10 个题型各 3 道，总量 30 看着够，实际每型都出不满。
+         阈值也别在前端写死，改门槛要同步三处，漏一处就是「没置灰却收到 404」。 */
+      const off = drSrc === 'real' && !d.real_mix_ok;
       return `<div class="dr-card dr-all${off ? ' dr-off' : ''}" data-drt=""${off ? ' data-droff="1"' : ''}>
         <div class="dr-card-h"><b>🎲 混合练</b></div>
         <p class="dr-desc">所有题型随机出，模拟真实考场</p>
-        <div class="dr-meta">${drSrc === 'ai' ? '' : `<span class="dr-real${tot >= 5 ? '' : ' none'}">📄 真题 ${tot} 道</span> · `}限时 ${drLimit} 秒/题</div></div>`;
+        <div class="dr-meta">${drSrc === 'ai' ? '' : `<span class="dr-real${d.real_mix_ok ? '' : ' none'}">📄 真题 ${d.real_total || 0} 道 / ${d.real_types_ok || 0} 个题型够刷</span> · `}限时 ${drLimit} 秒/题</div></div>`;
     })();
+  } catch (e) {
+    // renderDrillTypes 现在会被题源点击直接调用，那条路上抛异常就是未捕获，
+    // 表现为卡片停在旧内容、没有任何提示
+    box.innerHTML = `<p class="empty">${esc(e.message)}</p>`;
   }
 }
 function drCoefTip() {
@@ -109,9 +128,7 @@ $('#dr-srcs').addEventListener('click', e => {
   drSrc = b.dataset.drs;
   document.querySelectorAll('#dr-srcs .chip').forEach(x => x.classList.toggle('active', x === b));
   drSrcTip();
-  // 存量/置灰都来自已经拿到的那份响应，重渲染就够。只有从 ai 切到 real 且带着
-  // 年份筛选时才需要重拉（存量要按年份算）。
-  if (drSrc === 'real' && drYear) loadDrillTypes(); else renderDrillTypes();
+  loadDrillTypes();          // 年份口径没变就只重渲染，变了才真拉（见 loadDrillTypes）
 });
 $('#dr-years').addEventListener('click', e => {
   const b = e.target.closest('[data-dry]'); if (!b) return;
@@ -119,6 +136,7 @@ $('#dr-years').addEventListener('click', e => {
   document.querySelectorAll('#dr-years .chip').forEach(x => x.classList.toggle('active', x === b));
   loadDrillTypes();          // 存量是按年份算的，换年份必须重拉
 });
+/* 置灰用的门槛由服务端给（real_min），前端不再自己写死 5 */
 function drSrcTip() {
   const real = drSrc === 'real';
   /* 难度行和年份行**互斥**：真题没有难度可调，AI 题没有年份可筛 */
