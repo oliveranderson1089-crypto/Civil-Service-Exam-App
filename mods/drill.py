@@ -383,49 +383,97 @@ def _bank_avoid(db, board, qtype, n=25):
 # 直接把同题型的真题摆给它看，出来的题风格立刻就近了 —— 这是最省事也最有效的一招。
 #
 # 只取「答案靠得住」的真题（原卷带答案，或 AI 出解析且过了双模型核验）。
+#
+# ⚠️ **必须连模块一起卡**，只按题型捞会捞出一堆别的模块的题。
+# 题型标签有两个来源：rq.qtype（解析器按规则判的，可信）和 re.qtype（AI 顺手判的兜底）。
+# 后者**不受模块约束** —— 实测把「2012—2020年，中国IC封装市场规模同比增量最大的年份是：」
+# 判成了「语境分析」，于是它会作为「选词填空真题范例」喂给出题模型。
+# 跑 audit_qtype.py 量过：不卡模块的话，捞到的 5325 道里只有 68.7% 是对模块的，
+# 语境分析 46%、查找细节 58% 都是脏的。这种脏数据不报错也不崩，只让题一点点跑偏。
 _REAL_OK = ("rq.needs_asset=0 AND (rq.has_answer=1 OR re.agree=1) "
-            "AND COALESCE(NULLIF(rq.qtype,''), re.qtype, '')=?")
+            "AND COALESCE(NULLIF(rq.qtype,''), re.qtype, '')=? AND rq.module=?")
+
+# 板块 → 真题卷面上的模块名。政治理论**在卷面上不是独立模块**，它的题混在常识判断里
+# （gen_real_explain.py 归类时也是这么并的），不映射过去就一道范例都取不到。
+_BOARD_MODULE = {"资料分析": "资料分析", "言语理解与表达": "言语理解与表达",
+                 "判断推理": "判断推理", "数量关系": "数量关系",
+                 "常识判断": "常识判断", "政治理论": "常识判断"}
 
 
-def _real_examples(db, qtype, n=3):
-    """抽 n 道同题型真题当范例。近年的优先 —— 出题风格是会变的。"""
+def _real_args(board, qtype):
+    """_REAL_OK 里两个 ? 的实参，顺序不能反。"""
+    return (qtype, _BOARD_MODULE.get(board, board))
+
+
+def _material_of(r):
+    """题干前面那段材料（片段阅读的文段、资料分析的表）。
+
+    ⚠️ 这列**存过字符串 'None'**（早期入库时把 Python 的 None 直接格式化进去了），
+    不特判的话会把「None」四个字当成材料喂给模型。
+    """
+    m = (r["material"] or "").strip() if "material" in r.keys() else ""
+    return "" if m in ("", "None") else m
+
+
+def _real_len(r):
+    """这道真题**让人读多少字** = 材料 + 题干。
+
+    只量 stem 是不对的：片段阅读/文章阅读的文段存在 material 列里，题干只剩
+    「根据文章，下列说法正确的是：」14 个字。拿这个去算分位数，会把篇幅下限
+    压到 20 上下，而出题提示词和 _style_ok 都吃这个数 —— 那道「别把片段阅读
+    压成一句话」的护栏，就变成了**放行一句话的题**。
+    出题时是要求模型把文段写进题干的，所以这里也必须按合并后的长度量，两边口径才一致。
+    """
+    return len(_material_of(r)) + len(r["stem"] or "")
+
+
+def _real_examples(db, board, qtype, n=3):
+    """抽 n 道**同模块同题型**的真题当范例。近年的优先 —— 出题风格是会变的。"""
     try:
         rows = db.execute(
-            "SELECT rq.stem, rq.options, rq.answer, re.answer AS ai_answer "
+            "SELECT rq.stem, rq.material, rq.options, rq.answer, re.answer AS ai_answer "
             "FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
-            "WHERE " + _REAL_OK + " AND LENGTH(rq.stem) BETWEEN 20 AND 600 "
-            "ORDER BY rq.year_max DESC, RANDOM() LIMIT ?", (qtype, n * 4)).fetchall()
+            "WHERE " + _REAL_OK + " AND LENGTH(rq.stem) BETWEEN 8 AND 600 "
+            "ORDER BY rq.year_max DESC, RANDOM() LIMIT ?",
+            _real_args(board, qtype) + (n * 4,)).fetchall()
     except sqlite3.Error:
         return []                       # 真题库还没导入（新库），照老路子出题
     out, seen = [], set()
     for r in rows:
-        if r["stem"][:20] in seen:
+        # 材料要一起给：范例的价值就在文段怎么写、设问怎么问，只给设问等于没给
+        q = ("%s\n%s" % (_material_of(r), r["stem"])).strip()
+        # 上限是给提示词兜底的：文章阅读的原文能有一千多字，三道范例就把提示词撑得很大
+        if q[:20] in seen or not (20 <= len(q) <= 1800):
             continue
-        seen.add(r["stem"][:20])
-        out.append({"q": r["stem"], "options": json.loads(r["options"]),
+        seen.add(q[:20])
+        out.append({"q": q, "options": json.loads(r["options"]),
                     "answer": r["answer"] or r["ai_answer"] or ""})
         if len(out) >= n:
             break
     return out
 
 
-def _real_style(db, qtype):
+def _real_style(db, board, qtype):
     """真题在这个题型上的体量：题干多长、单个选项多长。用来卡住跑偏的生成结果。
 
     为什么要卡：模型很容易把选词填空写成一段两百字的小作文，或者把片段阅读
     压成一句话 —— 内容看着没错，但**一眼就不像真题**，练它没有意义。
     取 10%~90% 分位而不是极值，免得被个别超长题带跑。
+
+    卡模块之后政治理论那四个题型会掉到样本线以下（真题库里合计才个位数），
+    于是这里返回 None、不卡篇幅 —— 这是对的：**没有范例好过拿错模块的范例**，
+    宁可不卡，也别拿常识判断的体量去要求马原题。补齐要等 P1 把题型标签填完。
     """
     try:
         rows = db.execute(
-            "SELECT rq.stem, rq.options FROM real_questions rq "
+            "SELECT rq.stem, rq.material, rq.options FROM real_questions rq "
             "LEFT JOIN real_explains re ON re.qid=rq.id WHERE " + _REAL_OK,
-            (qtype,)).fetchall()
+            _real_args(board, qtype)).fetchall()
     except sqlite3.Error:
         return None
     if len(rows) < 12:                  # 样本太少，分位数不可信，不卡
         return None
-    stems = sorted(len(r["stem"]) for r in rows)
+    stems = sorted(_real_len(r) for r in rows)
     opts = sorted(len(o) for r in rows for o in json.loads(r["options"]))
     def pct(a, p):
         return a[min(len(a) - 1, int(len(a) * p))]
@@ -455,8 +503,8 @@ def _bank_fill(db, board, qtype, level, want=8):
     """
     stat = {"ok": 0, "dup": 0, "bad": 0, "flaw": 0, "style": 0}
     mat = _bank_material(db, board, qtype)
-    examples = _real_examples(db, qtype)
-    style = _real_style(db, qtype)
+    examples = _real_examples(db, board, qtype)
+    style = _real_style(db, board, qtype)
     tip = DRILL_TIP.get(qtype, "")
     spec = _AI_SPEC.get(qtype, "")
     extra = ""
