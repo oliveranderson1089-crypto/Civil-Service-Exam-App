@@ -24,7 +24,8 @@ def _db():
     con.execute("CREATE TABLE real_questions(id INTEGER PRIMARY KEY, module TEXT, qtype TEXT, "
                 "stem TEXT, material TEXT, options TEXT, answer TEXT, has_answer INT, "
                 "needs_asset INT, year_max INT)")
-    con.execute("CREATE TABLE real_explains(qid INT, answer TEXT, qtype TEXT, agree INT)")
+    con.execute("CREATE TABLE real_explains(qid INT, answer TEXT, qtype TEXT, agree INT, "
+                "wrong TEXT)")
     return con
 
 
@@ -61,7 +62,8 @@ class TestSample:
             _add(con, i + 1, "语" * 200)
         for i in range(20):        # 资料分析的短题，被 AI 兜底误判成语境分析
             _add(con, 100 + i, "问哪年最大？", module="资料分析", qtype="")
-            con.execute("INSERT INTO real_explains VALUES(?,'A','语境分析',1)", (100 + i,))
+            con.execute("INSERT INTO real_explains(qid,answer,qtype,agree) "
+                        "VALUES(?,'A','语境分析',1)", (100 + i,))
         p = realprofile.get(con, "言语理解与表达", "语境分析")
         assert p["med"] == 200, "中位数被别的模块的短题拉歪了：%d" % p["med"]
 
@@ -151,6 +153,57 @@ class TestBlanks:
         assert realprofile.get(con, "言语理解与表达", "语境分析")["blanks"] == {}
 
 
+class TestWrongWays:
+    """干扰项手法频次：真题的难度不在题干，在**错项是怎么造的**。"""
+
+    @staticmethod
+    def _add_w(con, qid, wrong):
+        _add(con, qid, "语" * 120)
+        con.execute("INSERT INTO real_explains(qid,answer,agree,wrong) VALUES(?,'A',1,?)",
+                    (qid, json.dumps(wrong, ensure_ascii=False)))
+
+    def test_数得出高频手法(self):
+        con = _db()
+        for i in range(20):
+            self._add_w(con, i + 1, {"B": "文中未提及，无中生有。", "C": "非重点，只是铺垫。",
+                                     "D": "与论证无关。"})
+        w = realprofile.get(con, "言语理解与表达", "语境分析")["wrongs"]
+        assert w.get("无中生有") == 33 and w.get("非重点") == 33, w
+
+    def test_分母是错项条数不是题数(self):
+        """一道题三个错项各算一条。用题数当分母会把比例算大三倍（33% 变 100%）。"""
+        con = _db()
+        for i in range(20):
+            self._add_w(con, i + 1, {"B": "无中生有。", "C": "这项也不对", "D": "那项也不对"})
+        assert realprofile.get(con, "言语理解与表达", "语境分析")["wrongs"].get("无中生有") == 33
+
+    def test_没有可归纳的套路就整个不给(self):
+        """定义判断、法律常识实测各手法都在 1% 上下 —— 那是噪声，
+           硬给等于让模型去凑一个真题里不存在的套路。"""
+        con = _db()
+        for i in range(30):
+            self._add_w(con, i + 1, {"B": "这一项说反了", "C": "这一项算错了", "D": "这一项记混了"})
+        assert realprofile.get(con, "言语理解与表达", "语境分析")["wrongs"] == {}
+
+    def test_单个手法占比太低不报(self):
+        con = _db()
+        for i in range(40):                       # 40 道 × 3 错项 = 120 条，只有 2 条命中
+            w = {"B": "说反了", "C": "算错了", "D": "记混了"}
+            if i < 2:
+                w["B"] = "无中生有。"
+            self._add_w(con, i + 1, w)
+        assert realprofile.get(con, "言语理解与表达", "语境分析")["wrongs"] == {}
+
+    def test_wrong存坏了不影响整张画像(self):
+        con = _db()
+        for i in range(20):
+            _add(con, i + 1, "语" * 120)
+            con.execute("INSERT INTO real_explains(qid,answer,agree,wrong) VALUES(?,'A',1,?)",
+                        (i + 1, "不是JSON" if i % 2 else '["数组不是对象"]'))
+        p = realprofile.get(con, "言语理解与表达", "语境分析")
+        assert p is not None and p["wrongs"] == {}
+
+
 class TestPromptLines:
     def test_给中位数而不是区间(self):
         con = _db()
@@ -175,6 +228,23 @@ class TestPromptLines:
         txt = realprofile.prompt_lines(p)
         assert "%d 字一律判不合格" % max(int(p["med"] * 0.8), p["stem"][0]) in txt
         assert p["stem"][0] <= max(int(p["med"] * 0.8), p["stem"][0]), "不合格线低于护栏下限"
+
+    def test_有手法就写进提示词(self):
+        con = _db()
+        for i in range(20):
+            _add(con, i + 1, "语" * 120)
+            con.execute("INSERT INTO real_explains(qid,answer,agree,wrong) VALUES(?,'A',1,?)",
+                        (i + 1, json.dumps({"B": "无中生有。", "C": "无中生有。",
+                                            "D": "无中生有。"}, ensure_ascii=False)))
+        txt = realprofile.prompt_lines(realprofile.get(con, "言语理解与表达", "语境分析"))
+        assert "无中生有" in txt and "干扰项" in txt
+
+    def test_没手法就不提干扰项(self):
+        con = _db()
+        for i in range(20):
+            _add(con, i + 1, "语" * 120)
+        assert "干扰项" not in realprofile.prompt_lines(
+            realprofile.get(con, "言语理解与表达", "语境分析"))
 
     def test_没画像就不加任何指标(self):
         assert realprofile.prompt_lines(None) == ""

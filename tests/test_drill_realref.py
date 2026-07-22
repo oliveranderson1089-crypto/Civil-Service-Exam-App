@@ -44,7 +44,8 @@ def _db():
     con.execute("CREATE TABLE real_questions(id INTEGER PRIMARY KEY, module TEXT, qtype TEXT, "
                 "stem TEXT, material TEXT, options TEXT, answer TEXT, has_answer INT, "
                 "needs_asset INT, year_max INT)")
-    con.execute("CREATE TABLE real_explains(qid INT, answer TEXT, qtype TEXT, agree INT)")
+    con.execute("CREATE TABLE real_explains(qid INT, answer TEXT, qtype TEXT, agree INT, "
+                "wrong TEXT)")
     return con
 
 
@@ -53,7 +54,8 @@ def _add(con, qid, module, qtype, stem, *, material="", ai_qtype=None, agree=1,
     con.execute("INSERT INTO real_questions VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (qid, module, qtype, stem, material, OPTS, "A", has_answer, needs_asset, year))
     if ai_qtype is not None:
-        con.execute("INSERT INTO real_explains VALUES(?,?,?,?)", (qid, "A", ai_qtype, agree))
+        con.execute("INSERT INTO real_explains(qid,answer,qtype,agree) VALUES(?,?,?,?)",
+                    (qid, "A", ai_qtype, agree))
 
 
 class TestModuleFilter:

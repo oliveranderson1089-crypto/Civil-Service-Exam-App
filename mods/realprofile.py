@@ -11,6 +11,10 @@
   med    题干中位数 —— 提示词给这个数，不给区间
   ask    高频设问句 —— 实测语境分析 60% 用「填入画横线部分最恰当的一项是」，
          判断意图 60% 用「这段文字意在说明/强调」。AI 出的题经常整句漏掉，一眼就不像真题
+  wrongs 干扰项手法频次 —— 真题的难度不在题干，在**错项是怎么造的**。
+         实测概括主旨的干扰项两成是「无中生有」、一成是「非重点」，
+         削弱/加强论证一成是「无关项」；而定义判断、法律常识全在 1% 上下 = 没有信号，
+         那种就不给（硬给等于让模型去凑一个真题里不存在的套路）
   blanks 选词填空的空数分布 —— 语境分析 1空55%/2空34%，词语辨析 2空62%/3空30%。
          这组数原先硬编码在 _AI_SPEC 的文案里，现在从真题数出来
 
@@ -69,6 +73,54 @@ def _ask_forms(stems, top=3):
     return [f for f, n in most if n >= 2]
 
 
+# 干扰项手法的词表 —— **是数出来的，不是拍脑袋列的**。
+# 真题解析里的错因是 AI 写的自由文字（「独特优势是引出任务的铺垫」），
+# 它描述的是这一项具体错在哪，而不是点名手法，所以只能靠这些关键词去认。
+# 召回率有限（概括主旨能认出三成四），但认出来的那部分频次是可信的。
+_WRONG_WAYS = {
+    "无中生有": r"无中生有|文中未提|未提及|没有提到|原文未",
+    "偷换概念": r"偷换概念|概念错误|混淆概念|张冠李戴",
+    "偷换时间": r"偷换时间|时间错误|时间点|时态",
+    "偷换主体": r"偷换主体|主体错误|主体不符|主语",
+    "范围偏差": r"以偏概全|范围扩大|范围缩小|扩大范围|部分.{0,4}整体",
+    "表述绝对": r"绝对化|表述绝对|过于绝对|说法绝对",
+    "因果倒置": r"因果倒置|强加因果|因果关系|颠倒因果",
+    "非重点": r"非重点|不是重点|非主要|只是.{0,6}(铺垫|细节|之一)|片面",
+    "无关项": r"与.{0,6}无关|不相关|无关项",
+    "程度不符": r"程度|过重|过轻|夸大|弱化",
+}
+# 一种手法占比不到这个数就不报：低于此就是噪声（定义判断/法律常识各手法都在 1% 上下）
+_WAY_MIN = 5
+# 认出来的手法加起来不到这个数，说明这个题型的错项没有可归纳的套路，整个不给
+_WAY_MIN_ALL = 10
+
+
+def _wrong_ways(wrongs):
+    """干扰项手法频次：这个题型的错项都是怎么造的。
+
+    分母是**错项条数**（一道题三个错项各算一条），不是题数 —— 说的是
+    「这个题型的干扰项里有多少比例用了某种手法」，用题数当分母会把比例算大三倍。
+    """
+    cnt = collections.Counter()
+    n = 0
+    for w in wrongs:
+        try:
+            d = json.loads(w or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        for v in d.values():
+            n += 1
+            for name, pat in _WRONG_WAYS.items():
+                if re.search(pat, str(v)):
+                    cnt[name] += 1
+    if not n:
+        return {}
+    out = {k: round(v / n * 100) for k, v in cnt.most_common(4) if v / n * 100 >= _WAY_MIN}
+    return out if sum(out.values()) >= _WAY_MIN_ALL else {}
+
+
 def _blank_dist(opts_list):
     """选词填空的空数分布 —— 按**选项里的词数**数，别数题干。
 
@@ -111,7 +163,7 @@ def build(db, board, qtype):
     和「库暂时读不到」（绝不能缓存，否则一锁就锁掉一小时的护栏）。
     """
     rows = db.execute(
-        "SELECT rq.stem, COALESCE(NULLIF(rq.material,'None'),'') mat, rq.options "
+        "SELECT rq.stem, COALESCE(NULLIF(rq.material,'None'),'') mat, rq.options, re.wrong "
         "FROM real_questions rq LEFT JOIN real_explains re ON re.qid=rq.id "
         "WHERE %s AND %s=? AND rq.module=?"
         % (realref.servable("rq", "re"), realref.qtype_expr("rq", "re")),
@@ -149,6 +201,7 @@ def build(db, board, qtype):
         "opt": (_pct(olens, .1), _pct(olens, .9)) if olens else (4, 30),
         "ask": _ask_forms([r["stem"] or "" for r in rows]),
         "blanks": _blank_dist(opts_list),
+        "wrongs": _wrong_ways([r["wrong"] for r in rows]),
     }
 
 
@@ -196,6 +249,12 @@ def prompt_lines(prof):
     if prof["blanks"]:
         out.append("空数按真题的实际比例来：%s。"
                    % "、".join("%d 空占 %d%%" % (k, v) for k, v in prof["blanks"].items()))
+    if prof.get("wrongs"):
+        # 真题的难度不在题干，在**错项是怎么造的**。不说清楚的话，模型造的错项
+        # 往往「一眼就能排除」——那种题练了不解决考场上的问题。
+        out.append("干扰项**按真题的套路造**：这个题型的错项里，%s。"
+                   "别造一眼就能排除的选项。"
+                   % "、".join("%d%% 是「%s」" % (v, k) for k, v in prof["wrongs"].items()))
     return "\n".join(out)
 
 
