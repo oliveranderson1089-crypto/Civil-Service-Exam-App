@@ -600,7 +600,12 @@ async function dvUpload(items) {
   await Promise.all(Array.from({ length: Math.min(DV_PARALLEL, items.length) }, worker));
   $('#dv-prog').classList.add('hidden');
   toast(fail ? '上传完成 ' + ok + ' 个，失败 ' + fail + ' 个' : '已上传 ' + ok + ' 个', fail > 0 && ok === 0);
-  loadDrive();
+  /* **要 await**：不等的话 dvUpload 在列表刷新之前就 resolve 了，
+     「上传完成」这个承诺就不包含「你能看见它了」。desktop.js 那两处
+     `p = dvUpload(list)` 正是拿这个 promise 当「传完了」用的。
+     测试里的表现更直接：await dvUpload(...) 一返回就拆掉 DOM，
+     loadDrive 的异步续体随后撞上已经销毁的 document（querySelector of undefined）。 */
+  await loadDrive();
 }
 
 $('#dv-upfile').addEventListener('change', e => {

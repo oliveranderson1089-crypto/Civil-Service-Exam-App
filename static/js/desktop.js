@@ -7,8 +7,11 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
+/* dropRoute **不在这张表里**：它就定义在本文件（见下面 function dropRoute），
+   而这张表只列「定义在别处」的符号。列进来 eslint 会报 no-redeclare —— 那不是误报，
+   是在提醒这份依赖清单和实际情况对不上了。 */
 /* global $, addDraftFiles, addDraftImages, aiHandleAttach, bindImgDrop, bindImgPaste,
-   c, compressImage, crFid, crSendFiles, deskMsg, dropRoute, dvOpenAndUpload, dvUpload,
+   c, compressImage, crFid, crSendFiles, deskMsg, dvOpenAndUpload, dvUpload,
    openAI, push, qnAddFiles, qnAddImgs, slUploadPaper, stack,
    toast, uploadDropped */
 
