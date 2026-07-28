@@ -318,6 +318,42 @@ class TestQhash:
         assert R.qhash_text("甲说法正确") != R.qhash_text("乙说法正确")
 
 
+class TestBlank:
+    """选词填空的横线：word 里它是一串 \xa0，不还原就等于把题目挖空了。"""
+
+    def test_句中的长空白是横线(self):
+        # 2023 国考副省级第 33 题原样：横线是 8 个 \xa0
+        got = R.norm("市场主体越要" + "\xa0" * 8 + "。")
+        assert got == "市场主体越要＿＿＿＿。", got
+
+    def test_横线常和普通空格交替(self):
+        # 同卷第 21 题：word 存成 \xa0 空格 \xa0 空格… 只按 \xa0 连续段找会漏
+        got = R.norm("经济循环的" + "\xa0 " * 6 + "\xa0，")
+        assert got == "经济循环的＿＿＿＿，", got
+
+    def test_行首缩进不是横线(self):
+        """段首缩进也是 \xa0（实测只有 2 格和 4 格两种，1581 处）。
+           当成横线的话，每一段开头都会多出一条线。"""
+        assert R.norm("\xa0\xa0\xa0\xa0超级计算，也被称为高性能计算") \
+            == "超级计算，也被称为高性能计算"
+        # 行中的缩进照旧压成一个空格（老行为），要紧的是别变成横线
+        assert R.norm("A 选项\n\xa0\xa0B 选项") == "A 选项\n B 选项"
+
+    def test_纯普通空格是排版不是横线(self):
+        # 2022 上半年四川：四个选项挤一行、只用空格分隔
+        assert R.norm("A ①②③④   B ①③②④") == "A ①②③④ B ①③②④"
+
+    def test_两格间隙不算(self):
+        assert R.norm("对于\xa0\xa0红酒") == "对于 红酒"
+
+    def test_补横线不改题干指纹(self):
+        """老库回填横线时全靠这条：指纹一样 = 还是同一道题。
+           qhash_text 把全角下划线转半角再当标点删掉，所以天然不变。"""
+        old = "市场主体越要 。企业应提升 和竞争意识"
+        new = "市场主体越要＿＿＿＿。企业应提升＿＿＿＿和竞争意识"
+        assert R.qhash_text(old) == R.qhash_text(new)
+
+
 def test_ans_numbered_block_ocr_bracket_ambiguity():
     """⑨「【解析 N】」：右括号被 OCR 认成 1 时，别把「解析 2】」读成第 21 题。
 
