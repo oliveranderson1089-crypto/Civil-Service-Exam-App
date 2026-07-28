@@ -4,6 +4,7 @@
 import base64
 import json
 import os
+import re
 import secrets
 import subprocess
 import threading
@@ -43,7 +44,7 @@ except Exception:
         HAVE_TRAY = False
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "4.9"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "5.0"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -73,6 +74,8 @@ class Gongkao(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
         self.win = None
+        self._share_jobs = {}   # id(download) → (download, 文件名)：这次下载是「为分享而下」
+        self._dl_paths = {}     # id(download) → 落盘路径：分享和普通下载可能并行，各记各的
 
     def do_activate(self):
         if self.win:
@@ -377,7 +380,7 @@ class Gongkao(Gtk.Application):
 
     def _flush(self, batch, intent=""):
         # intent 告诉网页这批的来路：'drive' 是点了「传文件夹」（明确要进云盘），
-        # 空字符串是拖放/粘贴（按用户当前在哪一页分发 —— 拖进小记就该进小记）
+        # 'paste' 是粘贴（跟着当前页面走），空字符串是拖放（按用户当前在哪一页分发 —— 拖进小记就该进小记）
         self._js("window.__onPickedFiles && window.__onPickedFiles(%s, %s)"
                  % (json.dumps(batch, ensure_ascii=False), json.dumps(intent)))
         return False                          # idle_add 只跑一次
@@ -416,7 +419,8 @@ class Gongkao(Gtk.Application):
                 paths.append(p)
         if not paths:
             return False
-        self._send_paths(paths, "正在粘贴…")
+        # intent='paste'：网页按「粘贴」的规矩分发（跟着当前页面走，不被侧栏 AI 抢）
+        self._send_paths(paths, "正在粘贴…", intent="paste")
         return True
 
     # ---------------- 拖放：GTK 层接管（WebKit 的 drop 给不到文件） ----------------
@@ -558,6 +562,8 @@ class Gongkao(Gtk.Application):
             self.take_shot()
         elif act == "open":
             self.open_external(d.get("url") or "")
+        elif act == "sharefile":
+            self.share_file(d.get("url") or "", d.get("name") or "")
         elif act == "copyimg":
             self.copy_image(d.get("data") or "")
         elif act == "pickdir":
@@ -605,6 +611,49 @@ class Gongkao(Gtk.Application):
             self._toast("打开浏览器失败：" + str(e)[:50])
         if not ok:
             self._toast("没能调起系统浏览器")
+
+    # ---------------- 分享文件：下到本地 + 弹应用列表 ----------------
+    # 桌面 Linux 没有手机那种「系统分享面板」，最接近的是 AppChooser：列出能处理这个
+    # 文件类型的应用（微信 / 邮件 / 看图 / 办公套件…），选中就把文件交过去。
+    # 原来这条路在桌面版只是**默默下载到「下载」文件夹**，用户还得自己去翻——等于没分享。
+    #
+    # 下载不自己写 HTTP：走 WebKit 的下载器，它共用登录 cookie，省得把会话再倒腾一遍。
+    def share_file(self, url, name):
+        if not url.startswith(("http://", "https://")):
+            self._toast("这个文件分享不了：" + url[:50])
+            return
+        try:
+            dl = self.web.get_context().download_uri(url)
+        except Exception as e:
+            self._toast("分享失败：" + str(e)[:60])
+            return
+        # 标记这次下载是「为分享而下」：destination 要落在缓存目录、下完要弹应用列表。
+        # 用 id() 做键而不是给 GObject 挂属性——PyGObject 的包装对象不保证是同一个。
+        self._share_jobs[id(dl)] = (dl, name or "")
+        self._toast("正在准备分享…")
+
+    def _share_dest(self, download, name):
+        """为分享下载的文件放缓存目录，不占用户的「下载」文件夹，且同名直接覆盖
+           （同一份资料反复分享，攒一堆 xxx(1).pdf 是纯噪音）。"""
+        d = os.path.join(GLib.get_user_cache_dir(), "gongkao-assistant", "share")
+        os.makedirs(d, exist_ok=True)
+        safe = re.sub(r'[/\\:*?"<>|]', "_", name).strip() or "分享文件"
+        return os.path.join(d, safe)
+
+    def _share_open(self, path):
+        """弹「用哪个应用打开」。这一步必须回到主线程做（GTK 对话框）。"""
+        gfile = Gio.File.new_for_path(path)
+        dlg = Gtk.AppChooserDialog.new(self.win, Gtk.DialogFlags.MODAL, gfile)
+        dlg.set_heading("把「%s」发送到／打开于" % os.path.basename(path))
+        resp = dlg.run()
+        app = dlg.get_app_info() if resp == Gtk.ResponseType.OK else None
+        dlg.destroy()
+        if not app:
+            return
+        try:
+            app.launch([gfile], None)
+        except Exception as e:
+            self._toast("调起「%s」失败：%s" % (app.get_display_name(), str(e)[:40]))
 
     def take_shot(self):
         """截图：走 xdg-desktop-portal（GNOME 直接的 Screenshot D-Bus 接口是禁掉的）。
@@ -776,20 +825,35 @@ class Gongkao(Gtk.Application):
     def on_download(self, ctx, download):
         download.connect("decide-destination", self._dl_dest)
         download.connect("finished", self._dl_done)
+        download.connect("failed", self._dl_failed)
 
     def _dl_dest(self, download, suggested):
-        d = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) or GLib.get_home_dir()
-        dest = os.path.join(d, suggested or "download")
-        base, ext = os.path.splitext(dest); i = 1
-        while os.path.exists(dest):                     # 不覆盖已存在的文件
-            dest = "%s(%d)%s" % (base, i, ext); i += 1
-        self._last_dl = dest
+        job = self._share_jobs.get(id(download))
+        if job:
+            # 为分享而下的：落缓存目录、按原名覆盖（见 _share_dest）
+            dest = self._share_dest(download, job[1] or suggested or "分享文件")
+        else:
+            d = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) or GLib.get_home_dir()
+            dest = os.path.join(d, suggested or "download")
+            base, ext = os.path.splitext(dest); i = 1
+            while os.path.exists(dest):                 # 不覆盖已存在的文件
+                dest = "%s(%d)%s" % (base, i, ext); i += 1
+            self._last_dl = dest
+        self._dl_paths[id(download)] = dest
         download.set_destination(GLib.filename_to_uri(dest, None))
         return True
 
     def _dl_done(self, download):
-        path = getattr(self, "_last_dl", "")
+        # 路径按这次下载取，不吃 self._last_dl —— 分享和普通下载可能同时在跑，
+        # 共用一个「最后一次」的变量会互相盖掉，表现是分享出去的是另一个文件。
+        path = self._dl_paths.pop(id(download), "") or getattr(self, "_last_dl", "")
+        job = self._share_jobs.pop(id(download), None)
         if not path or not os.path.exists(path):
+            if job:
+                self._toast("分享失败：文件没下下来")
+            return
+        if job:
+            GLib.idle_add(self._share_open, path)       # GTK 对话框必须回主线程
             return
         js = ("window.__onDownloaded && window.__onDownloaded(%s)"
               % ("'" + path.replace("\\", "\\\\").replace("'", "\\'") + "'"))
@@ -797,6 +861,11 @@ class Gongkao(Gtk.Application):
             self.web.run_javascript(js, None, None, None)
         except Exception:
             pass
+
+    def _dl_failed(self, download, error):
+        self._dl_paths.pop(id(download), None)
+        if self._share_jobs.pop(id(download), None):
+            self._toast("分享失败：" + str(error)[:60])
 
     def on_decide(self, web, decision, dtype):
         # 跳到「别的网站」的链接 → 交系统浏览器；App 只停在自己的站。

@@ -43,6 +43,7 @@ from mods.drill import bp as drill_bp
 from mods.dtest import bp as dtest_bp
 from mods.entries import bp as entries_bp
 from mods.essays import bp as essays_bp
+from mods.exam import bp as exam_bp
 from mods.fanwen import bp as fanwen_bp
 from mods.find import bp as find_bp
 from mods.gaikuo import bp as gaikuo_bp
@@ -113,6 +114,7 @@ app.register_blueprint(drill_bp)
 app.register_blueprint(dtest_bp)
 app.register_blueprint(entries_bp)
 app.register_blueprint(essays_bp)
+app.register_blueprint(exam_bp)
 app.register_blueprint(fanwen_bp)
 app.register_blueprint(find_bp)
 app.register_blueprint(gaikuo_bp)

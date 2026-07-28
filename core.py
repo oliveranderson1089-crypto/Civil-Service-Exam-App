@@ -94,13 +94,21 @@ def _save_cfg():
 
 
 # ---------------------------------------------------------------- 数据库
+def open_db():
+    """开一条**自己管生死**的连接。给活得比请求久的场合用（如 SSE 流式响应：
+    响应体是边算边发的，等它跑完时请求上下文早没了，g 上那条已经被 teardown 关掉）。
+    用完记得 close，别指望框架。"""
+    db = sqlite3.connect(DB, timeout=30)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA synchronous=NORMAL")
+    return db
+
+
 def get_db():
     db = getattr(g, "_db", None)
     if db is None:
-        db = g._db = sqlite3.connect(DB, timeout=30)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA synchronous=NORMAL")
+        db = g._db = open_db()
     return db
 
 

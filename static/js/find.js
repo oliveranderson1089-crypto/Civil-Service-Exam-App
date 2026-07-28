@@ -19,6 +19,10 @@
    （自由划词的区间对不齐采分点，判定必然变成玄学）。 */
 let fdPaper = null, fdPicked = new Set(), fdStep = 1, fdCheck = null, fdDrag = null;
 let fdManage = false, fdSel = new Set();   // 我的题：批量删除的管理态
+// 步骤要能回退，回退就得有东西可回 —— 答案和批改结果必须挂在模块上活着：
+// frFoot() 每次重渲染都会把 <textarea> 重建，答案不存在这儿，一回上一步就白写了。
+// fdMaxStep = 走到过的最远一步，只有走到过的步骤才让点回去（没做过的步骤点了没意义）。
+let fdAnswer = '', fdGrade = null, fdMaxStep = 1, fdTab = 'grade';
 
 function openFind() {
   fdManage = false; fdSel.clear();
@@ -146,8 +150,11 @@ function fdSyncBatchBar() {
 $('#fd-manage').onclick = () => { fdManage = !fdManage; if (!fdManage) fdSel.clear(); loadFindList(); };
 $('#fd-batchdel').onclick = fdBatchDel;
 $('#fd-gen').onclick = async () => {
-  const b = $('#fd-gen'); b.disabled = true; b.textContent = '出题中…（约 1~2 分钟）';
-  $('#fd-msg').textContent = 'AI 正在按题型出一则材料（对齐真题单则字数 1400~2500 字、掺干扰信息），字数不够会自动扩写，再标采分点…';
+  const b = $('#fd-gen'); b.disabled = true; b.textContent = '出题中…（约 3~5 分钟）';
+  // 出题现在是「造材料 → 分块扫描 → 定向补点 → 合并定分 → 拼参考答案」好几步，
+  // 比原来慢不少。慢的是出题这一次，练多少遍都不用再等（采分点和参考答案都存下来了）。
+  $('#fd-msg').textContent = 'AI 正在按题型出一则材料（对齐真题单则字数、掺干扰信息），再逐块扫全材料标采分点、'
+    + '补上漏掉的段落，最后拼一份参考答案 —— 出题只做这一次，之后练多少遍都不用再等…';
   try {
     const d = await api('/api/find/gen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -161,7 +168,9 @@ $('#fd-gen').onclick = async () => {
 $('#fd-up').onclick = () => $('#fd-file').click();
 $('#fd-file').onchange = async () => {
   const f = $('#fd-file').files[0]; if (!f) return;
-  $('#fd-msg').textContent = '正在识别真题（拆材料和小题，再逐题标采分点，可能要一两分钟）…';
+  // textContent 不解析标记，别在这儿写 **加粗**，会原样显示成星号
+  $('#fd-msg').textContent = '正在识别真题：拆材料和小题，再逐题扫全材料标采分点、拼参考答案。'
+    + '一份卷子有几道小题就要跑几轮，可能要五到十分钟，别关页面…';
   const fd = new FormData(); fd.append('file', f);
   try {
     const d = await api('/api/find/upload', { method: 'POST', body: fd });
@@ -175,52 +184,94 @@ $('#fd-file').onchange = async () => {
 /* ---- 做题：材料按句勾画 ---- */
 async function openFindRun(pid) {
   fdPaper = null; fdPicked = new Set(); fdStep = 1; fdCheck = null;
+  fdAnswer = ''; fdGrade = null; fdMaxStep = 1; fdTab = 'grade';
   push({ view: 'findrun', title: '找点训练' });
   $('#fr-head').innerHTML = '<p class="empty">加载中…</p>';
   $('#fr-mat').innerHTML = ''; $('#fr-foot').innerHTML = '';
   try {
     fdPaper = await api('/api/find/paper/' + pid);
+    fdAnswer = localStorage.getItem('fd-draft-' + pid) || '';   // 上次没写完的草稿
     frRender();
   } catch (e) { $('#fr-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 
+// 步骤条：走到过的步骤可以点回去。没有这个，第一步一交就永远回不去了 ——
+// 而找点这事儿本来就要反复改：看完判定想再补两句、写着写着发现漏了个点，都得能退回去。
+function frStepBar(cur, max) {
+  const N = ['① 找点', '② 写点', '③ 批改'];
+  return `<div class="fr-step">` + N.map((t, i) => {
+    const k = i + 1, can = k <= max && k !== cur;
+    return `<span class="${k === cur ? 'on' : (k <= max ? 'done' : '')}${can ? ' fr-back' : ''}"
+      ${can ? `data-fstep="${k}"` : ''} title="${can ? '点这里回到这一步' : ''}">${t}</span>`;
+  }).join('') + `</div>`;
+}
+
 function frRender() {
   const p = fdPaper;
-  $('#fr-head').innerHTML = `
-    <div class="fr-step">
-      <span class="${fdStep === 1 ? 'on' : 'done'}">① 找点</span>
-      <span class="${fdStep === 2 ? 'on' : (fdStep > 2 ? 'done' : '')}">② 写点</span>
-      <span class="${fdStep === 3 ? 'on' : ''}">③ 批改</span>
-    </div>
+  fdMaxStep = Math.max(fdMaxStep, fdStep);
+  $('#fr-head').innerHTML = frStepBar(fdStep, fdMaxStep) + `
     <div class="fr-stem">${esc(p.stem)}</div>
     <div class="fr-meta">${esc(p.type_name)} · ${p.full} 分 · 答案 ${p.word_min}~${p.word_max} 字
       · <b>共 ${p.n_points} 个采分点</b>${p.material_words ? ` · 给定资料 ${p.material_words} 字` : ''} · ${esc(p.source || '')}</div>
-    ${p.done ? `<div class="fr-hist"><i class="fr-histgo">🕐 本题练过 ${p.done} 次 · 查看记录 ›</i></div>` : ''}`;
+    ${p.done ? `<div class="fr-hist"><i class="fr-histgo">🕐 本题练过 ${p.done} 次 · 查看记录 ›</i></div>` : ''}`
+    + (fdStep === 3 ? frScoreHtml(fdGrade) + frTabBar() : '');
   frMat();
   frFoot();
 }
 // 做题页点「查看记录」→ 打开过滤到本题的做题记录（题目内部按时间的多次留痕）
 $('#fr-head').addEventListener('click', e => {
-  if (e.target.closest('.fr-histgo') && fdPaper) openFindRecs(fdPaper.id);
+  if (e.target.closest('.fr-histgo') && fdPaper) { openFindRecs(fdPaper.id); return; }
+  const b = e.target.closest('[data-fstep]'); if (!b) return;
+  frGoStep(+b.dataset.fstep);
 });
+// 在走到过的步骤之间**自由往返**。判定结果、答案、批改结果都挂在模块上活着，
+// 所以来回切不丢东西也不重复花 AI 调用 —— 退回第二步看一眼再回第三步看批改，是常事。
+// 第三步的批改已经落库，回去改完再交 = **新增**一条记录，不覆盖上一次。
+function frGoStep(k) {
+  if (k === fdStep || k > fdMaxStep) return;
+  fdStep = k;
+  frRender();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
 
-function frMat() {
-  const p = fdPaper;
+// 材料渲染抽成纯函数：做题页和「做题记录」详情都要按句渲染 + 按判定着色，
+// 差别只是数据从哪来（一个是当前会话，一个是历史快照），渲染规则必须是同一套。
+function frMatHtml(sents, picked, mk) {
   let html = '', lastP = -1;
-  p.sents.forEach(s => {
+  sents.forEach(s => {
     if (s.p !== lastP) { if (lastP >= 0) html += '</p>'; html += '<p class="fr-para">'; lastP = s.p; }
     if (s.head) { html += `<span class="fr-s fr-h">${esc(s.t)}</span>`; return; }
     const cls = ['fr-s'];
-    if (fdPicked.has(s.i)) cls.push('on');
-    if (fdCheck) {                               // 判完了：把对/错/漏直接标在原文上
-      if (fdCheck.okSents.has(s.i)) cls.push('ok');
-      else if (fdCheck.wrongSents.has(s.i)) cls.push('bad');
-      else if (fdCheck.missSents.has(s.i)) cls.push('miss');
+    if (picked.has(s.i)) cls.push('on');
+    if (mk) {                                    // 判完了：把对/错/漏直接标在原文上
+      if (mk.ok.has(s.i)) cls.push('ok');
+      else if (mk.bad.has(s.i)) cls.push('bad');
+      else if (mk.miss.has(s.i)) cls.push('miss');
     }
     html += `<span class="${cls.join(' ')}" data-fs="${s.i}">${esc(s.t)}</span>`;
   });
   if (lastP >= 0) html += '</p>';
-  $('#fr-mat').innerHTML = html;
+  return html;
+}
+
+function frMat() {
+  // 第三步（批改）材料一样要留着 —— 原来这儿是清空的，结果拿到分数却看不到材料，
+  // 没法对着原文看自己漏在哪；现在批改页把材料当成一个页签，还带着找对/错/漏的着色。
+  const box = $('#fr-mat');
+  box.classList.toggle('hidden', fdStep === 3 && fdTab !== 'mat');
+  const mk = fdCheck ? { ok: fdCheck.okSents, bad: fdCheck.wrongSents, miss: fdCheck.missSents } : null;
+  box.innerHTML = (fdStep === 3
+    ? `<div class="fr-sec-t">📄 给定资料${fdPaper.material_words ? `（${fdPaper.material_words} 字）` : ''}
+       <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏</i></div>` : '')
+    + frMatHtml(fdPaper.sents, fdPicked, mk);
+}
+
+// 批改结果的页签：真题批改那边就是这么摆的（维度评分/参考范文/原题材料/作答原文），
+// 小题这边原来只有一块光秃秃的逐点批改，材料和参考答案都没有。
+function frTabBar() {
+  const T = [['grade', '逐点批改'], ['ref', '参考答案'], ['mat', '材料原文'], ['mine', '我的作答']];
+  return `<div class="tk-tabs fr-tabs">` + T.map(([k, t]) =>
+    `<button class="tk-tab${fdTab === k ? ' active' : ''}" data-frt="${k}">${t}</button>`).join('') + `</div>`;
 }
 
 // 勾画：点一句 = 选中/取消；按住拖过多句 = 连着选（鼠标和手写笔都走 pointer 事件）
@@ -248,11 +299,21 @@ function frToggle(i, on) {
 function frFoot() {
   const p = fdPaper;
   if (fdStep === 1) {
+    // 判定过就把结果一并摆回来（回退到这一步时不该只剩个光秃秃的按钮）
     $('#fr-foot').innerHTML = `
       <div class="fr-tip">🖍 在材料里<b>点句子</b>勾出你认为的要点（按住拖可以连选）。
-        这一步<b>只找不写</b> —— 共 ${p.n_points} 个采分点，你勾了 <b id="fr-n">${fdPicked.size}</b> 句。</div>
-      <button class="btn primary" id="fr-check">看看我找得对不对</button>`;
+        这一步<b>只找不写</b> —— 共 ${p.n_points} 个采分点，你勾了 <b id="fr-n">${fdPicked.size}</b> 句。</div>`
+      + (fdCheck ? frCheckBody(fdCheck) : '')
+      + `<div class="fr-acts">
+        ${fdCheck ? '<button class="btn" id="fr-redo">🔄 全部清空重找</button>' : ''}
+        <button class="btn primary" id="fr-check">${fdCheck ? '改完了，重新判定' : '看看我找得对不对'}</button>
+        ${fdCheck ? '<button class="btn" id="fr-next">下一步：照着写点子 →</button>' : ''}
+      </div>`;
     $('#fr-check').onclick = frDoCheck;
+    if (fdCheck) {
+      $('#fr-redo').onclick = () => { fdCheck = null; fdPicked = new Set(); frMat(); frFoot(); };
+      $('#fr-next').onclick = frToStep2;
+    }
     return;
   }
   if (fdStep === 2) {
@@ -267,17 +328,70 @@ function frFoot() {
       <div class="fr-picked">${picked.map(s => `<div>· ${esc(s.t)}</div>`).join('') || '<i>你没勾到任何要点</i>'}</div>
       <textarea id="fr-ans" placeholder="一、…\n二、…\n三、…"></textarea>
       <div class="fr-wc"><span id="fr-wc">0</span> / ${p.word_max} 字</div>
-      <button class="btn primary" id="fr-grade">交给我批</button>`;
-    $('#fr-ans').oninput = () => {
-      $('#fr-wc').textContent = $('#fr-ans').value.replace(/\s/g, '').length;
+      <div class="fr-acts">
+        <button class="btn" id="fr-prev">← 回上一步改勾画</button>
+        <button class="btn primary" id="fr-grade">交给我批</button>
+      </div>`;
+    const ta = $('#fr-ans');
+    ta.value = fdAnswer;                                  // 回退/重渲染后把写过的答案接着放回去
+    $('#fr-wc').textContent = fdAnswer.replace(/\s/g, '').length;
+    ta.oninput = () => {
+      fdAnswer = ta.value;
+      $('#fr-wc').textContent = fdAnswer.replace(/\s/g, '').length;
+      // 草稿存本地：批改要 20 秒，中途手滑退出/刷新不该把整篇作答赔进去
+      try { localStorage.setItem('fd-draft-' + fdPaper.id, fdAnswer); } catch (_) { /* 配额满就算了 */ }
     };
+    $('#fr-prev').onclick = () => frGoStep(1);
     $('#fr-grade').onclick = frDoGrade;
+    return;
   }
+  if (fdStep === 3) {
+    $('#fr-foot').innerHTML = frStep3Pane() + `
+      <div class="fr-acts">
+        <button class="btn" id="fr-prev3">← 回去改答案</button>
+        <button class="btn primary" id="fr-again">🔄 再练这道</button>
+        <button class="btn" id="fr-back">换一道</button>
+      </div>`;
+    // 回去改答案再交 = **新增**一条记录，不覆盖这次的（做题记录里两次都在，能比进步）
+    $('#fr-prev3').onclick = () => frGoStep(2);
+    $('#fr-again').onclick = () => openFindRun(fdPaper.id);
+    $('#fr-back').onclick = () => { back(); loadFindList(); };
+  }
+}
+
+// 找点判定的结果块。抽出来是因为回退到第一步时要能把它原样摆回来（见 frFoot）
+function frCheckBody(r) {
+  return `<div class="fr-res">
+      <div class="fr-score">找到 <b>${r.found}</b> / ${r.total} 个采分点
+        <span class="fr-acc${r.acc < 60 ? ' bad' : ''}">${r.acc}%</span></div>
+      ${r.missed.length ? `<div class="fr-sec miss"><div class="fr-sec-t">❌ 找漏了 ${r.missed.length} 个</div>
+        ${r.missed.map(x => `<div class="fr-item">
+          <b>[${x.score} 分] ${esc(x.point)}</b>
+          <div class="fr-ev" data-fsgo="${x.sents[0]}">↗ 就在这句：${esc(x.evidence.slice(0, 50))}…</div>
+        </div>`).join('')}</div>` : ''}
+      ${r.wrong.length ? `<div class="fr-sec bad"><div class="fr-sec-t">⚠️ 找错了 ${r.wrong.length} 处
+          <i>（这些是干扰信息，不是采分点）</i></div>
+        ${r.wrong.map(x => `<div class="fr-item"><div class="fr-ev" data-fsgo="${x.i}">↗ ${esc(x.t.slice(0, 50))}…</div></div>`).join('')}</div>` : ''}
+      ${r.dup.length ? `<div class="fr-sec dup"><div class="fr-sec-t">🔁 找重了 ${r.dup.length} 处</div>
+        ${r.dup.map(x => `<div class="fr-item"><b>${esc(x.point)}</b>
+          <div class="fr-ev">这一个点你勾了 ${x.sents.length} 句 —— 材料里换了个说法而已，答案里只算一个点</div>
+        </div>`).join('')}</div>` : ''}
+      ${r.ok.length ? `<div class="fr-sec ok"><div class="fr-sec-t">✅ 找对了 ${r.ok.length} 个</div>
+        ${r.ok.map(x => `<div class="fr-item"><b>[${x.score} 分] ${esc(x.point)}</b></div>`).join('')}</div>` : ''}
+    </div>`;
+}
+function frToStep2() {
+  // 漏掉的点也补进勾画（不然第二步照着写，注定还是漏）—— 但它们在原文里仍标成黄的
+  fdCheck.missSents.forEach(i => fdPicked.add(i));
+  fdCheck.wrongSents.forEach(i => fdPicked.delete(i));
+  fdStep = 2; frRender();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 async function frDoCheck() {
   if (!fdPicked.size) { toast('先在材料里勾几句', true); return; }
-  const b = $('#fr-check'); b.disabled = true; b.textContent = '判定中…';
+  const b = $('#fr-check'); const old = b.textContent;
+  b.disabled = true; b.textContent = '判定中…';
   try {
     const r = await api('/api/find/check', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -289,43 +403,15 @@ async function frDoCheck() {
     r.missSents = new Set(r.missed.flatMap(x => x.sents));
     fdCheck = r;
     frMat();
-    $('#fr-foot').innerHTML = `
-      <div class="fr-res">
-        <div class="fr-score">找到 <b>${r.found}</b> / ${r.total} 个采分点
-          <span class="fr-acc${r.acc < 60 ? ' bad' : ''}">${r.acc}%</span></div>
-        ${r.missed.length ? `<div class="fr-sec miss"><div class="fr-sec-t">❌ 找漏了 ${r.missed.length} 个</div>
-          ${r.missed.map(x => `<div class="fr-item">
-            <b>[${x.score} 分] ${esc(x.point)}</b>
-            <div class="fr-ev" data-fsgo="${x.sents[0]}">↗ 就在这句：${esc(x.evidence.slice(0, 50))}…</div>
-          </div>`).join('')}</div>` : ''}
-        ${r.wrong.length ? `<div class="fr-sec bad"><div class="fr-sec-t">⚠️ 找错了 ${r.wrong.length} 处
-            <i>（这些是干扰信息，不是采分点）</i></div>
-          ${r.wrong.map(x => `<div class="fr-item"><div class="fr-ev" data-fsgo="${x.i}">↗ ${esc(x.t.slice(0, 50))}…</div></div>`).join('')}</div>` : ''}
-        ${r.dup.length ? `<div class="fr-sec dup"><div class="fr-sec-t">🔁 找重了 ${r.dup.length} 处</div>
-          ${r.dup.map(x => `<div class="fr-item"><b>${esc(x.point)}</b>
-            <div class="fr-ev">这一个点你勾了 ${x.sents.length} 句 —— 材料里换了个说法而已，答案里只算一个点</div>
-          </div>`).join('')}</div>` : ''}
-        ${r.ok.length ? `<div class="fr-sec ok"><div class="fr-sec-t">✅ 找对了 ${r.ok.length} 个</div>
-          ${r.ok.map(x => `<div class="fr-item"><b>[${x.score} 分] ${esc(x.point)}</b></div>`).join('')}</div>` : ''}
-      </div>
-      <div class="fr-acts">
-        <button class="btn" id="fr-redo">🔄 重新找一遍</button>
-        <button class="btn primary" id="fr-next">下一步：照着写点子 →</button>
-      </div>`;
-    $('#fr-redo').onclick = () => { fdCheck = null; fdPicked = new Set(); frMat(); frFoot(); };
-    $('#fr-next').onclick = () => {
-      // 漏掉的点也补进勾画（不然第二步照着写，注定还是漏）—— 但它们在原文里仍标成黄的
-      fdCheck.missSents.forEach(i => fdPicked.add(i));
-      fdCheck.wrongSents.forEach(i => fdPicked.delete(i));
-      fdStep = 2; frRender();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-  } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = '看看我找得对不对'; }
+    frFoot();
+  } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = old; }
 }
 $('#fr-foot').addEventListener('click', e => {
   const g = e.target.closest('[data-fsgo]');    // 点一下跳到原文那句
   if (!g) return;
-  const el = document.querySelector(`[data-fs="${g.dataset.fsgo}"]`);
+  // 第三步材料是折在「材料原文」页签里的，不先切过去，滚过去也是滚到个隐藏元素上
+  if (fdStep === 3 && fdTab !== 'mat') { fdTab = 'mat'; frRender(); }
+  const el = $('#fr-mat').querySelector(`[data-fs="${g.dataset.fsgo}"]`);
   if (el) {
     el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     el.classList.add('flash');
@@ -350,21 +436,50 @@ async function frDoGrade() {
         } : null,
       }),
     });
-    fdStep = 3;
-    $('#fr-head').innerHTML = `
-      <div class="fr-step"><span class="done">① 找点</span><span class="done">② 写点</span><span class="on">③ 批改</span></div>`
-      + frScoreHtml(g);
-    $('#fr-mat').innerHTML = '';
-    $('#fr-foot').innerHTML = frResultBody(g) + `
-      <div class="fr-acts">
-        <button class="btn primary" id="fr-again">🔄 再练这道</button>
-        <button class="btn" id="fr-back">换一道</button>
-      </div>`;
-    $('#fr-again').onclick = () => openFindRun(fdPaper.id);
-    $('#fr-back').onclick = () => { back(); loadFindList(); };
+    fdAnswer = ans; fdGrade = g; fdStep = 3; fdTab = 'grade';
+    try { localStorage.removeItem('fd-draft-' + fdPaper.id); } catch (_) { /* 交了就不留草稿 */ }
+    frRender();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = '交给我批'; }
 }
+
+// 第三步的页签内容。材料不在这儿 —— 它单独占着 #fr-mat（切到「材料原文」时才显示）。
+function frStep3Pane() {
+  const g = fdGrade || {};
+  if (fdTab === 'mat') return '';
+  if (fdTab === 'ref') {
+    return g.reference
+      ? `<div class="fr-sec"><div class="fr-sec-t">📖 参考答案<i class="fr-legend">${g.ref_words || ''} 字 · 由本题采分点拼装，要点与判分标准一一对应</i></div>
+         <div class="frd-ans">${esc(g.reference).replace(/\n/g, '<br>')}</div></div>`
+      : `<div class="fr-sec"><div class="fr-sec-t">📖 参考答案</div>
+         <p class="empty">这道题还没生成参考答案（生成是出题之外单独的一次 AI 调用，超时/失败就会空着）。</p>
+         <button class="btn primary" id="fr-refgen">🔄 生成参考答案</button></div>`;
+  }
+  if (fdTab === 'mine') {
+    const n = (fdAnswer || '').replace(/\s/g, '').length;
+    return `<div class="fr-sec"><div class="fr-sec-t">✍️ 我的作答<i class="fr-legend">${n} 字 · 要求 ${fdPaper.word_min}~${fdPaper.word_max} 字</i></div>
+      <div class="frd-ans">${esc(fdAnswer).replace(/\n/g, '<br>')}</div></div>`;
+  }
+  return frFindRecapHtml(fdCheck && {
+    found: fdCheck.found, total: fdCheck.total, acc: fdCheck.acc,
+    missed: (fdCheck.missed || []).map(m => m.point),
+    wrong_n: (fdCheck.wrong || []).length, dup_n: (fdCheck.dup || []).length,
+  }) + frResultBody(g);
+}
+// 页签切换 + 参考答案补生成（都挂在 #fr-head / #fr-foot 上，内容重渲染也不掉）
+$('#fr-head').addEventListener('click', e => {
+  const t = e.target.closest('[data-frt]'); if (!t || fdStep !== 3) return;
+  fdTab = t.dataset.frt; frRender();
+});
+$('#fr-foot').addEventListener('click', async e => {
+  const b = e.target.closest('#fr-refgen'); if (!b) return;
+  b.disabled = true; b.textContent = '生成中…（约 30 秒）';
+  try {
+    const d = await api(`/api/find/paper/${fdPaper.id}/reference`, { method: 'POST' });
+    fdGrade.reference = d.reference; fdGrade.ref_words = d.ref_words;
+    frRender(); toast(`参考答案已生成（${d.ref_words} 字）`);
+  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '🔄 生成参考答案'; }
+});
 // 批改结果的两块 HTML，做题页和「做题记录」详情共用
 function frScoreHtml(g) {
   return `<div class="fr-final"><b>${g.score}</b> / ${g.full} 分${g.content_score != null && g.format
@@ -461,22 +576,93 @@ function frFindRecapHtml(fr) {
     ${(fr.missed || []).length ? `<div class="fr-item">当时漏掉：${fr.missed.map(esc).join('；')}</div>` : ''}
   </div>`;
 }
+/* 一条记录的完整回看：不只是「分数 + 评语」，而是把当时那一遍**重演**出来 ——
+   材料上还留着当时的勾画和判定着色（绿=找对/红=找错/黄=找漏），照着能看出
+   「我当时为什么会漏这个点」。着色用记录里的采分点快照算，采分点后来被重标也不影响。 */
+let fdRec = null, fdRecTab = 'find';
 async function openFindRec(rid) {
   push({ view: 'findrecd', title: '这次的批改' });
-  $('#frd-head').innerHTML = '<p class="empty">加载中…</p>'; $('#frd-body').innerHTML = '';
+  $('#frd-head').innerHTML = '<p class="empty">加载中…</p>';
+  $('#frd-mat').innerHTML = ''; $('#frd-body').innerHTML = '';
   try {
-    const d = await api('/api/find/record/' + rid);
-    const g = d.grade || {}; g.score = d.score; g.full = d.full;
-    $('#frd-head').innerHTML = `<div class="fr-stem">${esc(d.stem)}</div>
-      <div class="fr-meta">${esc(d.type_name)} · ${d.full} 分 · 答案 ${d.word_min}~${d.word_max} 字 · ${esc((d.created_at || '').slice(0, 16))}</div>`
-      + frScoreHtml(g);
-    $('#frd-body').innerHTML = frFindRecapHtml(d.find_result) + frResultBody(g)
-      + `<div class="fr-sec"><div class="fr-sec-t">✍️ 我写的答案</div>
-         <div class="frd-ans">${esc(d.answer).replace(/\n/g, '<br>')}</div></div>`
-      + `<div class="fr-acts"><button class="btn primary" id="frd-again">🔄 再练这道</button>
-         <button class="btn" id="frd-back">返回记录</button></div>`;
-    $('#frd-again').onclick = () => openFindRun(d.paper_id);
-    $('#frd-back').onclick = () => back();
+    fdRec = await api('/api/find/record/' + rid);
+    fdRecTab = 'find';
+    frRecRender();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (e) { $('#frd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
+
+function frRecRender() {
+  const d = fdRec, g = d.grade || {};
+  g.score = d.score; g.full = d.full;
+  const T = [['find', '我的找点'], ['grade', '逐点批改'], ['ref', '参考答案'],
+             ['mat', '材料原文'], ['mine', '我的作答']];
+  $('#frd-head').innerHTML = `<div class="fr-stem">${esc(d.stem)}</div>
+    <div class="fr-meta">${esc(d.type_name)} · ${d.full} 分 · 答案 ${d.word_min}~${d.word_max} 字
+      · ${esc((d.created_at || '').slice(0, 16))}${d.snap ? '' : ' · <i>采分点已重标，着色按最新标准</i>'}</div>`
+    + frScoreHtml(g)
+    + `<div class="tk-tabs fr-tabs">` + T.map(([k, t]) =>
+      `<button class="tk-tab${fdRecTab === k ? ' active' : ''}" data-frdt="${k}">${t}</button>`).join('') + `</div>`;
+
+  // 材料页签：整份材料 + 当时的勾画/判定着色。「我的找点」页签也把它摆出来（要对着看）
+  const showMat = fdRecTab === 'mat' || fdRecTab === 'find';
+  $('#frd-mat').classList.toggle('hidden', !showMat);
+  $('#frd-mat').innerHTML = showMat
+    ? `<div class="fr-sec-t">📄 给定资料${d.material_words ? `（${d.material_words} 字）` : ''}
+       <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏</i></div>`
+      + frMatHtml(d.sents, new Set(d.marks), {
+        ok: new Set(d.mark_ok), bad: new Set(d.mark_bad), miss: new Set(d.mark_miss) })
+    : '';
+
+  let body = '';
+  if (fdRecTab === 'find') {
+    body = frFindRecapHtml(d.find_result)
+      + `<div class="fr-sec"><div class="fr-sec-t">这道题的全部采分点（${d.points.length} 个）</div>`
+      + d.points.map(p => {
+        const got = (p.sents || []).some(i => d.mark_ok.includes(i));
+        return `<div class="fr-item fr-g ${got ? 'ok' : 'miss'}">
+          <b>${got ? '✅' : '❌'} [${p.score} 分] ${esc(p.point || '')}</b>
+          ${(p.sents || []).length ? `<div class="fr-ev" data-fsgo="${p.sents[0]}">↗ 原文在第 ${p.sents.join('、')} 句</div>` : ''}
+        </div>`;
+      }).join('') + `</div>`;
+  } else if (fdRecTab === 'grade') {
+    body = frResultBody(g);
+  } else if (fdRecTab === 'ref') {
+    body = d.reference
+      ? `<div class="fr-sec"><div class="fr-sec-t">📖 参考答案<i class="fr-legend">${d.ref_words} 字 · 由本题采分点拼装</i></div>
+         <div class="frd-ans">${esc(d.reference).replace(/\n/g, '<br>')}</div></div>`
+      : `<div class="fr-sec"><div class="fr-sec-t">📖 参考答案</div>
+         <p class="empty">这道题还没生成参考答案。</p>
+         <button class="btn primary" id="frd-refgen">🔄 生成参考答案</button></div>`;
+  } else if (fdRecTab === 'mine') {
+    body = `<div class="fr-sec"><div class="fr-sec-t">✍️ 我写的答案<i class="fr-legend">${(d.answer || '').replace(/\s/g, '').length} 字</i></div>
+      <div class="frd-ans">${esc(d.answer).replace(/\n/g, '<br>')}</div></div>`;
+  }
+  $('#frd-body').innerHTML = body
+    + `<div class="fr-acts"><button class="btn primary" id="frd-again">🔄 再练这道</button>
+       <button class="btn" id="frd-back">返回记录</button></div>`;
+  $('#frd-again').onclick = () => openFindRun(d.paper_id);
+  $('#frd-back').onclick = () => back();
+}
+$('#frd-head').addEventListener('click', e => {
+  const t = e.target.closest('[data-frdt]'); if (!t) return;
+  fdRecTab = t.dataset.frdt; frRecRender();
+});
+$('#frd-body').addEventListener('click', async e => {
+  const g = e.target.closest('[data-fsgo]');       // 点采分点 → 跳到材料里那一句
+  if (g) {
+    const el = $('#frd-mat').querySelector(`[data-fs="${g.dataset.fsgo}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400);
+    }
+    return;
+  }
+  const b = e.target.closest('#frd-refgen'); if (!b) return;
+  b.disabled = true; b.textContent = '生成中…（约 30 秒）';
+  try {
+    const d = await api(`/api/find/paper/${fdRec.paper_id}/reference`, { method: 'POST' });
+    fdRec.reference = d.reference; fdRec.ref_words = d.ref_words;
+    frRecRender(); toast(`参考答案已生成（${d.ref_words} 字）`);
+  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '🔄 生成参考答案'; }
+});

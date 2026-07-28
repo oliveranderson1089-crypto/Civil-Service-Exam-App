@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, back, copyText, esc,
+/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, back, clipFiles, copyText, esc,
    lsDel, lsGet, lsSet, openViewerUrl, push, stack, toast */
 
 /* ================= 云盘 ================= */
@@ -683,6 +683,17 @@ dvView.addEventListener('drop', async e => {
   if (entries.length) await Promise.all(entries.map(en => dvWalkEntry(en, '', out)));
   else for (const f of [...(dt.files || [])]) out.push({ file: f, folder: '' });
   dvUpload(out);
+});
+/* 在云盘页 Ctrl+V 粘图/粘文件 → 上传到当前文件夹（浏览器；桌面壳走 __onPasteImage / __onPickedFiles）。
+   注意 #dv-search 里粘文字要放行，那是在搜文件名。 */
+document.addEventListener('paste', e => {
+  if (e.defaultPrevented) return;
+  if ((stack[stack.length - 1] || {}).view !== 'drive') return;
+  const t = e.target;
+  if (t && t.closest && t.closest('#ai-panel, #qnote, .composer, input, textarea')) return;
+  const fs = clipFiles(e);
+  if (fs.length) { e.preventDefault(); dvUpload(fs); return; }
+  if (dvClip.length) { e.preventDefault(); dvPaste(); }   // 系统剪贴板没文件 → 粘贴应用内复制的云盘文件
 });
 $('#dv-newfolder').onclick = async () => {
   const name = await appPrompt('新建文件夹', '', '');

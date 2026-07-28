@@ -5,26 +5,45 @@
 记成一个 action 交回前端执行。这样 AI 说「已加入」就是真的加了。
 """
 import json
+import time
 from datetime import datetime
 
 from flask import jsonify
 
 import aiclient
-from core import CFG, CJK_RE, _mark_study, lookup, to_pinyin, uid
+from core import CFG, CJK_RE, _mark_study, log, lookup, to_pinyin, uid
 from mods.agent_tools import exec_tool, tool, tool_specs
 from mods.ai import _ai_call_or_error
 
 
-def _ai_raw(messages, tools=None, temperature=0.4, max_tokens=1600, timeout=120):
-    """底层调用，返回完整 message 对象（可能含 tool_calls）。
+# 对话是**用户盯着屏幕等**的场景，超时口径跟离线脚本（出题/批改，动辄一两分钟）不同：
+# 实测这条路径一次调用 1~3 秒（带全部工具、20 条历史也一样）。所以慢不是「模型在想」，
+# 是这条 TCP 已经死了——代理/路由一抖，连接静默失效，read 只会干等到超时。
+# 走流式之后这个数的含义变了：它是**两个 token 之间**能等多久，不是整次调用的上限。
+# 连接一死，几十秒内就报出来；模型写得再长也不会被它误杀。
+AI_TIMEOUT = 40
+AI_RETRIES = 2
+# 一次对话的总预算。工具循环最多 5 次调用，不封顶的话最坏叠成十分钟：
+# 手机端早在 Cloudflare 隧道的 100 秒上限处就 524 断了，服务端还在空转占线程。
+AI_BUDGET = 100
+
+
+def _ai_stream(messages, tools=None, temperature=0.4, max_tokens=1600, deadline=None):
+    """一次流式调用，把 aiclient 的事件原样传出来。
 
     走 aiclient 而不是自己拼 URL：模型名解析、官方改名时的探活自愈，跟全站一套。
-    raw=True 是因为这儿要的是整个 message（里头有 tool_calls），不是正文字符串。
+
+    deadline 是这一整轮对话的截止时刻（time.time() 口径）：越到后面留给单次调用的
+    时间越短，免得最后一次调用把总预算撑爆。
     """
-    d = aiclient.chat(messages, tier="fast", temperature=temperature,
-                      max_tokens=max_tokens, timeout=timeout, cfg=CFG, raw=True,
-                      extra={"tools": tools} if tools else None)
-    return d["choices"][0]["message"]
+    timeout = AI_TIMEOUT
+    if deadline is not None:
+        # 除以「尝试次数」而不是直接拿剩余时间当超时：timeout 是**每次尝试**的，
+        # 带 2 次重试就是三份，不摊开的话总预算会被一次调用撑到三倍。
+        timeout = max(5, min(timeout, (deadline - time.time()) / (AI_RETRIES + 1)))
+    return aiclient.stream(messages, tier="fast", temperature=temperature,
+                           max_tokens=max_tokens, timeout=timeout, cfg=CFG,
+                           retries=AI_RETRIES, extra={"tools": tools} if tools else None)
 
 
 # 应用里能让 AI 帮你打开的功能（名字 → 前端的 openXxx 函数）
@@ -358,37 +377,91 @@ def _t_delete_note(args, db):
     return "已删除小记（id=%d）。" % nid, {"type": "refresh", "what": "notes"}
 
 
-def ai_chat_agentic(messages, db, max_rounds=4, temperature=0.5, max_tokens=2000):
-    """带工具调用的对话循环。返回 (最终回复文本, [前端要执行的 action])。"""
+def _round(msgs, tools, temperature, max_tokens, deadline, parts):
+    """跑一次调用：正文边出边往外吐，攒进 parts，返回完整 message（可能含 tool_calls）。"""
+    m = {}
+    for kind, p in _ai_stream(msgs, tools=tools, temperature=temperature,
+                              max_tokens=max_tokens, deadline=deadline):
+        if kind == "content":
+            parts.append(p)
+            yield "delta", p
+        elif kind == "reasoning":
+            yield "reasoning", p        # 前端拿它把「思考中…」变成真的在动
+        elif kind == "done":
+            m = p
+    return m
+
+
+def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_tokens=2000,
+                           budget=AI_BUDGET):
+    """带工具调用的对话循环，流式版。产出 (kind, payload)：
+
+        ("reasoning", 片段)          模型在想（还没开始写正文）
+        ("delta",     片段)          正文增量
+        ("tool",      {"name": …})   开始执行某个工具
+        ("done",      {"reply", "actions"})  收尾：整段回复 + 前端要执行的动作
+
+    reply 是**这一轮吐出去的全部正文**拼起来的，跟用户屏幕上看到的一致——模型常会
+    先说一句「我先查一下…」再调工具，那句话也是回答的一部分，落库时不能丢。
+    """
     msgs = list(messages)
-    actions = []
-    for _ in range(max_rounds):
-        m = _ai_raw(msgs, tools=tool_specs(), temperature=temperature, max_tokens=max_tokens)
-        tcs = m.get("tool_calls")
-        if not tcs:
-            return (m.get("content") or "").strip(), actions
-        msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": tcs})
-        need_confirm = False
-        for tc in tcs:
-            fn = tc.get("function") or {}
-            try:
-                a = json.loads(fn.get("arguments") or "{}")
-            except Exception:
-                a = {}
-            result, action = exec_tool(fn.get("name"), a, db)
-            if action:
-                actions.append(action)
-                if action.get("type") == "confirm":
-                    need_confirm = True
-            msgs.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
-        if need_confirm:
-            # 删除类要用户确认：停掉工具循环，让模型把「确定删除吗」问出来，
-            # 别在同一轮里自己补个 _confirmed 就把东西删了——确认必须跨一次用户回合。
-            m = _ai_raw(msgs, temperature=temperature, max_tokens=max_tokens)
-            return (m.get("content") or "").strip(), actions
-    # 轮数用完还在调工具：再要一次纯文本收尾
-    m = _ai_raw(msgs, temperature=temperature, max_tokens=max_tokens)
-    return (m.get("content") or "").strip(), actions
+    actions, parts = [], []
+    deadline = time.time() + budget
+    try:
+        for _ in range(max_rounds):
+            if time.time() >= deadline - 5:
+                break               # 预算用光就别再起新一轮工具，剩下的时间留给收尾那句话
+            m = yield from _round(msgs, tool_specs(), temperature, max_tokens, deadline, parts)
+            tcs = m.get("tool_calls")
+            if not tcs:
+                yield "done", {"reply": "".join(parts).strip(), "actions": actions}
+                return
+            msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": tcs})
+            need_confirm = False
+            for tc in tcs:
+                fn = tc.get("function") or {}
+                try:
+                    a = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    a = {}
+                yield "tool", {"name": fn.get("name") or ""}
+                result, action = exec_tool(fn.get("name"), a, db)
+                if action:
+                    actions.append(action)
+                    if action.get("type") == "confirm":
+                        need_confirm = True
+                msgs.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
+            if need_confirm:
+                # 删除类要用户确认：停掉工具循环，让模型把「确定删除吗」问出来，
+                # 别在同一轮里自己补个 _confirmed 就把东西删了——确认必须跨一次用户回合。
+                break
+        # 轮数（或预算）用完还在调工具：再要一次纯文本收尾
+        if parts and not parts[-1].endswith("\n"):
+            parts.append("\n\n")
+        yield from _round(msgs, None, temperature, max_tokens, deadline, parts)
+        yield "done", {"reply": "".join(parts).strip(), "actions": actions}
+    except Exception as e:
+        # 收尾这一下失败时**不能整轮报错**：工具可能已经真的把词收录、把小记写了，
+        # 这时候回「AI 调用失败」既是假话，用户还会以为没做成而再做一遍。
+        # 所以拿工具自己返回的结果拼一句话交差，动作照常带回前端。
+        done = [t["content"] for t in msgs if t.get("role") == "tool" and t.get("content")]
+        if not done:
+            raise
+        log.warning("agentic 收尾调用失败（%r），改用工具结果作答", e)
+        parts.append("\n".join(done) + "\n\n（网络不稳，这句总结是直接来自操作结果的，操作本身已完成。）")
+        yield "done", {"reply": "".join(parts).strip(), "actions": actions}
+
+
+def ai_chat_agentic(messages, db, **kw):
+    """带工具调用的对话循环，非流式版。返回 (最终回复文本, [前端要执行的 action])。
+
+    只是把流式那条跑干——**逻辑不再有第二份**。老 WebView（拿不到 ReadableStream）
+    和内部调用走这条，行为跟流式完全一致，不会出现「网页版修好了、APK 还是老样子」。
+    """
+    for kind, p in ai_chat_agentic_stream(messages, db, **kw):
+        if kind == "done":
+            return p["reply"], p["actions"]
+    return "", []
 
 
 def _ai_agentic_or_error(messages, db, **kw):

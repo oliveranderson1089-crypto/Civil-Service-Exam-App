@@ -40,7 +40,11 @@ def ai_chat(messages, temperature=0.4, max_tokens=1600, timeout=120, json_mode=F
 
     tier="fast" 用常规模型（flash，提取/解读/查询够用）；
     tier="pro" 用旗舰模型（创作/批改/命题这类质量敏感任务）。
-    档位→真实模型名的映射、以及官方改名时的自动纠正，都在 aiclient.py。"""
+    档位→真实模型名的映射、以及官方改名时的自动纠正，都在 aiclient.py。
+
+    max_tokens 按**正文**估就行（"这个回答最多写多少字"）：现在两个档都是推理模型，
+    推理段要烧的额度由 aiclient.budget() 另加、不够还会自己加额度重试，
+    调用方不用也不该在这儿替推理段留余量。"""
     return aiclient.chat(messages, tier=tier, temperature=temperature,
                          max_tokens=max_tokens, timeout=timeout,
                          json_mode=json_mode, cfg=CFG)

@@ -251,7 +251,7 @@ function lightbox(url, name) {
       <button class="lbx-b lbx-x" data-lbx="close" title="关闭（Esc）">×</button>
     </div>
     <div class="lbx-stage"><img id="lbx-img" src="${url}" alt=""></div>
-    <div class="lbx-hint">双指捏合 / 滚轮缩放 · 拖动平移 · 点背景关闭</div>`;
+    <div class="lbx-hint">Ctrl+C / 右键 复制这张图 · 双指捏合 / 滚轮缩放 · 拖动平移 · 点背景关闭</div>`;
   document.body.appendChild(box);
 
   const img = box.querySelector('#lbx-img');
@@ -262,9 +262,18 @@ function lightbox(url, name) {
 
   // ⚠️ 这个键盘处理函数原来叫 esc，把全局的 esc()（HTML 转义）**遮蔽**了 ——
   //    上面 innerHTML 里用到 esc(name) 就直接 ReferenceError。改名 onEsc。
-  const close = () => { box.remove(); document.removeEventListener('keydown', onEsc); };
-  const onEsc = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', onEsc);
+  const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
+  // 图开着的时候 Ctrl+C 就该复制这张图 —— 那是所有看图软件的通用手感，
+  // 不该逼人再去找工具栏上的按钮。选中了文字就让浏览器自己复制文字，别抢。
+  const onKey = (e) => {
+    if (e.key === 'Escape') { close(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+      if (String(window.getSelection() || '').trim()) return;
+      e.preventDefault();
+      copyImage(url, box.querySelector('[data-lbx="copy"]'));
+    }
+  };
+  document.addEventListener('keydown', onKey);
 
   box.addEventListener('click', e => {
     if (e.target === box || e.target === stage) { close(); return; }   // 点背景才关，点图不关
@@ -274,6 +283,7 @@ function lightbox(url, name) {
     else if (a === 'reset') reset();
     else if (a === 'copy') copyImage(url, b);
   });
+  img.addEventListener('contextmenu', e => { e.preventDefault(); copyImage(url); });
 
   // 滚轮缩放（电脑端）
   stage.addEventListener('wheel', e => {
@@ -345,6 +355,22 @@ async function copyImage(url, btn) {
   }
   if (btn) { btn.disabled = false; btn.textContent = label; }
 }
+
+/* 图片上右键 = 直接复制这张图。原来非得「点开预览 → 再点复制按钮」两步，
+   而复制图片是小记里最高频的动作之一（截图存进来，再发给别人）。
+   ★ 用 img 自己的 src，不去认各处不同的 data-* ——小记正文图（data-img）、草稿图和
+     速记图（data-imbig / data-qnbig，src 是本地 objectURL）、聊天图（data-lbimg）
+     的地址都在 src 上，fetch(objectURL) 一样读得到。
+   ★ 桌面壳里必须 preventDefault：不拦的话 WebKit 自己那份右键菜单也会弹出来，
+     两层菜单叠在一起。 */
+document.addEventListener('contextmenu', e => {
+  const im = e.target.closest('img[data-img], img[data-imbig], img[data-qnbig], img[data-lbimg]');
+  if (!im) return;
+  const src = im.currentSrc || im.src;
+  if (!src) return;
+  e.preventDefault();
+  copyImage(src);
+});
 
 /* 图片压缩：手机拍的图动辄 4~8MB，原样上传 → 点「发布」那一下就卡住了。
    在**选图时**就压到 1600px / JPEG 0.82，发布时传的是几百 KB，一下就完。

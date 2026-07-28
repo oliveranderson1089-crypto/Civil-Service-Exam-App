@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IS_MOBILE, aiBack, api, appConfirm, appPrompt,
+/* global $, CAN_ABORT, IS_MOBILE, aiBack, api, appConfirm, appPrompt,
    applyPush, avoidFab, back, c, composing, createDock,
    esc, loadClassics, loadDaily, loadEntries, loadFeed, loadPlan,
    loadWrongq, lsGet, lsSet, mdToHtml, navHomeCard, openAiChatMenu, push, stack, toast */
@@ -101,13 +101,44 @@ function renderAI() {
   $('#ai-msgs').innerHTML = (aiMsgs.length ? '' : '<div class="ai-msg assistant">我是你的公考 AI 助手 👋 讲知识点、出题、翻译古文、分析错题、聊备考都行。我还能看到你的收录/错题/复习数据。</div>')
     + aiMsgs.map(m =>
       `<div class="ai-msg ${m.role}">${m.role === 'assistant' ? mdToHtml(m.content) : esc(m.content)}</div>`).join('')
-    + (aiBusy ? '<div class="ai-msg assistant ai-typing">思考中…</div>' : '');
+    + (aiStreamText ? `<div class="ai-msg assistant" id="ai-stream">${mdToHtml(aiStreamText)}</div>` : '')
+    + (aiBusy && !aiStreamText ? '<div class="ai-msg assistant ai-typing" id="ai-typing">思考中…</div>' : '');
   const box = $('#ai-msgs');
   // 等布局重排完再滚到底 —— 同步设 scrollTop 时 mdToHtml 的高度可能还没算好，
   // 会出现「回复只露一行、其余被输入框挡住」（就是那个「只显示问题」的错觉）。
   box.scrollTop = box.scrollHeight;
   requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
   $('#ai-send').disabled = aiBusy;
+  aiTickStart();
+}
+/* 「思考中…」原来是一句死字：网络一抖，它就那么停在那儿，用户分不清是 AI 在想、
+   还是这次请求已经悄悄死了，只能一直等。走流式之后正文一出来这行就被真回复顶掉了，
+   它只负责「出字之前」那一两秒；超过 5 秒就把已等的秒数显出来，让「还在动」可见。 */
+let aiTimer = 0;
+function aiTickStart() {
+  clearInterval(aiTimer); aiTimer = 0;
+  if (!aiBusy) return;
+  const t0 = Date.now();
+  aiTimer = setInterval(() => {
+    const el = $('#ai-typing');
+    if (!el) { clearInterval(aiTimer); aiTimer = 0; return; }
+    const s = Math.round((Date.now() - t0) / 1000);
+    const base = aiPhase || '思考中…';
+    el.textContent = s < 5 ? base : (s < 20 ? base + '（' + s + ' 秒）' : base + '（' + s + ' 秒，网络较慢）');
+  }, 1000);
+}
+/* 流式收到的正文。逐字重画整个消息列表太贵（每片都要把全部历史过一遍 Markdown），
+   所以只改那一个气泡的 innerHTML，并且最多 80 毫秒画一次。 */
+let aiStreamText = '', aiPhase = '', aiPaintAt = 0, aiPaintTimer = 0;
+function aiPaint() {
+  clearTimeout(aiPaintTimer); aiPaintTimer = 0;
+  const now = Date.now();
+  if (now - aiPaintAt < 80) { aiPaintTimer = setTimeout(aiPaint, 80); return; }
+  aiPaintAt = now;
+  const el = $('#ai-stream');
+  if (!el) { renderAI(); return; }            // 第一片到达：先让气泡本身出现
+  el.innerHTML = mdToHtml(aiStreamText);
+  const box = $('#ai-msgs'); box.scrollTop = box.scrollHeight;
 }
 let aiAtts = [];  // [{name, text}]
 function renderAiAtts() {
@@ -220,6 +251,68 @@ $('#ai-toolsheet').addEventListener('click', e => {
   if (it) aiToolRun(it);
 });
 
+/* 流式读一次对话。返回 {reply, title, actions}。
+
+   为什么不用 EventSource：它只能 GET，而问题文本可以很长（截图 OCR 出来的整道题），
+   塞进 query string 会被各段代理截断。所以 POST + 自己解 SSE 帧。
+
+   安卓壳 minSdk21，老 WebView 可能没有 ReadableStream —— 那就抛 noStream，
+   调用方退回非流式 /send，功能一样只是没有逐字效果。 */
+const CAN_STREAM = !!(window.fetch && window.TextDecoder && typeof ReadableStream !== 'undefined');
+const noStream = () => Object.assign(new Error('NO_STREAM'), { noStream: true });
+async function aiSendStream(payload) {
+  let ctl = null, timer = 0;
+  /* 空闲超时，不是总超时：流式下每个 token 都是一次心跳，所以「45 秒一个字节都没有」
+     才叫连接死了。模型写得再长也不会被误杀 —— 这正是非流式做不到的。 */
+  const arm = () => { if (ctl) { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), 45000); } };
+  if (CAN_ABORT) { ctl = new AbortController(); arm(); }
+  let r;
+  try {
+    r = await fetch('/api/aichat/chats/' + aiChatId + '/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: payload }), signal: ctl ? ctl.signal : undefined
+    });
+  } catch (e) { clearTimeout(timer); throw e; }
+  if (r.status === 401) { clearTimeout(timer); location.href = '/login'; throw new Error('未登录'); }
+  if (!r.ok) {
+    clearTimeout(timer);
+    let msg = '请求失败';
+    try { msg = (await r.json()).error || msg; } catch (_) { /* 不是 JSON 就用默认话术 */ }
+    throw new Error(msg);
+  }
+  if (!r.body || !r.body.getReader) { clearTimeout(timer); throw noStream(); }
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = '', done = null, err = '';
+  for (;;) {
+    const chunk = await reader.read();
+    arm();
+    if (chunk.done) break;
+    buf += dec.decode(chunk.value, { stream: true });
+    const frames = buf.split('\n\n');
+    buf = frames.pop();                        // 最后一段可能只收到一半，留着跟下一片拼
+    for (const f of frames) {
+      let ev = 'message', data = '';
+      for (const line of f.split('\n')) {
+        if (line.indexOf('event:') === 0) ev = line.slice(6).trim();
+        else if (line.indexOf('data:') === 0) data += line.slice(5).trim();
+      }
+      if (!data) continue;
+      let d; try { d = JSON.parse(data); } catch (_) { continue; }
+      if (ev === 'delta') { aiStreamText += d; aiPaint(); }
+      else if (ev === 'reasoning') { aiPhase = '思考中…'; }
+      else if (ev === 'tool') { aiPhase = '正在操作…'; }
+      else if (ev === 'done') { done = d; }
+      else if (ev === 'error') { err = d.error || 'AI 调用失败'; }
+    }
+  }
+  clearTimeout(timer);
+  if (err) throw new Error(err);
+  if (done) return { reply: done.reply || aiStreamText, title: done.title, actions: done.actions || [] };
+  // 连接在收完之前断了：已经出来的字是真的，别丢掉重来，标一句「可能不完整」就行。
+  if (aiStreamText) return { reply: aiStreamText + '\n\n（连接中断，回答可能不完整）', title: '', actions: [] };
+  throw noStream();                            // 一个字节都没有 → 当没流过，退回非流式
+}
+
 async function aiSend() {
   const t = $('#ai-text').value.trim();
   if ((!t && !aiAtts.length) || aiBusy) return;
@@ -237,21 +330,33 @@ async function aiSend() {
   }
   aiMsgs.push({ role: 'user', content: shown });
   $('#ai-text').value = ''; aiGrow();
-  aiBusy = true; renderAI();
+  aiBusy = true; aiStreamText = ''; aiPhase = ''; renderAI();
   try {
-    const d = await api('/api/aichat/chats/' + aiChatId + '/send', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: payload })
-    });
+    let d = null;
+    if (CAN_STREAM) {
+      try { d = await aiSendStream(payload); }
+      catch (e) { if (!e.noStream) throw e; }   // 只有「这条路走不通」才退回，真错误照报
+    }
+    if (!d) {
+      d = await api('/api/aichat/chats/' + aiChatId + '/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // 非流式没有逐字心跳，只能靠总超时兜底：服务端自己封顶 100 秒
+        // （mods/agent.py AI_BUDGET），这里多给 30 秒。没有它，连接整条断掉时
+        // 「思考中…」就永远转下去。
+        body: JSON.stringify({ content: payload }), timeoutMs: 130000
+      });
+    }
     aiMsgs.push({ role: 'assistant', content: d.reply || '（空回复）' });
     if (d.title) $('#aic-title').textContent = d.title;
-    aiBusy = false; renderAI();
+    aiStreamText = ''; aiBusy = false; renderAI();
     aiRunActions(d.actions);          // AI 真做了事（加收录 / 打开某功能）→ 前端跟着执行/刷新
     return;
   } catch (e) {
-    aiMsgs.push({ role: 'assistant', content: '⚠️ ' + e.message });
+    const partial = aiStreamText;     // 断在半截时，已经出来的字是真的，别连它一起丢掉
+    if (partial) aiMsgs.push({ role: 'assistant', content: partial });
+    aiMsgs.push({ role: 'assistant', content: '⚠️ ' + (e.name === 'AbortError' ? 'AI 响应超时（网络不稳），请再发一次' : e.message) });
   }
-  aiBusy = false; renderAI();
+  aiStreamText = ''; aiBusy = false; renderAI();
 }
 // 执行 AI 工具产生的动作：收录类刷新对应列表，导航类打开功能页
 function aiRunActions(actions) {

@@ -98,6 +98,40 @@ GW_CAP = {"短评": 380, "编者按": 380, "简报": 420, "新闻稿": 450, "案
           "宣传稿": 460, "公开信": 470, "倡议书": 470, "建议书": 480}
 
 
+# 「一是…二是…」是口头汇报的分条法，写进应用文正文就是扣分项——公文分条要用「一、二、」。
+# 提示词说了不算数：这套说法在模型的公文语料里太根深蒂固，实测还是会往外冒。所以出稿之后
+# 再过一道硬替换，让规则**落到字面上**而不是停在提示词里。
+_XSHI = re.compile(r"(^|[\n。；;：:，,、])([一二三四五六七八九十])是(?=[^，。；\s])")
+# 「，一、加强领导」这种标点在公文里不存在：分条项之间是断句的，前面的逗号/顿号/分号
+# 一并升成句号。冒号和换行保留（「现提出如下意见：一、…」本来就对）。
+_SEP_UP = "，,、；;"
+
+
+def fix_fentiao(s):
+    """把成串的「一是…二是…」改写成「一、…二、…」。
+
+    只在**确实成串**时才动手，判据是「一是」和「二是」都真的落在分条位置上（句首或标点后）。
+    单看字面含不含「二是」不够——「任务一是重点、二是难点」里的「一是」是正常汉语的
+    「一 + 是」，只改后半句会得到一个不伦不类的「任务一是重点。二、难点」。
+    """
+    if not s or "一是" not in s or "二是" not in s:
+        return s
+    hits = list(_XSHI.finditer(s))
+    if not {"一", "二"} <= {m.group(2) for m in hits}:
+        return s
+
+    out, last = [], 0
+    for m in hits:
+        sep = m.group(1)
+        out.append(s[last:m.start()])
+        # sep 为空是「串就从头开始」，前面没东西可升级 —— 别写成 `sep in _SEP_UP`，
+        # 空串是任何字符串的子串，那样会在正文最前面凭空多一个句号。
+        out.append(("。" if sep and sep in _SEP_UP else sep) + m.group(2) + "、")
+        last = m.end()
+    out.append(s[last:])
+    return "".join(out)
+
+
 def _word_band(doctype, pos):
     """按题位档取字数区间，再用文种自然上限和 500 硬顶收一下。返回 (下限, 上限)。"""
     lo, hi = POS_BANDS.get(pos, POS_BANDS["medium"])
@@ -190,6 +224,9 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
             "**规范序号**分条，每条先亮做法再讲怎么落地，**不要拿「首先 / 其次 / 最后」这类连接词"
             "当骨架**；面向群众、重感染力的文种（倡议书 / 公开信 / 讲话稿 / 宣传稿 / 短评）可用"
             "连贯的行文段落，但也要**分层分段**。\n"
+            "3.1 **分条一律用序号，禁止「一是…二是…三是…」**（也不许用「其一…其二…」）——"
+            "「一是」是口头汇报的说法，写进公文正文就是扣分项。序号后直接跟动宾短语，"
+            "如「一、健全联防联控机制。」；哪怕在一段之内分层，也写成「一、…。二、…。」。\n"
             "4. **分段合理**：正文按层次分段，一段讲清一层意思（一般 2~5 句），"
             "**严禁一句话一个自然段**；分条项内部若有展开，也放在同一段里。\n"
             "5. **字数**：正文控制在 %d~%d 字（不含标题和落款日期），**绝不超过 %d 字**——"
@@ -212,7 +249,8 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
             "1. **按格式骨架逐块列**，一块都不能少（该有称谓就写「称谓：…」，该有落款就写「落款：…」）。\n"
             "2. 每块下面用「· 」列 2~4 条要点，每条是**短句**（10~25 字），说清这一块放什么、"
             "怎么起头。**不要写成完整段落，不要展开论述**。\n"
-            "3. 主体部分要标出**分条的条数和每条讲什么**（一是…／二是…／三是…）。\n"
+            "3. 主体部分要标出**分条的条数和每条讲什么**，用「一、」「二、」「三、」这类规范序号"
+            "（提纲里也不要用「一是…二是…」，免得照着提纲写正文时把口语说法带进去）。\n"
             "4. 该用规范表述的地方，直接把表述写进要点里（如「开头用『为深入贯彻…、结合…实际』」）。\n\n"
             "还要给**逐块说明**：\n"
             "· part：这一块是哪个部件\n"
@@ -247,11 +285,15 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
         if form != "full" or len(re.sub(r"\s", "", content)) <= MAX_YY_WORDS:
             break     # 提纲不卡字数；范文达标就收工，否则再压一次
 
+    # 分条改成规范序号。**必须赶在批注核对之前**：批注的 text 是从正文逐字复制的，
+    # 正文改了而批注没改，下面那道「必须出现在正文里」的闸会把整篇的批注全丢掉。
+    content = fix_fentiao(content)
+
     # 批注的 text 必须真的来自正文，否则点了跳不过去、也说明它在瞎编
     flat = re.sub(r"\s", "", content)
     segs = []
     for s in (d.get("segs") or []):
-        t = (s.get("text") or "").strip()
+        t = fix_fentiao((s.get("text") or "").strip())
         if not t or re.sub(r"\s", "", t) not in flat:
             continue
         segs.append({"part": (s.get("part") or "").strip()[:12],
@@ -326,7 +368,8 @@ def _gen_yy_compose(db, date):
         "   · 该有标题 / 称谓 / 落款就有，单位用「××」代替；**落款和日期各自单独成行、放在最后**"
         "（倒数第二行署名机关、最后一行日期，如「××市××局」换行「2025年4月1日」），别和正文混在一起；\n"
         "   · 能分条的文种（通知 / 方案 / 汇报 / 调研报告 / 建议书 / 简报等）主体用「一、二、三、」"
-        "或「（一）（二）（三）」**规范序号**分条，别用「首先 / 其次 / 最后」当骨架；面向群众的"
+        "或「（一）（二）（三）」**规范序号**分条，别用「首先 / 其次 / 最后」当骨架，"
+        "更**不许用「一是…二是…三是…」**（那是口头汇报的说法，写进公文正文要扣分）；面向群众的"
         "（倡议书 / 公开信 / 讲话稿 / 短评）可用连贯段落但要分层；\n"
         "   · **分段合理**：一段讲清一层意思（2~5 句），**严禁一句话一个自然段**；语气合身份、用词规范；\n"
         "④ 给范文的**逐段批注** segs：把范文拆段，每段说清 part（部件名）、text（从范文逐字复制）、"
@@ -363,10 +406,11 @@ def _gen_yy_compose(db, date):
         if len(re.sub(r"\s", "", content)) <= MAX_YY_WORDS:
             break
     doctype = (d.get("doctype") or "").strip()
+    content = fix_fentiao(content)     # 只改范文；给定材料该怎么说话就怎么说话，不动它
     flat = re.sub(r"\s", "", content)
     segs = []
     for s in (d.get("segs") or []):
-        t = (s.get("text") or "").strip()
+        t = fix_fentiao((s.get("text") or "").strip())
         if not t or re.sub(r"\s", "", t) not in flat:
             continue
         segs.append({"part": (s.get("part") or "").strip()[:12],
@@ -581,7 +625,14 @@ def write_yy_backfill():
 
 @bp.get("/api/write/days")
 def write_days():
-    """每日成文：列出有素材的日期 + 每天写了没有。"""
+    """每日成文：列出有素材的日期 + 每天写了没有；素材断供的日子也要列出来。
+
+    这个列表原来只 SELECT 有素材的日期——素材一断，那几天干脆不出现在列表里，
+    界面看上去「最新的一天就是 7-24」，补齐按钮还理直气壮地写着「往期都写齐了」
+    （它数的是「有素材但没写」的天数，断供当然是 0）。2026-07-25 素材真断了 4 天，
+    从界面上完全看不出坏了。所以这里补上最近 14 天的空档：n=0 的日子照样返回，
+    前端把它显示成「素材没更新」，坏了要能一眼看见。
+    """
     db = get_db()
     _sucai_import(db)
     rows = db.execute(
@@ -590,7 +641,20 @@ def write_days():
         "e.id eid, e.title, e.topic, e.words "
         "FROM sucai_items s LEFT JOIN daily_essays e ON e.mode='daily' AND e.date=s.date "
         "GROUP BY s.date ORDER BY s.date DESC").fetchall()
-    return jsonify({"days": [dict(r) for r in rows]})
+    days = [dict(r) for r in rows]
+
+    # 空档只从「素材开始有的那天」算起，别把用不上这个功能之前的日子也标成坏了
+    have = {d["date"] for d in days}
+    first = min(have) if have else None
+    today = datetime.now().date()
+    for i in range(14):
+        d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        if d in have or (first and d < first):
+            continue
+        days.append({"date": d, "n": 0, "nl": 0, "eid": None,
+                     "title": None, "topic": None, "words": None, "nosucai": 1})
+    days.sort(key=lambda x: x["date"], reverse=True)
+    return jsonify({"days": days})
 
 
 @bp.post("/api/write/daily")

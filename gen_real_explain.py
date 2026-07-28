@@ -107,13 +107,18 @@ def _url(base):
 
 def _chat(base, key, model, prompt, system, max_tokens=4096, temperature=0.2, tries=3):
     """跑几千道题的过程里，网络抖动是常态（实测撞到过 SSL UNEXPECTED_EOF）。
-       不重试的话，一次抖动就白扔掉 4 道题的生成结果。"""
+       不重试的话，一次抖动就白扔掉 4 道题的生成结果。
+
+       这儿自己拼 payload（要同时打 DeepSeek 和智谱两家），所以额度得自己过一道
+       aiclient.budget：pro 档是推理模型，4096 里推理段先占掉大半，salvage 一条也捞不着。
+       非推理的核验模型（glm）走这个函数时 budget 原样返回，不受影响。"""
     url = _url(base)
+    mt = aiclient.budget(model, max_tokens)
     last = None
     for k in range(tries):
         try:
             d = _post(url, key, {"model": model, "temperature": temperature,
-                                 "max_tokens": max_tokens,
+                                 "max_tokens": mt,
                                  "response_format": {"type": "json_object"},
                                  "messages": [{"role": "system", "content": system},
                                               {"role": "user", "content": prompt}]})

@@ -8,7 +8,7 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, IS_MOBILE, ME, SKIN, api, appConfirm,
-   back, c, composing, compressImage, dvIcon, esc,
+   back, c, clipFiles, composing, compressImage, dvIcon, esc,
    fSize, init, lightbox, preview, push, stack,
    state, toast */
 
@@ -234,6 +234,18 @@ async function crSendFiles(files) {
   el.addEventListener('dragover', e => { if (!crFid) return; e.preventDefault(); el.classList.add('cr-drop'); });
   el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.classList.remove('cr-drop'); });
   el.addEventListener('drop', e => { e.preventDefault(); el.classList.remove('cr-drop'); if (!crFid) return; const fs = [...(e.dataTransfer.files || [])]; if (fs.length) crSendFiles(fs); });
+  /* 在聊天页 Ctrl+V 粘图/粘文件 → 发给正在聊的人（浏览器；桌面壳走 __onPasteImage）。
+     以前这里什么都没接，粘贴会被侧栏的 AI 助手收走 —— 人明明在聊天窗里。 */
+  document.addEventListener('paste', e => {
+    if (e.defaultPrevented || !crFid) return;
+    if ((stack[stack.length - 1] || {}).view !== 'chat') return;
+    if (e.target && e.target.closest && e.target.closest('#ai-panel, #qnote, .composer')) return;  // 焦点在别人的输入框里
+    const fs = clipFiles(e);
+    if (!fs.length) return;                  // 粘文字照常进输入框，不拦
+    e.preventDefault();
+    toast('正在发送…');
+    crSendFiles(fs);
+  });
 })();
 function updateChatBadge(n) {
   const b = $('#chat-badge'); if (!b) return;

@@ -254,3 +254,97 @@ class TestIsolation:
     def test_未登录不能提交复习(self, client):
         assert client.post("/api/review/done",
                            json={"kind": "entry", "id": 1, "result": "know"}).status_code == 401
+
+
+def _mk_changkao(idioms, words):
+    """造常考词条。成语的 freq 是真题考频（个位数），实词的 freq 是词表权重（四位数）——
+    量纲差两个数量级，这正是「成语被实词霸榜」的成因，测试必须照着造。"""
+    con = _db()
+    con.execute("DELETE FROM changkao_items")
+    ids = {"成语": [], "实词": []}
+    for i in range(idioms):
+        cur = con.execute(
+            "INSERT INTO changkao_items(board,title,content,freq) VALUES(?,?,?,?)",
+            ("成语", f"成语{i}", f"释义{i}", idioms - i))          # freq 1~idioms
+        ids["成语"].append(cur.lastrowid)
+    for i in range(words):
+        cur = con.execute(
+            "INSERT INTO changkao_items(board,title,content,meaning,freq) VALUES(?,?,?,?,?)",
+            ("实词", f"实词{i}", f"搭配{i}", f"词义{i}", 1000 - i))  # freq 四位数
+        ids["实词"].append(cur.lastrowid)
+    con.commit()
+    con.close()
+    return ids
+
+
+def _burn(client, kind, ids):
+    """把这些条目背到「以后再说」，模拟已经背熟的一批。"""
+    for i in ids:
+        _done(client, kind, i)
+
+
+class TestChangkaoPool:
+    """常考高频成语进复习轮。两条都是真实翻过的车：
+    - 实词 freq 是词表权重（902~1000）、成语是真题考频（4~47），混着 ORDER BY freq 排，
+      99 条实词全霸在前面，894 条成语只挤得进 21 条 → test_成语不会被实词霸榜
+    - 池子固定取考频前 N 条，背熟这批就再没有新的了 → test_背熟一批就补新的进来
+
+    这里直接查复习池（_review_due），不走 /api/review/today：那层还要按每日额度截断、
+    还要扣掉「今天已背」的名额，测「池子里有没有新词」会被这两样搅浑。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_ck(self):
+        yield
+        con = _db()
+        con.execute("DELETE FROM changkao_items")     # 别漏给后面的用例
+        con.commit()
+        con.close()
+
+    def _pool(self):
+        """池子里的常考词，按板块分组。"""
+        con = _db()
+        con.row_factory = sqlite3.Row
+        try:
+            due = rvmod._review_due(con, _uid(), TODAY)
+        finally:
+            con.close()
+        got = {}
+        for it in due:
+            if it["kind"] == "changkao":
+                got.setdefault(it["sub"], []).append(it["id"])
+        return got
+
+    def test_成语不会被实词霸榜(self, auth_client):
+        _mk_changkao(300, 99)
+        _set_limits(auth_client, word=40)
+        got = self._pool()
+        assert got.get("成语"), "一条成语都没进复习池"
+        assert len(got["成语"]) >= len(got.get("实词", [])), \
+            f"成语被实词挤掉了：成语 {len(got.get('成语', []))} / 实词 {len(got.get('实词', []))}"
+
+    def test_按考频先背高频的(self, auth_client):
+        _mk_changkao(300, 5)
+        _set_limits(auth_client, word=40)
+        con = _db()
+        top = {r[0] for r in con.execute(
+            "SELECT id FROM changkao_items WHERE board='成语' ORDER BY freq DESC, id LIMIT 40")}
+        con.close()
+        assert set(self._pool()["成语"]) == top, "没按真题考频从高到低排"
+
+    def test_背熟一批就补新的进来(self, auth_client):
+        _mk_changkao(300, 20)
+        _set_limits(auth_client, word=40)
+        first = self._pool()["成语"]
+        for i in first:                                # 这批推到以后
+            _done(auth_client, "changkao", i)
+        second = self._pool().get("成语") or []
+        assert second, "背熟一批之后就再也没有新成语了——池子没往后滚"
+        assert not (set(second) & set(first)), "补进来的还是刚背过的那批"
+
+    def test_已进轮的到期照常回来(self, auth_client):
+        _mk_changkao(50, 5)
+        _set_limits(auth_client, word=40)
+        one = self._pool()["成语"][0]
+        _done(auth_client, "changkao", one, "forget")  # 忘记 → 今天就该再出现
+        assert one in self._pool()["成语"], "忘记的常考词没回到今天的复习里"

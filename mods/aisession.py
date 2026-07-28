@@ -3,10 +3,13 @@
 
 """
 
-from flask import Blueprint, jsonify, request
+import json
 
-from core import get_db, uid
-from mods.agent import _ai_agentic_or_error
+from flask import Blueprint, Response, g, jsonify, request, stream_with_context
+
+import aiclient
+from core import get_db, log, open_db, uid
+from mods.agent import _ai_agentic_or_error, ai_chat_agentic_stream
 from mods.agent_tools import TOOL_REGISTRY, exec_tool
 from mods.aichat import _user_stats
 
@@ -82,16 +85,16 @@ def aichat_del(cid):
     return jsonify({"ok": True})
 
 
-@bp.post("/api/aichat/chats/<int:cid>/send")
-def aichat_send(cid):
-    data = request.get_json(silent=True) or {}
-    content = (data.get("content") or "").strip()
-    if not content:
-        return jsonify({"error": "请输入内容"}), 400
+def _build(cid, content):
+    """把一次提问拼成完整的 messages。返回 (db, 会话行, messages)，会话不存在则全 None。
+
+    /send 和 /stream 共用这一份：提示词有一千多字、还带项目指令和用户概况，
+    抄成两份迟早走样成「网页版的 AI 会用工具、APK 里的不会」。
+    """
     db = get_db()
     c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
     if not c:
-        return jsonify({"error": "会话不存在"}), 404
+        return None, None, None
     sys_prompt = ("你是「公考助手」里的 AI 学习助理，服务正在备考公务员的用户。回答简洁、准确、条理清晰，用简体中文。\n"
                   "【排版要求】用 Markdown 让回答层次分明、重点突出：\n"
                   "· 用 `##`/`###` 小标题分段，用有序/无序列表列要点，别写成一大坨。\n"
@@ -130,10 +133,11 @@ def aichat_send(cid):
                       (cid,)).fetchall()
     msgs = [{"role": r["role"], "content": r["content"]} for r in reversed(hist)]
     msgs.append({"role": "user", "content": content})
-    reply, actions, err = _ai_agentic_or_error(
-        [{"role": "system", "content": sys_prompt}] + msgs, db, temperature=0.6, max_tokens=2000)
-    if err:
-        return err
+    return db, c, [{"role": "system", "content": sys_prompt}] + msgs
+
+
+def _persist(db, cid, c, content, reply):
+    """落库：用户这句 + AI 那句，顺带给还没标题的会话起个名。返回标题。"""
     db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "user", content))
     db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "assistant", reply))
     title = c["title"]
@@ -142,7 +146,81 @@ def aichat_send(cid):
         db.execute("UPDATE ai_chats SET title=? WHERE id=?", (title, cid))
     db.execute("UPDATE ai_chats SET updated_at=datetime('now','localtime') WHERE id=?", (cid,))
     db.commit()
-    return jsonify({"reply": reply, "title": title, "actions": actions})
+    return title
+
+
+@bp.post("/api/aichat/chats/<int:cid>/send")
+def aichat_send(cid):
+    """非流式：整段回复一次性返回。老 WebView（没有 ReadableStream）走这条。"""
+    content = ((request.get_json(silent=True) or {}).get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "请输入内容"}), 400
+    db, c, full = _build(cid, content)
+    if not c:
+        return jsonify({"error": "会话不存在"}), 404
+    reply, actions, err = _ai_agentic_or_error(full, db, temperature=0.6, max_tokens=2000)
+    if err:
+        return err
+    return jsonify({"reply": reply, "title": _persist(db, cid, c, content, reply), "actions": actions})
+
+
+@bp.post("/api/aichat/chats/<int:cid>/stream")
+def aichat_stream(cid):
+    """流式：边生成边推，前端一两秒内就见字。
+
+    用 POST + SSE 而不是 EventSource：EventSource 只能 GET，问题文本可以很长
+    （截图 OCR 出来的整道题），塞 query string 会被各段代理截断。前端用
+    fetch + ReadableStream 读，读不动的老 WebView 自己退回上面的 /send。
+
+    落库放在生成器末尾：响应头早发出去了，这里再出错也改不了状态码，
+    所以错误一律走 event:error 推给前端，别指望 HTTP 状态。
+    """
+    content = ((request.get_json(silent=True) or {}).get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "请输入内容"}), 400
+    _, c, full = _build(cid, content)
+    if not c:
+        return jsonify({"error": "会话不存在"}), 404
+
+    def sse(kind, obj):
+        return "event: %s\ndata: %s\n\n" % (kind, json.dumps(obj, ensure_ascii=False))
+
+    def gen():
+        # 自己开一条连接，**并且顶掉 g 上那条**：响应体是边算边发的，跑到一半时视图函数
+        # 早返回了，g 上那条已经随应用上下文 teardown 关掉，再用就是
+        # "Cannot operate on a closed database."。
+        # 光把新连接传给 ai_chat_agentic_stream 不够——工具底下的 core.lookup()、
+        # current_user() 这些是自己去 get_db() 的，几十处，一个个改不现实也迟早漏。
+        db = g._db = open_db()
+        buf, saved = [], False
+        try:
+            for kind, p in ai_chat_agentic_stream(full, db, temperature=0.6, max_tokens=2000):
+                if kind == "delta":
+                    buf.append(p)
+                if kind == "done":
+                    p["title"] = _persist(db, cid, c, content, p["reply"])
+                    saved = True
+                yield sse(kind, p)
+        except Exception as e:
+            log.warning("AI 流式对话失败：%r", e)
+            yield sse("error", {"error": aiclient.error_message(e)})
+        finally:
+            # 手机切后台、隧道抖一下，客户端就不读了 —— 这里会被 GeneratorExit 打断，
+            # 上面的 done 分支根本走不到。可工具的副作用（词已入库）是**已经发生**的事实，
+            # 这一轮要是不落库，用户回头看只见自己问了、AI 没答，再问一遍就重复收录。
+            if not saved and buf:
+                try:
+                    _persist(db, cid, c, content,
+                             "".join(buf).strip() + "\n\n（连接中断，回答可能不完整）")
+                except Exception:
+                    log.warning("AI 对话中断后补存失败", exc_info=True)
+            db.close()
+            g._db = None      # teardown 会再 close 一次，别让它拿着已关的连接
+
+    resp = Response(stream_with_context(gen()), mimetype="text/event-stream")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Accel-Buffering"] = "no"   # 别让中间代理攒着不发，那就白流式了
+    return resp
 
 
 @bp.post("/api/aichat/chats/<int:cid>/confirm")

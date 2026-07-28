@@ -696,6 +696,23 @@
     <div id="news-wrap" class="poly-wrap"></div>
   </section>
 
+  <!-- ===== 全国考情 ===== -->
+  <section id="view-exam" class="view hidden">
+    <div class="pd-intro">
+      每天自动抓各地招考公告（国考 / 省考 / 事业单位），AI 归类到省份和类型。
+      <b>只列「有什么、在哪看」</b>——报名和考试的细则以原文为准，点标题跳原公告。
+    </div>
+    <div class="ex-bar">
+      <input id="ex-q" type="search" placeholder="搜标题，如 选调 / 监狱 / 补充录用">
+      <button class="btn tiny" id="ex-follow">📍 关注地区</button>
+      <button class="btn tiny" id="ex-refresh">🔄 立即抓取</button>
+    </div>
+    <div id="ex-kinds" class="ex-chips"></div>
+    <div id="ex-regions" class="ex-chips"></div>
+    <div id="ex-meta" class="ex-meta"></div>
+    <div id="ex-list" class="poly-list"></div>
+  </section>
+
   <!-- ===== 申论 · 概括句积累 ===== -->
   <section id="view-gaikuo" class="view hidden">
     <div class="pd-intro">每天从当日时政素材提炼「材料表述 → 规范概括句」· 按日期积累背诵</div>
@@ -766,6 +783,7 @@
 
   <section id="view-findrecd" class="view hidden">
     <div id="frd-head" class="fr-head"></div>
+    <div id="frd-mat" class="fr-mat"></div>
     <div id="frd-body" class="fr-foot"></div>
   </section>
 
@@ -1851,6 +1869,7 @@
 <script src="js/topbar.js"></script>
 <script src="js/video.js"></script>
 <script src="js/news.js"></script>
+<script src="js/exam.js"></script>
 <script src="js/gongwen.js"></script>
 <script src="js/handwrite.js"></script>
 <script src="js/find.js"></script>

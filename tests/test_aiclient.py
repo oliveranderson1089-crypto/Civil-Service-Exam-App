@@ -104,6 +104,43 @@ def _http_error(code, body):
     return urllib.error.HTTPError("u", code, "e", {}, BytesIO(body.encode()))
 
 
+class Test额度:
+    """业务传的 max_tokens 是**正文**额度，推理段的额度由 aiclient 另外加。
+
+    这条约束是「规划助手排不出计划」那次事故的根：全站三十多处调用方的额度都是
+    照非推理的 deepseek-chat 定的（200~2000 居多），换成 v4 之后推理段一占，
+    正文就是空串——而报出来的话是「AI 返回格式异常」，根本指不到额度上。
+    """
+
+    @pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-v4-pro",
+                                       "deepseek-reasoner", "deepseek-r1", "qwen3-thinking"])
+    def test_推理模型另给推理段额度(self, model):
+        assert aiclient.is_reasoning(model), model
+        assert aiclient.budget(model, 2000) > 2000
+
+    @pytest.mark.parametrize("model", ["deepseek-chat", "glm-4-plus", "qwen-max"])
+    def test_非推理模型的额度原样发(self, model):
+        # 这些地方（智谱核验模型等）的额度是拿来兜住输出长度的，别替它加
+        assert not aiclient.is_reasoning(model), model
+        assert aiclient.budget(model, 600) == 600
+
+    def test_额度不越过接口上限(self):
+        assert aiclient.budget("deepseek-v4-pro", 300000) == aiclient.HARD_CAP
+        assert aiclient.budget("deepseek-chat", 500000) == aiclient.HARD_CAP
+
+    def test_真发出去的额度确实变大了(self, monkeypatch):
+        """budget() 算对了但没接进 payload 的话，线上照样是空正文。"""
+        seen = []
+
+        def fake(req, **k):
+            seen.append(json.loads(req.data)["max_tokens"])
+            return _FakeResp(_ok("ok"))
+
+        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        aiclient.chat([], cfg={"ai_model": "deepseek-v4-flash", "ai_key": "k"}, max_tokens=200)
+        assert seen == [aiclient.budget("deepseek-v4-flash", 200)]
+
+
 class Test调用:
     CFG = {"ai_model": "old-name", "ai_model_pro": "old-pro",
            "ai_base": "https://x.test", "ai_key": "k"}
@@ -133,6 +170,25 @@ class Test调用:
         assert aiclient.chat([], cfg=self.CFG) == "救回来了"
         assert seen == ["old-name", "deepseek-v4-flash"], "应当换成清单里的 fast 档重试"
 
+    def test_retries为0也照样探活换名(self, monkeypatch):
+        """自愈不该占用「网络重试」的次数。
+
+        原来两者共用 `for attempt in range(retries+1)`，探活换名靠 continue 进下一轮——
+        于是 retries=0 的调用方（find/drill 这些自己在外层管重试的）一探活就直接
+        掉出循环，第三层防线等于没有：官方改名时它们照样整条链失败。
+        """
+        monkeypatch.setattr(aiclient, "list_models", lambda *a, **k: ["deepseek-v4-flash"])
+        seen = []
+
+        def fake(req, **k):
+            seen.append(json.loads(req.data)["model"])
+            if seen[-1] == "old-name":
+                raise _http_error(400, '{"error":{"message":"Model Not Exist"}}')
+            return _FakeResp(_ok("救回来了"))
+
+        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        assert aiclient.chat([], cfg=self.CFG, retries=0) == "救回来了"
+
     def test_只探活一次不会无限换名(self, monkeypatch):
         monkeypatch.setattr(aiclient, "list_models", lambda *a, **k: ["another"])
         n = []
@@ -145,6 +201,37 @@ class Test调用:
         with pytest.raises(urllib.error.HTTPError):
             aiclient.chat([], cfg=self.CFG)
         assert len(n) == 2, "第一次 + 探活后一次，不能再多"
+
+    def test_读取阶段超时会重试(self, monkeypatch):
+        """长任务（出题/批改）最容易撞的一种失败，原来一次抖动就整轮报废。
+
+        坑在异常类型：**连接**阶段超时会被 urllib 包成 URLError，可**读取**阶段超时
+        （"The read operation timed out"）抛的是裸的 socket.timeout —— 它是 TimeoutError
+        的别名、不是 URLError 的子类，原来那条 `except urllib.error.URLError` 根本接不住。
+        实测小题出题连跑 4 次有 1 次栽在这儿，整道题白出、还得从头再来一遍。
+        """
+        n = []
+
+        def flaky(req, **k):
+            n.append(1)
+            if len(n) == 1:
+                raise TimeoutError("The read operation timed out")
+            return _FakeResp(_ok("第二次成功"))
+
+        monkeypatch.setattr(aiclient.urllib.request, "urlopen", flaky)
+        monkeypatch.setattr(aiclient.time, "sleep", lambda *_: None)
+        assert aiclient.chat([], cfg=self.CFG) == "第二次成功"
+        assert len(n) == 2, "读超时该重试一次，实际调了 %d 次" % len(n)
+
+    def test_读取超时重试用尽后照样抛出去(self, monkeypatch):
+        """能重试不等于能吞掉：一直超时就得让上层看见，而不是返回空串。"""
+        def always_slow(req, **k):
+            raise TimeoutError("The read operation timed out")
+
+        monkeypatch.setattr(aiclient.urllib.request, "urlopen", always_slow)
+        monkeypatch.setattr(aiclient.time, "sleep", lambda *_: None)
+        with pytest.raises(TimeoutError):
+            aiclient.chat([], cfg=self.CFG)
 
     def test_余额不足这类错误不去探活(self, monkeypatch):
         """402 跟模型名无关，探活只会白白多打一次接口、多等一轮。"""
@@ -170,6 +257,60 @@ class Test调用:
                 "usage": {"completion_tokens_details": {"reasoning_tokens": 199}}}))
         with pytest.raises(RuntimeError, match="截断"):
             aiclient.chat([], cfg=self.CFG, max_tokens=200, retries=0)
+
+    def test_被推理段挤空时自己加额度重试(self, monkeypatch):
+        """规划助手那次事故：正文额度 2000，推理段自己就用了 2001，正文一个字没出。
+
+        全站三十多处调用方的额度都是按非推理的 deepseek-chat 定的，不可能一处一处
+        去猜推理段要烧多少，所以得让这一次调用自己爬起来——跟「官方改名了就探活换名」
+        是同一条原则。
+        """
+        seen = []
+
+        def fake(req, **k):
+            seen.append(json.loads(req.data)["max_tokens"])
+            if len(seen) == 1:
+                return _FakeResp({
+                    "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                    "usage": {"completion_tokens_details": {"reasoning_tokens": 2001}}})
+            return _FakeResp(_ok("这回写出来了"))
+
+        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        cfg = dict(self.CFG, ai_model="deepseek-v4-flash")
+        assert aiclient.chat([], cfg=cfg, max_tokens=2000, retries=0) == "这回写出来了"
+        assert len(seen) == 2, "该重试一次"
+        assert seen[1] >= 2001 * 3, "加的额度要够装下实测烧掉的推理段，别只翻一点点"
+
+    def test_加额度也不越过接口上限(self, monkeypatch):
+        """超上限不是截断，是整个请求 400（deepseek-v4 实测上限 393216）。
+        为了救一次截断反而把请求打成 400，是把一个能报错的问题换成一个更难查的。"""
+        seen = []
+
+        def fake(req, **k):
+            seen.append(json.loads(req.data)["max_tokens"])
+            return _FakeResp({
+                "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                "usage": {"completion_tokens_details": {"reasoning_tokens": 300000}}})
+
+        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        cfg = dict(self.CFG, ai_model="deepseek-v4-flash")
+        with pytest.raises(RuntimeError, match="截断"):
+            aiclient.chat([], cfg=cfg, max_tokens=200000, retries=0)
+        assert max(seen) <= aiclient.HARD_CAP
+
+    def test_正文写了一半的截断不加额度重试(self, monkeypatch):
+        """出题/扫材料那边有 salvage，能从截断的 JSON 里把写完整的几条捞回来。
+        这种情况再跑一遍只是多花一次钱，捞回来的还未必更多。"""
+        n = []
+
+        def fake(req, **k):
+            n.append(1)
+            return _FakeResp(_ok('{"items":[{"title":"写到一半', finish="length"))
+
+        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        cfg = dict(self.CFG, ai_model="deepseek-v4-flash")
+        assert aiclient.chat([], cfg=cfg, retries=0).startswith('{"items"')
+        assert len(n) == 1, "半截正文该原样交给上游 salvage，不该重试"
 
     def test_错误话术是给用户看的中文(self):
         assert "余额" in aiclient.error_message(_http_error(402, ""))

@@ -36,9 +36,11 @@ _GONGWEN_SEED = [
     ("主体·存在问题", "仍存在短板、有待加强、亟需破解、还不够…、尚未根本扭转、存在…的问题",
      "报告/分析/自查", "客观指出不足的委婉规范说法，先肯定再指出。",
      "个别环节衔接仍存在短板，长效机制有待进一步加强。"),
-    ("主体·分条领起", "一是…二是…三是…、其一…其二…、首先…其次…再次…、坚持…、突出…、注重…",
-     "意见/方案/讲话", "分条作答的领起词，同一份材料内保持句式一致。",
-     "一是加强组织领导，二是细化任务分工，三是强化督导考核。"),
+    # 这里**不放**「一是…二是…三是…」：应用文分条一律用「一、二、三、」这类规范序号，
+    # 「一是」是口头汇报的说法，摆进公文正文里像念稿子。领起词只管每条开头的动词。
+    ("主体·分条领起", "一、二、三、（一）（二）（三）、其一…其二…、坚持…、突出…、注重…、聚焦…",
+     "意见/方案/讲话", "分条用规范序号领起，序号后直接跟动宾短语；同一份材料内保持句式一致。",
+     "一、加强组织领导。二、细化任务分工。三、强化督导考核。"),
     ("结尾·号召（倡议）", "让我们…、携手…、共同…、从我做起、从现在做起、以实际行动…",
      "倡议书/演讲稿", "倡议、演讲类的结尾动员语，有感染力、有画面感。",
      "让我们携手行动起来，从点滴做起，共建美丽家园。"),
@@ -205,6 +207,20 @@ def init_db():
             content TEXT, ai_summary TEXT,
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        -- 全国考情：各地招考公告汇总（crawl_exam.py 定时抓 + AI 归类，全局共享）
+        -- 只存「这条公告是什么、在哪看」，不存正文：招考细则改得勤，转存一份等于给自己
+        -- 埋一个会过期的副本，用户该点进原文看。url 唯一，同一条公告多个源抓到只留一份。
+        CREATE TABLE IF NOT EXISTS exam_notices(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT DEFAULT '其他',        -- 国考/省考/事考/选调/教师/医疗/警法/其他
+            region TEXT DEFAULT '全国',      -- 省级名称，全国性的写「全国」
+            title TEXT, url TEXT UNIQUE, source TEXT, pub_date TEXT,
+            headcount TEXT DEFAULT '',       -- 招录人数（标题里写了才有）
+            brief TEXT DEFAULT '',           -- AI 给的一句话
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_exam_notices_pub ON exam_notices(pub_date DESC);
+        CREATE INDEX IF NOT EXISTS idx_exam_notices_region ON exam_notices(region, kind);
         -- 时政要文库：重要文件全文 + AI 政策解读（全局共享）
         CREATE TABLE IF NOT EXISTS policy_docs(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -924,6 +940,23 @@ def init_db():
     # 常考成语/实词：补「典故」列（看懂来历自然就记住了，不用死背）
     if "story" not in _cols(con, "changkao_items"):
         con.execute("ALTER TABLE changkao_items ADD COLUMN story TEXT")
+    # 小题训练：
+    #   reference  出题时就把参考答案生成好存下来（由采分点拼装，见 mods/find.py 的
+    #              _find_reference），批改和回看直接取，不用每次再调一次 AI。
+    #   points_old 重标采分点时（audit_find.py --rerun --apply）备份旧的那套，能回退。
+    for col in ("reference", "points_old"):
+        if col not in _cols(con, "find_papers"):
+            con.execute("ALTER TABLE find_papers ADD COLUMN %s TEXT" % col)
+    # 采分点会被「重标」改掉，改完历史记录里的勾画就和新采分点对不上了 —— 回看会串。
+    # 所以每次批改把当次那套采分点快照进记录，回看永远按快照重算，重标不污染历史。
+    if "points_snap" not in _cols(con, "find_records"):
+        con.execute("ALTER TABLE find_records ADD COLUMN points_snap TEXT")
+    # 真题批改：把采分点**预标下来**，别每次批改现场重提炼。
+    # 现场提炼有三个毛病：同一份答案两次批改可能不同分（标尺本身在变）、说不出漏的点
+    # 在材料第几句（没有原文锚点）、和小题训练是两套标准。预标之后三个一起解决。
+    # 首次批改这道题时惰性生成并缓存（上传时同步做会让上传变成好几分钟）。
+    if "points" not in _cols(con, "shenlun_questions"):
+        con.execute("ALTER TABLE shenlun_questions ADD COLUMN points TEXT")
     # 每日时政：补「重点标注」列（在原文里划出考点，不用通读全文）
     if "marks" not in _cols(con, "news_items"):
         con.execute("ALTER TABLE news_items ADD COLUMN marks TEXT")
@@ -946,6 +979,10 @@ def init_db():
     # 各功能页卡片排序（JSON 对象：网格键→顺序数组）
     if "ui_orders" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN ui_orders TEXT")
+    # 全国考情：关注哪几个省（JSON 数组）。考情最怕「刷不到自己要考的那个省」，
+    # 所以进页面默认只看关注的地区 + 全国性公告。
+    if "exam_follow" not in _cols(con, "users"):
+        con.execute("ALTER TABLE users ADD COLUMN exam_follow TEXT")
     # 备考规划：把 AI 给出的今日重点存下来，刷新后还能看到
     for col in ("summary", "summary_date"):
         if col not in _cols(con, "plan_profile"):
@@ -1029,5 +1066,14 @@ def init_db():
         for scene, phrases, doctype, note, example in _GONGWEN_SEED:
             con.execute("INSERT OR IGNORE INTO gongwen_items(scene,phrases,doctype,note,example,source) "
                         "VALUES(?,?,?,?,?,'seed')", (scene, phrases, doctype, note, example))
+    else:
+        # 老库里那条「分条领起」还写着「一是…二是…」，而这张表是整份地喂给 AI 当零件用的
+        # —— 不改它，提示词里再怎么说「用一、二、」都会被这条例句带回去。只动 source='seed'
+        # 的那条，用户自己加的表述不碰。
+        for scene, phrases, doctype, note, example in _GONGWEN_SEED:
+            if scene == "主体·分条领起":
+                con.execute("UPDATE gongwen_items SET phrases=?, note=?, example=? "
+                            "WHERE scene=? AND source='seed' AND phrases LIKE '一是%'",
+                            (phrases, note, example, scene))
     con.commit()
     con.close()

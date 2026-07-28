@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, AI_FOLDER, ALL_BOARDS, ME, aiCurProject, api,
+/* global $, AI_FOLDER, ALL_BOARDS, DESKTOP_VER, ME, aiCurProject, api,
    appConfirm, appPrompt, chSwitch, chTab, crInRoom, crLoad,
    esc, fabClamp, init, inkHere, loadAiHome, loadCsBoard,
    loadDrive, loadEntries, loadFanwen, loadFeed, loadFeedTags, loadGaikuo,
@@ -270,6 +270,14 @@ $('#ai-chatmenu').addEventListener('click', async e => {
 })();
 
 /* 资料库条目 ⋮ 菜单：分享 / 重命名 / 复制 / 下载 / 删除 */
+const MAT_SHARE_VER = 5.0;      // 桌面壳从这个版本起才认 sharefile（会弹应用列表；老壳只会静默丢弃）
+/* 安卓壳分享大文件时，得先整份下到本地才能交给系统分享面板。几十秒里只有一句
+   「正在准备分享…」，看不出是在跑还是卡死了 —— 所以让壳把百分比喂回来。
+   老壳不会调这个函数，那边的行为不变。 */
+window.__shareProgress = pct => {
+  if (pct < 0) return;                                   // 失败：壳自己会弹 Toast，别再叠一层
+  toast(pct >= 100 ? '准备好了，选个应用发送吧' : '正在准备分享… ' + pct + '%');
+};
 let matMenuCtx = null;
 function openMatMenu(id, name, ext) {
   matMenuCtx = { id, name, ext };
@@ -308,11 +316,19 @@ $('#mat-menu').addEventListener('click', async e => {
     const url = '/api/materials/' + id + '/download';
     try {
       if (window.GongkaoNative && typeof GongkaoNative.shareFile === 'function') {
-        toast('正在准备分享…');
-        GongkaoNative.shareFile(location.origin + url, name);
+        GongkaoNative.shareFile(location.origin + url, name);   // 进度条由安卓壳自己弹
         return;
       }
     } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
+    // 桌面壳（WebKitGTK 没有系统分享面板）：交给壳去下载 + 弹「用哪个应用打开」的应用列表。
+    // 老壳不认这条消息且**静默丢弃**，所以先卡版本，不够新就退回下面的下载兜底。
+    if (window.__desktop && parseFloat(DESKTOP_VER || '0') >= MAT_SHARE_VER) {
+      try {
+        window.webkit.messageHandlers.gk.postMessage(
+          JSON.stringify({ a: 'sharefile', url: location.origin + url, name }));
+        return;
+      } catch (_) { /* 桥不在，往下走兜底 */ }
+    }
     // 浏览器支持「分享文件本身」的（部分桌面 Chrome / 手机浏览器）→ 直接弹系统分享，分享文件
     if (navigator.share && navigator.canShare) {
       try {
@@ -324,8 +340,8 @@ $('#mat-menu').addEventListener('click', async e => {
         }
       } catch (e) { if (e && e.name === 'AbortError') return; }
     }
-    // 电脑桌面版（WebKitGTK 没有系统分享面板）：把文件下下来 —— 到「下载」文件夹后就能手动发给别人，
-    // 比原来复制个文件名文本有用。（要在应用内分享给同学，用菜单里的「👥 共享给队友」。）
+    // 都不支持（老桌面壳 / 老浏览器）：把文件下下来 —— 到「下载」文件夹后就能手动发给别人。
+    // （要在应用内分享给同学，用菜单里的「👥 共享给队友」。）
     const a = document.createElement('a'); a.href = url; a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
     toast('已下载「' + name + '」，可从「下载」文件夹发给他人（应用内分享用「👥 共享给队友」）');

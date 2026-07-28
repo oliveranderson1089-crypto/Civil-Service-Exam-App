@@ -61,27 +61,44 @@ document.addEventListener('click', e => {
    图片由壳在 GTK 层截下来、转成 base64 再回调这里。所以**壳里的拖放/粘贴走的是这条路**，
    不是网页里那些 bindImgDrop/bindImgPaste —— 那两个只在浏览器里生效。
    ⚠️ 随手记和小记编辑器一直没接进这个路由，所以在桌面版里拖图片进随手记会掉进兜底提示。 */
-function dropTarget() {                 // 当前该把文件丢给谁
-  const st = stack[stack.length - 1];
-  // ① 先看光标此刻在哪个输入区——人点了小记编辑框正要粘贴，就该进小记，
-  //    哪怕 AI 面板也开着（原来只按"哪个面板开着"排优先级，AI 一开就永远抢走粘贴）。
+const shown = (sel) => { const el = $(sel); return !!el && !el.classList.contains('hidden'); };
+/* ① 光标此刻在哪个区域 —— 人点了哪儿就是想往哪儿粘，这是最准的信号 */
+function focusTarget() {
   const ae = document.activeElement;
-  if (ae && ae.closest) {
-    if (ae.closest('#qnote') && $('#qnote') && !$('#qnote').classList.contains('hidden')) return 'qnote';
-    if (ae.closest('.composer')) return 'notes';                                      // 小记编辑器（含 #cp-content）
-    if (ae.closest('#ai-panel') && $('#ai-panel') && !$('#ai-panel').classList.contains('hidden')) return 'ai';
-  }
-  // ② 没有明确焦点时，才退回"谁开着"的老优先级
-  // 随手记开着 → 它就是焦点，优先级**高于** AI 面板（人正在那儿写字）
-  if ($('#qnote') && !$('#qnote').classList.contains('hidden')) return 'qnote';
-  if ($('#ai-panel') && !$('#ai-panel').classList.contains('hidden')) return 'ai';
+  if (!ae || !ae.closest) return '';
+  if (ae.closest('#qnote') && shown('#qnote')) return 'qnote';
+  if (ae.closest('.composer')) return 'notes';                  // 小记编辑器（含 #cp-content）
+  if (ae.closest('#ai-panel') && shown('#ai-panel')) return 'ai';
+  if (ae.closest('#chat-main') && crFid) return 'chatroom';     // 聊天窗（含 #cr-text）
+  if (ae.closest('#view-drive')) return 'drive';
+  if (ae.closest('#view-materials')) return 'materials';
+  return '';
+}
+/* ② 当前停在哪一页 */
+function viewTarget() {
+  const st = stack[stack.length - 1];
   if (!st) return '';
   if (st.view === 'notes') return 'notes';          // 小记页 → 进编辑器的图片区
   if (st.view === 'materials') return 'materials';
   if (st.view === 'shenlun') return 'shenlun';
-  if (st.view === 'chat' && crFid) return 'chatroom';  // 正开着聊天窗 → 拖文件直接发
-  if (st.view === 'drive') return 'drive';          // 云盘 → 拖文件上传到当前文件夹
+  if (st.view === 'chat' && crFid) return 'chatroom';  // 正开着聊天窗 → 直接发给对方
+  if (st.view === 'drive') return 'drive';          // 云盘 → 传到当前文件夹
   return '';
+}
+/* 当前该把文件丢给谁。mode='paste' 是键盘粘贴，'drop'（默认）是拖放。
+   两者的区别只在**没有焦点**时谁优先：
+   · 粘贴跟着人在哪一页走 —— 在云盘/聊天页 Ctrl+V 就该进这一页。原来这里 AI 面板一开着就
+     无条件返回 'ai'，而侧栏 AI 是可以一直挂在旁边的，于是在云盘和聊天页粘贴的东西全被
+     AI 助手截走了（要粘给 AI，点一下 AI 输入框即可，走上面的焦点判定）。
+   · 拖放没有焦点概念，人多半是冲着看得见的面板拖的，保持面板优先的老行为。 */
+function dropTarget(mode) {
+  const f = focusTarget();
+  if (f) return f;
+  // 随手记开着 → 它就是焦点，优先级**高于** AI 面板（人正在那儿写字）
+  if (shown('#qnote')) return 'qnote';
+  if (mode === 'paste') return viewTarget() || (shown('#ai-panel') ? 'ai' : '');
+  if (shown('#ai-panel')) return 'ai';
+  return viewTarget();
 }
 window.__onDragOver = () => {
   const t = dropTarget();
@@ -138,8 +155,8 @@ window.__onPickedFiles = (items, intent) => {
   const done = () => { try { deskMsg({ a: 'batchdone' }); } catch (_) { /* 不在壳里就没这回事 */ } };
   if (!list.length) { done(); return; }
   /* intent==='drive' 是用户点了「传文件夹」，明确就是要进云盘，不看当前在哪一页；
-     拖放和粘贴则按当前页面分发 —— 拖进小记就该进小记。 */
-  const t = intent === 'drive' ? 'drive' : dropTarget();
+     'paste' 是粘贴（跟着当前页面走），其余（含老壳送来的空值）按拖放规矩分发。 */
+  const t = intent === 'drive' ? 'drive' : dropTarget(intent === 'paste' ? 'paste' : 'drop');
   let p;
   if (t === 'drive') p = dvUpload(list);                 // 只有云盘认得「相对目录」
   else if (t) p = dropRoute(t, list.map(x => x.file));   // 别的目标没有目录概念，摊平
@@ -149,11 +166,15 @@ window.__onPickedFiles = (items, intent) => {
 window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」（壳里的粘贴也走这条路）
   fetch(dataUrl).then(r => r.blob()).then(b => {
     const f = new File([b], '粘贴的图片.png', { type: 'image/png' });
-    const t = dropTarget();                       // 和拖放共用一套路由，行为一致
+    const t = dropTarget('paste');                 // 和拖放共用一套路由，行为一致
+    /* 原来这里自己另写了一张表，只认 qnote/notes/ai/materials —— 聊天窗和云盘掉进
+       兜底分支，于是在这两页粘图片会**自动开 AI 并塞给 AI 助手**。改成走同一张分发表。 */
     if (t === 'qnote') { qnAddImgs([f]); toast('已粘贴图片'); }
     else if (t === 'notes') { addDraftImages([f]); toast('已粘贴图片'); }
     else if (t === 'ai') { toast('正在读取图片…'); aiHandleAttach(f); }
-    else if (t === 'materials') uploadDropped([f]);
-    else { openAI(); toast('正在读取图片…'); aiHandleAttach(f); }   // 其它地方：开 AI 并附上
+    else if (t === 'chatroom') { toast('正在发送图片…'); crSendFiles([f]); }
+    else if (t === 'drive') { toast('正在上传到云盘…'); dvUpload([f]); }
+    else if (t) dropRoute(t, [f]);                  // materials / shenlun
+    else { openAI(); toast('正在读取图片…'); aiHandleAttach(f); }   // 没有明确去处：开 AI 并附上
   }).catch(() => toast('粘贴失败', true));
 };

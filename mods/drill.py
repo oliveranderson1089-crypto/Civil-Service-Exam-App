@@ -733,10 +733,17 @@ def _bank_fill(db, board, qtype, level, want=8):
          {"role": "user", "content": prompt}],
         # 接了真题画像之后题干按中位数写（选词填空 123 字、判断意图 211 字，都比原来长
         # 一倍多），8 道题加解析在 4096 里放不下，后半批会被截断 —— 表现是
-        # _salvage_items 一直在抢救，产出白白少一半。所以提到 8000。
-        # 上限依据：deepseek-chat 单次输出上限 8192，留一点余量。**换模型前先确认它的上限**，
-        # 超了不是截断而是整批 400，日志只会显示「+0 可用」，看不出是参数越界。
-        temperature=0.6, max_tokens=8000, timeout=180, json_mode=True)
+        # _salvage_items 一直在抢救，产出白白少一半。
+        # **额度得跟着批量走**：固定 8000 时 want=8 的分析推理正好卡在边上——实测一批
+        # 8 道的正文就是 8089 token（≈1000/道，题干带材料 + 解析），只超一点点，
+        # 表现就是「抢救回 6 道」白丢两道。按 1400/道 给，留够方差。
+        # ⚠️ 这里是**正文**额度：推理段的额度 aiclient.budget() 会另外加，别在这儿自己加。
+        #    （也别把这处截断当成推理段造成的：实测这批 JSON 出题的推理段只用了 77 token，
+        #      json_mode 下模型基本不"想"，纯粹是正文写不下。两种截断的处方不一样。）
+        # 上限：实测 v4 两个档都是 393216（老注释写的 8192 是 deepseek-chat 时代的数）。
+        # **换模型前先确认它的上限**，超了不是截断而是整批 400，日志只会显示
+        # 「+0 可用」，看不出是参数越界。
+        temperature=0.6, max_tokens=max(8000, want * 1400), timeout=180, json_mode=True)
     if err:
         return stat
     got = _parse_items(rep, "题库补充 %s·%s/%s" % (board, qtype, level))

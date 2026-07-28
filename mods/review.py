@@ -41,16 +41,27 @@ def _review_due(db, u, today):
             "front": r["word"], "front_sub": (r["pinyin"] or "") + " · " + (r["category"] or "词语"),
             "back": back or "（无释义）"})
     # 常考里的高频成语 / 实词搭配：按真题考频排的，比自己零散收录的更该背。
-    # 只取考频最高的一批进复习轮，背完一轮会随考频往后推。
-    # 池子开到「用户设的每日量」的 3 倍（自己收录的词也占这一组，得留位置）；
-    # 真正每天出多少由 review_today 按上限截。设 0（不限）就把这批全放进来。
+    # 两件事必须分开办，不然「高频成语」这块等于没进复习 —— 都是实测出来的：
+    #   · 成语和实词**各算各的配额**。两边的 freq 根本不是一个量纲：实词是 902~1000
+    #     （词表权重），成语是 4~47（真题考频）。混在一起 ORDER BY freq 排，99 条实词
+    #     全霸在前面，894 条成语只挤得进 21 条。
+    #   · 新词要**滚动**补。老写法固定取考频前 N 条，这批一背熟就再没有新的了
+    #     （873 条成语永远轮不到，「不再规划新成语」就是这么来的）。改成
+    #     「已进复习轮的照常按到期出 ＋ 没背过的按考频补足配额」，背熟一批自动往后推一批。
     _lw = _rv_limits(db, u)["word"]
-    n_ck = 894 if _lw == 0 else max(120, _lw * 3)
-    if n_ck > 0:
+    ck_seen = {k[1] for k in states if k[0] == "changkao"}   # 已在复习轮里的，不占新词配额
+    ck_quota = {"成语": 894 if _lw == 0 else max(40, _lw),    # 一次放多少「没背过的」进来
+                "实词": 99 if _lw == 0 else max(15, _lw // 2)}
+    if max(ck_quota.values()) > 0:
+        # ORDER BY board 在前，保证同板块的行连在一起，配额才扣得准
         for r in db.execute(
                 "SELECT id, board, title, content, note, example, example_src, meaning "
                 "FROM changkao_items WHERE board IN ('成语','实词') "
-                "ORDER BY COALESCE(freq,0) DESC, id LIMIT ?", (n_ck,)):
+                "ORDER BY board, COALESCE(freq,0) DESC, id"):
+            if r["id"] not in ck_seen:
+                if ck_quota.get(r["board"], 0) <= 0:
+                    continue
+                ck_quota[r["board"]] -= 1
             body = (r["content"] or "").strip()
             # 实词的 content 是「常用搭配」，词义单独放在 meaning —— 背面先给词义、再给搭配，才记得住
             mean = (r["meaning"] or "").strip()
@@ -199,7 +210,9 @@ def review_today():
     today = datetime.now().strftime("%Y-%m-%d")
     db = get_db()
     due = _review_due(db, uid(), today)
-    order = {"entry": 0, "classic": 1, "sucai": 2, "annot": 3, "wrongq": 4}
+    # 组内先后。changkao 以前没写在这儿，靠默认值排到 9（最末），跟别的组混着看不出问题；
+    # 现在显式排在 word 组末位 —— 自己收录的词先背，常考的填满剩下的额度。
+    order = {"entry": 0, "classic": 1, "changkao": 2, "sucai": 3, "annot": 4, "wrongq": 5}
     # 组内排序：**已经在复习轮里的排前面**（stage>0 说明背过一遍了，别让它一直往后堆），
     # 然后才是新词。被上限截掉的不动 next_due —— 只是今天不出现，明天照样在。
     due.sort(key=lambda x: (order.get(x["kind"], 9), -int(x.get("stage") or 0), x["id"]))

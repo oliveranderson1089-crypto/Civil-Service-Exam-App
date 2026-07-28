@@ -114,85 +114,511 @@ def _find_locate(sents, evidence):
     return [best_i] if best_i >= 0 else []
 
 
-def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requirement=""):
-    """材料 + 题干 → AI 标出采分点（逐字依据），存成一套可判的题。"""
-    name, dfull, dmin, dmax = FIND_TYPES[qtype][0], FIND_TYPES[qtype][1], FIND_TYPES[qtype][2], FIND_TYPES[qtype][3]
-    pts_full = full or dfull
+# ---------------------------------------------------------------- 采分点的「覆盖度」
+# 实测出来的病：采分点会全挤在材料前段。2026 国考副省级第 1 题（H 市城市用光）23 句材料，
+# 5 个点全落在句 3~9，句 10~22 连续 13 句零覆盖 —— 智慧照明整段、长效机制整段一个点没标，
+# 而这两块正是真题标准答案里的第 4、5 点。另一道 K 市安全生产 48 句，句 0~12 同样零覆盖。
+# 成因不是模型笨：是「evidence 必须逐字照抄」这个硬约束，让模型偏向去句式规整、信息密集、
+# 好照抄的段落里凑够点数（H 市题里句 3/4/5 本属同一个「规划管控」大点，被拆成三个占满名额），
+# 叙述性强、夹引语和设备清单的段落就整段跳过。
+# 所以必须有个服务端能算的硬指标，出题时当闸门用，audit 时当验收标准用 —— 两边共用这一个函数。
+#
+# 为什么按「句索引」分块而不是按自然段：H 市那份材料 OCR 出来只有 2 个自然段（句 0~8 一段、
+# 句 9~22 一段），按段扫等于没扫。句索引才是这个模块真正的粒度（勾画粒度也是句）。
+_FIND_BLOCK = 7            # 每 7 句算一块（≈ 一个可独立成点的信息单元）
+_FIND_GAP_MAX = 8          # 连续 8 句无采分点 = 有整块材料被漏掉
+_FIND_COV_MIN = 0.6        # 有点的块数占比低于此 = 找点集中在局部
+
+
+def _find_coverage(sents, points, block=_FIND_BLOCK):
+    """采分点在材料里铺得开不开。只算可勾画的句（标题行不参与）。
+
+    返回 max_gap（最长连续无采分点句数，跟块大小无关，最客观）、coverage（有点块占比）、
+    blanks（空白区间 [(起句,止句)]，补点时直接拿它去定向追问）。"""
+    idx = [i for i, s in enumerate(sents) if not s.get("head")]
+    hit = {i for p in points for i in (p.get("sents") or [])}
+    if not idx:
+        return {"n_sents": 0, "n_blocks": 0, "cov_blocks": 0, "coverage": 0.0,
+                "max_gap": 0, "gap_range": None, "blanks": []}
+    blocks = [idx[i:i + block] for i in range(0, len(idx), block)]
+    cov = sum(1 for b in blocks if any(i in hit for i in b))
+    # 最长空白带：在「可勾画句」序列上数连续未命中，顺带记下每一段空白的首末句号
+    blanks, run = [], []
+    for i in idx:
+        if i in hit:
+            if run:
+                blanks.append((run[0], run[-1]))
+            run = []
+        else:
+            run.append(i)
+    if run:
+        blanks.append((run[0], run[-1]))
+    spans = [(a, b, sum(1 for i in idx if a <= i <= b)) for a, b in blanks]
+    mg = max(spans, key=lambda x: x[2]) if spans else None
+    return {"n_sents": len(idx), "n_blocks": len(blocks), "cov_blocks": cov,
+            "coverage": round(cov / len(blocks), 3),
+            "max_gap": mg[2] if mg else 0,
+            "gap_range": (mg[0], mg[1]) if mg else None,
+            "blanks": [(a, b) for a, b, n in spans]}
+
+
+def _find_needs_more(cov):
+    """要不要触发定向补点：材料里还有整块没被碰过。"""
+    return cov["max_gap"] >= _FIND_GAP_MAX or cov["coverage"] < _FIND_COV_MIN
+
+
+_FIND_TYPE_FOCUS = {
+    "guina": "抓「做法／措施／表现／成效」",
+    "zonghe": "抓「是什么—为什么—怎么样」各层的要点",
+    # 对策题必须单独说清楚，否则整个「问题段」会被漏光：实测一道 58 句的对策题，
+    # 前 32 句全是问题描述（一票否决、资金分摊无标准、维保没人管），后面才是他山之石，
+    # 结果采分点全落在后面 —— 因为模型认为「对策」在前 32 句里找不到原文依据。
+    # 可对策题的标准答案本来就是「一个问题配一条对策」，对策是从问题推出来的，
+    # 材料里没有现成原话是常态。所以这里明确：**问题句就是依据**。
+    "duice": ("抓「问题 → 对策」：材料里**每一个问题／困难／矛盾／短板都要落一个采分点**，"
+              "point 写成「针对…（问题），…（对策）」，sent 指向**描述这个问题的那一句** —— "
+              "对策是你从问题推出来的，材料里往往没有现成原话，这很正常，不要因此跳过问题段；"
+              "材料里若另有现成的做法或他山之石（别地的成功经验），也各落一个点"),
+    "guanche": "抓「正文该写进去的内容要点」（由头、举措、成效、号召）",
+}
+
+
+def _find_numbered(sents, lo=0, hi=None, block=_FIND_BLOCK):
+    """材料 → 带【第N块】和句号的文本。
+
+    句号是这套流程的地基：给了句号，模型就能直接报「这个点出自第几句」，
+    服务端拿它当锚点、拿 evidence 当校验，比只给 evidence 再回头去猜位置稳得多。
+    块号则是**逼它扫全文**的抓手 —— 要求逐块表态（有要点就列、没有就写"无"），
+    模型跳过某一块就会在输出里露馅，不像一次性提问那样悄悄漏掉半篇材料。"""
+    hi = len(sents) - 1 if hi is None else hi
+    out, cur_blk = [], None
+    for i, s in enumerate(sents):
+        if i < lo or i > hi:
+            continue
+        blk = i // block + 1
+        if blk != cur_blk:
+            out.append("【第%d块】" % blk)
+            cur_blk = blk
+        out.append(("   -- %s" % s["t"]) if s.get("head") else ("[%d] %s" % (i, s["t"])))
+    return "\n".join(out)
+
+
+# 分块扫描用哪个档位。扫描本质是**提取**（哪一句是要点、把原句抄出来），按档位分工
+# 本该是 fast 的活；真正需要判断力的是「合并定分」那一步（哪些点该并、名额给谁）。
+# 用 pro 扫一道 23 句的题要跑十分钟（推理段吃掉大量 token），一份 4 题的真题就是 40 分钟，
+# 出题慢到没法用。所以留成可切的：GONGKAO_FIND_SCAN_TIER=pro 可以切回去对比。
+# 逼出覆盖率的是**分块结构**，不是档位 —— 老流程用的也是 flash，坏在一次性提问。
+_SCAN_TIER = os.environ.get("GONGKAO_FIND_SCAN_TIER", "fast")
+
+
+def _find_json(msgs, max_tokens, what, tier="pro"):
+    """调一次 AI 拿 JSON。失败返回 (None, err)；解析不了也算失败（上游一律重试/兜底）。"""
+    rep, err = _ai_call_or_error(
+        msgs, temperature=0.25, max_tokens=max_tokens, timeout=300,
+        json_mode=True, tier=tier)
+    if err:
+        return None, err
+    try:
+        return json.loads(rep), None
+    except Exception:
+        log.warning("find %s 的 JSON 解析失败：%s", what, (rep or "")[:200])
+        # 普通 dict 而非 jsonify：这条链路会被 audit_find.py 在 Flask 之外调到
+        return None, ({"error": "AI 返回格式异常，请重试"}, 502)
+
+
+_FIND_SYS = ("你是申论阅卷组组长，负责制定这道题的标准答案与评分细则。"
+             "采分点要**铺满整篇材料**（真题的标准答案从来不会只出自开头几段），"
+             "每个点必须指明出自材料第几句、并照抄该句原文作依据，绝不改写、不编造。"
+             "严格输出 JSON。")
+
+
+def _find_scan(name, stem, sents, qtype):
+    """Pass 1：逐块扫描候选要点。**这一步不定分值、不去重**，只求把全材料过一遍。
+
+    为什么要单独一步：老流程一次性问「标出 4~6 个采分点」，模型会去句式规整、
+    信息密集、好照抄的段落里凑够数就收工 —— 实测 11 道题里 8 道有整块材料零覆盖，
+    最狠的一道 58 句材料前 32 句一个点没有。先按块逼它表态，凑数的动机就没了。"""
+    n_blk = (len(sents) - 1) // _FIND_BLOCK + 1
+    d, err = _find_json(
+        [{"role": "system", "content": _FIND_SYS},
+         {"role": "user", "content":
+          "下面是一道申论**%s**的题干和给定资料。资料已按每 %d 句切成 %d 块，每句前面是句号。\n\n"
+          "【题干】%s\n\n【给定资料】\n%s\n\n"
+          "【任务】**逐块**找出可以得分的要点，%s。\n"
+          "1. **必须把第 1 块到第 %d 块每一块都过一遍**，一块都不许跳过。某一块确实全是背景铺垫、"
+          "无关细节、同义重复、反面例子这类干扰信息，就把这一块的 points 写成空数组 —— "
+          "但你得明确表态，不能不提这一块。\n"
+          "2. 每个要点给：\n"
+          "   · sent：这个要点出自**哪一句**的句号（就是材料里 [] 里的数字）。跨句总结的，"
+          "填**最能支撑它的那一句**。\n"
+          "   · point：概括后的要点表述（10~28 字，动宾结构、点到关键词，**不是照抄原文**）\n"
+          "   · evidence：把 sent 那一句**开头的 10~20 个字原封不动复制**过来（用来核对你没报错句号，"
+          "所以一个字都不能改、不能概括；**不用抄整句**）\n"
+          "3. 要点要具体：一个要点只讲一件事，别写「加强管理」「提升水平」这种空话（空话不给分）。\n"
+          "4. 允许一块出多个要点，也允许一块零要点 —— 按材料实际情况来，别为了均匀硬凑。\n\n"
+          '只输出 JSON：{"blocks":[{"block":1,"points":[{"sent":0,"point":"","evidence":""}]}]}'
+          % (name, _FIND_BLOCK, n_blk, stem, _find_numbered(sents)[:14000],
+             _FIND_TYPE_FOCUS.get(qtype, ""), n_blk)}],
+        # 这里给的是**正文额度**（推理段由 aiclient.budget() 另外加）。
+        # 论正文，这段 JSON 撑死两三千 token：二十来个点 × (句号 + 10~28 字概括 + 十来字依据)，
+        # evidence 只抄原句开头、不整句抄。但给到 8000 是有意的 ——
+        # **budget() 的推理额度是按正文额度推导的**（max(4000, 2×正文)），而「逐块扫全材料」
+        # 要想多久跟正文写多长根本不成比例。实测把正文压到 4000（推理只剩 8000）时，
+        # 同一道 23 句的题只扫出 7 个候选（原来稳定 11~15 个），采分点从 5 个掉到 4 个，
+        # 还把「LED 节能」和「5G 智慧灯杆」两个维度并成了一条。给宽不花钱（上限不是花销），
+        # 给窄直接掉质量，所以这儿宁可宽。
+        max_tokens=8000, what="分块扫描", tier=_SCAN_TIER)
+    if err:
+        return [], err
+    got = []
+    for b in (d.get("blocks") or []):
+        got.extend(b.get("points") or [])
+    return got, None
+
+
+def _find_fill(name, stem, sents, qtype, blanks, have):
+    """定向补点：只把「还没被任何采分点碰过」的句子喂回去，问这里面还有没有独立要点。
+
+    只喂空白区间，模型没有别处可挑，注意力被摁在漏掉的那几句上；
+    同时把已有要点列给它，避免补出同义重复。最多一轮，成本可控。"""
+    seg = "\n\n".join(_find_numbered(sents, a, b) for a, b in blanks)
+    if not seg.strip():
+        return []
+    d, err = _find_json(
+        [{"role": "system", "content": _FIND_SYS},
+         {"role": "user", "content":
+          "这道申论**%s**的采分点已经标了一批，但下面这几段材料**一个采分点都没落上**，"
+          "很可能是漏了。请只针对这几段判断：里面还有没有**独立的、还没被下面已有要点覆盖**的得分点。\n\n"
+          "【题干】%s\n\n【已有要点】\n%s\n\n【还没被覆盖的材料】\n%s\n\n"
+          "【要求】%s。真有独立要点就补出来；确实全是背景铺垫／无关细节／和已有要点重复的，"
+          "就返回空数组 —— **不要为了填满而硬凑**，凑出来的空话点会把练习者带偏。\n"
+          "每个点给 sent（句号）、point（10~28 字概括）、evidence（照抄该句**开头 10~20 字**）。\n\n"
+          '只输出 JSON：{"points":[{"sent":0,"point":"","evidence":""}]}'
+          % (name, stem, "\n".join("· " + p["point"] for p in have),
+             seg[:9000], _FIND_TYPE_FOCUS.get(qtype, ""))}],
+        # 补点也是提取，同扫描档位；额度同理留够推理（要判断空白段里到底有没有独立要点）
+        max_tokens=4000, what="定向补点", tier=_SCAN_TIER)
+    return [] if err else (d.get("points") or [])
+
+
+def _find_merge(name, stem, cands, pts_full, n_lo, n_hi):
+    """Pass 2：合并同义、剔干扰、砍到 n_lo~n_hi 个并配平分值。
+
+    Pass 1 是「宁滥勿缺」地铺开，这一步才收口。**只许在候选里挑和合并，不许新增** ——
+    新增的点没有经过句号锚定，会变成判不了的幽灵点。
+
+    **合并结果只许回报候选编号，不许回报句号**：候选列表里同时摆着编号和句号，
+    模型会把两者搞混 —— 实测一道 58 句的对策题，合并出的 12 个点里有 8 个把「候选序号」
+    当成句号填了回来（「借鉴公交电梯模式」被标到句 10，可那段原文在句 35~37），
+    采分点整体锚错位。学生勾对了句子反被判找错，比找点不全还糟。
+    改成只报编号，句号由服务端从候选里查 —— 模型没有报错句号的机会。"""
+    lst = "\n".join("%d) %s ｜ 原文：%s"
+                    % (i + 1, c["point"], c["evidence"][:50])
+                    for i, c in enumerate(cands))
+    d, err = _find_json(
+        [{"role": "system", "content": _FIND_SYS},
+         {"role": "user", "content":
+          "下面是一道申论**%s**从材料里逐块扫出来的**候选要点**（可能有重复、有过细的拆分、"
+          "也可能混进了干扰信息）。请像真题阅卷组定评分细则那样，把它收口成最终的采分点。\n\n"
+          "【题干】%s\n\n【候选要点】\n%s\n\n"
+          "【怎么收口】\n"
+          "1. 最终标 **%d~%d 个**采分点，合计正好 %d 分（真题一般每 2~3 分一个点）。\n"
+          "2. **同一个治理维度下的几件事要合并成一个点**：比如「发布总体规划」「限制灯光秀新增」"
+          "「设三种亮灯模式」同属『规划与分区管控』，应合并为一个采分点，而不是占掉三个名额 —— "
+          "名额被一个维度吃光，材料后半段的维度就写不进标准答案了。\n"
+          "3. **名额优先给覆盖面**：宁可让每个点粗一档，也要保证材料里**各个不同的方面都有点**，"
+          "不要几个点全出自相邻的句子。\n"
+          "4. 剔掉：背景铺垫、无关细节、反面例子、和别的点意思重复的。\n"
+          "5. **只能从候选里挑和合并，绝对不许凭空新增候选里没有的点。**\n"
+          "6. 每个最终点给：\n"
+          "   · from：这个点是由**上面哪几条候选**合并来的，填**候选前面的编号**"
+          "（合并了几条就列几个编号；没合并就填一个）。**填编号，不是句子序号。**\n"
+          "   · point：合并后的要点表述（10~28 字，动宾结构、点到关键词）\n"
+          "   · score：分值（所有点相加 = %d 分）\n\n"
+          '只输出 JSON：{"points":[{"from":[1,3],"point":"","score":0}]}'
+          % (name, stem, lst[:12000], n_lo, n_hi, pts_full, pts_full)}],
+        # 同扫描：正文很短（十来条 point + 编号 + 分值，撑死八百 token），但这一步干的是
+        # **判断**活 —— 哪些点同属一个维度该合并、有限的名额给谁。推理量同样不由输出长度决定。
+        # 实测压到 2500 时，两次里有一次只出 4 个点，还把「居民区柔和灯光」（规划维度）
+        # 和「长效管理机制」硬并成一条 —— 两个不相干的维度挤在一个采分点里。
+        max_tokens=6000, what="合并定分")
+    return (None if err else (d.get("points") or []))
+
+
+def _find_anchor(sents, sent_no, evidence, point):
+    """候选点 → 材料句号。三级降级，**不再静默丢点**。
+
+    老逻辑是 evidence 锚不上就 `continue`，丢了几个点、丢了什么，谁也不知道 ——
+    这本身就是「找点不全」的一个来源。现在：先信模型报的句号（拿 evidence 校验它没瞎报），
+    对不上再用 evidence 反查，还不行就用 point 文本反查，全败才丢并计数。"""
+    n = len(sents)
+    ev = re.sub(r"\s", "", evidence or "")
+    if isinstance(sent_no, (int, float)) and 0 <= int(sent_no) < n:
+        i = int(sent_no)
+        t = re.sub(r"\s", "", sents[i]["t"])
+        # 校验：报的这一句得跟 evidence 对得上（模型偶尔会把句号报偏一两位）
+        if not sents[i].get("head") and t and (
+                not ev or _lcs_len(ev, t) >= min(10, len(t) // 3)):
+            return [i]
+    hit = _find_locate(sents, evidence)
+    if hit:
+        return hit
+    return _find_locate(sents, point)          # 最后一档：拿概括后的表述去找最像的原句
+
+
+def _find_points(qtype, stem, material, full):
+    """材料 + 题干 → 一套采分点。返回 (points, info, err)，**不碰数据库**。
+
+    三步：分块扫描（铺开）→ 合并定分（收口）→ 覆盖校验不过关就定向补点再收口一次。
+    比老流程多 1~2 次 AI 调用，但出题是一次性的（一道题练 N 次只标一次），换的是
+    「材料后半段不再整段没有采分点」—— 见 audit_find.py 的体检表。
+
+    单独抽出来是为了能被 audit_find.py --rerun 直接调：那儿要在**不写库**的前提下
+    拿新旧两套流程各跑一遍做对比。所以这里的 err 一律是普通 dict 而非 jsonify ——
+    脱离 Flask 应用上下文调 jsonify 会当场抛 "Working outside of application context"。"""
+    name = FIND_TYPES[qtype][0]
+    pts_full = full or FIND_TYPES[qtype][1]
     if qtype == "guanche":                          # 贯彻执行：格式另占约 1/4，采分点只分内容那部分
         pts_full = pts_full - max(2, round(pts_full * 0.25))
     # 采分点个数按分值定，贴近真题阅卷（约每 2~3 分一个点，按要点/关键词给分）
     n_lo = max(4, round(pts_full / 3.0))
     n_hi = min(10, max(n_lo + 2, round(pts_full / 2.0)))
-    prompt = (
-        "下面是一道申论**%s**的给定资料和题干。请**像真题阅卷组制定标准答案（评分细则）一样**，"
-        "把这道题的**采分点**逐条标出来。\n\n"
-        "【题干】%s\n\n【给定资料】\n%s\n\n"
-        "【怎么标（对齐真题评分标准）】\n"
-        "1. 一个采分点 = 一个**独立的得分要点**。本题内容部分 %d 分，标 **%d~%d 个**采分点"
-        "（真题一般每 2~3 分一个点、按要点/关键词给分）。**宁全勿漏**：材料里凡是能得分的要点都要标出来，"
-        "别怕多。\n"
-        "2. **要点要具体、能拆就拆**：一个采分点只讲一件事；不同的做法／表现／原因／影响／意义要**分开**标，"
-        "不要并成「加强管理」「提升水平」这种空泛的大点（空话不给分）。\n"
-        "3. 每个点给：\n"
-        "   · point：概括后的要点表述（10~28 字，标准答案里该写的话，动宾结构、点到关键词，**不是照抄原文**）\n"
-        "   · evidence：这个点在材料里的依据，必须是从材料里**原封不动复制**的连续一句（或相邻两句）原文，"
-        "**一个字都不能改、不能自己概括、不能把不相邻的句子拼接**。若这个要点是跨多句总结出来的，"
-        "就挑**最能支撑它的那一句原文**照抄。\n"
-        "     ——【正例】point「推广太阳能路灯等绿色照明」，evidence 照抄原句「近年来，H市积极推广太阳能路灯"
-        "这一绿色照明方案」；【反例】evidence 写成「H市推广了绿色照明」← 这是概括，会被判对不上原文而丢掉。\n"
-        "   · score：该点分值（一般 1~3 分，所有点相加正好 = %d 分）\n"
-        "4. **材料里有干扰信息**（背景铺垫、无关细节、反面例子、同义重复），不要标成采分点。\n"
-        "5. 同一个意思在材料里出现两次的，**只标一个点**，evidence 取最完整的那处。\n"
-        "6. 按题型抓要点：归纳概括抓「做法/措施/表现/成效」；综合分析抓「是什么—为什么—怎么办各层的要点」；"
-        "提出对策抓「问题及其对应的对策」；贯彻执行抓「正文该写进去的内容要点」。\n\n"
-        '只输出 JSON：{"points":[{"point":"","evidence":"","score":0}]}'
-        % (name, stem, material[:8000], pts_full, n_lo, n_hi, pts_full))
-    rep, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是申论阅卷组组长，负责制定这道题的标准答案与评分细则。"
-                                       "采分点要齐全（宁全勿漏、按要点给分），依据必须逐字来自材料，"
-                                       "绝不改写、不编造。严格输出 JSON。"},
-         {"role": "user", "content": prompt}],
-        temperature=0.3, max_tokens=3200, timeout=300, json_mode=True)
+    sents = _find_sents(material)
+
+    cands, err = _find_scan(name, stem, sents, qtype)
+    if err:
+        return None, None, err
+    cands = _find_norm(sents, cands)
+    if len(cands) < 3:
+        return None, None, ({"error": "AI 没从材料里扫出足够的要点，请重试"}, 502)
+
+    # 扫完先看铺得开不开：还有整块材料没被碰过就定向补一轮（补点只在空白处问，不会重复）
+    n_scan, filled = len(cands), 0
+    cov0 = _find_coverage(sents, [{"sents": c["sents"]} for c in cands])
+    if _find_needs_more(cov0):
+        more = _find_fill(name, stem, sents, qtype, cov0["blanks"], cands)
+        add = _find_norm(sents, more, exist=cands)
+        cands += add
+        filled = len(add)
+
+    points, dropped = _find_finalize(name, stem, sents, cands, pts_full, n_lo, n_hi)
+    if len(points) < 3:
+        return None, None, ({"error": "AI 标出的采分点太少或对不上原文，请重试"}, 502)
+
+    cov = _find_coverage(sents, points)
+    info = {"n_sents": len(sents), "n_scan": n_scan, "n_filled": filled,
+            "n_cands": len(cands), "dropped": dropped, "cov": cov}
+    log.info("find 出题 [%s] %d 句 → 扫出 %d（补 %d）→ 采分点 %d，coverage %d/%d，max_gap %d%s",
+             name, len(sents), n_scan, filled, len(points),
+             cov["cov_blocks"], cov["n_blocks"], cov["max_gap"],
+             "，丢弃 %d 个锚不上的候选" % dropped if dropped else "")
+    return points, info, None
+
+
+# 参考答案的骨架：按题型给框架，让串出来的答案长得像该题型的标准答案
+_FIND_REF_FRAME = {
+    "guina": "分条列点（一、二、三…），每条「小标题 + 具体做法」，只陈述不评价",
+    "zonghe": "先亮观点/解释，再分层展开（是什么→为什么→怎么样），最后落回结论",
+    "duice": "分条列点，每条「针对的问题 + 具体对策」，对策要具体可执行",
+    "guanche": "按指定文种的格式成文（标题、称谓、正文分条、落款），要点写进正文",
+}
+
+
+def _find_reference(qtype, name, stem, points, wmin, wmax, doctype=""):
+    """由**采分点拼装**参考答案：AI 只负责串词、书面化、收字数，**不许增删要点**。
+
+    为什么不像真题批改那样让 AI 从头写一篇（mods/find.py 的 _gen_reference 就是那么干的）：
+    从头写出来的范文，要点跟这道题的采分点对不上 —— 学生照着范文写，反而被判漏点，
+    自相矛盾。小题训练手里有现成的采分点，参考答案就该是「这几个点写成文」的样子，
+    一个不多一个不少，学生拿它和自己的作答逐条比才有意义。"""
+    lst = "\n".join("%d. %s" % (i + 1, p["point"]) for i, p in enumerate(points))
+    frame = _FIND_REF_FRAME.get(qtype, _FIND_REF_FRAME["guina"])
+    if doctype:
+        spec = GW_MAP.get(doctype, {})
+        frame = "按「%s」的格式成文：%s。把下面的要点写进正文。" % (doctype, spec.get("fmt", ""))
+    target = wmin + int((wmax - wmin) * 0.45)
+    base = ("把下面这道申论**%s**的采分点，串成一份可以拿满分的参考答案。\n\n"
+            "【题干】%s\n\n【必须写进去的采分点】（阅卷标准，一个不能少）\n%s\n\n"
+            "【要求】\n"
+            "1. **只准写这 %d 个要点，不许增加材料里没有的内容、也不许漏掉任何一个**。\n"
+            "2. %s\n"
+            "3. 书面化、动宾结构、点到关键词；不抄材料原句的口语和引语。\n"
+            "4. 字数 %d~%d 字（目标 %d 字），这是硬性要求。\n"
+            "只输出答案正文：不要 Markdown 记号，不要解释，不要字数统计。"
+            % (name, stem[:800], lst, len(points), frame, wmin, wmax, target))
+    msgs = [{"role": "system", "content": "你是资深申论老师，参考答案要点齐全、表述规范、字数精准。"},
+            {"role": "user", "content": base}]
+    # 档位用 fast，不是 pro：这一步是「把给定要点压成 250 字」的写作压缩，不是推理。
+    # 实测同一道题 —— pro 要 2~3 分钟、还屡屡被 max_tokens 截断（推理段吃光额度、正文空串），
+    # 写出来 304 字超上限 54；fast 全程 30 秒、零失败，稿子在 187~295 之间。
+    # 要点是现成的，模型不需要"想"，只需要"写短"。
+    #
+    # 收口标准也改了：**上限硬、下限软**。word_min 是我们自己按题型定的，题干里真正的
+    # 硬约束是「不超过 N 字」—— 写少了不扣分，写超了才扣。原来把下限当同等硬条件，
+    # 返工就来回震荡（187→295→158→265），四稿都"不合格"，最后反而交出最差的那版。
+    lo_ok = int(wmin * 0.75)
+    best = ""
+    for i in range(4):
+        rep, err = _ai_call_or_error(msgs, temperature=0.35, max_tokens=max(2000, wmax * 4),
+                                     timeout=300, tier="fast")
+        if err:
+            log.warning("find 参考答案第 %d 稿失败：%s", i + 1, err[0].get("error"))
+            break
+        ref = re.sub(r"[*#`]+", "", rep or "").strip()
+        n = _sl_words(ref)
+        if lo_ok <= n <= wmax:
+            return ref
+        # 挑兜底稿时超上限要重罚：超了是硬伤，短一点只是不够丰满
+        pen = (lambda x: _sl_gap(x, wmin, wmax) * (3 if x > wmax else 1))
+        if not best or pen(n) < pen(_sl_words(best)):
+            best = ref
+        # 光说「压缩到 250 字」压不住 —— 模型在「要点一个不能少」和「字数」之间会选前者。
+        # 给到每个要点的字数预算，它才知道该怎么砍（砍修饰，不是砍要点）。
+        per = max(12, target // max(1, len(points)))
+        msgs = msgs[:1] + [
+            {"role": "user", "content": base},
+            {"role": "assistant", "content": ref},
+            {"role": "user", "content": "这一稿 %d 字，不符合要求（要求 %d~%d 字，目标 %d 字）。请%s。\n"
+                                        "**%d 个要点一个都不能少**，所以平均每个要点只能写 **%d 字左右** —— "
+                                        "%s，不要删要点。只输出答案正文。"
+                                        % (n, wmin, wmax, target,
+                                           "扩写" if n < wmin else "压缩",
+                                           len(points), per,
+                                           "把修饰语、举例、铺垫全部砍掉，只留动宾结构的关键词"
+                                           if n > wmax else "每点补足具体做法")}]
+    return best
+
+
+def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requirement=""):
+    """出一套采分点并落库，返回 (paper_id, err)。参考答案在这一步一并生成存下来。"""
+    name, dfull, dmin, dmax = FIND_TYPES[qtype][0], FIND_TYPES[qtype][1], FIND_TYPES[qtype][2], FIND_TYPES[qtype][3]
+    points, _info, err = _find_points(qtype, stem, material, full)
     if err:
         return None, err
+    lo, hi = wmin or dmin, wmax or dmax
+    doctype = ""
+    if qtype == "guanche":
+        for k in sorted(GW_MAP.keys(), key=len, reverse=True):
+            if k in (stem or ""):
+                doctype = k
+                break
+    # 范文生成失败不该让整道题白出（它是独立的一次调用，超时就空着，页面上另有重生成按钮）
     try:
-        got = json.loads(rep).get("points") or []
+        ref = _find_reference(qtype, name, stem, points, lo, hi, doctype)
     except Exception:
-        return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
-
-    sents = _find_sents(material)
-    points = []
-    seen = set()
-    for p in got:
-        ev = (p.get("evidence") or "").strip()
-        pt = (p.get("point") or "").strip()
-        if not ev or not pt:
-            continue
-        hit = _find_locate(sents, ev)              # 能锚到材料某句就留（含近似兜底），锚不到才丢
-        if not hit:
-            continue
-        key = tuple(hit)
-        if key in seen:                            # 同一句已被别的点占了（同义重复）→ 只留一个
-            continue
-        seen.add(key)
-        # 依据统一取「命中的材料原句」，保证「找漏」里「就在这句」引用的是真原文（而非 AI 的转述）
-        ev_text = "".join(sents[i]["t"] for i in hit) or ev
-        points.append({"point": pt, "evidence": ev_text,
-                       "score": float(p.get("score") or 0), "sents": hit})
-    if len(points) < 3:
-        return None, (jsonify({"error": "AI 标出的采分点太少或对不上原文，请重试"}), 502)
-    # 分值按满分重新配比，保证一道题所有采分点相加正好 = 满分（AI 给的分常不配平）
-    tot = sum(p["score"] for p in points) or len(points)
-    for p in points:
-        p["score"] = round(p["score"] / tot * pts_full, 1) if tot else round(pts_full / len(points), 1)
-
+        log.warning("find 参考答案生成失败，题目照常出", exc_info=True)
+        ref = ""
     cur = db.execute(
         "INSERT INTO find_papers(user_id,qtype,type_name,stem,requirement,full,word_min,word_max,"
-        "material,points,source) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        (uid_, qtype, name, stem, requirement, full or dfull, wmin or dmin, wmax or dmax,
-         material, json.dumps(points, ensure_ascii=False), source))
+        "material,points,source,reference) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (uid_, qtype, name, stem, requirement, full or dfull, lo, hi,
+         material, json.dumps(points, ensure_ascii=False), source, ref))
     db.commit()
     return cur.lastrowid, None
+
+
+def _ev_text(sents, hit):
+    """把命中的几句拼成可读的依据原文。**不相邻的句子之间要打省略号。**
+
+    原来是一路 "".join —— 句号连续时没问题，一旦跨句（一个采分点覆盖句 22、28、47、50
+    这种很常见）就会把不挨着的半句硬粘在一起，读出来是断的：
+    「…工商人员核查经营资质，卫生监督2014年初，县工商局与…」。
+    小题训练那边材料是按句渲染高亮的，看不出来；真题批改把 evidence 当一整段引文显示，
+    就直接露馅了。所以拼接这件事得有个统一的地方管。
+    """
+    out, prev = [], None
+    for i in hit:
+        if prev is not None and i != prev + 1:
+            out.append("……")
+        out.append(sents[i]["t"])
+        prev = i
+    return "".join(out)
+
+
+def _find_norm(sents, raw, exist=()):
+    """候选点 → 锚定过的 {sents, point, evidence}，顺手去掉重复占同一句的。"""
+    taken = {i for c in exist for i in c["sents"]}
+    out = []
+    for p in raw:
+        pt = (p.get("point") or "").strip()
+        ev = (p.get("evidence") or "").strip()
+        if not pt:
+            continue
+        hit = _find_anchor(sents, p.get("sent"), ev, pt)
+        if not hit or hit[0] in taken:
+            continue
+        taken.update(hit)
+        out.append({"sents": hit, "sent": hit[0], "point": pt,
+                    "evidence": _ev_text(sents, hit) or ev})
+    return out
+
+
+def _find_guard(sents, points, cands, n_hi):
+    """合并之后再守一道覆盖 —— 而且这一道**不指望 AI**。
+
+    实测踩出来的：扫描阶段明明在材料后半段找到了要点，合并收口时模型嫌它"不重要"又给砍了，
+    结果最终采分点 coverage 2/6、最长空白带 26 句 —— 比不做分块扫描还差。
+    校验只放在合并前是拦不住的：那时候看的是候选，铺得挺开。
+    所以这儿改成确定性兜底：哪一段空着、候选里正好有现成的点落在那儿，就直接补回去。
+    补进来的点分值先留空，最后统一按满分配比。"""
+    for _ in range(4):                          # 最多补 4 个，别让点数失控
+        cov = _find_coverage(sents, points)
+        if not _find_needs_more(cov) or len(points) >= n_hi + 2:
+            break
+        used = {i for p in points for i in p["sents"]}
+        pick = None
+        # 先补最长的那段空白 —— 那儿漏得最狠
+        for a, b in sorted(cov["blanks"], key=lambda x: -(x[1] - x[0])):
+            for c in cands:
+                if c["sent"] not in used and a <= c["sent"] <= b:
+                    pick = c
+                    break
+            if pick:
+                break
+        if not pick:                            # 空白处扫描时本来就没找到东西，认了
+            break
+        log.info("find 合并后覆盖不足，从候选补回：[句%d] %s", pick["sent"], pick["point"])
+        points.append({"point": pick["point"], "evidence": pick["evidence"],
+                       "score": 0.0, "sents": pick["sents"]})
+    return sorted(points, key=lambda p: p["sents"][0])   # 按材料顺序排，读起来顺
+
+
+def _find_finalize(name, stem, sents, cands, pts_full, n_lo, n_hi):
+    """合并定分 + 落成最终采分点。合并这一步失败就退回「直接用候选」，不让一道题白出。"""
+    merged = _find_merge(name, stem, cands, pts_full, n_lo, n_hi) if len(cands) > n_hi else None
+    points, dropped, seen = [], 0, set()
+    for m in (merged or []):
+        pt = (m.get("point") or "").strip()
+        # 句号一律从候选查，不信模型回报的（它会把候选编号当句号填回来，见 _find_merge）
+        idx = [int(x) - 1 for x in (m.get("from") or []) if str(x).lstrip("-").isdigit()]
+        hit = sorted({i for k in idx if 0 <= k < len(cands) for i in cands[k]["sents"]})
+        if not pt or not hit:                     # 编号也对不上 —— 拿 point 文本兜一次底
+            hit = _find_locate(sents, pt) if pt else []
+            if not hit:
+                dropped += 1
+                continue
+        key = frozenset(hit)
+        if key in seen:
+            continue
+        seen.add(key)
+        points.append({"point": pt, "evidence": _ev_text(sents, hit),
+                       "score": float(m.get("score") or 0), "sents": hit})
+    if not points:                                # 没合并（候选本来就不多）或合并失败 → 直接用候选
+        for c in cands[:n_hi]:
+            points.append({"point": c["point"], "evidence": c["evidence"],
+                           "score": 0.0, "sents": c["sents"]})
+    points = _find_guard(sents, points, cands, n_hi)   # 合并砍掉的覆盖面，在这儿补回来
+    # 分值按满分重新配比，保证一道题所有采分点相加正好 = 满分（AI 给的分常不配平）。
+    # 补回来的点 score=0，只按 AI 那份配比会让它们白干活 —— 先按均分兜个底再一起配比。
+    avg = (sum(p["score"] for p in points) / sum(1 for p in points if p["score"])) \
+        if any(p["score"] for p in points) else 0
+    for p in points:
+        if not p["score"]:
+            p["score"] = avg
+    tot = sum(p["score"] for p in points)
+    for p in points:
+        p["score"] = round(p["score"] / tot * pts_full, 1) if tot else round(pts_full / len(points), 1)
+    return points, dropped
 
 
 @bp.get("/api/find/types")
@@ -562,7 +988,9 @@ def find_grade():
         [{"role": "system", "content": "你是申论阅卷组组长。逐个采分点对照批改，"
                                        "给分实在，说清差在哪。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
-        temperature=0.3, max_tokens=2500, timeout=300, json_mode=True)
+        # 正文额度：逐点评语 + 格式段 + 表述问题 + 一句建议（推理段由 budget() 另加）。
+        # 同样按「输出短但要逐点比对」留够推理，别照正文长度抠。
+        temperature=0.3, max_tokens=5000, timeout=300, json_mode=True, tier="pro")
     if err:
         return err
     try:
@@ -583,12 +1011,17 @@ def find_grade():
         g["content_score"], g["content_full"] = content_final, content_target
         g["score"] = round(content_final + fmt_score, 1)
     score = float(g.get("score") or 0)
-    db.execute("INSERT INTO find_records(user_id,paper_id,marks,find_result,answer,grade,score,full) "
-               "VALUES(?,?,?,?,?,?,?,?)",
+    # points_snap：把当次这套采分点快照进记录。采分点是会被重标的（audit_find.py --apply），
+    # 重标之后旧记录里的勾画就和新采分点对不上，回看会串 —— 回看一律按快照重算。
+    db.execute("INSERT INTO find_records(user_id,paper_id,marks,find_result,answer,grade,score,full,"
+               "points_snap) VALUES(?,?,?,?,?,?,?,?,?)",
                (uid(), pid, json.dumps(picked), json.dumps(d.get("find_result") or {}, ensure_ascii=False),
-                answer, json.dumps(g, ensure_ascii=False), score, r["full"]))
+                answer, json.dumps(g, ensure_ascii=False), score, r["full"],
+                json.dumps(points, ensure_ascii=False)))
     db.commit()
     g["full"] = r["full"]
+    g["reference"] = r["reference"] or ""       # 参考答案：出题时就生成好了，这里直接给
+    g["ref_words"] = _sl_words(g["reference"])
     return jsonify(g)
 
 
@@ -631,10 +1064,15 @@ def find_records_list():
 
 @bp.get("/api/find/record/<int:rid>")
 def find_record(rid):
-    """一条历史记录的详情：题干 + 我的找点过程（勾画/找漏找错）+ 完整批改（采分点/格式）+ 我写的答案。"""
+    """一条历史记录的详情 —— 要能把当时那一遍**完整重演**出来：
+    题干 + 材料（按句切好，带当时的勾画着色）+ 找点判定 + 逐点批改 + 我写的答案 + 参考答案。
+
+    材料/采分点都从记录当时的快照走：采分点会被重标（audit_find.py --apply），
+    拿现在的采分点去着色旧勾画，绿的会变黄、判定和当时对不上。"""
     r = get_db().execute(
         "SELECT r.id, r.paper_id, r.score, r.full, r.grade, r.answer, r.marks, r.find_result, "
-        "r.created_at, p.qtype, p.type_name, p.stem, p.word_min, p.word_max, p.source "
+        "r.points_snap, r.created_at, p.qtype, p.type_name, p.stem, p.word_min, p.word_max, "
+        "p.source, p.material, p.points, p.reference "
         "FROM find_records r JOIN find_papers p ON p.id=r.paper_id "
         "WHERE r.id=? AND r.user_id=?", (rid, uid())).fetchone()
     if not r:
@@ -645,13 +1083,54 @@ def find_record(rid):
             return json.loads(s or "")
         except Exception:
             return default
+
+    marks = _loads(r["marks"], [])
+    # 老记录没有快照，只能退回用现在的采分点（可能已重标）—— 前端据 snap 标志提示一下
+    snap = _loads(r["points_snap"], None)
+    points = snap if snap is not None else _loads(r["points"], [])
+    sents = _find_sents(r["material"] or "")
+    picked = set(marks)
+    pt_sents = {i for p in points for i in (p.get("sents") or [])}
+    ok_s = sorted(picked & pt_sents)              # 找对：勾了且是采分点
+    bad_s = sorted(picked - pt_sents)             # 找错：勾了但不是采分点（被干扰信息骗了）
+    miss_s = sorted(pt_sents - picked)            # 找漏：是采分点但没勾
     return jsonify({"id": r["id"], "paper_id": r["paper_id"], "score": r["score"], "full": r["full"],
                     "qtype": r["qtype"], "type_name": r["type_name"], "stem": r["stem"],
                     "word_min": r["word_min"], "word_max": r["word_max"], "source": r["source"] or "",
                     "answer": r["answer"] or "", "created_at": r["created_at"],
-                    "marks": _loads(r["marks"], []),            # 我勾画的句子下标
+                    "marks": marks,                            # 我勾画的句子下标
                     "find_result": _loads(r["find_result"], {}),  # 找点判定：找到几/漏几/错几/重几
-                    "grade": _loads(r["grade"], {})})
+                    "grade": _loads(r["grade"], {}),
+                    "reference": r["reference"] or "",         # 参考答案（出题时生成）
+                    "ref_words": _sl_words(r["reference"] or ""),
+                    "material_words": _sl_words(r["material"] or ""),
+                    "snap": snap is not None,                  # 采分点是不是当时的快照
+                    # 材料按句下发 + 当时的着色，前端直接复用做题页那套渲染
+                    "sents": [{"i": i, "p": s["p"], "t": s["t"], "head": s["head"]}
+                              for i, s in enumerate(sents)],
+                    "mark_ok": ok_s, "mark_bad": bad_s, "mark_miss": miss_s,
+                    "points": [{"point": p.get("point"), "score": p.get("score"),
+                                "sents": p.get("sents") or []} for p in points]})
+
+
+@bp.post("/api/find/paper/<int:pid>/reference")
+def find_ref_regen(pid):
+    """单独重生成参考答案：它是出题之外独立的一次 AI 调用，超时/失败就会空着，
+       没必要为了一份参考答案把整道题重出一遍（那要重标采分点，历史判定全变）。"""
+    db = get_db()
+    r = _find_paper(db, pid)
+    if not r:
+        return jsonify({"error": "题目不存在"}), 404
+    points = json.loads(r["points"] or "[]")
+    if not points:
+        return jsonify({"error": "这道题没有采分点，无法拼装参考答案"}), 400
+    ref = _find_reference(r["qtype"], r["type_name"], r["stem"] or "", points,
+                          r["word_min"] or 150, r["word_max"] or 300, _find_doctype(r))
+    if not ref:
+        return jsonify({"error": "AI 还是没给出参考答案，请稍后再试"}), 502
+    db.execute("UPDATE find_papers SET reference=? WHERE id=? AND user_id=?", (ref, pid, uid()))
+    db.commit()
+    return jsonify({"reference": ref, "ref_words": _sl_words(ref)})
 
 
 # 上传的一份真题里有「给定资料1/2/3…」多则，而一道小题通常只对应其中某一则。
@@ -880,9 +1359,13 @@ def _gen_reference(t, question, material, wmin, wmax, tries=2):
             (question[:2000], mat, frame, wmin, wmax, target))
     msgs = [{"role": "system", "content": "你是资深申论老师，参考答案规范、切题、字数精准。"},
             {"role": "user", "content": base}]
-    best, budget = "", max(1200, int(wmax * 2.2))
+    # 保持 fast：这是「限字数写作」，不是推理。实测在小题那边的同类任务上（_find_reference），
+    # pro 要 2~3 分钟、屡屡被 max_tokens 截断（推理段吃光额度、正文一个字没出），
+    # 写出来还超上限；fast 三十秒收工且字数收得住。写范文不需要"想"，需要"写准长度"。
+    best, budget = "", max(2000, int(wmax * 4))
     for _ in range(tries + 1):
-        rep, err = _ai_call_or_error(msgs, temperature=0.4, max_tokens=budget, timeout=300)
+        rep, err = _ai_call_or_error(msgs, temperature=0.4, max_tokens=budget,
+                                     timeout=300, tier="fast")
         if err:
             break
         ref = re.sub(r"[*#`]+", "", rep).strip()
@@ -910,6 +1393,60 @@ _SL_DIMS = [("立意", 10), ("结构", 7), ("论证与材料运用", 10), ("语�
 
 SL_SYS = ("你是阅卷经验丰富的申论老师，严格对照给定资料的采分点批改，只认材料里有的要点，"
           "不编造材料里没有的内容。评分克制、有依据，严格输出 JSON。")
+
+
+def _q_mat_refs(qbody, mats):
+    """题干里引用了「给定资料几」。返回 [3] 这样的编号列表；没写明或切不出多则就 []。"""
+    if not mats:
+        return []
+    out = []
+    for m in _Q_MAT_REF.finditer(qbody or ""):
+        n = _cn2i(m.group(1))
+        if n in mats and n not in out:
+            out.append(n)
+    return out
+
+
+def _sl_std_points(db, qrow, qtype, question, material, full):
+    """真题某一小题的**预标采分点**：有就取，没有就现标一次并缓存。
+    返回 (points, refs)；points 为 [] 表示这题不适用、退回现场提炼。
+    refs 是这套采分点标在「给定资料几」上（句号是相对那一则的，标签要靠它才说得准）。
+
+    为什么不在上传时就标：一份卷子四五道题，每道要跑「分块扫描 → 合并定分」两三次 AI 调用，
+    上传会从半分钟变成十分钟，用户对着转圈不知道在等什么。改成**第一次批改这道题时**
+    惰性标一次并缓存 —— 成本只付一次，而且只给真正练到的题付。
+
+    自由练（没有 qrow）不预标：那是用户临时贴的题干和材料，标了也没地方存、下次还是新的。
+    """
+    if not qrow or not material or qtype not in FIND_TYPES:
+        return [], []
+    mats = _split_materials(material)
+    refs = _q_mat_refs(question, mats)
+    try:
+        cached = json.loads(qrow["points"] or "[]")
+    except Exception:
+        cached = []
+    if cached:
+        return cached, refs
+    # **一题一则**：shenlun_papers.material 存的是整份卷子的给定资料（材料一到五全在里面），
+    # 而一道小题通常只对应其中某一则。不切就会拿整份去标 —— 实测一道 15 分的归纳概括，
+    # 291 句材料标出 6 个点、coverage 10/42、max_gap 211，依据里全是别的题的材料
+    # （问的是这一题，摘的是隔壁「鲁师傅烧饼」那则）。
+    # 切法直接复用上传小题那条管线：按编号切成多则，只喂题干里引用的那一则。
+    qmat = _q_scoped_material(question, mats, material)
+    points, info, err = _find_points(qtype, question, qmat, full)
+    if err:
+        # 标不出来不该让整次批改失败 —— 退回「现场提炼」那条老路，照样能批
+        log.warning("真题第 %s 题预标采分点失败，本次退回现场提炼：%s",
+                    qrow["seq"], err[0].get("error") if isinstance(err, tuple) else err)
+        return [], refs
+    db.execute("UPDATE shenlun_questions SET points=? WHERE id=?",
+               (json.dumps(points, ensure_ascii=False), qrow["id"]))
+    db.commit()
+    log.info("真题第 %s 题预标采分点 %d 个（给定资料%s，%d 句），coverage %d/%d，max_gap %d",
+             qrow["seq"], len(points), refs or "全部", info["n_sents"],
+             info["cov"]["cov_blocks"], info["cov"]["n_blocks"], info["cov"]["max_gap"])
+    return points, refs
 
 
 @bp.post("/api/shenlun/grade")
@@ -948,12 +1485,26 @@ def shenlun_grade():
     words = _sl_words(answer)
 
     is_essay = key == "zuowen"
+    std, std_refs = ([], []) if is_essay else _sl_std_points(db, qrow, key, question, material, full)
     if is_essay:
         dims = "、".join("%s（0-%d 分）" % (n, m) for n, m in _SL_DIMS)
         rubric = ("按固定的四个维度打分，points 里每个维度一条，顺序不变：%s。\n"
                   "（若本题满分不是 35 分，请按比例折算各维度满分。）\n"
                   'name=维度名，max=该维度满分，got=实际得分，yours=引用考生原文中最能体现该维度的一句，\n'
                   'hits=做得好的地方，misses=扣分点，material=（留空字符串）。' % dims)
+    elif std:
+        # 采分点是**预先标好**的（第一次批改这道题时生成并缓存），不再每次现场提炼。
+        # 现场提炼的三个毛病一起解决：同一份答案两次批改分数不再飘（标尺固定了）、
+        # 能说出漏的点在材料第几句（有原文锚点）、和小题训练用的是同一套标准。
+        lst = "\n".join("%d. %s（%g 分）依据原文：%s" % (i + 1, p["point"], p["score"], p["evidence"][:70])
+                        for i, p in enumerate(std))
+        rubric = ("下面是这道题的**标准答案采分点**（阅卷组已定，考生看不到）。"
+                  "**必须逐条照抄这几个点来评分，不许自己另立采分点、不许增删条数**：\n%s\n\n"
+                  "points 里一条对一个采分点、**顺序不变**：\n"
+                  'name=采分点原话（照抄上面的），max=上面给的分值，got=实际得分，\n'
+                  'yours=考生答案里对应这一点的原文（没写到就填空字符串），\n'
+                  'hits=已写到的要点，misses=未写到的要点，partial=部分写到的要点，\n'
+                  'material=（留空，服务端会填上锚定好的原文）。' % lst)
     else:
         rubric = ("先从给定资料中提炼出这道题的采分点（每个采分点一条），再逐条对照考生答案：\n"
                   'name=采分点名（如「总领」「接近、启发村民」），max=该点分值，got=实际得分，\n'
@@ -980,8 +1531,10 @@ def shenlun_grade():
     msgs = [{"role": "system", "content": SL_SYS}, {"role": "user", "content": prompt}]
     res = None
     for attempt in range(2):
-        rep, err = _ai_call_or_error(msgs, temperature=0.2, max_tokens=4000,
-                                     timeout=300, json_mode=True)
+        # 正文额度：points（每条含 yours/hits/misses/material 摘录）+ advice。
+        # 这一步要现场提炼采分点再逐条比对，推理最重，额度留宽。
+        rep, err = _ai_call_or_error(msgs, temperature=0.2, max_tokens=6000,
+                                     timeout=300, json_mode=True, tier="pro")
         if err:
             return err
         try:
@@ -1003,6 +1556,18 @@ def shenlun_grade():
     except Exception:
         res["score"] = 0
     pts = res.get("points") or []
+    if std:
+        # 用预标采分点批的：material 由服务端按**锚定好的原句**回填，别信模型转述。
+        # 顺带把句号带上 —— 这是现场提炼那条路给不出来的东西，「漏的点在材料第几句」
+        # 全靠它。分值也一律以标准答案为准，不让模型改 max。
+        for i, p in enumerate(pts[:len(std)]):
+            s = std[i]
+            p["material"] = s["evidence"][:120]
+            p["sents"] = s["sents"]
+            p["max"] = s["score"]
+        res["std_points"] = True          # 前端据此显示「按预标采分点评分（可复现）」
+        # 句号是相对**那一则**给定资料的，不带上是哪一则，「第 8 句」就对不上页面里的整份材料
+        res["std_refs"] = std_refs
     res["hit_n"] = sum(1 for p in pts if not (p.get("misses") or p.get("partial")))
     res["part_n"] = sum(1 for p in pts if p.get("partial"))
     res["miss_n"] = sum(1 for p in pts if p.get("misses") and not p.get("yours"))

@@ -131,6 +131,15 @@ function fmtSize(n) {
   return (n / 1048576).toFixed(1) + ' MB';
 }
 function fmtTime(s) { return (s || '').slice(5, 16); }
+/* 从 paste 事件里掏出文件。截图走 items（有些浏览器不进 files），复制的文件走 files ——
+   两条都得看，只看一条就会出现「有的图粘得进、有的粘不进」。两者不叠加，免得同一张图收两遍。 */
+function clipFiles(e) {
+  const cd = e && e.clipboardData;
+  if (!cd) return [];
+  const fs = [...(cd.files || [])];
+  if (fs.length) return fs;
+  return [...(cd.items || [])].filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean);
+}
 // 线性 SVG 图标
 const _svg = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const IC = {

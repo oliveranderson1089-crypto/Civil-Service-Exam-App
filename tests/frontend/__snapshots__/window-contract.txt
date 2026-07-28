@@ -14,6 +14,7 @@ __onShot
 __onSysTheme
 __padTheme
 __padView
+__shareProgress
 __t0
 __ttsEnd
 __ttsEvent

@@ -381,6 +381,28 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 分享进度回网页：0~100 是百分比，100 表示可以弹分享面板了，-1 表示失败。 */
+    private void shareProgress(int pct) {
+        final String js = "window.__shareProgress && window.__shareProgress(" + pct + ")";
+        runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
+    }
+
+    /** 读一个很小的伴随文件（ETag / Last-Modified）；没有或读不了都当没有。 */
+    private static String readSmall(File f) {
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+            byte[] b = new byte[512];
+            int n = in.read(b);
+            return n > 0 ? new String(b, 0, n, "UTF-8").trim() : null;
+        } catch (Exception e) { return null; }
+    }
+
+    private static void writeSmall(File f, String s) {
+        if (s == null || s.isEmpty()) { f.delete(); return; }
+        try (java.io.FileOutputStream o = new java.io.FileOutputStream(f)) {
+            o.write(s.getBytes("UTF-8"));
+        } catch (Exception ignored) { }
+    }
+
     /** 把离线手写识别结果（JSON 字符串）安全地回调给网页的 window.__hwNative。 */
     private void deliverHw(int reqId, String json) {
         final String js = "window.__hwNative && window.__hwNative(" + reqId + ",'" + jsEsc(json) + "')";
@@ -552,6 +574,16 @@ public class MainActivity extends Activity {
             }).start();
         }
 
+        /**
+         * 分享资料库里的一个文件：得先把它从服务器整份拉到本地（安卓只能分享本地 Uri），
+         * 再弹系统分享面板。慢就慢在这一步——一份 6.7 MB 的讲义每分享一次就重下一次。
+         *
+         * 两件事让它别再慢：
+         *   · **带条件的 GET**：缓存里有上次那份就带 If-None-Match / If-Modified-Since，
+         *     服务端（Flask send_file）回 304 就直接用本地那份，一个字节都不用传。
+         *   · **报进度**：真要下的时候把百分比回调给网页，让它显示在 toast 上。
+         *     原来只有一句「正在准备分享…」，几十秒里看不出是在跑还是卡死了。
+         */
         @android.webkit.JavascriptInterface
         public void shareFile(String url, String name) {
             new Thread(() -> {
@@ -562,17 +594,54 @@ public class MainActivity extends Activity {
                             ? ("file_" + System.currentTimeMillis())
                             : name.replaceAll("[/\\\\:*?\"<>|]", "_");
                     File out = new File(dir, safe);
+                    File meta = new File(dir, safe + ".etag");
+
                     HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
                     String cookie = CookieManager.getInstance().getCookie(url);
                     if (cookie != null) conn.setRequestProperty("Cookie", cookie);
                     conn.setConnectTimeout(15000);
                     conn.setReadTimeout(120000);
-                    InputStream in = conn.getInputStream();
-                    java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
-                    fo.close(); in.close(); conn.disconnect();
+                    // 缓存命中的前提是本地那份确实还在；只剩 .etag 没剩文件时别发条件请求，
+                    // 否则服务端回 304、我们却没有可分享的文件。
+                    String tag = out.exists() ? readSmall(meta) : null;
+                    if (tag != null && !tag.isEmpty()) {
+                        if (tag.startsWith("W/") || tag.startsWith("\"")) conn.setRequestProperty("If-None-Match", tag);
+                        else conn.setRequestProperty("If-Modified-Since", tag);
+                    }
+
+                    int code = conn.getResponseCode();
+                    if (code != HttpURLConnection.HTTP_NOT_MODIFIED) {
+                        if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
+                        // 用 int 版：getContentLengthLong() 要 API 24，这个 APK 的 minSdk 是 21。
+                        // 资料库里没有 2 GB 以上的文件，够用。
+                        long total = conn.getContentLength();
+                        InputStream in = conn.getInputStream();
+                        // 下到临时文件再改名：中途断网/杀进程也不会在缓存里留下半份文件，
+                        // 而半份文件配上还在的 .etag 会让下一次条件请求拿 304 —— 分享出去是坏文件。
+                        File tmp = new File(dir, safe + ".part");
+                        java.io.FileOutputStream fo = new java.io.FileOutputStream(tmp);
+                        byte[] buf = new byte[65536];
+                        long got = 0;
+                        int n, last = -1;
+                        while ((n = in.read(buf)) > 0) {
+                            fo.write(buf, 0, n);
+                            got += n;
+                            if (total > 0) {
+                                int pct = (int) (got * 100 / total);
+                                if (pct != last && pct % 5 == 0) { last = pct; shareProgress(pct); }
+                            }
+                        }
+                        fo.close(); in.close();
+                        if (out.exists()) out.delete();
+                        if (!tmp.renameTo(out)) throw new java.io.IOException("写缓存失败");
+                        String et = conn.getHeaderField("ETag");
+                        if (et == null) et = conn.getHeaderField("Last-Modified");
+                        writeSmall(meta, et);
+                    }
+                    conn.disconnect();
+                    if (!out.exists()) throw new java.io.IOException("缓存里没有这个文件");
+
+                    shareProgress(100);
                     final Uri cu = Uri.parse("content://" + CamProvider.AUTH + "/share/" + Uri.encode(safe));
                     final String mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(
                             safe.contains(".") ? safe.substring(safe.lastIndexOf('.') + 1).toLowerCase() : "");
@@ -584,6 +653,7 @@ public class MainActivity extends Activity {
                         startActivity(Intent.createChooser(i, "分享文件"));
                     });
                 } catch (Exception e) {
+                    shareProgress(-1);
                     runOnUiThread(() -> Toast.makeText(MainActivity.this,
                             "分享失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
                 }

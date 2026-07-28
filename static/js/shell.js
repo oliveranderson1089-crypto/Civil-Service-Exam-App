@@ -12,7 +12,7 @@
    aiBack, api, c, chatConnect, closeSlideshow, dqPoll,
    esc, loadNotebook, loadSkin, matClose, matInited, mkInject,
    newDraft, openBoardKb, openChangkao, openChangshi, openChat, openCkBoard,
-   openClassics, openDrill, openDrive, openFanwen, openFind, openGaikuo,
+   openClassics, openDrill, openDrive, openExam, openFanwen, openFind, openGaikuo,
    openGongwen, openIdiom, openKb, openMaterials, openNews, openNotes,
    openPartyDict, openPolicyDocs, openQuiz, openReview, openShenlun, openSucai,
    openTasks, openTheory, openVideos, openWorks, openWrite, openWrongq,
@@ -132,6 +132,7 @@ async function init() {
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
     <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
     <div class="home-card" data-go="quiz"><div class="hc-logo">${IC.edit}</div><div class="hc-name">题库</div><div class="hc-desc">四川省考卷面 · 每周自动更新</div></div>
+    <div class="home-card" data-go="exam"><div class="hc-logo hc-exam">📣</div><div class="hc-name">全国考情</div><div class="hc-desc">国考/省考/事考公告 · 每天自动汇总</div></div>
     <div class="home-card" data-go="realq"><div class="hc-logo hc-real">${IC.target || IC.edit}<span class="rev-badge hidden" id="realq-badge"></span></div><div class="hc-name">历年真题</div><div class="hc-desc">国考/川考原卷 · 反复刷 · 错题自动重现</div></div>
     <div class="home-card" data-go="tasks"><div class="hc-logo">${IC.check || IC.clock}</div><div class="hc-name">任务清单</div><div class="hc-desc">每日任务 · 互监待办</div></div>
     <div class="home-card" data-go="drive"><div class="hc-logo hc-drive">☁️</div><div class="hc-name">云盘</div><div class="hc-desc">存取任意文件 · 发给好友</div></div>
@@ -219,6 +220,7 @@ function navHomeCard(g) {
   else if (g === 'tasks') openTasks();
   else if (g === 'quiz') openQuiz();
   else if (g === 'realq') openRealq();
+  else if (g === 'exam') openExam();
   else if (g === 'changkao') openChangkao();
   else if (g === 'drive') openDrive();
   else if (g === 'chat') openChat();

@@ -1,6 +1,6 @@
 // 网络优先：在线总是拿最新页面/样式/脚本，断网才用缓存兜底。
 // （避免旧的「缓存优先」导致更新后还显示旧样式）
-const CACHE = 'gongkao-v192';   // 后台加服务管理面板 + 模型探活
+const CACHE = 'gongkao-v193';   // 全国考情 + 成文重生成确认 + 分享/复制图片
 
 self.addEventListener('install', e => { self.skipWaiting(); });
 

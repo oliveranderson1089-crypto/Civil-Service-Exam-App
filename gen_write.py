@@ -36,14 +36,32 @@ def _con():
     return con
 
 
+def _err_text(err):
+    """(Response, code) → 人看得懂的一句话。
+
+    这些错误来自 HTTP 层，err[0] 是 flask 的 Response 而不是 dict——原来那句
+    `err[0] if isinstance(err[0], dict) else {}` 永远走 else，日志里只留下
+    「(<Response 79 bytes [200 OK]>, 400)」。素材断了 4 天没人看出来，
+    一半原因就是日志里根本读不到「这一天没有素材」这句话。
+    """
+    body = err[0] if isinstance(err, tuple) else err
+    d = None
+    try:
+        d = body.get_json(silent=True) if hasattr(body, "get_json") else body
+    except Exception:
+        pass
+    if isinstance(d, dict) and d.get("error"):
+        return str(d["error"])
+    return str(err)
+
+
 def gen(con, mode, date):
     """议论文一篇。"""
     t0 = time.time()
     with app.app_context():
         e, err = _write_gen(con, mode, date)
     if err:
-        body = err[0] if isinstance(err[0], dict) else {}
-        print("  ✗ %s %s：%s" % (mode, date, body.get("error", err)))
+        print("  ✗ %s %s：%s" % (mode, date, _err_text(err)))
         return False
     print("  ✓ %s %s《%s》%d 字 · 用了 %d 条素材 · %.0fs"
           % (mode, date, e["title"], e["words"], len(json.loads(e["used"])), time.time() - t0))
@@ -60,8 +78,7 @@ def gen_yy(con, kind, date):
             eid, err = _gen_yingyong(con, _pick_daily_yy(con, date),
                                      mode="yingyong-daily", date=date)
     if err:
-        body = err[0] if isinstance(err[0], dict) else {}
-        print("  ✗ 应用文-%s %s：%s" % (kind, date, body.get("error", err)))
+        print("  ✗ 应用文-%s %s：%s" % (kind, date, _err_text(err)))
         return False
     r = con.execute("SELECT title,topic,words FROM daily_essays WHERE id=?", (eid,)).fetchone()
     print("  ✓ 应用文-%s %s《%s》%s %d 字 · %.0fs"
@@ -134,6 +151,12 @@ def main():
         gen(con, "compose", today)
 
     if a.daily is not None:
+        # 先把缓存目录里的素材入库。定时器 08:40 跑到这儿时，08:00 生成的素材还只是
+        # 磁盘上一个 txt——入库原来只发生在有人打开网页（GET /api/write/days）的时候，
+        # 没人开就「这一天没有素材」。补齐那条路（--backfill）一直是先 import 的，
+        # 每天这条反而漏了。
+        with app.app_context():
+            _sucai_import(con)
         gen(con, "daily", day(a.daily))
 
     # 应用文和议论文各跑各的：一个失败不该拖垮另一个（定时器一次把四篇都跑了）

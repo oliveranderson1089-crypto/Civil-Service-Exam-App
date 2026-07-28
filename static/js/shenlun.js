@@ -317,9 +317,17 @@ function renderSlResult(r) {
       ${(p.hits || []).map(h => `<div class="slp-li hit">✓ ${esc(h)}</div>`).join('')}
       ${(p.partial || []).map(h => `<div class="slp-li part">— ${esc(h)}</div>`).join('')}
       ${(p.misses || []).map(h => `<div class="slp-li miss">✕ ${esc(h)}</div>`).join('')}
-      ${p.material ? `<div class="slp-mat"><b>对照材料：</b>${esc(p.material)}</div>` : ''}
+      ${p.material ? `<div class="slp-mat"><b>对照材料${
+        // 句号只有「按预标采分点评分」时才有 —— 现场提炼那条老路给不出原文位置。
+        // 句号是相对「给定资料N」那一则的，所以得把是哪一则一并标出来，否则对不上整份材料。
+        (p.sents || []).length
+          ? `（${(r.std_refs || []).length ? '给定资料' + r.std_refs.join('、') + ' ' : ''}第 ${p.sents.join('、')} 句）`
+          : ''}：</b>${esc(p.material)}</div>` : ''}
     </div>`;
-  }).join('') + ((r.advice || []).length ? `<div class="slr-advice"><div class="slt-sec">改进建议</div><ul>`
+  }).join('')
+    // 采分点是预先标好的：同一份答案再批一次分数不会飘，值得让用户看见
+    + (r.std_points ? `<div class="slr-wtag">📌 本题按<b>预标采分点</b>评分：标尺固定、结果可复现，"对照材料"是逐字锚定到原句的</div>` : '')
+    + ((r.advice || []).length ? `<div class="slr-advice"><div class="slt-sec">改进建议</div><ul>`
     + r.advice.map(a => `<li>${esc(a)}</li>`).join('') + `</ul></div>` : '');
 
   const rw = r.ref_words || slWords(r.reference);
@@ -345,11 +353,14 @@ function renderSlResult(r) {
   slrTab('points');
   window.scrollTo(0, 0);
 }
+// 选择器必须锁在 #view-slresult 内：范文详情页的 #esd-tabs 也顶着 .slr-tabs（为了蹭样式），
+// 且在 DOM 里排在前面。用裸的 .slr-tabs 会选到它——事件绑错元素，本页四个页签一点没反应。
 function slrTab(t) {
-  document.querySelectorAll('.slr-tabs .tk-tab').forEach(x => x.classList.toggle('active', x.dataset.slrt === t));
+  document.querySelectorAll('#view-slresult .slr-tabs .tk-tab')
+    .forEach(x => x.classList.toggle('active', x.dataset.slrt === t));
   ['points', 'ref', 'orig', 'mine'].forEach(k => $('#slr-' + k).classList.toggle('hidden', k !== t));
 }
-document.querySelector('.slr-tabs').addEventListener('click', e => {
+document.querySelector('#view-slresult .slr-tabs').addEventListener('click', e => {
   const b = e.target.closest('[data-slrt]'); if (b) slrTab(b.dataset.slrt);
 });
 $('#slr-ref').addEventListener('click', async e => {

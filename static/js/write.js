@@ -40,12 +40,17 @@ $('#wr-tabs').addEventListener('click', e => {
 // 「一键补齐往期」的按钮状态。**没什么可补时不能让它凭空消失** ——
 // 议论文和应用文现在都每天自动生成，undone 常年是 0，一藏这个入口就等于没了，
 // 人打开只会以为功能坏了。留在原地、置灰、把话说明白，才分得清「没得补」和「坏了」。
-function wrBfState(undone) {
+// gaps = 素材根本没更新的天数。以前只有 undone 一个数：素材断供时它是 0，
+// 按钮就说「往期都写齐了」，可列表其实停在断供前那天 —— 坏了却像一切正常。
+// 没素材补齐也无能为力（那是 08:00 素材那条链的事），所以不改按钮能不能点，
+// 只把话说准：写齐的是「有素材的那些天」，另有几天是根本没素材。
+function wrBfState(undone, gaps) {
   const b = $('#wr-backfill');
   b.classList.remove('hidden');
   b.classList.toggle('primary', !!undone);   // 有活干才用高亮主按钮
   b.disabled = !undone;
-  b.textContent = undone ? `⚡ 一键补齐往期（还差 ${undone} 天）` : '✅ 往期都写齐了';
+  b.textContent = undone ? `⚡ 一键补齐往期（还差 ${undone} 天）`
+    : (gaps ? `⚠️ 有素材的都写齐了（${gaps} 天没素材）` : '✅ 往期都写齐了');
 }
 
 async function loadWrDays() {
@@ -55,9 +60,15 @@ async function loadWrDays() {
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/write/days');
-    wrBfState(d.days.filter(x => !x.eid).length);
+    // 「还差几天」只数有素材、没写的；没素材那几天点了也白点（写不出来），别混进去
+    wrBfState(d.days.filter(x => !x.eid && !x.nosucai).length,
+              d.days.filter(x => x.nosucai).length);
     if (!d.days.length) { box.innerHTML = '<p class="empty">还没有素材，每天 08:00 自动更新～</p>'; return; }
-    box.innerHTML = d.days.map(x => x.eid ? `
+    box.innerHTML = d.days.map(x => x.nosucai ? `
+      <div class="wr-day nosucai">
+        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-m"><span class="wr-n">⚠️ 这天没素材，写不了（素材每天 08:00 自动更新）</span></div>
+      </div>` : x.eid ? `
       <div class="wr-day done" data-weid="${x.eid}">
         <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
         <div class="wr-day-m"><b>${esc(x.title || '')}</b>
@@ -104,6 +115,12 @@ $('#wr-days').addEventListener('click', async e => {
   if (g) {
     // 已生成的那天也留着按钮：force=1 就是「不满意，照今天的素材/题目重来一篇」（需求四）。
     const force = g.dataset.force === '1';
+    // 重新生成会**覆盖**已有的那篇，且要真跑一次 AI。按钮就贴在卡片右边，误点一下
+    // 原来那篇就没了 —— 所以先问一句。首次「写」不问：本来就没东西可覆盖。
+    const old = (g.closest('.wr-day').querySelector('b') || {}).textContent || '';
+    if (force && !await appConfirm(
+      `${old ? '「' + old + '」' : '这一篇'}会被重写覆盖，旧的找不回来，而且要重新跑一次 AI。确定重来？`,
+      { title: '重新生成', okText: '重新写' })) return;
     const label = g.textContent;
     g.disabled = true; g.textContent = force ? '重新生成中…' : '写作中…';
     try {

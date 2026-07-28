@@ -26,6 +26,7 @@ div.cp-bar @click
 #cp-taginput @keydown
 #cp-taginput @blur
 #cp-tags @click
+document @contextmenu
 #cp-imgfile @change
 div.composer @dragover
 div.composer @dragleave
@@ -202,6 +203,11 @@ document @fullscreenchange
 #news-list @click
 #news-wrap @click
 #gk-dates @click
+#ex-kinds @click
+#ex-regions @click
+#ex-q @input
+#ex-follow .onclick
+#ex-refresh .onclick
 #gw-q @input
 #gw-ask .onclick
 #gw-list @click
@@ -220,10 +226,14 @@ document @click
 #fr-mat @pointerover
 document @pointerup
 #fr-foot @click
+#fr-head @click
+#fr-foot @click
 #fd-recs .onclick
 #frr-list @click
 #fd-wrong .onclick
 #fdw-list @click
+#frd-head @click
+#frd-body @click
 #rq-body @click
 #rq-body @click
 #rq-opts @click
@@ -302,7 +312,7 @@ document @pointerup
 #slt-go .onclick
 #slg-a @input
 #slg-go .onclick
-#esd-tabs @click
+div.tk-tabs @click
 #slr-ref @click
 #ck-boards @click
 #ck-daily @click
@@ -354,6 +364,7 @@ document @click
 #view-drive @dragover
 #view-drive @dragleave
 #view-drive @drop
+document @paste
 #dv-newfolder .onclick
 #ch-tabs @click
 #ch-convos @click
@@ -369,6 +380,7 @@ document @click
 #chat-main @dragover
 #chat-main @dragleave
 #chat-main @drop
+document @paste
 #pd-cats @click
 #pd-q @input
 #pd-recite .onclick

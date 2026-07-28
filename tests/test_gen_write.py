@@ -224,3 +224,37 @@ def test_对齐接口不碰应用文(auth_client):
     eid = _seed(mode="yingyong-daily", date="2099-03-05")
     r = auth_client.post("/api/write/%d/align" % eid)
     assert r.status_code == 400
+
+
+def test_素材断供的日子要出现在每日成文列表里(auth_client, monkeypatch):
+    """素材断了 4 天（2026-07-25 起），列表只 SELECT 有素材的日期 —— 那几天直接
+       从界面上消失，最新一条还停在断供前，补齐按钮照旧写「往期都写齐了」。
+       坏了必须看得见：没素材的日子也要返回，带 nosucai=1。"""
+    import time as _t
+    import mods.sucai
+    # 接口开头会 _sucai_import 扫缓存目录；不掐断就把真机上的素材导进测试库了
+    monkeypatch.setattr(mods.sucai, "KAOGONG_CACHE", "/nonexistent-kaogong-cache")
+    db = sqlite3.connect(DB)
+    db.execute("DELETE FROM sucai_items")
+    today = _t.strftime("%Y-%m-%d")
+    old = _t.strftime("%Y-%m-%d", _t.localtime(_t.time() - 3 * 86400))
+    for kind in ("人物事例", "衔接表达"):
+        db.execute("INSERT INTO sucai_items(date,kind,topic,content) VALUES(?,?,?,?)",
+                   (old, kind, "创新", "占位素材"))
+    db.commit(); db.close()
+
+    days = auth_client.get("/api/write/days").get_json()["days"]
+    by = {d["date"]: d for d in days}
+    assert by[old]["n"] == 2 and not by[old].get("nosucai")
+    assert by[today].get("nosucai") == 1, "今天没素材，却没在列表里露面"
+    assert days[0]["date"] == today, "列表要按日期倒序，最新的在最上面"
+
+
+def test_错误信息不能打印成Response元组():
+    """_write_gen 返回的是 (flask Response, 400)。原来那句取 err[0] 当 dict，
+       日志里只留下「(<Response 79 bytes [200 OK]>, 400)」，
+       「这一天没有素材」这句关键的话一次都没露出来过。"""
+    from flask import jsonify
+    with gen_write.app.app_context():
+        err = (jsonify({"error": "这一天没有素材，写不了"}), 400)
+        assert gen_write._err_text(err) == "这一天没有素材，写不了"

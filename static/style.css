@@ -440,6 +440,41 @@ main{max-width:none;margin:0;padding:0;}
   -webkit-overflow-scrolling:touch;scrollbar-width:none;}
 .date-strip::-webkit-scrollbar{display:none;}
 .date-strip .chip{flex:0 0 auto;white-space:nowrap;}
+/* 全国考情：招考公告汇总 */
+#view-exam{max-width:820px;margin:0 auto;}
+.ex-bar{display:flex;gap:8px;align-items:center;margin:2px 0 10px;flex-wrap:wrap;}
+.ex-bar input{flex:1 1 200px;min-width:0;border:1.5px solid var(--line);border-radius:10px;
+  padding:8px 12px;font-size:14px;background:#fff;color:inherit;}
+/* 31 个省的胶囊一行放不下，横滑；换行会把筛选区撑成半屏，列表就看不见了 */
+.ex-chips{display:flex;gap:7px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.ex-chips::-webkit-scrollbar{display:none;}
+.ex-chips .chip{flex:0 0 auto;white-space:nowrap;cursor:pointer;}
+.ex-meta{font-size:12.5px;color:#9aa1ac;margin:0 0 10px;}
+.ex-card{background:#fff;border:1px solid #eef1f5;border-radius:12px;padding:13px 15px;
+  box-shadow:var(--shadow);}
+.ex-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px;}
+.ex-head .poly-badge{margin-bottom:0;}
+.ex-region{font-size:12.5px;font-weight:700;color:#4a5568;}
+.ex-num{font-size:12px;font-weight:600;color:#b23b2e;background:#fdf0ee;
+  border-radius:5px;padding:1px 7px;}
+/* 时效标：新的绿、旧的灰。只说「几天前发的」，不替用户判断还能不能报名 */
+.ex-age{margin-left:auto;font-size:12px;color:#9aa1ac;}
+.ex-age.new{color:#1e8449;font-weight:600;}
+.ex-age.old{color:#b9bfc9;}
+.ex-title{display:block;font-weight:700;font-size:15px;line-height:1.55;color:#1f2733;
+  text-decoration:none;}
+.ex-title:hover{color:var(--blue);text-decoration:underline;}
+.ex-foot{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:7px;
+  font-size:12.5px;color:#9aa1ac;}
+.ex-brief{color:#6b7280;}
+.ex-src{margin-left:auto;}
+.ex-pick{background:#fff;border:1px solid #eef1f5;border-radius:12px;padding:14px 16px;
+  box-shadow:var(--shadow);}
+.ex-pick-t{font-size:13px;color:#6b7280;margin-bottom:10px;}
+.ex-pick .ex-chips{flex-wrap:wrap;overflow:visible;}
+.ex-pick-b{display:flex;gap:8px;margin-top:6px;}
+.hc-exam{background:linear-gradient(135deg,#e8834a,#d1622a);color:#fff;}
 /* 概括句卡片 */
 .gk-card{background:#fff;border:1px solid #eef1f5;border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);}
 .gk-head{display:flex;align-items:center;gap:8px;margin-bottom:9px;}
@@ -1352,11 +1387,13 @@ body.dark .mat-item,body.dark .aih-item,body.dark .item,body.dark .cd-sec,
 body.dark .cs-overview,body.dark .cs-kq,body.dark .acct-sec,body.dark .rv-flash,
 body.dark .board-card,body.dark .feed-card,body.dark .composer,body.dark .bkb-gen,
 body.dark .poly-genbox,body.dark .pd-search,body.dark .qz-mat,body.dark .sr-item,
-body.dark .wq-item,body.dark .nb-card,body.dark .placeholder-box{
+body.dark .wq-item,body.dark .nb-card,body.dark .ex-card,body.dark .ex-pick,
+body.dark .placeholder-box{
   background:#1a2233;border-color:#2a3345;color:#cfd5e0;box-shadow:0 2px 10px rgba(0,0,0,.35);}
 body.dark .cd-body,body.dark .poly-reader,body.dark #viewer-reader{
   background:#1a2233;border-color:#2a3345;color:#d6dce8;}
 /* 文字层级 */
+body.dark .ex-title,body.dark .ex-region,
 body.dark .hc-name,body.dark .gk-topic,body.dark .poly-t,body.dark .rvf-title,
 body.dark .aih-it,body.dark .qz-q,body.dark .pd-term,body.dark .cd-title,
 body.dark .view-title,body.dark .mat-name,body.dark .item-word,body.dark .cd-han,
@@ -1477,6 +1514,8 @@ body.dark .yy-pill.out{background:#16261f;border-color:#2c5544;}
   border-radius:12px;background:#fff;margin-bottom:8px;}
 .wr-day.done{cursor:pointer;}
 .wr-day.done:hover{border-color:var(--blue);background:#f6fafe;}
+/* 素材没更新的日子：留在列表里但一眼看出是坏的，别让它冒充「不存在」 */
+.wr-day.nosucai{background:#fffaf0;border-style:dashed;border-color:#e6c88a;}
 .wr-day-d{flex:0 0 auto;font-size:13px;color:var(--muted);font-weight:600;}
 .wr-day-m{flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .wr-day-m b{font-size:14.5px;}
@@ -1544,6 +1583,7 @@ body.dark .wd-mb.fix{background:#16301f;color:#68c48c;}
 body.dark .wd-mb.warn,body.dark .wd-ed-warn{background:#2a2312;color:#d8b25f;}
 body.dark .wd-ed-row input,body.dark .wd-ed-row textarea{background:#141b29;}
 body.dark .wr-day{background:#141b29;}
+body.dark .wr-day.nosucai{background:#2a2214;border-color:#6b552a;}
 body.dark .wr-day.done:hover{background:#1a2434;}
 body.dark .wr-tag{background:#1c2a45;color:#7fb0ff;}
 body.dark .wd-note{background:#2a2312;color:#d8b25f;}
@@ -1597,7 +1637,7 @@ body.dark .sc-day,body.dark .rv-meta-row,body.dark .empty,body.dark .cd-meta,
 body.dark .item-sub,body.dark .gk-head .cs-date{color:#9aa4b2 !important;}
 /* 输入框/文本域 暗色 */
 body.dark input,body.dark textarea,body.dark select,body.dark .ad-input,
-body.dark #ai-text,body.dark .pd-search input,body.dark #search-input{
+body.dark #ai-text,body.dark .pd-search input,body.dark #search-input,body.dark .ex-bar input{
   background:#1b2231 !important;color:#e2e7ef !important;border-color:#333d52 !important;}
 body.dark .home-search{background:#1b2231 !important;color:#9aa4b2;}
 /* 弹窗/底部面板 暗色 */
@@ -2876,6 +2916,14 @@ body.dark .fr-sec.fr-recap{background:#182234;}
 .fr-step span{padding:3px 11px;border-radius:20px;background:#eef1f5;color:var(--muted);}
 .fr-step span.on{background:var(--blue);color:#fff;font-weight:600;}
 .fr-step span.done{background:#e6f4ec;color:#1e8449;}
+/* 走到过的步骤可以点回去 —— 得让它看起来像能点的（光标 + 悬停反馈），
+   不然没人会想到那个小胶囊是个按钮 */
+.fr-step span.fr-back{cursor:pointer;}
+.fr-step span.fr-back:hover{background:#cfe6d8;box-shadow:0 0 0 1px #1e8449 inset;}
+/* 批改结果的页签：沿用 .tk-tabs 那套，只是数量多、窄屏放不下要能横滑 */
+.fr-tabs{margin:14px 0 12px;overflow-x:auto;}
+.fr-tabs .tk-tab{flex:0 0 auto;white-space:nowrap;padding-left:14px;padding-right:14px;}
+.fr-legend{margin-left:8px;font-style:normal;font-size:12px;font-weight:400;color:var(--muted);}
 .fr-stem{font-size:15px;font-weight:600;line-height:1.7;}
 .fr-meta{margin-top:5px;font-size:12.3px;color:var(--muted);}
 .fr-mat{margin:14px 0;padding:14px 16px;border:1px solid var(--line);border-radius:13px;background:var(--card);
