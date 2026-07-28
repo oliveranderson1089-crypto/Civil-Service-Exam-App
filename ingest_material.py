@@ -76,6 +76,12 @@ _MAT_HEAD = re.compile(
     r"|^[\s　]*(?:[（(]?\s*[一二三四五六七八九十\d]+\s*[）)、.．]\s*)?"
     r"根据(?:下|上|本|该)(?:表|图|图表)[^\n]{0,12}?回答[^\n]{0,20}$")
 _MAT_HEAD_WEAK = re.compile(r"^[\s　]*[图表]\s*\d+[\s　]")
+# 材料头**自己写明了管哪几道题**：「根据下表回答116～120题」「回答第111—115题」。
+# 有它就以它为准，别再去猜边界 —— 老卷子（2001~2008 国考）的材料是一张大表格，
+# 表格里每一行都以数字打头（「5.4」「0.9」），_Q_HEAD 会把它们当成题号，
+# 于是材料正文在第一行数据处就被截断、归属也落到一堆根本不存在的题号上。
+_HEAD_RANGE = re.compile(r"(?:回答|完成)[\s　]*第?[\s　]*(\d{1,3})[\s　]*"
+                         r"[-–—~～、,，至到][\s　]*第?[\s　]*(\d{1,3})[\s　]*题")
 _MIN_MAT = 20          # 太短的不算材料（多半是个孤零零的小标题）
 # 材料正文到这个长度就认为「自成一体」，没有表格图也能做题（文字型资料分析）。
 # 300 字是看着分布定的：<300 字的基本是图表型材料的那句「注：…」，数还在图里。
@@ -249,26 +255,119 @@ def _crop_region(pdf, flat, i0, i1, tmp, max_imgs=3):
     return out
 
 
-def split_materials(text, figs_by_para):
+def _line_modules(lines):
+    """每一行落在哪个模块里 + 分节标题所在的行号。一趟扫完，两样都要 ——
+       secs 给「材料别越过分节」用，line_mod 给「材料只管本模块」用，
+       别各扫一遍 _MOD_HEAD。认不出分节的卷子 line_mod 全是空串。
+
+    材料头**长在哪个模块里，就只能管那个模块的题**。老卷子（2008/2009 国考）的
+    资料分析材料是一张大表，表格行「2.5」「3.2」会被 _Q_HEAD 认成题号 2、3 ——
+    这些题号在卷子上真实存在（是言语理解的第 2、3 题），光靠「题号得存在」拦不住，
+    得靠「这份材料长在资料分析节里，管不到言语理解」。
+    """
+    out, secs, cur = [], [], ""
+    for i, ln in enumerate(lines):
+        m = R._MOD_HEAD.match(ln)
+        if m:
+            name = next((g for g in m.groups() if g), "") or cur
+            cur = "言语理解与表达" if name == "言语理解" else name
+            secs.append(i)
+        out.append(cur)
+    return out, secs
+
+
+def _is_head(ln, head_re):
+    """这行是不是材料头：形态对得上，且不是**披着材料头外衣的题干**。
+
+    「52、根据所给材料，以下哪一项…」这种题干会误配 _MAT_HEAD（「根据所给材料」那条），
+    当成材料头就把它自己的四个选项收成了材料正文。靠「它没写题号范围」把它认出来 ——
+    真材料头要么不以阿拉伯题号打头（「一、根据…」用汉字），要么写了范围
+    （「116、根据下表回答117~120题」）。只用「不以题号打头」一刀切，会连带把
+    以阿拉伯数字编号、又确实写了范围的材料头也误杀。
+    """
+    return bool(head_re.match(ln)) and (
+        not R._Q_HEAD.match(ln) or bool(_HEAD_RANGE.search(ln)))
+
+
+def _leading_run(qs):
+    """从第一道题起、题号一路往上涨的那一段；断档就停。
+
+    一份材料管的永远是**卷面上连着的几道题**（116~120）。题号一旦倒退或跳一大截，
+    说明已经越过这份材料的地界，后面那些是别的题。留 2 的余量是给
+    「中间那道题的题号行没被认出来」留的，跳得更远就不再是同一组了。
+    """
+    out = [qs[0]]
+    for i, seq in qs[1:]:
+        if seq <= out[-1][1] or seq - out[-1][1] > 2:
+            break
+        out.append((i, seq))
+    return out
+
+
+def split_materials(text, figs_by_para, valid_seqs=None, seq_module=None):
     """切出 [(材料正文, 材料图的段落集合, 归它管的题号集合)]。
 
-    归属规则：一个材料头之后、下一个材料头之前的所有题号都归它。
     材料正文 = 材料头到**第一个题号**之间的文字；那之后是题，不是材料。
+    难的是「归它管的题号」到哪儿为止 —— 四道闸依次卡：
+
+      ① 材料头自己写了范围（「根据下表回答116～120题」）就以它为准，别猜；
+      ② 只认**这份卷子上真实存在的题号**。老卷子的材料是一张大表格，每行数据
+         都以数字打头（「5.4」→ 题号 5），不卡这一条，材料正文会在第一行数据处
+         被截断，归属还会落到一堆不存在的题上；
+      ③ 不许越过**模块分节标题**。原先一份材料一直管到下一个材料头为止 ——
+         对背靠背排列的资料分析没问题，可言语理解的文章阅读后面跟着的是
+         数量关系、判断推理的独立题，于是 2023 国考副省级那篇「降雨来源于云层」
+         被挂到了 56~115 共 60 道题上（连同材料里那三张 -40℃/-15℃/-2℃ 的小图），
+         做定义判断时先读一篇讲云层细菌的文章；
+      ④ 题号得是**连续的一段**、且**同属一个模块**。一份给定资料横跨两个模块，
+         在行测卷面上不存在。
+
+    valid_seqs / seq_module 由调用方从 real_raw 查好传进来（哪些题号真的存在、
+    各属哪个模块）。传空就退化成「只有 ①③ 两道闸」，不会报错。
     """
     lines = text.split("\n")
-    heads = [i for i, ln in enumerate(lines) if _MAT_HEAD.match(ln)]
+    # 题号行**基本不是材料头**（详见 _is_head）：「52、根据所给材料，以下哪一项…」
+    # 会误配 _MAT_HEAD，当成材料头就把它自己的四个选项收成材料正文（实测 2019 国考
+    # 省级中招 4 处，存出来是「A、实时成像 B、检测大脑氧气含量 …」）。
+    heads = [i for i, ln in enumerate(lines) if _is_head(ln, _MAT_HEAD)]
     if not heads:                       # 本卷没有明确材料头，才退到「图1／表1」兜底
-        heads = [i for i, ln in enumerate(lines) if _MAT_HEAD_WEAK.match(ln)]
+        heads = [i for i, ln in enumerate(lines) if _is_head(ln, _MAT_HEAD_WEAK)]
     if not heads:
         return []
+    # 模块分节标题（「第二部分　数量关系」「一、判断推理」「资料分析」独占一行）+
+    # 每行落在哪个模块。复用 realbank 那份 _MOD_HEAD —— real_raw.module 就是它切
+    # 出来的，另写一个的话两边对「这儿是不是换模块了」的判断会不一致。
+    line_mod, secs = _line_modules(lines)
     qmark = [(i, int(m.group(1))) for i, ln in enumerate(lines)
-             for m in [R._Q_HEAD.match(ln)] if m]
+             for m in [R._Q_HEAD.match(ln)] if m
+             if valid_seqs is None or int(m.group(1)) in valid_seqs]
     out = []
     for k, start in enumerate(heads):
         end = heads[k + 1] if k + 1 < len(heads) else len(lines)
+        nxt_sec = next((i for i in secs if i > start), None)
+        if nxt_sec is not None:
+            end = min(end, nxt_sec)
         qs = [(i, seq) for i, seq in qmark if start < i < end]
+        rng = _HEAD_RANGE.search(lines[start])
+        if rng:
+            lo, hi = sorted((int(rng.group(1)), int(rng.group(2))))
+            # 写明了范围就只认范围内的题；**不受 end 约束** —— 老卷子的材料头
+            # 和它管的那几道题之间隔着整张表格，中间还可能夹着别的材料头。
+            qs = [(i, seq) for i, seq in qmark if i > start and lo <= seq <= hi]
         if not qs:
             continue
+        # 材料只管**它自己所在模块**的题；认不出分节的卷子退而求其次，
+        # 用「第一道题是哪个模块，就都得是哪个模块」把一份材料锁在一个模块里。
+        if seq_module:
+            m0 = line_mod[start] or seq_module.get(qs[0][1], "")
+            qs = [(i, seq) for i, seq in qs if seq_module.get(seq, "") == m0]
+            if not qs:
+                continue
+        # 材料头**没写范围**时才用连续性兜边界（防表格行漏进来）。写了范围的，
+        # [lo,hi] 就是权威 —— 再套 _leading_run，一旦范围内有两道题没解析出来
+        # （老扫描卷常见），题号断档 >2 会把声明过的尾巴（如 115~120）整段丢掉。
+        if not rng:
+            qs = _leading_run(qs)
         body_end = qs[0][0]                       # 第一个题号之前都是材料
         body = R.norm(" ".join(lines[start + 1:body_end]))
         paras = set(range(start, body_end + 1))   # 材料图就在这个段落区间里
@@ -276,6 +375,87 @@ def split_materials(text, figs_by_para):
             continue                              # 既没正文又没图，不是材料
         out.append((body[:4000], paras, {seq for _i, seq in qs}))
     return out
+
+
+def word_read(path, ext, tmp):
+    """word 版卷子读一次：正文行 + 每段挂了哪些图。"""
+    if ext == ".doc":
+        path = R.doc_to_docx(path, tmp)
+    text = R.docx_text(path)
+    figs_by_para = {}
+    for para, blob, ext2 in R.docx_figures(path):
+        figs_by_para.setdefault(para, []).append((blob, ext2))
+    return text, text.split("\n"), figs_by_para
+
+
+def word_materials(text, lines, figs_by_para, seq2qid, seq_module, zl_seqs):
+    """word 版这份卷子的 [(材料正文, 材料图, 归它管的题号)]。
+
+    两条路：有材料头的走 split_materials，剩下**没分到材料的资料分析题**再走
+    gap_materials 兜一次。抽成函数是因为 --reset 要用同一套口径算出「修好之后
+    这张表该长什么样」，两边各写一份的话，清理和重建会按不同规则跑。
+    """
+    mats = [(body,
+             [x for para in sorted(paras) for x in figs_by_para.get(para, [])],
+             seqs)
+            for body, paras, seqs in split_materials(
+                text, figs_by_para, set(seq2qid), seq_module)]
+    # 材料头认不出来的资料分析题，退到「靠题与题之间的空隙找材料」。
+    # **按题补，不是整卷二选一**：原先只有「一个材料头都没有」才走兜底，
+    # 可现代卷子（2020/2022 国考）常常是判断推理里有个「（一）」被当成材料头、
+    # 而资料分析那四份材料一个头都没写 —— 有头的那份把兜底整个挡掉，
+    # 那 20 道资料分析题于是分到了判断推理那份材料。
+    todo = zl_seqs - {s for _b, _f, sq in mats for s in sq}
+    if todo:
+        qmark = [(i, int(m.group(1))) for i, ln in enumerate(lines)
+                 for m in [R._Q_HEAD.match(ln)] if m]
+        mats += gap_materials(lines, figs_by_para, qmark, todo)
+    return mats
+
+
+def reset_figs(con, papers, tmp):
+    """把 word 版留下的**过期材料图**删掉，为 main() 重建腾地方。返回删了多少行。
+
+    为什么不能只 `DELETE WHERE kind='mat'`：kind 这列是后加的，更早那几轮
+    ingest_material 插的行 kind 是空的，和 ingest_figs 按段落邻近挂的图混在一起
+    分不出来 —— 而串题最狠的正是那批（2023 国考副省级那三张 -40℃/-15℃/-2℃
+    的小图，跟着「降雨来源于云层」那篇材料挂到了 58 道题上）。
+
+    所以按**内容**判、只保一样东西：**ingest_figs 按题邻近挂的图**（图形推理等，
+    本脚本不重建它们，删了就没人补）。材料图一律删掉、交给 main() 随后按修好的
+    归属重新挂 —— 「谁先写谁赢、正文对不上就不挂图」这套归属只有 main() 一处说了算，
+    reset 不再自己算一份材料归属（算重了就会把败者卷的表格图留成串图）。
+    删除面 = 来自某份 word 卷、又不是 ingest_figs 那份的图；PDF 整页裁的图 sha
+    不在 word 图里，不会被误伤。
+    """
+    from ingest_figs import paper_figs                      # 只有 --reset 用得上
+    good, word_shas = set(), set()
+    for p in papers:
+        if p["ext"] not in (".docx", ".doc"):
+            continue
+        path = find_path(p["stored_name"])
+        if not path:
+            continue
+        seq2qid = {r["seq"]: r["qid"] for r in con.execute(
+            "SELECT seq, qid FROM real_raw WHERE paper_id=? AND qid IS NOT NULL", (p["id"],))}
+        # paper_figs 自己把 .doc 转好 docx 再抠图 —— 别再单独 word_read 一趟，
+        # 那样 27 份 .doc 每份要多跑一次 libreoffice。它返回的 {seq: [(sha,...)]}
+        # 覆盖了这份卷子所有 ≥400 的嵌入图，既是「谁不能删」的白名单（按题邻近那份），
+        # 又凑齐了「哪些 sha 是 word 来的」这张删除底片（<400 的图库里本就没有）。
+        try:
+            got, _dropped = paper_figs(path, tmp)
+        except Exception:
+            continue
+        for seq, items in got.items():
+            qid = seq2qid.get(seq)
+            for sha, _e, _b in items:
+                word_shas.add(sha)
+                if qid:
+                    good.add((qid, sha))
+    drop = [(r["qid"], r["sha"]) for r in con.execute("SELECT qid, sha FROM real_figs")
+            if (r["qid"], r["sha"]) not in good and r["sha"] in word_shas]
+    con.executemany("DELETE FROM real_figs WHERE qid=? AND sha=?", drop)
+    return len(drop)
 
 
 def _to_png(blob, tmp):
@@ -298,6 +478,9 @@ def _to_png(blob, tmp):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--plan", action="store_true")
+    ap.add_argument("--reset", action="store_true",
+                    help="先清空已挂的材料正文与过期配图再重建（改了归属规则之后要跑这个："
+                         "平时是「只填空着的」，不清的话旧规则串错的材料一条都不会被覆盖）")
     a = ap.parse_args()
 
     con = sqlite3.connect(DB, timeout=60)
@@ -319,6 +502,13 @@ def main():
         "ORDER BY p.year DESC").fetchall()
     print("扫 %d 份题目卷（word 版抠嵌入图，PDF 版按坐标裁页）" % len(papers))
 
+    if a.reset and not a.plan:
+        gone = reset_figs(con, papers, tmp)
+        cleared = con.execute("UPDATE real_questions SET material='' "
+                              "WHERE COALESCE(material,'')<>''").rowcount
+        con.commit()
+        print("--reset：清空 %d 道题的材料正文，删掉 %d 张过期配图" % (cleared, gone))
+
     n_mat = n_q = 0
     seen_sha = set()          # 按**内容**计数：同一张表挂给材料下的每道题，不该算成很多张
     for p in papers:
@@ -327,33 +517,21 @@ def main():
             continue
         seq2qid = {r["seq"]: r["qid"] for r in con.execute(
             "SELECT seq, qid FROM real_raw WHERE paper_id=? AND qid IS NOT NULL", (p["id"],))}
+        # 这份卷子上每个题号属于哪个模块。word 版和 PDF 版都要用：
+        # 前者拿它卡「材料不跨模块」，后者拿它认「这份材料归不归资料分析管」。
+        seq_module = {r["seq"]: (r["module"] or "") for r in con.execute(
+            "SELECT rr.seq, q.module FROM real_raw rr "
+            "LEFT JOIN real_questions q ON q.id=rr.qid WHERE rr.paper_id=?", (p["id"],))}
         try:
             if p["ext"] == ".pdf":
                 # PDF 版的表是**印在页面上**的，没有嵌入图片可取，只能按坐标裁页
-                seq_module = {r["seq"]: (r["module"] or "") for r in con.execute(
-                    "SELECT rr.seq, q.module FROM real_raw rr "
-                    "LEFT JOIN real_questions q ON q.id=rr.qid WHERE rr.paper_id=?", (p["id"],))}
                 mats = pdf_materials(path, seq_module, tmp)
             else:
-                if p["ext"] == ".doc":
-                    path = R.doc_to_docx(path, tmp)
-                text = R.docx_text(path)
-                figs_by_para = {}
-                for para, blob, ext in R.docx_figures(path):
-                    figs_by_para.setdefault(para, []).append((blob, ext))
-                lines = text.split("\n")
-                mats = [(body,
-                         [x for para in sorted(paras) for x in figs_by_para.get(para, [])],
-                         seqs)
-                        for body, paras, seqs in split_materials(text, figs_by_para)]
-                if not mats:
-                    # 本卷一个文字材料头都没有 —— 退到「靠题与题之间的空隙找材料」
-                    qmark = [(i, int(m.group(1))) for i, ln in enumerate(lines)
-                             for m in [R._Q_HEAD.match(ln)] if m]
-                    zl = {r["seq"] for r in con.execute(
-                        "SELECT rr.seq FROM real_raw rr JOIN real_questions q ON q.id=rr.qid "
-                        "WHERE rr.paper_id=? AND q.module='资料分析'", (p["id"],))}
-                    mats = gap_materials(lines, figs_by_para, qmark, zl)
+                text, lines, figs_by_para = word_read(path, p["ext"], tmp)
+                zl = {s for s, m in seq_module.items()
+                      if m == "资料分析" and s in seq2qid}
+                mats = word_materials(text, lines, figs_by_para,
+                                      seq2qid, seq_module, zl)
         except Exception:
             continue
         if not mats:
