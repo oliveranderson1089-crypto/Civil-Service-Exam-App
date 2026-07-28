@@ -16,7 +16,7 @@ from core import DB, bg_new, bg_set, get_db, log, uid
 from mods.ai import _ai_call_or_error
 from mods.align import align, quick_report
 from mods.sucai import _sucai_import
-from mods.write import _e_row, _used_hit, _write_gen
+from mods.write import WRITE_MAX, _e_row, _used_hit, _write_gen
 
 bp = Blueprint("gongwen", __name__)
 
@@ -234,7 +234,7 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
             [{"role": "system", "content": "你是申论阅卷组的应用文范文作者。格式是第一位的，"
                                            "语气要合身份。严格输出 JSON。"},
              {"role": "user", "content": p}],
-            temperature=0.5, max_tokens=3500, timeout=300, json_mode=True)
+            temperature=0.5, max_tokens=3500, timeout=300, json_mode=True, tier="pro")
         if err:
             return None, err
         try:
@@ -348,7 +348,7 @@ def _gen_yy_compose(db, date):
             [{"role": "system", "content": "你是申论阅卷组的应用文范文作者，也擅长命制综合应用能力大题。"
                                            "格式是第一位的，语气要合身份。严格输出 JSON。"},
              {"role": "user", "content": p}],
-            temperature=0.6, max_tokens=4000, timeout=300, json_mode=True)
+            temperature=0.6, max_tokens=4000, timeout=300, json_mode=True, tier="pro")
         if err:
             return None, err
         try:
@@ -775,7 +775,7 @@ def _align_one(db, eid):
     if (r["mode"] or "").startswith("yingyong"):
         return None, (jsonify({"error": "应用文没有分论点，不用对齐"}), 400)
     e = _e_row(r)
-    content, outline, rep = align(e["content"], e["outline"])
+    content, outline, rep = align(e["content"], e["outline"], wmax=WRITE_MAX)
     db.execute("UPDATE daily_essays SET content=?,outline=?,words=?,used=?,align=? WHERE id=?",
                (content, json.dumps(outline, ensure_ascii=False),
                 len(re.sub(r"\s", "", content)), _recheck(r, content)[0],
@@ -846,7 +846,7 @@ def gongwen_ai():
               '"example":"一个用上这些规范表述的完整示范句（30~60字）"}\n只输出 JSON。' % text[:200])
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论应用文（公文写作）阅卷老师，熟悉各文种的规范用语。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=500, json_mode=True)
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=500, json_mode=True, tier="pro")
     if err:
         return err
     try:

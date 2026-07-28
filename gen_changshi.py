@@ -10,6 +10,7 @@
 """
 import re, os, sys, json, sqlite3, time, html, urllib.request
 from datetime import date
+import aiclient
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -18,26 +19,19 @@ os.environ.setdefault("NO_PROXY", "*")
 UA = {"User-Agent": "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 Chrome/120 Mobile"}
 
 CFG = json.load(open(CFG_PATH, encoding="utf-8")) if os.path.exists(CFG_PATH) else {}
-AI_BASE = (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/")
-AI_MODEL = CFG.get("ai_model") or "deepseek-chat"
-AI_KEY = CFG.get("ai_key") or os.environ.get("GONGKAO_AI_KEY", "")
-AI_URL = AI_BASE if AI_BASE.endswith("/chat/completions") else (
-    AI_BASE + "/chat/completions" if AI_BASE.endswith("/v1") else AI_BASE + "/v1/chat/completions")
+# 模型档位：fast —— 常识条目：结构化输出，flash 够用
+# 真实模型名不写在这儿：aiclient 负责 档位→模型名 的映射，官方改名时只动 config.json。
+TIER = "fast"
+_AI = aiclient.conf(TIER, CFG)
+AI_BASE, AI_URL, AI_MODEL, AI_KEY = _AI["base"], _AI["url"], _AI["model"], _AI["key"]
 
 META = json.load(open(os.path.join(BASE, "changshi_meta.json"), encoding="utf-8"))
 TODAY = date.today().isoformat()
 
 
 def ai(messages, max_tokens=3000, json_mode=True, temperature=0.4):
-    payload = {"model": AI_MODEL, "temperature": temperature, "max_tokens": max_tokens,
-               "messages": messages}
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
-                                 headers={"Authorization": "Bearer " + AI_KEY, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=240) as resp:
-        j = json.loads(resp.read().decode("utf-8"))
-    return j["choices"][0]["message"]["content"]
+    return aiclient.chat(messages, tier=TIER, temperature=temperature,
+                         max_tokens=max_tokens, timeout=240, json_mode=json_mode, cfg=CFG)
 
 
 def save_items(con, board, topic, items, source="ai"):

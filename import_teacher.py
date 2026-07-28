@@ -7,7 +7,9 @@
 写入 changkao_items(board='成语'/'实词')，并把考频回写 idiom_freq，供成语词语库按考频排序。
 用法: python3 import_teacher.py [--dry]
 """
-import os, re, sys, json, difflib, sqlite3, subprocess, tempfile, shutil, urllib.request
+import os, re, sys, json, difflib, sqlite3, subprocess, tempfile, shutil
+
+import aiclient
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -192,20 +194,13 @@ def parse_cida(path):
 
 
 def _ai(messages, max_tokens=4000):
-    cfg_path = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
-    cfg = json.load(open(cfg_path, encoding="utf-8"))
-    base = (cfg.get("ai_base") or "https://api.deepseek.com").rstrip("/")
-    url = base if base.endswith("/chat/completions") else (
-        base + "/chat/completions" if base.endswith("/v1") else base + "/v1/chat/completions")
+    """档位 fast：从教材里抽实词搭配，是结构化提取不是创作，flash 够用。
+
+    模型名交给 aiclient 解析——官方改名时这儿不用动。
+    """
     os.environ.setdefault("NO_PROXY", "*")
-    payload = {"model": cfg.get("ai_model") or "deepseek-chat", "temperature": 0.1,
-               "max_tokens": max_tokens, "messages": messages,
-               "response_format": {"type": "json_object"}}
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
-                                 headers={"Authorization": "Bearer " + cfg["ai_key"],
-                                          "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=300) as resp:
-        return json.loads(json.loads(resp.read().decode("utf-8"))["choices"][0]["message"]["content"])
+    return json.loads(aiclient.chat(messages, tier="fast", temperature=0.1,
+                                    max_tokens=max_tokens, timeout=300, json_mode=True))
 
 
 def ai_fix(items, con):

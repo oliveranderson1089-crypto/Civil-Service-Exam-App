@@ -1,6 +1,6 @@
 // 网络优先：在线总是拿最新页面/样式/脚本，断网才用缓存兜底。
 // （避免旧的「缓存优先」导致更新后还显示旧样式）
-const CACHE = 'gongkao-v191';   // 前端合并成一个 bundle + gzip：清掉旧的 56 个逐个脚本缓存
+const CACHE = 'gongkao-v192';   // 后台加服务管理面板 + 模型探活
 
 self.addEventListener('install', e => { self.skipWaiting(); });
 

@@ -6,7 +6,8 @@
   python3 gen_theory.py seed 毛泽东思想    # 只生成某板块
 写入 theory_items(UNIQUE(board,title))，幂等去重。
 """
-import os, sys, json, sqlite3, time, urllib.request
+import os, sys, json, sqlite3, time
+import aiclient
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -14,11 +15,11 @@ CFG_PATH = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 os.environ.setdefault("NO_PROXY", "*")
 
 CFG = json.load(open(CFG_PATH, encoding="utf-8")) if os.path.exists(CFG_PATH) else {}
-AI_BASE = (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/")
-AI_MODEL = CFG.get("ai_model") or "deepseek-chat"
-AI_KEY = CFG.get("ai_key") or os.environ.get("GONGKAO_AI_KEY", "")
-AI_URL = AI_BASE if AI_BASE.endswith("/chat/completions") else (
-    AI_BASE + "/chat/completions" if AI_BASE.endswith("/v1") else AI_BASE + "/v1/chat/completions")
+# 模型档位：fast —— 知识点条目：结构化输出，flash 够用
+# 真实模型名不写在这儿：aiclient 负责 档位→模型名 的映射，官方改名时只动 config.json。
+TIER = "fast"
+_AI = aiclient.conf(TIER, CFG)
+AI_BASE, AI_URL, AI_MODEL, AI_KEY = _AI["base"], _AI["url"], _AI["model"], _AI["key"]
 
 BOARDS = {
     "马克思主义基本原理": [
@@ -46,17 +47,14 @@ SYS = "你是公务员考试政治理论教研老师，只讲考点，结论准�
 
 
 def ai(messages, max_tokens=4000, temperature=0.3, retry=2):
-    payload = {"model": AI_MODEL, "temperature": temperature, "max_tokens": max_tokens,
-               "messages": messages, "response_format": {"type": "json_object"}}
+    # retries=0：aiclient 自己也会重试网络错误，这儿的 retry 循环还要兜 JSON 截断，
+    # 两层都放开的话实际次数会翻倍，长任务能拖成半小时。
     last = None
     for i in range(retry + 1):
         try:
-            req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
-                                         headers={"Authorization": "Bearer " + AI_KEY,
-                                                  "Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                j = json.loads(resp.read().decode("utf-8"))
-            return json.loads(j["choices"][0]["message"]["content"])
+            return json.loads(aiclient.chat(
+                messages, tier=TIER, temperature=temperature, max_tokens=max_tokens,
+                timeout=300, json_mode=True, cfg=CFG, retries=0))
         except Exception as e:
             last = e
             time.sleep(3 + 3 * i)

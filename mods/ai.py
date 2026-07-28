@@ -12,52 +12,38 @@ _ai_call_or_error 原先躺在「小记」区段中间（L3201），位置本身
 import base64
 import io
 import json
-import os
 import time
 import urllib.error
 import urllib.request
 
-from flask import jsonify
-
+import aiclient
 from core import CFG, log
 
 
 def _ai_conf():
-    return {
-        "base": (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/"),
-        "model": CFG.get("ai_model") or "deepseek-chat",
-        "key": CFG.get("ai_key") or os.environ.get("GONGKAO_AI_KEY", ""),
-    }
+    """模型名的解析规则在 aiclient 里（别名/下线名纠正），这儿只负责把内存 CFG 递过去。
+
+    必须传 CFG 而不是让 aiclient 自己读盘：后台改完 AI 设置是先改内存 CFG 再存盘，
+    并发下盘上的可能还是旧值。
+    """
+    fast = aiclient.conf("fast", CFG)
+    return {"base": fast["base"], "model": fast["model"],
+            "pro": aiclient.conf("pro", CFG)["model"], "key": fast["key"]}
 
 
 def ai_configured():
-    return bool(_ai_conf()["key"])
+    return aiclient.configured(CFG)
 
 
-def ai_chat(messages, temperature=0.4, max_tokens=1600, timeout=120, json_mode=False):
-    """调用 OpenAI 兼容的对话接口（默认 DeepSeek），返回回复文本。"""
-    conf = _ai_conf()
-    if not conf["key"]:
-        raise RuntimeError("AI 未配置，请管理员在「后台 → AI 设置」填写 API Key")
-    b = conf["base"]
-    if b.endswith("/chat/completions"):
-        url = b
-    elif b.endswith("/v1"):
-        url = b + "/chat/completions"
-    else:
-        url = b + "/v1/chat/completions"
-    payload = {"model": conf["model"], "messages": messages,
-               "temperature": temperature, "max_tokens": max_tokens, "stream": False}
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=body, method="POST", headers={
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + conf["key"],
-    })
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        d = json.loads(r.read().decode("utf-8"))
-    return d["choices"][0]["message"]["content"].strip()
+def ai_chat(messages, temperature=0.4, max_tokens=1600, timeout=120, json_mode=False, tier="fast"):
+    """调用 OpenAI 兼容的对话接口（默认 DeepSeek），返回回复文本。
+
+    tier="fast" 用常规模型（flash，提取/解读/查询够用）；
+    tier="pro" 用旗舰模型（创作/批改/命题这类质量敏感任务）。
+    档位→真实模型名的映射、以及官方改名时的自动纠正，都在 aiclient.py。"""
+    return aiclient.chat(messages, tier=tier, temperature=temperature,
+                         max_tokens=max_tokens, timeout=timeout,
+                         json_mode=json_mode, cfg=CFG)
 
 
 # ---------------------------------------------------------------- 视觉模型（智谱 GLM-4.6V，OpenAI 兼容）
@@ -146,24 +132,18 @@ def vision_ocr(path):
 
 
 def _ai_call_or_error(messages, **kw):
-    """统一封装：调用 AI，出错时返回 (None, (json, code))。"""
+    """统一封装：调用 AI，出错时返回 (None, (dict, code))。
+
+    错误分支别用 jsonify：dailytest 等处在线程池里调它，线程内没有 Flask
+    application context，jsonify 会直接抛 "Working outside of application context"，
+    把上游错误变成 500 崩溃。普通 dict 元组由视图 return 时自动序列化，线程里也只是数据。
+    """
     try:
         return ai_chat(messages, **kw), None
     except urllib.error.HTTPError as e:
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8", "ignore")[:300]
-        except Exception:
-            log.debug("读 HTTP 错误详情失败", exc_info=True)
-        msg = "AI 服务返回错误 %d" % e.code
-        if e.code == 401:
-            msg = "API Key 无效或未授权，请在后台重新填写"
-        elif e.code == 402:
-            msg = "账户余额不足，请到 DeepSeek 充值"
-        elif e.code == 429:
-            msg = "请求过于频繁，请稍后再试"
-        return None, (jsonify({"error": msg, "detail": detail}), 502)
-    except urllib.error.URLError as e:
-        return None, (jsonify({"error": "连不上 AI 服务：" + str(e.reason)}), 502)
+        # detail 由 aiclient 读好挂在 gk_detail 上：HTTPError 的 body 只能读一次，
+        # 它已经读过（要判断是不是模型名失效），这儿再 read() 只会拿到空串。
+        return None, ({"error": aiclient.error_message(e),
+                       "detail": getattr(e, "gk_detail", "")[:300]}, 502)
     except Exception as e:
-        return None, (jsonify({"error": "AI 调用失败：" + str(e)}), 502)
+        return None, ({"error": aiclient.error_message(e)}, 502)

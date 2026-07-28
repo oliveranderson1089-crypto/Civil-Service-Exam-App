@@ -153,7 +153,7 @@ def plan_analyze():
         [{"role": "system", "content": "你是公考备考教练，善于从学习记录里发现坚持得好的地方和被忽视的短板，"
           "建议具体可执行。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
-        temperature=0.5, max_tokens=1400, timeout=120, json_mode=True)
+        temperature=0.5, max_tokens=1400, timeout=120, json_mode=True, tier="pro")
     if err:
         return err
     try:

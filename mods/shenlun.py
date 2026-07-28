@@ -154,7 +154,7 @@ def _classify_questions(qs):
               + "\n\n".join(lines))
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论教研老师，熟悉各题型的判别特征，严格输出 JSON。"},
-         {"role": "user", "content": prompt}], temperature=0.1, max_tokens=1200, json_mode=True)
+         {"role": "user", "content": prompt}], temperature=0.1, max_tokens=1200, json_mode=True, tier="pro")
     if err:
         return {}
     try:

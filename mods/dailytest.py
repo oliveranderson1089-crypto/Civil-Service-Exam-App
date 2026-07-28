@@ -176,7 +176,7 @@ def _dtest_one(module, k, mat, prof, examples):
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是四川省考命题老师。答案唯一、干扰项讲究。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
-        temperature=0.5, max_tokens=4000, timeout=180, json_mode=True)
+        temperature=0.5, max_tokens=4000, timeout=180, json_mode=True, tier="pro")
     if err:
         log.warning("每日测试 %s 出题失败：%s", module, err)
         return []

@@ -3,7 +3,8 @@
 """为「衔接表达」补齐 AI 例句（每天素材更新后跑一次，用户就不用挨个点按钮）。
 用法: python3 fill_examples.py [最多生成条数，默认 30]
 """
-import os, sys, json, sqlite3, time, urllib.request
+import os, sys, json, sqlite3, time
+import aiclient
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -11,11 +12,11 @@ CFG_PATH = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 os.environ.setdefault("NO_PROXY", "*")
 
 CFG = json.load(open(CFG_PATH, encoding="utf-8")) if os.path.exists(CFG_PATH) else {}
-AI_BASE = (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/")
-AI_MODEL = CFG.get("ai_model") or "deepseek-chat"
-AI_KEY = CFG.get("ai_key") or os.environ.get("GONGKAO_AI_KEY", "")
-AI_URL = AI_BASE if AI_BASE.endswith("/chat/completions") else (
-    AI_BASE + "/chat/completions" if AI_BASE.endswith("/v1") else AI_BASE + "/v1/chat/completions")
+# 模型档位：fast —— 补例句：单句短输出，flash 够用
+# 真实模型名不写在这儿：aiclient 负责 档位→模型名 的映射，官方改名时只动 config.json。
+TIER = "fast"
+_AI = aiclient.conf(TIER, CFG)
+AI_BASE, AI_URL, AI_MODEL, AI_KEY = _AI["base"], _AI["url"], _AI["model"], _AI["key"]
 
 SYS = "你是申论写作辅导老师，例句规范、书面化。"
 TPL = ("下面是一句申论写作的衔接表达/万能句式：\n%s\n\n"
@@ -23,18 +24,15 @@ TPL = ("下面是一句申论写作的衔接表达/万能句式：\n%s\n\n"
 
 
 def ai(content, retry=2):
-    payload = {"model": AI_MODEL, "temperature": 0.6, "max_tokens": 200,
-               "messages": [{"role": "system", "content": SYS},
-                            {"role": "user", "content": TPL % content}]}
+    messages = [{"role": "system", "content": SYS},
+                {"role": "user", "content": TPL % content}]
     last = None
     for i in range(retry + 1):
         try:
-            req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
-                                         headers={"Authorization": "Bearer " + AI_KEY,
-                                                  "Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                j = json.loads(resp.read().decode("utf-8"))
-            return j["choices"][0]["message"]["content"].strip()
+            # max_tokens 从 200 提到 800：deepseek-v4 是推理模型，reasoning 段也吃这个
+            # 配额，200 会在推理还没完时就截断、正文一个字都出不来。
+            return aiclient.chat(messages, tier=TIER, temperature=0.6, max_tokens=800,
+                                 timeout=120, cfg=CFG, retries=0)
         except Exception as e:
             last = e
             time.sleep(2 + 2 * i)

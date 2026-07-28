@@ -5,34 +5,25 @@
 记成一个 action 交回前端执行。这样 AI 说「已加入」就是真的加了。
 """
 import json
-import urllib.error
-import urllib.request
 from datetime import datetime
 
 from flask import jsonify
 
-from core import CJK_RE, _mark_study, lookup, to_pinyin, uid
+import aiclient
+from core import CFG, CJK_RE, _mark_study, lookup, to_pinyin, uid
 from mods.agent_tools import exec_tool, tool, tool_specs
-from mods.ai import _ai_call_or_error, _ai_conf
+from mods.ai import _ai_call_or_error
 
 
 def _ai_raw(messages, tools=None, temperature=0.4, max_tokens=1600, timeout=120):
-    """底层调用，返回完整 message 对象（可能含 tool_calls）。"""
-    conf = _ai_conf()
-    if not conf["key"]:
-        raise RuntimeError("AI 未配置，请管理员在「后台 → AI 设置」填写 API Key")
-    b = conf["base"]
-    url = b if b.endswith("/chat/completions") else (
-        b + "/chat/completions" if b.endswith("/v1") else b + "/v1/chat/completions")
-    payload = {"model": conf["model"], "messages": messages,
-               "temperature": temperature, "max_tokens": max_tokens, "stream": False}
-    if tools:
-        payload["tools"] = tools
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST",
-                                 headers={"Content-Type": "application/json",
-                                          "Authorization": "Bearer " + conf["key"]})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        d = json.loads(r.read().decode("utf-8"))
+    """底层调用，返回完整 message 对象（可能含 tool_calls）。
+
+    走 aiclient 而不是自己拼 URL：模型名解析、官方改名时的探活自愈，跟全站一套。
+    raw=True 是因为这儿要的是整个 message（里头有 tool_calls），不是正文字符串。
+    """
+    d = aiclient.chat(messages, tier="fast", temperature=temperature,
+                      max_tokens=max_tokens, timeout=timeout, cfg=CFG, raw=True,
+                      extra={"tools": tools} if tools else None)
     return d["choices"][0]["message"]
 
 
@@ -405,16 +396,7 @@ def _ai_agentic_or_error(messages, db, **kw):
     try:
         reply, actions = ai_chat_agentic(messages, db, **kw)
         return reply, actions, None
-    except urllib.error.HTTPError as e:
-        msg = "AI 服务返回错误 %d" % e.code
-        if e.code == 401:
-            msg = "API Key 无效或未授权，请在后台重新填写"
-        elif e.code == 402:
-            msg = "账户余额不足，请到 DeepSeek 充值"
-        elif e.code == 429:
-            msg = "请求过于频繁，请稍后再试"
-        return None, None, (jsonify({"error": msg}), 502)
-    except urllib.error.URLError as e:
-        return None, None, (jsonify({"error": "连不上 AI 服务：" + str(e.reason)}), 502)
     except Exception as e:
-        return None, None, (jsonify({"error": "AI 调用失败：" + str(e)}), 502)
+        # 错误话术统一在 aiclient.error_message，别在这儿再抄一份 401/402/429 的分支：
+        # 原先两份，改一处漏一处。
+        return None, None, (jsonify({"error": aiclient.error_message(e)}), 502)

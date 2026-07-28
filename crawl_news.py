@@ -9,6 +9,7 @@
 用法: python3 crawl_news.py [每板块最多处理的新文章数, 默认 4] [板块名(可选,只跑某板块)]
 """
 import re, os, sys, json, sqlite3, time, html, urllib.request
+import aiclient
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -46,11 +47,11 @@ try:
     CFG = json.load(open(CFG_PATH, encoding="utf-8"))
 except Exception:
     pass
-AI_BASE = (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/")
-AI_MODEL = CFG.get("ai_model") or "deepseek-chat"
-AI_KEY = CFG.get("ai_key") or os.environ.get("GONGKAO_AI_KEY", "")
-AI_URL = AI_BASE if AI_BASE.endswith("/chat/completions") else (
-    AI_BASE + "/chat/completions" if AI_BASE.endswith("/v1") else AI_BASE + "/v1/chat/completions")
+# 模型档位：fast —— 时政提炼：量大、每天跑，flash 够用且便宜
+# 真实模型名不写在这儿：aiclient 负责 档位→模型名 的映射，官方改名时只动 config.json。
+TIER = "fast"
+_AI = aiclient.conf(TIER, CFG)
+AI_BASE, AI_URL, AI_MODEL, AI_KEY = _AI["base"], _AI["url"], _AI["model"], _AI["key"]
 
 
 def fetch(url):
@@ -118,14 +119,11 @@ def ai_extract(board, title, content, pub_date=""):
         "③ 素材：一句可直接用于申论的书面化表述（不口语、可积累）\n\n"
         "标题：%s\n正文：\n%s"
     ) % (board, pub_date or "近期", title, content[:4000])
-    payload = {"model": AI_MODEL, "temperature": 0.4, "max_tokens": 600,
-               "messages": [{"role": "system", "content": "你是资深公考申论辅导老师，提炼准确精炼、书面化，用简体中文。"},
-                            {"role": "user", "content": prompt}]}
-    req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
-                                 headers={"Authorization": "Bearer " + AI_KEY, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        j = json.loads(resp.read().decode("utf-8"))
-    return j["choices"][0]["message"]["content"].strip()
+    # max_tokens 从 600 提到 1500：deepseek-v4 是推理模型，reasoning 段也吃这个配额。
+    return aiclient.chat(
+        [{"role": "system", "content": "你是资深公考申论辅导老师，提炼准确精炼、书面化，用简体中文。"},
+         {"role": "user", "content": prompt}],
+        tier=TIER, temperature=0.4, max_tokens=1500, timeout=120, cfg=CFG)
 
 
 def ensure_schema(con):
@@ -195,14 +193,10 @@ def gen_gaikuo(con):
         '"raw":"材料里的原始表述（口语化/描述性的一句，可轻度改写但保持材料味）",'
         '"sentence":"提炼后的规范概括句（书面化、动宾结构、可直接写进申论答案，20-35字）",'
         '"tip":"一句用法点拨：这类表述适合什么题型/怎么迁移"}\n\n素材：\n%s') % material[:5000]
-    payload = {"model": AI_MODEL, "temperature": 0.4, "max_tokens": 1500,
-               "messages": [{"role": "system", "content": "你是资深申论辅导老师，擅长把材料语言提炼成规范概括句。严格输出 JSON 数组，用简体中文。"},
-                            {"role": "user", "content": prompt}]}
-    req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
-                                 headers={"Authorization": "Bearer " + AI_KEY, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=150) as resp:
-        j = json.loads(resp.read().decode("utf-8"))
-    text = j["choices"][0]["message"]["content"].strip()
+    text = aiclient.chat(
+        [{"role": "system", "content": "你是资深申论辅导老师，擅长把材料语言提炼成规范概括句。严格输出 JSON 数组，用简体中文。"},
+         {"role": "user", "content": prompt}],
+        tier=TIER, temperature=0.4, max_tokens=3000, timeout=150, cfg=CFG)
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
     try:
         items = json.loads(text)
@@ -331,16 +325,12 @@ def gen_xiyu(con):
         "src=来源文章编号(数字)。\n"
         '只输出 JSON：{"items":[{"category":"...","keyword":"...","quote":"...","note":"...","apply":"...","src":1},...]}'
         + avoid + "\n\n" + material)
-    payload = {"model": AI_MODEL, "temperature": 0.3, "max_tokens": 2800,
-               "response_format": {"type": "json_object"},
-               "messages": [{"role": "system", "content": "你是严谨的公考时政编辑，金句必须逐字摘自给定素材，宁缺毋滥，严格输出 JSON。"},
-                            {"role": "user", "content": prompt}]}
-    req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
-                                 headers={"Authorization": "Bearer " + AI_KEY, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        j = json.loads(resp.read().decode("utf-8"))
     try:
-        items = json.loads(j["choices"][0]["message"]["content"]).get("items", [])
+        items = json.loads(aiclient.chat(
+            [{"role": "system", "content": "你是严谨的公考时政编辑，金句必须逐字摘自给定素材，宁缺毋滥，严格输出 JSON。"},
+             {"role": "user", "content": prompt}],
+            tier=TIER, temperature=0.3, max_tokens=5000, timeout=180,
+            json_mode=True, cfg=CFG)).get("items", [])
     except Exception:
         items = []
     n = 0

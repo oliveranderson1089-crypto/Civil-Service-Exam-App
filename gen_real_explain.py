@@ -38,15 +38,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
+import aiclient                                            # noqa: E402
 import realbank as R                                       # noqa: E402
 
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 CFG = json.load(open(os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json")),
                      encoding="utf-8"))
 
-AI_BASE = (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/")
-AI_MODEL = CFG.get("ai_model") or "deepseek-chat"
-AI_KEY = CFG.get("ai_key") or ""
+# 模型档位：pro —— 真题解析：真题库是全站的标尺，解析错了会带偏出题
+# 真实模型名不写在这儿：aiclient 负责 档位→模型名 的映射，官方改名时只动 config.json。
+TIER = "pro"
+_AI = aiclient.conf(TIER, CFG)
+AI_BASE, AI_MODEL, AI_KEY = _AI["base"], _AI["model"], _AI["key"]
 AUDIT_BASE = (CFG.get("vision_base") or "").rstrip("/")
 AUDIT_KEY = CFG.get("vision_key") or ""
 AUDIT_MODEL = "glm-4-plus"          # 非推理版：推理版一道要 15~30 秒，核验几千道等不起

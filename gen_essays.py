@@ -12,7 +12,8 @@
   python3 gen_essays.py --topic 乡村振兴 # 只生成某个话题
   python3 gen_essays.py --list         # 看已生成/待生成
 """
-import os, re, sys, json, sqlite3, time, urllib.request
+import os, re, sys, json, sqlite3, time
+import aiclient
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -20,11 +21,11 @@ CFG_PATH = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 os.environ.setdefault("NO_PROXY", "*")
 
 CFG = json.load(open(CFG_PATH, encoding="utf-8")) if os.path.exists(CFG_PATH) else {}
-AI_BASE = (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/")
-AI_MODEL = CFG.get("ai_model") or "deepseek-chat"
-AI_KEY = CFG.get("ai_key") or os.environ.get("GONGKAO_AI_KEY", "")
-AI_URL = AI_BASE if AI_BASE.endswith("/chat/completions") else (
-    AI_BASE + "/chat/completions" if AI_BASE.endswith("/v1") else AI_BASE + "/v1/chat/completions")
+# 模型档位：pro —— 创作：范文/应用文，质量敏感
+# 真实模型名不写在这儿：aiclient 负责 档位→模型名 的映射，官方改名时只动 config.json。
+TIER = "pro"
+_AI = aiclient.conf(TIER, CFG)
+AI_BASE, AI_URL, AI_MODEL, AI_KEY = _AI["base"], _AI["url"], _AI["model"], _AI["key"]
 
 META = json.load(open(os.path.join(BASE, "shenlun_meta.json"), encoding="utf-8"))
 SPECS = META["specs"]
@@ -60,19 +61,13 @@ def _words(t):
 
 
 def ai(messages, max_tokens=4000, temperature=0.6, json_mode=False, retry=2):
-    payload = {"model": AI_MODEL, "temperature": temperature, "max_tokens": max_tokens,
-               "messages": messages}
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
+    # retries=0：网络重试交给 aiclient，这层只兜 JSON 截断，别让两层重试次数相乘。
     last = None
     for i in range(retry + 1):
         try:
-            req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
-                                         headers={"Authorization": "Bearer " + AI_KEY,
-                                                  "Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=420) as resp:
-                j = json.loads(resp.read().decode("utf-8"))
-            txt = j["choices"][0]["message"]["content"].strip()
+            txt = aiclient.chat(messages, tier=TIER, temperature=temperature,
+                                max_tokens=max_tokens, timeout=420, json_mode=json_mode,
+                                cfg=CFG, retries=0)
             return json.loads(txt) if json_mode else txt
         except Exception as e:
             last = e

@@ -7,35 +7,33 @@
 申论 1 套：归纳概括 + 综合分析 + 贯彻执行 + 大作文（含给定资料与参考答案）。
 用法: python3 gen_quiz.py [xingce|shenlun|both]
 """
-import json, os, sys, sqlite3, time, urllib.request
+import json, os, sys, sqlite3, time
 from datetime import date
 
+import aiclient
 from figgen import _gen_figure_q, _gen_ziliao   # 图形推理/资料分析：程序化出题，答案由代码保证
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 CFG = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
-AI_BASE = (CFG.get("ai_base") or "https://api.deepseek.com").rstrip("/")
-AI_MODEL = CFG.get("ai_model") or "deepseek-chat"
-AI_KEY = CFG.get("ai_key") or ""
-AI_URL = AI_BASE if AI_BASE.endswith("/chat/completions") else (
-    AI_BASE + "/chat/completions" if AI_BASE.endswith("/v1") else AI_BASE + "/v1/chat/completions")
+# 模型档位：pro —— 命题：整卷出题，答案唯一性和解析质量最敏感
+# 真实模型名不写在这儿：aiclient 负责 档位→模型名 的映射，官方改名时只动 config.json。
+TIER = "pro"
+_AI = aiclient.conf(TIER, CFG)
+AI_BASE, AI_URL, AI_MODEL, AI_KEY = _AI["base"], _AI["url"], _AI["model"], _AI["key"]
 
 
 def ai(prompt, max_tokens=4000, temperature=0.6, tries=2):
+    messages = [{"role": "system",
+                 "content": "你是资深公务员考试命题人，题目规范、答案唯一、解析清晰，严格输出 JSON，用简体中文。"},
+                {"role": "user", "content": prompt}]
     last = None
     for _ in range(tries):
         try:
-            payload = {"model": AI_MODEL, "temperature": temperature, "max_tokens": max_tokens,
-                       "response_format": {"type": "json_object"},
-                       "messages": [{"role": "system",
-                                     "content": "你是资深公务员考试命题人，题目规范、答案唯一、解析清晰，严格输出 JSON，用简体中文。"},
-                                    {"role": "user", "content": prompt}]}
-            req = urllib.request.Request(AI_URL, data=json.dumps(payload).encode("utf-8"),
-                                         headers={"Authorization": "Bearer " + AI_KEY, "Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                j = json.loads(resp.read().decode("utf-8"))
-            return json.loads(j["choices"][0]["message"]["content"])
+            # retries=0：网络重试交给 aiclient，这层只兜 JSON 截断，别让次数相乘。
+            return json.loads(aiclient.chat(
+                messages, tier=TIER, temperature=temperature, max_tokens=max_tokens,
+                timeout=300, json_mode=True, cfg=CFG, retries=0))
         except Exception as e:  # JSON 截断等：重试一次
             last = e
             time.sleep(1)

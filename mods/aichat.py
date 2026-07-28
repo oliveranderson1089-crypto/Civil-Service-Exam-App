@@ -4,6 +4,7 @@
 """
 from flask import Blueprint, jsonify, request
 
+import aiclient
 from core import CFG, _save_cfg, _study_stats, get_db, uid
 from mods.ai import _ai_call_or_error, _ai_conf, ai_configured, vision_configured
 
@@ -59,16 +60,41 @@ def api_ai_chat():
 @bp.get("/api/admin/ai")
 def admin_ai_get():
     c = _ai_conf()
-    return jsonify({"base": c["base"], "model": c["model"], "has_key": bool(c["key"])})
+    return jsonify({"base": c["base"], "model": c["model"], "model_pro": c["pro"],
+                    "has_key": bool(c["key"])})
+
+
+@bp.get("/api/admin/ai/models")
+def admin_ai_models():
+    """问接口「你现在到底有哪些模型」，并指出当前两个档位配得对不对。
+
+    这就是「deepseek-chat 被下线」那次真正缺的东西：当时只能看到一句
+    400，没法在后台确认新名字叫什么，只好去翻官网。现在一点就知道。
+    """
+    ids = aiclient.list_models(CFG, ttl=0)          # ttl=0：这是人手点的，要现拉不要缓存
+    if not ids:
+        return jsonify({"error": "拉不到模型清单：Key 无效、网络不通，或该接口不支持 /v1/models",
+                        "models": []}), 502
+    cur = {t: aiclient.conf(t, CFG)["model"] for t in ("fast", "pro")}
+    return jsonify({
+        "models": ids,
+        "current": cur,
+        "invalid": {t: m for t, m in cur.items() if m not in ids},
+        "suggest": {t: aiclient.pick_model(ids, t) for t in ("fast", "pro")},
+    })
 
 
 @bp.post("/api/admin/ai")
 def admin_ai_set():
     data = request.get_json(silent=True) or {}
     if "base" in data:
-        CFG["ai_base"] = (data.get("base") or "").strip() or "https://api.deepseek.com"
+        CFG["ai_base"] = (data.get("base") or "").strip() or aiclient.DEFAULT_BASE
+    # 兜底名取自 aiclient.TIERS——真实模型名全项目只有那一处，别在这儿再抄一遍。
+    # normalize 顺手把粘错的旧名/斜杠写法就地改对，省得存下去下次再炸。
     if "model" in data:
-        CFG["ai_model"] = (data.get("model") or "").strip() or "deepseek-chat"
+        CFG["ai_model"] = (aiclient.normalize(data.get("model")) or aiclient.TIERS["fast"][1])
+    if "model_pro" in data:
+        CFG["ai_model_pro"] = (aiclient.normalize(data.get("model_pro")) or aiclient.TIERS["pro"][1])
     if data.get("clear_key"):
         CFG["ai_key"] = ""
     elif (data.get("key") or "").strip():

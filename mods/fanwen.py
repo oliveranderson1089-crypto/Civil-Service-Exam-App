@@ -93,7 +93,7 @@ def fanwen_ai(mid):
     ) % (r["title"], body)
     reply, err = _ai_call_or_error(
         [{"role": "system", "content": "你是资深申论辅导老师，拆解范文准确、具体、实用，用简体中文 Markdown，务必完整不截断。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=5000)
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=5000, tier="pro")
     if err:
         return err
     db = get_db()
@@ -125,7 +125,7 @@ def fanwen_annotate(mid):
         '只输出 JSON：{"notes":[{"i":段号,"note":"批注"}]}' % (r["title"], numbered))
     reply, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论老师，给范文逐段批注，具体到句、能直接学。严格输出 JSON。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=3000, json_mode=True)
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=3000, json_mode=True, tier="pro")
     if err:
         return err
     notes = {}

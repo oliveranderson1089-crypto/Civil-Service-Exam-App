@@ -42,6 +42,27 @@
   .ai-msg2{font-size:13px;margin-top:10px;white-space:pre-wrap;line-height:1.6;}
   .ai-msg2.ok{color:#1f9d57;}
   .ai-msg2.err{color:#c0392b;}
+  /* ---- 服务管理 ---- */
+  .svc-row{display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13.5px;}
+  .svc-row:last-child{border-bottom:none;}
+  .svc-row input[type=checkbox]{flex:0 0 auto;width:16px;height:16px;}
+  .svc-name{flex:1 1 auto;min-width:0;}
+  .svc-name b{display:block;font-weight:600;word-break:break-all;}
+  .svc-name .svc-desc{color:var(--muted);font-size:12px;margin-top:1px;}
+  .svc-name .svc-time{color:#9aa4b2;font-size:11.5px;margin-top:2px;}
+  .pill{flex:0 0 auto;font-size:11px;padding:2px 8px;border-radius:20px;white-space:nowrap;}
+  .pill.run{background:#dff3e6;color:#1f7a45;}
+  .pill.idle{background:#eef1f5;color:#77808d;}
+  .pill.fail{background:#fbe0dc;color:#b23428;}
+  .pill.self{background:#e3edfa;color:#1a6fb5;}
+  .svc-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;}
+  .svc-head .grow{flex:1 1 auto;}
+  .svc-group{font-size:12px;color:#8a94a2;margin:12px 0 2px;font-weight:600;}
+  .svc-log{background:#1e2530;color:#cfd8e3;border-radius:8px;padding:10px;font-size:11.5px;
+    line-height:1.55;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:10px;}
+  .model-chip{display:inline-block;background:#eef3fa;color:#1a6fb5;border:1px solid #d4e2f3;
+    border-radius:6px;padding:3px 8px;font-size:12px;margin:3px 4px 0 0;cursor:pointer;}
+  .model-chip:hover{background:#1a6fb5;color:#fff;}
 </style>
 </head>
 <body>
@@ -55,14 +76,17 @@
   <div class="ai-cfg">
     <p class="ai-tip">接入云端大模型（默认 <b>DeepSeek</b>，OpenAI 兼容）。到 <b>platform.deepseek.com</b> 申请 API Key 填入即可；用于 AI 助手、古诗文释义、错题分析等。</p>
     <label class="ai-f"><span>接口地址</span><input id="ai-base" type="text" placeholder="https://api.deepseek.com"></label>
-    <label class="ai-f"><span>模型</span><input id="ai-model" type="text" placeholder="deepseek-chat"></label>
+    <label class="ai-f"><span>模型</span><input id="ai-model" type="text" placeholder="deepseek-v4-flash"></label>
+    <label class="ai-f"><span>旗舰模型</span><input id="ai-model-pro" type="text" placeholder="deepseek-v4-pro（写作/批改/命题用）"></label>
     <label class="ai-f"><span>API Key</span><input id="ai-key" type="password" placeholder="留空=不改；已设会显示●●●" autocomplete="off"></label>
     <div class="ai-acts">
       <button class="ubtn" id="ai-clearkey">清除 Key</button>
+      <button class="ubtn" id="ai-models">查可用模型</button>
       <button class="ubtn" id="ai-test">测试连通</button>
       <button class="ubtn primary" id="ai-save">保存</button>
     </div>
     <div id="ai-msg" class="ai-msg2"></div>
+    <div id="ai-chips"></div>
   </div>
   <h2 class="view-title" style="margin-top:26px;">注册入口</h2>
   <div class="ai-cfg">
@@ -73,6 +97,26 @@
       <button class="ubtn" id="reg-save">保存邀请码</button>
       <button class="ubtn primary" id="reg-toggle">…</button>
     </div>
+  </div>
+  <h2 class="view-title" style="margin-top:26px;">服务管理</h2>
+  <div class="ai-cfg">
+    <p class="ai-tip">出问题时不用开终端：勾选要重启的服务点「重启选中」即可。
+      定时任务跑完就是 <b>inactive</b>，那是正常的——只有标 <b>失败</b> 的才需要处理，点服务名可以看它的日志。</p>
+    <div class="svc-head">
+      <label style="font-size:13px;display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="svc-all">全选</label>
+      <span class="grow"></span>
+      <button class="ubtn" id="svc-refresh">刷新</button>
+      <button class="ubtn" id="svc-restart-sel">重启选中</button>
+      <button class="ubtn danger" id="svc-restart-all">全部重启</button>
+    </div>
+    <div id="svc-list"><p class="ai-tip" style="margin:0;">加载中…</p></div>
+    <div id="svc-msg" class="ai-msg2"></div>
+    <div id="svc-journal" class="svc-log hidden"></div>
+    <details style="margin-top:12px;">
+      <summary style="font-size:13px;color:#667;cursor:pointer;">最近的重启记录</summary>
+      <div id="svc-oplog" style="font-size:12px;color:#77808d;margin-top:8px;line-height:1.8;"></div>
+    </details>
   </div>
   <h2 class="view-title" style="margin-top:26px;">用户管理 <span class="uadd" id="ucount"></span></h2>
   <table class="utable" id="utable">
@@ -95,12 +139,37 @@
   </div>
 </div>
 
+<div id="confirm-modal" class="modal hidden">
+  <div class="modal-box">
+    <h3 id="cf-title">确认</h3>
+    <p id="cf-text" style="font-size:14px;line-height:1.7;color:#555;white-space:pre-wrap;"></p>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn" id="cf-no">取消</button>
+      <button class="btn primary" id="cf-yes">确定</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast hidden"></div>
 <script>
 const $ = (s) => document.querySelector(s);
 let ME_ID = null;
 function toast(m, err) { const t = $('#toast'); t.textContent = m; t.className = 'toast' + (err ? ' err' : ''); clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), 2200); }
 function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+/* 项目规矩：不用原生 confirm/alert。主应用里有 appConfirm，但后台是独立页面加载不到，
+   所以在这儿放一个同样语义的小实现（返回 Promise<boolean>）。 */
+function adminConfirm(text, title) {
+  return new Promise(resolve => {
+    $('#cf-title').textContent = title || '确认';
+    $('#cf-text').textContent = text;
+    const m = $('#confirm-modal');
+    m.classList.remove('hidden');
+    const done = (v) => { m.classList.add('hidden'); $('#cf-yes').onclick = $('#cf-no').onclick = null; resolve(v); };
+    $('#cf-yes').onclick = () => done(true);
+    $('#cf-no').onclick = () => done(false);
+  });
+}
 
 async function load() {
   let me; try { me = await (await fetch('/api/me')).json(); } catch (_) {}
@@ -154,7 +223,7 @@ async function saveSecq() {
   if (r.ok) { toast('已设置密保'); closeSecq(); load(); } else toast(d.error || '失败', true);
 }
 async function resetPw(id, name) {
-  if (!confirm('把「' + name + '」的密码重置为初始密码 123456？')) return;
+  if (!await adminConfirm('把「' + name + '」的密码重置为初始密码 123456？')) return;
   const r = await fetch('/api/admin/users/' + id + '/reset', { method: 'POST' });
   const d = await r.json();
   if (r.ok) toast('已重置为 ' + d.password); else toast(d.error || '失败', true);
@@ -165,7 +234,7 @@ async function toggleRole(id, isAdmin) {
   if (r.ok) { toast('已更新'); load(); } else toast(d.error || '失败', true);
 }
 async function delUser(id, name) {
-  if (!confirm('删除用户「' + name + '」？其收录和资料将一并删除，不可恢复！')) return;
+  if (!await adminConfirm('删除用户「' + name + '」？其收录和资料将一并删除，不可恢复！', '删除用户')) return;
   const r = await fetch('/api/admin/users/' + id, { method: 'DELETE' });
   const d = await r.json();
   if (r.ok) { toast('已删除'); load(); } else toast(d.error || '失败', true);
@@ -175,12 +244,39 @@ async function loadAI() {
     const d = await (await fetch('/api/admin/ai')).json();
     $('#ai-base').value = d.base || '';
     $('#ai-model').value = d.model || '';
+    // 旗舰模型这一格原先只在 HTML 里摆着，既不回填也不提交，等于改不了。
+    $('#ai-model-pro').value = d.model_pro || '';
     $('#ai-key').placeholder = d.has_key ? '已设置 ●●●（留空=不改）' : 'sk-...（DeepSeek 的 API Key）';
   } catch (_) {}
 }
 function aiMsg(text, ok) { const m = $('#ai-msg'); m.textContent = text; m.className = 'ai-msg2 ' + (ok === true ? 'ok' : ok === false ? 'err' : ''); }
+
+/* 问接口现在到底有哪些模型。官方改名那次缺的就是这个：光看 400 猜不出新名字。 */
+$('#ai-models').onclick = async () => {
+  aiMsg('查询中…'); $('#ai-chips').innerHTML = '';
+  try {
+    const r = await fetch('/api/admin/ai/models');
+    const d = await r.json();
+    if (!r.ok) { aiMsg('✗ ' + (d.error || '查询失败'), false); return; }
+    const bad = Object.entries(d.invalid || {});
+    aiMsg(bad.length
+      ? '⚠ 当前配置里有失效的模型名：' + bad.map(([t, m]) => t + '=' + m).join('、') +
+        '\n建议改为 fast=' + d.suggest.fast + '、pro=' + d.suggest.pro + '（点下面的名字可填入）'
+      : '✓ 接口共 ' + d.models.length + ' 个模型，当前两档都有效。点名字可填入对应输入框。', !bad.length);
+    // 点一下就填进「模型」，按住 Shift 点填进「旗舰模型」——手机上没 Shift，所以两个都给按钮
+    $('#ai-chips').innerHTML = d.models.map(m =>
+      `<span class="model-chip" data-m="${esc(m)}" data-f="model">${esc(m)} → 模型</span>` +
+      `<span class="model-chip" data-m="${esc(m)}" data-f="pro">${esc(m)} → 旗舰</span>`).join('');
+  } catch (e) { aiMsg('✗ ' + e.message, false); }
+};
+$('#ai-chips').onclick = (e) => {
+  const c = e.target.closest('.model-chip'); if (!c) return;
+  $(c.dataset.f === 'pro' ? '#ai-model-pro' : '#ai-model').value = c.dataset.m;
+  toast('已填入，记得点保存');
+};
 $('#ai-save').onclick = async () => {
-  const body = { base: $('#ai-base').value.trim(), model: $('#ai-model').value.trim() };
+  const body = { base: $('#ai-base').value.trim(), model: $('#ai-model').value.trim(),
+                 model_pro: $('#ai-model-pro').value.trim() };
   const k = $('#ai-key').value.trim(); if (k) body.key = k;
   aiMsg('保存中…');
   try {
@@ -191,7 +287,7 @@ $('#ai-save').onclick = async () => {
   } catch (e) { aiMsg('保存失败：' + e.message, false); }
 };
 $('#ai-clearkey').onclick = async () => {
-  if (!confirm('清除已保存的 API Key？')) return;
+  if (!await adminConfirm('清除已保存的 API Key？')) return;
   try { await fetch('/api/admin/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear_key: true }) }); aiMsg('已清除 Key', true); loadAI(); }
   catch (e) { aiMsg('失败：' + e.message, false); }
 };
@@ -228,11 +324,119 @@ $('#reg-save').onclick = async () => {
     if (r.ok) { toast(code ? '已设置邀请码' : '已清除邀请码（开放时无需暗号）'); loadReg(); } else toast('操作失败', true);
   } catch (_) { toast('网络错误', true); }
 };
+/* ---------------------------------------------------------------- 服务管理 */
+let SVC = [];
+function svcMsg(t, ok) { const m = $('#svc-msg'); m.textContent = t; m.className = 'ai-msg2 ' + (ok === true ? 'ok' : ok === false ? 'err' : ''); }
+
+function svcPill(s) {
+  if (!s.healthy) return '<span class="pill fail">失败</span>';
+  if (s.running) return '<span class="pill run">运行中</span>';
+  // 定时任务是 oneshot，跑完就 dead——这是正常的，别标成红色吓人
+  return '<span class="pill idle">' + (s.kind === 'timer' ? '待触发' : '空闲') + '</span>';
+}
+
+async function loadSvc() {
+  try {
+    const d = await (await fetch('/api/admin/services')).json();
+    SVC = d.services || [];
+  } catch (e) { $('#svc-list').innerHTML = '<p class="ai-tip">读取失败：' + esc(e.message) + '</p>'; return; }
+  const groups = [['service', '服务'], ['timer', '定时器']];
+  $('#svc-list').innerHTML = groups.map(([k, label]) => {
+    const rows = SVC.filter(s => s.kind === k);
+    if (!rows.length) return '';
+    return `<div class="svc-group">${label}（${rows.length}）</div>` + rows.map(s => `
+      <div class="svc-row">
+        <input type="checkbox" class="svc-cb" value="${esc(s.name)}">
+        <div class="svc-name">
+          <b><a href="#" class="svc-jl" data-n="${esc(s.name)}" style="color:inherit;">${esc(s.name)}</a></b>
+          <div class="svc-desc">${esc(s.desc)}</div>
+          <div class="svc-time">${s.last_run ? '上次 ' + esc(s.last_run) : ''}${s.next_run ? ' · 下次 ' + esc(s.next_run) : ''}</div>
+        </div>
+        ${s.is_self ? '<span class="pill self">本服务</span>' : ''}${svcPill(s)}
+      </div>`).join('');
+  }).join('');
+  loadOpLog();
+}
+
+$('#svc-list').onclick = async (e) => {
+  const a = e.target.closest('.svc-jl'); if (!a) return;
+  e.preventDefault();
+  const box = $('#svc-journal');
+  box.classList.remove('hidden');
+  box.textContent = '读取 ' + a.dataset.n + ' 的日志…';
+  try {
+    const d = await (await fetch('/api/admin/services/journal/' + encodeURIComponent(a.dataset.n))).json();
+    box.textContent = d.text || d.error || '(无日志)';
+    box.scrollTop = box.scrollHeight;
+  } catch (err) { box.textContent = '读取失败：' + err.message; }
+};
+
+$('#svc-all').onclick = (e) => {
+  document.querySelectorAll('.svc-cb').forEach(c => { c.checked = e.target.checked; });
+};
+$('#svc-refresh').onclick = () => { svcMsg('刷新中…'); loadSvc().then(() => svcMsg('')); };
+
+async function doRestart(names, all) {
+  const self = SVC.filter(s => s.is_self && (all || names.includes(s.name)));
+  const what = all ? '全部 ' + SVC.length + ' 个单元' : names.length + ' 个：\n' + names.join('\n');
+  let warn = '确定重启' + (all ? '' : '选中的') + what + '？';
+  if (self.length) warn += '\n\n其中包含本服务，页面会短暂断开几秒后自动恢复。';
+  if (!await adminConfirm(warn, '重启服务')) return;
+  svcMsg('重启中…');
+  try {
+    const r = await fetch('/api/admin/services/restart', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(all ? { all: true } : { names })
+    });
+    const d = await r.json();
+    if (!r.ok) { svcMsg('✗ ' + (d.error || '失败'), false); return; }
+    const failed = Object.entries(d.results).filter(([, v]) => !v.ok);
+    svcMsg(failed.length
+      ? '完成 ' + d.done + '/' + d.total + '，失败：' + failed.map(([n, v]) => n + '（' + v.msg + '）').join('；')
+      : '✓ ' + d.total + ' 个单元已重启', !failed.length);
+    // 重启了自己就等它起来：直接刷新会撞在服务重启的空档上，看到一片「读取失败」
+    if ((d.deferred || []).length) {
+      svcMsg('✓ 已下达，本服务 2 秒后重启，等待恢复…');
+      setTimeout(waitBack, 3000);
+    } else {
+      setTimeout(loadSvc, 800);
+    }
+  } catch (e) { svcMsg('✗ ' + e.message, false); }
+}
+
+async function waitBack(tries) {
+  tries = tries || 0;
+  try {
+    const r = await fetch('/api/admin/services', { cache: 'no-store' });
+    if (r.ok) { svcMsg('✓ 服务已恢复', true); loadSvc(); return; }
+  } catch (_) { /* 还没起来，正常 */ }
+  if (tries > 20) { svcMsg('等了 40 秒还没恢复，去看日志：./emergency.sh logs gongkao.service', false); return; }
+  svcMsg('等待服务恢复…（' + (tries + 1) + '）');
+  setTimeout(() => waitBack(tries + 1), 2000);
+}
+
+$('#svc-restart-sel').onclick = () => {
+  const names = [...document.querySelectorAll('.svc-cb:checked')].map(c => c.value);
+  if (!names.length) { svcMsg('先勾选要重启的服务', false); return; }
+  doRestart(names, false);
+};
+$('#svc-restart-all').onclick = () => doRestart([], true);
+
+async function loadOpLog() {
+  try {
+    const d = await (await fetch('/api/admin/services/log')).json();
+    $('#svc-oplog').innerHTML = (d.log || []).length
+      ? d.log.map(x => `${esc(x.at)} · ${esc(x.who)} · ${esc((x.units || []).join(', '))}`).join('<br>')
+      : '（还没有记录）';
+  } catch (_) {}
+}
+
 (async () => {
   try { const me = await (await fetch('/api/me')).json(); MY_NAME = me.username; } catch (_) {}
   await load();
   await loadAI();
   await loadReg();
+  await loadSvc();
 })();
 </script>
 </body>

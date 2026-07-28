@@ -58,6 +58,7 @@ from mods.news import bp as news_bp
 from mods.notes import bp as notes_bp
 from mods.notifications import bp as notifications_bp
 from mods.ocr import bp as ocr_bp
+from mods.ops import bp as ops_bp
 from mods.partydict import bp as partydict_bp
 from mods.pdfexport import bp as pdfexport_bp
 from mods.plan import bp as plan_bp
@@ -127,6 +128,7 @@ app.register_blueprint(news_bp)
 app.register_blueprint(notes_bp)
 app.register_blueprint(notifications_bp)
 app.register_blueprint(ocr_bp)
+app.register_blueprint(ops_bp)
 app.register_blueprint(partydict_bp)
 app.register_blueprint(pdfexport_bp)
 app.register_blueprint(plan_bp)
