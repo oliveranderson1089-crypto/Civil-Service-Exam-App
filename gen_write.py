@@ -42,7 +42,7 @@ def gen(con, mode, date):
     with app.app_context():
         e, err = _write_gen(con, mode, date)
     if err:
-        body = err[0].get_json() if hasattr(err[0], "get_json") else {}
+        body = err[0] if isinstance(err[0], dict) else {}
         print("  ✗ %s %s：%s" % (mode, date, body.get("error", err)))
         return False
     print("  ✓ %s %s《%s》%d 字 · 用了 %d 条素材 · %.0fs"
@@ -60,7 +60,7 @@ def gen_yy(con, kind, date):
             eid, err = _gen_yingyong(con, _pick_daily_yy(con, date),
                                      mode="yingyong-daily", date=date)
     if err:
-        body = err[0].get_json() if hasattr(err[0], "get_json") else {}
+        body = err[0] if isinstance(err[0], dict) else {}
         print("  ✗ 应用文-%s %s：%s" % (kind, date, body.get("error", err)))
         return False
     r = con.execute("SELECT title,topic,words FROM daily_essays WHERE id=?", (eid,)).fetchone()
@@ -70,20 +70,21 @@ def gen_yy(con, kind, date):
 
 
 def align_all(con):
-    """存量议论文的「提纲 ↔ 正文」对一遍。
+    """存量议论文：把正文里**完全缺了对应段落**的分论点，参考提纲补写上。
 
-    先用字面筛一道（survey 不调 AI）：段首已经原样是提纲那句的直接跳过，
-    只有真对不上的才值得花一次 AI。落库走 _align_one —— 和界面上那个「对齐提纲」
-    按钮共用一份实现，不然两边迟早各写各的（用不用重核 used、字数怎么算就已经会分叉）。"""
+    对齐现在只展示、不改写已有段落（提纲归提纲、全文归全文），唯一会动正文的就是
+    「补写一段正文原本缺失的分论点」。所以这里只挑出「有分论点在正文里找不到对应段落」
+    （survey 里 para 为 None）的文章——字面就能筛，不必为每篇都花一次 AI。落库走
+    _align_one，和界面上「对齐提纲」按钮共用一份实现，免得两边各写各的。"""
     todo = []
     for r in con.execute("SELECT * FROM daily_essays WHERE mode IN ('daily','compose') "
                          "ORDER BY date DESC"):
         e = _e_row(r)
-        if any(not x["exact"] and x["para"] is not None
+        if any(x["kind"] == "sub" and x["para"] is None
                for x in survey(e["content"], e["outline"])):
             todo.append((e["id"], e["date"][:10], e["title"]))
     if not todo:
-        print("所有文章的提纲和正文都对得上")
+        print("所有文章的每条分论点在正文里都有对应段落")
         return
     print("要对 %d 篇：" % len(todo))
     ok = 0
@@ -91,7 +92,7 @@ def align_all(con):
         with app.app_context():
             rep, err = _align_one(con, eid)
         if err:
-            body = err[0].get_json() if hasattr(err[0], "get_json") else {}
+            body = err[0] if isinstance(err[0], dict) else {}
             print("  [%d/%d] ✗ %s《%s》%s" % (i, len(todo), date, title, body.get("error", err)))
             continue
         ok += 1

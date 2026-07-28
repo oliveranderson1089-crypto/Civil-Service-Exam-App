@@ -1,26 +1,21 @@
-"""议论文成文的「提纲 ↔ 正文」对齐：让提纲上的每一条论点，在正文里都真的找得到。
+"""议论文成文的「提纲 ↔ 正文」对照：提纲与全文各自独立呈现，**只展示、不改写正文**。
 
-为什么非得有这一步：
-  · 提纲和正文是 AI 一次输出的两个字段。写正文时它顺着衔接表达和素材走，段首常被引言顶掉
-    （「善除害者察其本，善理疾者绝其源。」），提纲那条分论点就落空了；
-  · 更要命的是 _write_gen 的「补素材」循环**只回写 content、不回写 outline**，
-    补一轮正文就和提纲差一轮，补两轮差两轮。
-提纲是拿来学结构的：分论点句该长什么样、该摆在哪。对不上，这页就白看了。
+从前这里会把提纲句硬织进段首、或按正文回头重拟提纲，把两者强行对齐 —— 那既容易改坏
+已经写好的段落，又会一路把字数撑超（成文动辄破上限）。现在改成**提纲归提纲、全文归全文**：
 
-**怎么对齐，是量出来的，不是拍的。** 全库 38 篇扫了一遍：26 篇字面对不上，但拆开看，
-绝大多数段首其实已经是分论点句了，只是换了个更文气的说法（提纲写「实干是成就事业的基石」，
-正文写「执一而御万，实干的底层逻辑归根到底在于坚持实事求是、群众路线」）。
-真正「段首只有引言、论点没亮」的只有少数几处。所以规则是**双向**的：
+  · 同义表述（正文这一段讲的就是这条分论点，只是换了说法）→ 正文**一字不动**，
+    把正文里对应的那一句摘出来，当「另一种写作思路」并排显示（state=same，带 quote）。
+    两种写法都值得学，并排看才对得上，而不是二选一、更不是回头改正文去凑提纲。
+  · 补充缺失分论点（某条分论点在正文里**根本没有对应段落**，即正文段数少于提纲条数）→
+    参考提纲补写**一段**，插在结尾段之前（state=added）；补写后全文仍须 ≤ wmax 字，
+    塞不下就只报出来（state=nopara），绝不为补一段把字数写超。
+  · 段首字面就是这条的 → state=exact，什么都不做。
 
-  · 段首已经是论点句（只是措辞不同）→ **两边都不动**。两种写法都值得学，
-    只把正文里对应的那一句记下来，提纲页并排显示，好对照。
-  · 段首只有引言/衔接、论点真没亮 → 把提纲那条**织进段首**（AI 织、服务端核对、机械兜底）。
-  · 提纲那条压根跟这一段说的不是一回事（偏题）→ 不能硬塞，让 AI **照着这一段实际写的**
-    重拟一条论点句，提纲和正文一起更新。
+关键约束：**正文里已有的段落，任何情况下都不改**。唯一会动正文的只有「补写一段全新的、
+正文原本缺失的分论点段落」，且受字数上限约束。判定用字面相似度（sim）就够，不必调 AI ——
+只有真要补写缺失段落时才调一次 AI 去写那一段。
 
-「段首是不是论点句」这件事字面相似度判不了（同一个意思能写得毫无重字），只能问 AI；
-但 AI 说「已经有了」时**必须指出正文里逐字存在的那一句**，指不出来就不采信 ——
-和这个项目里其它 AI 产出一个规矩：能自己核对的，绝不信它一面之词。
+「段首是不是论点句」字面相似度到 TH_EXACT 就算 exact；到不了但落在对应段里，就当同义表述。
 
 只管议论文（mode = daily / compose）。应用文的 outline 存的是逐段批注 segs，不走这里。
 """
@@ -167,181 +162,123 @@ def survey(content, outline):
                 v = sim(subs[i], s)
                 if v > best:
                     best, quote = v, s
+            # 换了说法、字面一个重字都不共用时 best=0、quote 会空 —— 这条正要拿去当「另一种
+            # 写作思路」并排显示，不能空。退回段首第一句：提示词要求每段开头先亮分论点，
+            # 段首就是正文对这条的写法（哪怕是句引言，也正是这篇的实际开法，值得对照着学）。
+            if not quote:
+                ss = sents(body[j])
+                quote = ss[0] if ss else ""
             it.update(para=j + 1, qpara=j + 1, quote=quote,
                       score=round(best, 3), exact=best >= TH_EXACT)
         out.append(it)
     return out
 
 
-def _end(s):
-    """补进正文的论点句要能收住 —— 提纲条目常常不带句号。"""
-    s = (s or "").strip()
-    return s if s and s[-1] in "。！？；!?;" else s + "。"
+_SYS = "你是申论阅卷组的范文作者。只补写正文里缺失的那一段分论点，绝不删改已有的段落、素材、事例。严格输出 JSON。"
 
 
-_SYS = "你是申论阅卷组的范文作者。只判断和调整论点句，绝不删改素材、事例、数据。严格输出 JSON。"
+def _supplement(content, missing, wmax):
+    """给正文里**没有对应段落**的分论点补写段落，插在结尾段之前。
 
-
-def _head_sents(ps, it):
-    """这条论点该落在哪几句里 —— 判定和核对都只认这个范围。
-
-    分论点只看对应段的**前两句**：论点句要么是第一句，要么被一句衔接顶到第二句；
-    第三句往后就算撞上了，那也不叫「段首亮论点」，学的人照样一眼找不到。
-    段末的回扣句尤其不能算 —— 实测 AI 最爱拿它来交差（「唯有…方能…」那种），
-    可它恰恰证明了段首没亮论点。总论点则认开头段全段 + 结尾段（回扣是它的正常写法）。"""
-    if it["kind"] == "thesis":
-        return sents(ps[0]) + sents(ps[-1])
-    return sents(ps[it["para"]])[:2]
-
-
-def _ask(content, items):
-    """问 AI：这几条论点，正文对应段落的段首到底亮出来没有？没亮的顺手织进去。
-
-    一次调用把「判断」和「改写」一起做完 —— 分两次调是白花一次钱，中间还多一层错位风险。
-    返回 {下标: {...}}，key 是 items 里的位置。失败返回 {}。"""
+    只在这一种情形下会动正文（新增段落，不碰已有段落），且边插边数字：补一段就把全文长度
+    重算一遍，超了 wmax 的就不插了 —— 绝不为补一段把字数写超。
+    返回 (新正文, 补了哪几条分论点的下标集合, log)。补不成就原样奉还、集合为空。"""
     ps = paras(content)
-    ask = []
-    for k, it in enumerate(items):
-        if it["exact"] or it["para"] is None:
-            continue
-        # 「该看的位置」要和 _head_sents 划的范围**一字不差**：分论点是对应段的前两句，
-        # 总论点是整个开头段 + 整个结尾段。标签写错范围，它就会去别处摘句子来交差。
-        where = ("开头段和结尾段" if it["kind"] == "thesis"
-                 else "第 %d 段的前两句" % (it["para"] + 1))
-        ask.append("【%d】%s\n  提纲写的：%s\n  该看的位置——%s：%s"
-                   % (k, "总论点" if it["kind"] == "thesis" else "分论点%d" % (it["i"] + 1),
-                      it["text"], where, "".join(_head_sents(ps, it))))
-    if not ask:
-        return {}
+    if len(ps) < 2:
+        return content, set(), []
+    ask = "\n".join("【%d】%s" % (m["i"] + 1, m["text"]) for m in missing)
     prompt = (
-        "下面是一篇申论大作文的正文，和它的提纲。有几条论点，字面上在正文里找不到，"
-        "要你逐条判断到底是**换了说法**还是**真的没写**。\n\n"
-        "【正文】（按自然段编号）\n"
+        "下面这篇申论大作文缺了几个分论点段落（正文里没有讲到它们的段落）。"
+        "请为每个分论点各补写**一段**正文：\n"
+        "· 以该分论点句原样作为这一段的**第一句**；\n"
+        "· 随后用 1~2 句展开（举个例子或讲清道理即可），每段 100~160 字；\n"
+        "· 语气与全文一致，能独立成段。**不要改动、也不要重复已有的段落**。\n\n"
+        "【现有正文】（按自然段编号）\n"
         + "\n".join("第 %d 段：%s" % (i + 1, p) for i, p in enumerate(ps))
-        + "\n\n【要判断的条目】\n" + "\n\n".join(ask) + "\n\n"
-        "【逐条给出 verdict】\n"
-        "· has —— **上面给的那几句里**已经把这个论点亮出来了，只是换了说法。\n"
-        "    这时必须填 quote：从**上面给的那几句里**逐字复制承担这个论点的那一句"
-        "（一字不差，含标点）。⚠️ 不许从段落中间或段末的回扣句去找 —— 段末写「唯有…方能…」"
-        "恰恰说明段首没亮论点，那种情况要判 none。复制不出原句就不能填 has。\n"
-        "· none —— 段首只是引言、名句、衔接或直接进事例，**论点句没亮**，但这一段讲的内容"
-        "确实就是提纲那条说的事。\n"
-        "· offtopic —— 提纲那条和这一段实际写的**根本不是一回事**（跑题了）。\n\n"
-        "verdict 是 none 或 offtopic 的，还要给：\n"
-        "· point：要放在段首的论点句（none 就用提纲原话；offtopic 则**照着这一段实际写的内容**"
-        "重拟一句，15~35 字，要和全文总论点一脉相承）\n"
-        "· para：这一整段改写后的样子 —— **point 原样放在段首当第一句**，原来占着段首的引言、"
-        "名句**不要删**，顺势挪到 point 后面接着说；这一段其余的内容、事例、数据**一字不动**。\n"
-        "  （总论点这一条改的是**开头段**，请给开头段改写后的全文；总论点句按惯例收在开头段末尾。）\n\n"
-        '只输出 JSON：{"items":[{"k":条目编号,"verdict":"has|none|offtopic",'
-        '"quote":"","point":"","para":""}]}')
+        + "\n\n【要补写的分论点】\n" + ask + "\n\n"
+        '只输出 JSON：{"items":[{"i":分论点编号,"para":"补写的这一整段"}]}')
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": _SYS}, {"role": "user", "content": prompt}],
-        temperature=0.3, max_tokens=4000, timeout=300, json_mode=True)
+        temperature=0.4, max_tokens=2000, timeout=300, json_mode=True)
     if err:
-        return {}
+        return content, set(), []
     try:
-        got = json.loads(rep).get("items") or []
+        got = {int(x["i"]) - 1: (x.get("para") or "").strip()
+               for x in json.loads(rep).get("items") or []
+               if isinstance(x, dict) and x.get("para")}
     except Exception:
-        return {}
-    return {x["k"]: x for x in got if isinstance(x, dict) and isinstance(x.get("k"), int)}
+        return content, set(), []
+
+    body, tail = ps[:-1], ps[-1:]          # 结尾段单独留出，补写段插在它前面
+    added, log = set(), []
+    cur = len(_flat(content))
+    for m in missing:
+        para = got.get(m["i"])
+        if not para:
+            continue
+        # 论点句必须真在补写段的段首，否则不算补成功（宁可不补，不补错）
+        head = _flat(strip_label(m["text"]))[:8]
+        if head and not _flat(para).startswith(head):
+            continue
+        w = len(_flat(para))
+        if cur + w > wmax:               # 补上就超字数了 —— 这条只报不补
+            continue
+        body.append(para)
+        cur += w
+        added.add(m["i"])
+        log.append("分论点%d：正文原缺，已参考提纲补写一段" % (m["i"] + 1))
+    if not added:
+        return content, set(), []
+    return "\n".join(body + tail), added, log
 
 
 def quick_report(content, outline):
-    """不调 AI 的对照表 —— 人工编辑完正文用这个刷新。
+    """不调 AI 的对照表 —— 人工编辑完正文用这个刷新，和生成时同一把尺子。
 
-    「这一段落在哪」「段首最像的是哪句」都算得出来，唯独「算不算已经亮了论点」算不出来
-    （同一个意思能写得毫无重字），所以标 unsure，等点「对齐提纲」再让 AI 判。"""
+    段首字面就是这条 → exact；正文里有对应段落但换了说法 → same（另一种写作思路）；
+    正文里根本没有对应段落 → nopara。都是字面算得出的，不必调 AI。"""
     return [{"kind": x["kind"], "i": x["i"], "oi": x["oi"], "point": x["text"],
              "quote": x["quote"], "para": x["para"], "qpara": x["qpara"],
-             "state": "exact" if x["exact"] else ("nopara" if x["para"] is None else "unsure")}
+             "state": "exact" if x["exact"] else ("nopara" if x["para"] is None else "same")}
             for x in survey(content, outline)]
 
 
-def align(content, outline, use_ai=True):
-    """对齐一篇。返回 (新正文, 新提纲, 报告)。
+def align(content, outline, use_ai=True, wmax=1100):
+    """对照一篇（只展示、不改写已有正文）。返回 (正文, 提纲, 报告)。
 
-    报告 = {"changed": bool, "log": [...], "items": [每条论点最终怎么落地的]}
-    items 里每条：{kind,i,point,quote,para,state}
-      exact     段首就是提纲那句，没动
-      same      措辞不同但段首确实是论点句 —— 两边都没动，quote 是正文里对应那句（前端并排显示）
-      woven     段首没亮论点，把提纲那句织进去了
-      rewritten 提纲那条偏题，按正文实际内容重拟了一句，提纲和正文一起更新
-      nopara    正文段数少于提纲条数，找不到对应段，只能报出来
+    提纲和正文各自独立，绝不为了「对齐」去改写已经写好的段落，也不回头重拟提纲。唯一会动
+    正文的是「补写一段**正文原本缺失**的分论点段落」（受 wmax 字数上限约束）。
+
+    报告 = {"changed": bool, "log": [...], "items": [每条论点在正文里怎么落地的]}
+    items 里每条：{kind,i,oi,point,quote,para,qpara,state}
+      exact   段首字面就是这条
+      same    换了说法 —— 正文一字没动，quote 是正文对应段里最像的那句（前端当「另一种写作思路」并排显示）
+      added   正文原本缺这条对应的段落，已参考提纲补写了一段
+      nopara  正文缺这条对应的段落，且没能补（use_ai 关着，或补上会超字数）
     """
     items = survey(content, outline)
     # 没提纲、正文不足三段、或 outline 根本不是数组 —— 原样奉还，一个字都不动。
     # 注意返回的是 outline 本身而不是 list(outline)：后者会把字符串拆成逐字列表。
     if not items:
         return content, outline, {"changed": False, "log": [], "items": []}
-    ps = paras(content)
-    thesis, subs = split_outline(outline)
-    ans = _ask(content, items) if use_ai and any(
-        not x["exact"] and x["para"] is not None for x in items) else {}
 
-    log, rep, new_subs, new_thesis = [], [], list(subs), thesis
-    for k, it in enumerate(items):
-        r = {"kind": it["kind"], "i": it["i"], "oi": it["oi"], "point": it["text"],
-             "quote": it["quote"], "para": it["para"], "qpara": it["qpara"], "state": "exact"}
-        if it["exact"]:
-            rep.append(r)
-            continue
-        if it["para"] is None:
-            r["state"] = "nopara"
-            rep.append(r)
-            continue
-        a = ans.get(k) or {}
-        v = a.get("verdict")
-        quote = (a.get("quote") or "").strip()
-        # AI 说「已经有了」，就得把那句原样指出来，而且必须落在**该看的那几句**里。
-        # 实测它会拿段末回扣句来交差（正文里确实有这句，但不在段首）—— 只查「正文里有没有」
-        # 是拦不住的，必须连位置一起核。指不出来就当它没说过。
-        if v == "has":
-            if quote and _flat(quote) in _flat("".join(_head_sents(ps, it))):
-                r.update(state="same", quote=quote)     # 段首确实是论点句，换了说法而已 → 两边都不动
-            else:
-                # 说有、却指不出段首里的原句。不采信这个 has —— 可也不敢照 none 处理硬插一句，
-                # 万一真是换了说法，插进去就成了同义重复。标 unsure 摆到前端去，人一眼能判、
-                # 也能用编辑功能手改。宁可少改，不能改坏（和 _used_hit「宁可少列不能列错」同一条）。
-                r["state"] = "unsure"
-            rep.append(r)
-            continue
-        if v not in ("none", "offtopic"):
-            r["state"] = "unsure"        # AI 没给准话（没答这条 / verdict 乱填）：谁都不动
-            rep.append(r)
-            continue
+    # 「正文里根本没有对应段落」的分论点（para is None）才补写。这是唯一会动正文的分支。
+    missing = [it for it in items if it["kind"] == "sub" and it["para"] is None]
+    added_i, log = set(), []
+    if use_ai and missing:
+        content, added_i, log = _supplement(content, missing, wmax)
 
-        point = strip_label((a.get("point") or "").strip()) or it["text"]
-        newp = (a.get("para") or "").strip()
-        # AI 改写的这一段必须：① 论点句真在该在的位置 ② 原有内容基本还在（它爱顺手重写整段）。
-        # 位置**分论点看段首、总论点看段末**——开头段的规矩是「引材料 → 末尾亮总论点」，
-        # 拿段首去卡总论点，AI 写对了也会被判失败、白白退回机械兜底。
-        flatp, key = _flat(newp), _flat(point)[:10]
-        ok = (newp and len(flatp) >= len(_flat(ps[it["para"]])) * 0.9
-              and (flatp.endswith(_flat(point)[-10:]) if it["kind"] == "thesis"
-                   else flatp.startswith(key)))
-        if ok:
-            ps[it["para"]] = newp
-        elif it["kind"] == "thesis":
-            ps[0] = ps[0].rstrip() + _end(point)         # 开头段的规矩：引材料 → 末尾亮总论点
+    # 补写会新增段落、段号跟着挪，报告以补写后的正文重新摸一遍底。
+    rep = []
+    for it in survey(content, outline):
+        if it["kind"] == "sub" and it["i"] in added_i:
+            state = "added"
+        elif it["exact"]:
+            state = "exact"
+        elif it["para"] is None:
+            state = "nopara"
         else:
-            ps[it["para"]] = _end(point) + ps[it["para"]]
-        r.update(state="rewritten" if v == "offtopic" else "woven", point=point,
-                 quote="", qpara=it["para"])       # 补进去之后，这句就在归属段的段首了
-        if it["kind"] == "thesis":
-            new_thesis = point
-        else:
-            new_subs[it["i"]] = point
-        log.append("%s：%s（%s）" % (
-            "总论点" if it["kind"] == "thesis" else "分论点%d" % (it["i"] + 1),
-            "提纲那条跑题了，照正文重拟一句" if v == "offtopic" else "论点句补进段首",
-            "AI 织入" if ok else "机械插入兜底"))
-        rep.append(r)
-
-    changed = bool(log)
-    new_outline = list(outline or [])
-    if changed:
-        new_outline = ([("总论点：" + new_thesis)] if thesis else []) + \
-                      ["分论点%d：%s" % (i + 1, s) for i, s in enumerate(new_subs)]
-    return ("\n".join(ps) if changed else content), new_outline, \
-           {"changed": changed, "log": log, "items": rep}
+            state = "same"
+        rep.append({"kind": it["kind"], "i": it["i"], "oi": it["oi"], "point": it["text"],
+                    "quote": it["quote"], "para": it["para"], "qpara": it["qpara"], "state": state})
+    return content, outline, {"changed": bool(log), "log": log, "items": rep}

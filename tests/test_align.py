@@ -1,11 +1,13 @@
-"""提纲 ↔ 正文 对齐（mods/align）。
+"""提纲 ↔ 正文 对照（mods/align）。
 
-这块是照实测数据长出来的：全库 38 篇扫过一遍，26 篇字面对不上，但拆开看绝大多数
-段首**已经是**分论点句、只是换了说法（提纲「实干是成就事业的基石」／正文「执一而御万，
-实干的底层逻辑归根到底在于坚持实事求是、群众路线」），真正「段首只有引言」的是少数。
-所以判定不能只看字面 —— 得问 AI，但 AI 说「已经有了」时必须**指出段首里的原句**，
-指不出来就不采信。这份测试盯的就是那几处「不采信」的闸门：闸门一松，
-它就会拿段末的回扣句来交差，而回扣句恰恰证明段首没亮论点。
+对齐现在**只展示、不改写已有正文**：提纲归提纲、全文归全文。
+  · 同义表述（正文换了说法，讲的还是这条分论点）→ 正文一字不动，state=same，
+    把正文里对应那句摘出来当「另一种写作思路」并排显示；
+  · 补充缺失（某条分论点在正文里根本没有对应段落）→ 参考提纲补写**一段**，
+    插在结尾段之前，且补完全文仍须 ≤ wmax 字，塞不下就只报出来（nopara）。
+唯一会动正文的就是「补写一段原本缺失的分论点段落」，其余任何情况都不碰已有段落。
+
+这份测试盯的就是这两条边界：同义句绝不回改正文、补写受字数上限约束。
 """
 import mods.align as A
 
@@ -17,7 +19,7 @@ def test_sim_同一句多个补充从句仍算高分():
 
 
 def test_sim_换了说法要低于阈值():
-    # 同一个论点（实干/为民），但一个重字都不共用的写法 —— 字面判不出来，必须交给 AI
+    # 同一个论点（实干/为民），但一个重字都不共用的写法 —— 字面判不出来，当同义表述并排展示
     assert A.sim("实干是成就事业的基石，需以人民为中心、扎根基层。",
                  "良法是善治之前提，高质量发展的落地成效归根结底取决于实干与为民的同向发力。") \
         < A.TH_EXACT
@@ -46,10 +48,33 @@ _TXT = "\n".join([
     "让我们以创新实干书写新篇。",
 ])
 
+# 正文只有两个论证段（段 2、段 3），提纲却有三条分论点 —— 分论点3 在正文里没有对应段落
+_OL_MISS = _OL
+_TXT_MISS = "\n".join([
+    "开头段引材料。以创新实干推动高质量发展。",
+    "创新是引领发展的第一动力。某地靠制度创新突破了瓶颈，成效显著。",
+    "实干是成就事业的基石。廖俊波扎根基层三年，使县域经济跃至全省前列。",
+    "让我们以创新实干书写新篇。",
+])
+
+
+def _stub(monkeypatch, items):
+    def fake(_msgs, **_kw):
+        import json
+        return json.dumps({"items": items}, ensure_ascii=False), None
+    monkeypatch.setattr(A, "_ai_call_or_error", fake)
+
+
+def _no_ai(monkeypatch):
+    """没有缺失分论点时绝不该调 AI —— 调了就让测试当场炸。"""
+    def boom(*_a, **_k):
+        raise AssertionError("不该调 AI：没有缺失的分论点，只是展示对照")
+    monkeypatch.setattr(A, "_ai_call_or_error", boom)
+
 
 def test_survey_段首原样命中算exact不用问AI():
     got = {(x["kind"], x["i"]): x for x in A.survey(_TXT, _OL)}
-    assert got[("sub", 0)]["exact"] is True, "段首原样就是分论点1，不该再花一次 AI"
+    assert got[("sub", 0)]["exact"] is True, "段首原样就是分论点1，算 exact"
     assert got[("sub", 1)]["exact"] is False, "段首是引言，字面对不上"
 
 
@@ -60,68 +85,71 @@ def test_survey_分论点只看段首前两句():
     assert "唯有实干" not in got[("sub", 1)]["quote"], "把段末回扣句当成了段首论点句"
 
 
-def _stub(monkeypatch, items):
-    def fake(_msgs, **_kw):
-        import json
-        return json.dumps({"items": items}, ensure_ascii=False), None
-    monkeypatch.setattr(A, "_ai_call_or_error", fake)
-
-
-def test_align_AI说has但引段末回扣句不采信(monkeypatch):
-    """AI 最爱拿段末的「唯有…方能…」来交差。只查「正文里有没有这句」是拦不住的
-       （正文里确实有），必须连位置一起核。核不过就不采信，也不硬插 —— 标 unsure 交给人。"""
-    _stub(monkeypatch, [{"k": 2, "verdict": "has", "quote": "唯有实干方能成事。"}])
+def test_align_同义表述只展示不改正文(monkeypatch):
+    """正文换了说法但讲的是同一条分论点 —— 正文一字不动，标 same、并排显示正文那句，
+       而且这条路径压根不该调 AI（没有缺失分论点要补写）。"""
+    _no_ai(monkeypatch)
     content, outline, rep = A.align(_TXT, _OL)
+    assert content == _TXT, "同义表述不该改动正文"
+    assert outline == _OL, "提纲不该被回改"
+    assert rep["changed"] is False
     sub2 = [x for x in rep["items"] if x["kind"] == "sub" and x["i"] == 1][0]
-    assert sub2["state"] == "unsure", "段末回扣句被当成了段首论点句"
-    assert content == _TXT, "不采信就不该动正文"
+    assert sub2["state"] == "same", "换了说法的分论点应标 same（另一种写作思路）"
+    assert sub2["quote"], "same 要给出正文里对应那句，好并排显示"
+    # 段首原样命中的仍是 exact
+    sub1 = [x for x in rep["items"] if x["kind"] == "sub" and x["i"] == 0][0]
+    assert sub1["state"] == "exact"
 
 
-def test_align_段首没亮论点就把提纲那句织进去(monkeypatch):
-    _stub(monkeypatch, [{"k": 2, "verdict": "none", "point": "实干是成就事业的基石。",
-                         "para": "实干是成就事业的基石。善除害者察其本，善理疾者绝其源。"
-                                 "廖俊波扎根基层三年，使县域经济跃至全省前列。唯有实干方能成事。"}])
-    content, outline, rep = A.align(_TXT, _OL)
-    p3 = A.paras(content)[2]
-    assert p3.startswith("实干是成就事业的基石。"), "论点句没进段首"
-    assert "善除害者察其本" in p3, "原来的引言被删了——只该顺势后移，不该删"
-    assert "廖俊波" in p3, "素材被删了"
-    assert [x for x in rep["items"] if x["i"] == 1 and x["kind"] == "sub"][0]["state"] == "woven"
+def test_align_缺失分论点参考提纲补写(monkeypatch):
+    """某条分论点正文里完全没有对应段落 → 参考提纲补写一段，插在结尾段之前，标 added。
+       这是唯一会动正文的分支。"""
+    # 提纲第 3 条分论点在正文里没段落，AI 返回它的补写段（编号按提纲里的第 3 条 → i=3）
+    _stub(monkeypatch, [{"i": 3, "para": "开放是繁荣发展的必由之路。某自贸区吸引外资连年增长，"
+                                         "区域合作释放共赢红利。"}])
+    content, outline, rep = A.align(_TXT_MISS, _OL_MISS, wmax=2000)
+    ps = A.paras(content)
+    assert len(ps) == 5, "补写段没插进去（原 4 段应变 5 段）"
+    assert "开放是繁荣发展的必由之路" in content
+    assert ps[-1] == "让我们以创新实干书写新篇。", "补写段应插在结尾段之前，别顶掉结尾"
+    sub3 = [x for x in rep["items"] if x["kind"] == "sub" and x["i"] == 2][0]
+    assert sub3["state"] == "added"
+    assert rep["changed"] is True and rep["log"]
+    # 已有的两段一字未动
+    assert "创新是引领发展的第一动力。某地靠制度创新突破了瓶颈，成效显著。" in content
+    assert "实干是成就事业的基石。廖俊波扎根基层三年" in content
 
 
-def test_align_AI把整段重写缩水时走机械兜底(monkeypatch):
-    """它爱顺手「润色」，一润色素材就没了。段落缩水就丢掉这一版，改用机械前插。"""
-    _stub(monkeypatch, [{"k": 2, "verdict": "none", "point": "实干是成就事业的基石。",
-                         "para": "实干是成就事业的基石。"}])       # 素材全没了
-    content, _outline, _rep = A.align(_TXT, _OL)
-    p3 = A.paras(content)[2]
-    assert p3.startswith("实干是成就事业的基石。")
-    assert "廖俊波" in p3, "缩水的那一版被采用了，素材丢了"
-
-
-def test_align_提纲跑题时照正文重拟并同步提纲(monkeypatch):
-    _stub(monkeypatch, [{"k": 2, "verdict": "offtopic", "point": "扎根基层才能干成事。",
-                         "para": "扎根基层才能干成事。善除害者察其本。廖俊波扎根基层三年，"
-                                 "使县域经济跃至全省前列。唯有实干方能成事。"}])
-    content, outline, rep = A.align(_TXT, _OL)
-    assert A.paras(content)[2].startswith("扎根基层才能干成事。")
-    assert "扎根基层才能干成事" in outline[2], "正文改了，提纲没跟着改 —— 又对不上了"
-    assert [x for x in rep["items"] if x["i"] == 1 and x["kind"] == "sub"][0]["state"] == "rewritten"
-
-
-def test_align_AI调用失败时不动正文(monkeypatch):
-    monkeypatch.setattr(A, "_ai_call_or_error", lambda *_a, **_k: (None, ("boom", 502)))
-    content, outline, rep = A.align(_TXT, _OL)
-    assert content == _TXT and outline == _OL
+def test_align_补写会超字数就只报不写(monkeypatch):
+    """补一段就顶破字数上限的，这条只报出来（nopara），绝不为补一段把全文写超。"""
+    _stub(monkeypatch, [{"i": 3, "para": "开放是繁荣发展的必由之路。某自贸区吸引外资连年增长。"}])
+    content, _outline, rep = A.align(_TXT_MISS, _OL_MISS, wmax=10)   # 上限卡得极低，怎么都塞不下
+    assert content == _TXT_MISS, "超字数就不该补，正文要原样"
+    sub3 = [x for x in rep["items"] if x["kind"] == "sub" and x["i"] == 2][0]
+    assert sub3["state"] == "nopara"
     assert rep["changed"] is False
 
 
+def test_align_补写的AI调用失败时不动正文(monkeypatch):
+    monkeypatch.setattr(A, "_ai_call_or_error", lambda *_a, **_k: (None, ("boom", 502)))
+    content, _outline, rep = A.align(_TXT_MISS, _OL_MISS)
+    assert content == _TXT_MISS and rep["changed"] is False
+    sub3 = [x for x in rep["items"] if x["kind"] == "sub" and x["i"] == 2][0]
+    assert sub3["state"] == "nopara"
+
+
+def test_align_没缺失分论点时不调AI也不动正文(monkeypatch):
+    _no_ai(monkeypatch)
+    content, outline, rep = A.align(_TXT, _OL)
+    assert content == _TXT and outline == _OL and rep["changed"] is False
+
+
 def test_quick_report_不调AI也给得出对照位置():
-    # 人工编辑完正文用这个刷新：位置和段首最像的句子算得出，判不准的标 unsure
+    # 人工编辑完正文用这个刷新：段首命中算 exact，换了说法算 same，都是字面算得出的
     got = A.quick_report(_TXT, _OL)
     sub1 = [x for x in got if x["kind"] == "sub" and x["i"] == 0][0]
     assert sub1["state"] == "exact" and sub1["para"] == 1
-    assert [x for x in got if x["kind"] == "sub" and x["i"] == 1][0]["state"] == "unsure"
+    assert [x for x in got if x["kind"] == "sub" and x["i"] == 1][0]["state"] == "same"
 
 
 def test_survey_总论点在结尾段回扣时段号要指结尾段():
@@ -168,19 +196,6 @@ def test_strip_label_不吃以论点开头的正常句子():
     assert A.strip_label("论点鲜明才立得住") == "论点鲜明才立得住"
     assert A.strip_label("分论点1：创新是第一动力") == "创新是第一动力"
     assert A.strip_label("总论点：以创新促发展") == "以创新促发展"
-
-
-def test_align_总论点的AI改写按段末校验(monkeypatch):
-    """开头段的规矩是「引材料 → 末尾亮总论点」。若拿段首去卡总论点，
-       AI 写对了也会被判失败、白退回机械兜底。"""
-    ol = ["总论点：唯有创新方能致远。", "分论点1：甲论点。", "分论点2：乙论点。"]
-    txt = "\n".join(["今天天气不错，风和日丽，适合散步，是个好天气。", "甲论点。某地做了事。",
-                     "乙论点。某人做了事。", "结尾段升华一下。"])
-    _stub(monkeypatch, [{"k": 0, "verdict": "none", "point": "唯有创新方能致远。",
-                         "para": "今天天气不错，风和日丽，适合散步，是个好天气。唯有创新方能致远。"}])
-    content, _outline, rep = A.align(txt, ol)
-    assert A.paras(content)[0].endswith("唯有创新方能致远。")
-    assert "AI 织入" in rep["log"][0], "AI 那一版被误判成不合格，退回了机械兜底"
 
 
 def test_align_正文不足三段不动它():

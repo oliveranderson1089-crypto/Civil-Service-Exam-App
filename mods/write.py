@@ -12,10 +12,10 @@ from flask import jsonify
 
 from core import log
 from mods.ai import _ai_call_or_error
-from mods.align import align
+from mods.align import align, paras, sents
 
 
-WRITE_MIN, WRITE_MAX = 1000, 1200      # 省考大作文常规字数
+WRITE_MIN, WRITE_MAX = 900, 1100       # 省考大作文常规字数；WRITE_MAX 是**绝对上限**，入库前保证 ≤ 它
 
 # 政治理论和常考提法**不是按天更新的**（都是一次性铺进去的），
 # 所以它们不能按日期取——要按当天素材的话题去检索，这样每篇都用得上。
@@ -191,8 +191,10 @@ def _write_lack(p, content):
     w = len(re.sub(r"\s", "", content))
     if w < WRITE_MIN:
         need.append("字数只有 %d，要写到 %d~%d" % (w, WRITE_MIN, WRITE_MAX))
-    elif w > WRITE_MAX + 80:
-        need.append("字数 %d 超了，压到 %d~%d" % (w, WRITE_MIN, WRITE_MAX))
+    elif w > WRITE_MAX:
+        # 硬上限，一个字都不放过：以前放行到 +80，成文就总在上限出头。绝不能超。
+        need.append("字数 %d 超了 %d 上限，必须压到 %d 以内（宁可 %d 出头，别顶格写）"
+                    % (w, WRITE_MAX, WRITE_MAX, WRITE_MIN))
     return need
 
 
@@ -245,6 +247,45 @@ def _compose_dirs(db, p, n_hist=40, n_out=4):
     return dirs, recent
 
 
+def _compress(content):
+    """字数超上限时叫 AI 精简到 ≤ WRITE_MAX，保住结构、分论点句和素材，只删冗余修饰。
+       和补素材循环分开：那个是「缺什么补什么」，这个是「多了就删」，混在一起两头够不着。"""
+    rep, err = _ai_call_or_error(
+        [{"role": "system", "content": "你是申论阅卷组的范文作者。这次只做精简压缩，严格输出 JSON。"},
+         {"role": "user", "content":
+          "这篇申论大作文字数超了，请精简到 **%d 字以内**（宁可 %d 字出头，别顶格写）。\n"
+          "只删冗余的修饰、重复的铺垫和空话；**分论点句、素材事例、三段结构一段都不许少**，"
+          "开头的总论点、结尾的升华都要留。\n\n【正文】\n%s\n\n"
+          '只输出 JSON：{"content":"精简后的正文全文，用 \\n 分段"}'
+          % (WRITE_MAX, WRITE_MIN, content)}],
+        temperature=0.3, max_tokens=4000, timeout=300, json_mode=True, tier="pro")
+    if err:
+        return content
+    try:
+        c2 = (json.loads(rep).get("content") or "").strip()
+    except Exception:
+        return content
+    return c2 or content
+
+
+def _cap_words(content, wmax=WRITE_MAX):
+    """机械兜底：AI 还是压不到 wmax 以内时，从**论证段**（中间段）末尾整句整句地删，直到达标。
+       开头段（总论点）和结尾段（升华）不动，免得砍掉立意或收尾。极少触发，是最后一道闸。"""
+    if len(re.sub(r"\s", "", content)) <= wmax:
+        return content
+    ps = paras(content)
+    if len(ps) < 3:                       # 连三段都不够，删了就不成文，认了
+        return content
+    i = len(ps) - 2                        # 从倒数第二段（最后一个论证段）往前删
+    while len(re.sub(r"\s", "", "\n".join(ps))) > wmax and i >= 1:
+        ss = sents(ps[i])
+        if len(ss) > 1:
+            ps[i] = "".join(ss[:-1])      # 删这一段的末句
+        else:
+            i -= 1                         # 这段只剩一句了（多半是论点句），别删空，退到上一段
+    return "\n".join(ps)
+
+
 def _write_gen(db, mode, date):
     """生成一篇。返回 (essay_dict, None) 或 (None, (json, code))。"""
     p = _write_pool(db, date if mode == "daily" else None)
@@ -271,12 +312,12 @@ def _write_gen(db, mode, date):
     prompt = (head + "\n" + pool + "\n\n"
               "【要求】\n"
               "1. 标题：8~16 字，观点鲜明，不要「浅谈」「论」这种套话开头。\n"
-              "2. 结构：开头（引材料+亮总论点）→ 三个分论点（每段：分论点句+素材论证+回扣）→ 结尾升华。\n"
-              "   ⚠️ **outline 里的每一句，必须在正文里逐字找得到**，这是硬要求：\n"
-              "   · 分论点句**原样当那一段的第一句**——不许拿名句、古语、衔接表达开头再绕回论点，\n"
-              "     那样读的人对着提纲在正文里一句都对不上，提纲就废了；\n"
-              "   · 总论点句原样出现在开头段（一般是最后一句）。\n"
-              "   写完请自己回头核一遍：提纲那 4 句，是不是都能在正文里原样找到。\n"
+              "2. 结构：开头（引材料+亮总论点）→ 三个分论点（每段：先亮分论点，再素材论证，再回扣）→ 结尾升华。\n"
+              "   · outline 是骨架：把总论点、三个分论点各写成**一句话**放进 outline 数组"
+              "（每条只写论点句本身，别加「总论点：」「分论点1：」这类序号标签）；\n"
+              "   · 正文每一段**开头先把该段的分论点亮出来**，别拿名句、古语、衔接表达开头把论点埋起来；\n"
+              "   · 提纲和正文**各自独立、不必逐字一致**（正文可以换个更文气的说法），"
+              "但每一条分论点在正文里都要有**对应的一段**在讲它，不能漏。\n"
               "3. 每个分论点段**必须实打实用上面素材里的事例或理论**，写清是谁、做了什么、说明什么；"
               "不要写「某地某人」这种空壳。\n"
               "4. 段落之间**必须使用上面给的衔接表达**，不要自己造「首先其次最后」这种口水过渡。\n"
@@ -285,19 +326,19 @@ def _write_gen(db, mode, date):
               "   · 政治理论 或 常考提法 ≥2 条，用来支撑分论点的道理，不是贴标签\n"
               "   · 金句（习语/权威表述）≥1 条，放在开头或结尾\n"
               "   · 高频成语 2~3 个，用在恰当处，别堆砌\n"
-              "6. 字数 %d~%d 字，**必须达标**（这是评分硬指标）。\n"
+              "6. 字数 %d~%d 字，**绝不超过 %d 字**（这是硬上限，宁可 %d 字出头也别顶格、别写超）。\n"
               "7. 正文用 \\n 分段，不要 markdown 标记、不要小标题、不要「分论点一」这种标签。\n\n"
               "只输出 JSON：\n"
               '{"title":"","topic":"话题标签，4~8字","outline":["总论点","分论点1","分论点2","分论点3"],'
               '"content":"正文全文","used":[序号,...],"note":"一句话说明为什么这么选材"}\n'
               "used 里填你**真正用进文章**的素材序号（就是上面每条前面的数字），没用的别写。"
-              % (WRITE_MIN, WRITE_MAX))
+              % (WRITE_MIN, WRITE_MAX, WRITE_MAX, WRITE_MIN))
 
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论阅卷组的范文作者。文章要能直接当范文用："
                                        "论点立得住、素材是真的、衔接不生硬、字数达标。严格输出 JSON。"},
          {"role": "user", "content": prompt}],
-        temperature=0.6, max_tokens=4000, timeout=300, json_mode=True)
+        temperature=0.6, max_tokens=4000, timeout=300, json_mode=True, tier="pro")
     if err:
         return None, err
     try:
@@ -329,7 +370,7 @@ def _write_gen(db, mode, date):
               "不许为了塞素材把字数写超。\n"
               '只输出 JSON：{"content":"改好的正文全文","used":[序号,...]}'
               % (WRITE_MIN, WRITE_MAX)}],
-            temperature=0.5, max_tokens=4000, timeout=300, json_mode=True)
+            temperature=0.5, max_tokens=4000, timeout=300, json_mode=True, tier="pro")
         if ferr:
             break
         try:
@@ -341,11 +382,16 @@ def _write_gen(db, mode, date):
             break                       # 没改好就别越改越乱，保住上一版
         content, d["used"] = c2, f.get("used") or d.get("used")
 
-    # 提纲和正文对齐。**必须在这儿、在补素材循环之后**——那个循环只回写 content 不回写 outline，
-    # 补一轮正文就和提纲差一轮，这正是「提纲的分论点在正文里找不到」的根子。
-    # 提示词里已经硬要求过一遍了，但模型对这种结构性要求一贯不敏感，所以入库前真去核一遍。
+    # 字数硬上限：无论前面补了什么，入库前必须 ≤ WRITE_MAX。先让 AI 精简一次（保结构），
+    # 还压不下去再机械地从论证段末尾整句删。放在对齐**之前**：对齐现在只补写缺失段落、
+    # 会受同一个 wmax 约束，不会再把已经压好的正文重新撑超。
+    if len(re.sub(r"\s", "", content)) > WRITE_MAX:
+        content = _cap_words(_compress(content))
+
+    # 提纲和正文只做对照，不再改写已有段落（提纲归提纲、全文归全文）：同义句并排显示，
+    # 只有正文里**完全缺**某条分论点的对应段落时，才参考提纲补写一段，且仍受 WRITE_MAX 约束。
     outline = d.get("outline") or []
-    content, outline, arep = align(content, outline)
+    content, outline, arep = align(content, outline, wmax=WRITE_MAX)
 
     words = len(re.sub(r"\s", "", content))
 

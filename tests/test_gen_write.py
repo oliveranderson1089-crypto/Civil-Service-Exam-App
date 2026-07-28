@@ -44,7 +44,7 @@ def _seed(mode="daily", date="2099-03-01"):
 def test_write_gen_真跑一遍(monkeypatch, flask_app):
     """_write_gen 是定时器每天 08:40 跑的**主生成路径**，之前一条测试都没有：
        test_write.py 只测 _kw_of / _used_hit 两个纯函数，整个函数体从没被执行过。
-       这次给它加了 align() 一步、INSERT 从 10 列改成 11 列 —— 任何一处写错，
+       它末尾有 align()（现在只展示不改写正文）、字数硬压、INSERT 11 列 —— 任何一处写错，
        都要等次日早上定时任务静默失败才发现（summarize_ai.py 就是这么连崩两晚的）。"""
     import mods.write as W
     date = "2099-03-09"
@@ -58,21 +58,18 @@ def test_write_gen_真跑一遍(monkeypatch, flask_app):
     db.commit()
     db.close()
 
-    # 段 3 的段首只有引言、分论点2 没亮 —— 逼 _write_gen 末尾那步 align 真的动手
+    # _TXT 五段、_OL 四条，三条分论点都各有一段对应 —— 对齐只做展示、正文一字不改。
     gen = {"title": "以创新实干铸就发展新篇", "topic": "创新实干", "outline": _OL,
            "content": _TXT, "used": [1], "note": "选材说明"}
 
     def fake_write(_msgs, **_kw):
         return json.dumps(gen, ensure_ascii=False), None
 
-    def fake_align(_msgs, **_kw):
-        return json.dumps({"items": [
-            {"k": 2, "verdict": "none", "point": "实干是成就事业的基石。",
-             "para": "实干是成就事业的基石。善除害者察其本，善理疾者绝其源。"
-                     "廖俊波扎根基层三年，使县域经济跃至全省前列。"}]}, ensure_ascii=False), None
+    def boom_align(*_a, **_k):
+        raise AssertionError("对齐不该调 AI：三条分论点都有对应段落，没有要补写的")
 
     monkeypatch.setattr(W, "_ai_call_or_error", fake_write)
-    monkeypatch.setattr(A, "_ai_call_or_error", fake_align)
+    monkeypatch.setattr(A, "_ai_call_or_error", boom_align)
 
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
@@ -81,32 +78,45 @@ def test_write_gen_真跑一遍(monkeypatch, flask_app):
     assert err is None, err
     r = con.execute("SELECT * FROM daily_essays WHERE id=?", (e["id"],)).fetchone()
     con.close()
-    assert A.paras(r["content"])[2].startswith("实干是成就事业的基石。"), "入库前那步对齐没生效"
-    assert r["words"] == len("".join(r["content"].split())), "字数是对齐前算的"
+    # 对齐只展示、不改写：正文原样入库（提纲归提纲、全文归全文）
+    assert r["content"] == _TXT, "对齐动了正文——现在应当只展示、不改写"
+    assert r["words"] == len("".join(r["content"].split())), "字数没重算"
     assert json.loads(r["align"]), "对齐报告没写进 align 列"
-    # 入库的必须是**对齐后**那份 outline，不是 AI 原样吐的那份 ——
-    # 补素材循环只回写 content 不回写 outline，正是「提纲和正文对不上」的病根
+    # 提纲原样入库（不再回改），四条齐全
     ol = json.loads(r["outline"])
     assert isinstance(ol, list) and len(ol) == 4, ol
-    assert "实干是成就事业的基石" in ol[2]
-    # 织进正文的那条，提纲和正文必须逐字一致（其余几条按设计可以是「两种写法」，不强求逐字）
-    flat = "".join(r["content"].split())
+    # 换了说法的分论点标 same（另一种写作思路），段首原样命中的是 exact
     items = {(x["kind"], x["i"]): x for x in json.loads(r["align"])}
-    assert items[("sub", 1)]["state"] == "woven"
-    assert A.strip_label(ol[2]).rstrip("。") in flat
+    assert items[("sub", 0)]["state"] == "exact"
+    assert items[("sub", 1)]["state"] == "same" and items[("sub", 1)]["quote"]
     # oi 是前端对号入座的依据，必须覆盖每一条提纲，且不重号
     assert sorted(x["oi"] for x in items.values()) == [0, 1, 2, 3]
 
 
 def test_align_all_真跑一遍(monkeypatch, flask_app):
-    """--align-all：定时器之外最容易断的一条，因为它同时碰 mods.align 和 mods.write._e_row。"""
-    eid = _seed()
+    """--align-all：定时器之外最容易断的一条，因为它同时碰 mods.align 和 mods.write._e_row。
+       现在它专挑「有分论点在正文里没有对应段落」的存量文章，参考提纲补写那一段。"""
+    # 正文只有两个论证段，提纲三条分论点 —— 分论点3（开放）在正文里没段落
+    txt_miss = "\n".join([
+        "开头段引材料。以创新实干推动高质量发展。",
+        "创新是引领发展的第一动力。某地靠制度创新突破了瓶颈。",
+        "实干是成就事业的基石。廖俊波扎根基层三年，使县域经济跃至全省前列。",
+        "让我们以创新实干书写新篇。"])
+    date = "2099-03-08"
+    db = sqlite3.connect(DB)
+    db.execute("DELETE FROM daily_essays WHERE date=?", (date,))
+    db.execute("INSERT INTO daily_essays(mode,date,topic,title,outline,content,words,used,note) "
+               "VALUES('daily',?,?,?,?,?,?,?,?)",
+               (date, "创新实干", "冒烟范文", json.dumps(_OL, ensure_ascii=False),
+                txt_miss, len(txt_miss), "[]", ""))
+    db.commit()
+    eid = db.execute("SELECT id FROM daily_essays WHERE date=?", (date,)).fetchone()[0]
+    db.close()
 
     def fake(_msgs, **_kw):
         return json.dumps({"items": [
-            {"k": 2, "verdict": "none", "point": "实干是成就事业的基石。",
-             "para": "实干是成就事业的基石。善除害者察其本，善理疾者绝其源。"
-                     "廖俊波扎根基层三年，使县域经济跃至全省前列。"}]}, ensure_ascii=False), None
+            {"i": 3, "para": "开放是繁荣发展的必由之路。某自贸区吸引外资连年增长，"
+                             "区域合作释放共赢红利。"}]}, ensure_ascii=False), None
     monkeypatch.setattr(A, "_ai_call_or_error", fake)
 
     con = sqlite3.connect(DB)
@@ -114,10 +124,11 @@ def test_align_all_真跑一遍(monkeypatch, flask_app):
     gen_write.align_all(con)
     r = con.execute("SELECT content,outline,words,align FROM daily_essays WHERE id=?", (eid,)).fetchone()
     con.close()
-    assert A.paras(r["content"])[2].startswith("实干是成就事业的基石。"), "对齐没落库"
-    assert "廖俊波" in r["content"], "素材被改没了"
+    assert "开放是繁荣发展的必由之路" in r["content"], "缺失的分论点没补写落库"
+    assert A.paras(r["content"])[-1] == "让我们以创新实干书写新篇。", "补写段应插在结尾段之前"
+    assert "廖俊波" in r["content"], "已有段落被动过了"
     assert r["words"] == len("".join(r["content"].split())), "字数没跟着重算"
-    assert any(x["state"] == "woven" for x in json.loads(r["align"])), "对齐报告没存"
+    assert any(x["state"] == "added" for x in json.loads(r["align"])), "对齐报告没记补写"
 
 
 def test_gen_yy_分发到对的生成函数(monkeypatch):

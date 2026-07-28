@@ -63,6 +63,7 @@ async function loadWrDays() {
         <div class="wr-day-m"><b>${esc(x.title || '')}</b>
           <span class="wr-tag">${esc(x.topic || '')}</span>
           <span class="wr-w">${x.words} 字</span></div>
+        <button class="btn tiny" data-wgen="${x.date}" data-force="1">🔄 重新生成</button>
       </div>` : `
       <div class="wr-day">
         <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
@@ -88,6 +89,7 @@ async function loadYyDays() {
           <span class="wr-tag">${esc(x.topic || x.doctype || '')}</span>
           <span class="wr-tag">${esc(band(x))}</span>
           <span class="wr-w">${x.words} 字</span></div>
+        <button class="btn tiny" data-wgen="${x.date}" data-force="1">🔄 重新生成</button>
       </div>` : `
       <div class="wr-day">
         <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
@@ -100,15 +102,18 @@ async function loadYyDays() {
 $('#wr-days').addEventListener('click', async e => {
   const g = e.target.closest('[data-wgen]');
   if (g) {
-    g.disabled = true; g.textContent = '写作中…';
+    // 已生成的那天也留着按钮：force=1 就是「不满意，照今天的素材/题目重来一篇」（需求四）。
+    const force = g.dataset.force === '1';
+    const label = g.textContent;
+    g.disabled = true; g.textContent = force ? '重新生成中…' : '写作中…';
     try {
       const d = await api(wrApp ? '/api/write/yingyong/daily' : '/api/write/daily', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: g.dataset.wgen }),
+        body: JSON.stringify({ date: g.dataset.wgen, force }),
       });
       openWrited(d.id);
       loadWrDays();
-    } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '✍️ 写'; }
+    } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = label; }
     return;
   }
   const c = e.target.closest('[data-weid]');
@@ -355,7 +360,8 @@ function renderWrited() {
   const isComp = sp.kind === 'compose';      // 综合应用能力大题：有给定材料 + 作答要求
   const isOut = gw && sp.form === 'outline'; // 提纲：框架式要点式，字数本来就少，不卡字数
   const wlo = sp.wmin || 150, whi = sp.wmax || 500;   // 应用文按「题位」定的字数区间（上限 ≤500）
-  const ok = isOut ? true : (gw ? (d.words >= wlo && d.words <= whi) : (d.words >= 1000 && d.words <= 1300));
+  // 议论文 900~1100 字，上限是硬指标（真题字数卡这条），超一个字都算不达标
+  const ok = isOut ? true : (gw ? (d.words >= wlo && d.words <= whi) : (d.words >= 900 && d.words <= 1100));
   document.querySelector('#wd-tabs [data-wd=text]').textContent = isOut ? '🧭 提纲' : '📄 全文';
   document.querySelector('#wd-tabs [data-wd=outline]').textContent =
     isOut ? '📐 每块怎么写' : (gw ? '📐 格式批注' : '🧭 提纲');
@@ -368,7 +374,7 @@ function renderWrited() {
     : (d.mode === 'daily' ? '📅 ' + fmtDay(d.date) + ' 的素材' : '🧩 综合应用');
   const wtxt = gw && !isOut
     ? `${d.words} 字 / 目标 ${wlo}~${whi}${ok ? '' : (d.words > whi ? '（超了）' : '（不足）')}`
-    : `${d.words} 字${ok ? '' : '（字数不达标）'}`;
+    : `${d.words} 字${ok ? '' : (d.words > 1100 ? '（超了 1100 上限）' : '（不足 900）')}`;
   $('#wd-head').innerHTML = `
     <h2 class="wd-title">${esc(d.title || '')}</h2>
     <div class="wd-meta">
@@ -407,22 +413,34 @@ function renderWrited() {
         </div>`).join('')
       : '<p class="empty">没有批注。</p>';
   } else {
+    // 提纲按「1.总论点：… / 2.分论点1：… / 3.分论点2：…」呈现：ol 自动编号，前缀补角色标签。
+    const roles = olRoles(d.outline || []);
     $('#wd-outline').innerHTML = (d.outline || []).length
-      ? `<ol class="wd-ol">${d.outline.map((x, i) => `<li>${esc(x)}${olMatch(d, i)}</li>`).join('')}</ol>`
+      ? `<ol class="wd-ol">${d.outline.map((x, i) =>
+          `<li><b class="wd-ol-role">${roles[i]}</b>${esc(olStrip(x))}${olMatch(d, i)}</li>`).join('')}</ol>`
       : '<p class="empty">没有提纲。</p>';
   }
   $('#wd-align').classList.toggle('hidden', gw || !(d.outline || []).length);
 }
 // 提纲每一条，在正文里落在哪、原句是哪句（后端 mods/align 算好存在 align 列里）。
-// 同一个论点，提纲写得直白、正文写得文气，两种写法都值得学 —— 所以并排摆出来，而不是二选一。
+// 提纲归提纲、全文归全文：同一个论点，提纲写得直白、正文写得文气，两种写法都值得学 ——
+// 所以把正文那句当「另一种写作思路」并排摆出来，而不是回头改正文去凑提纲。
 const WD_AL = {
   exact: ['', ''],                                    // 段首就是这句，没什么好说的
-  same: ['换了说法', 'ok'],
-  woven: ['已补进段首', 'fix'],
-  rewritten: ['原提纲跑题，已照正文重拟', 'fix'],
-  unsure: ['待对齐', 'warn'],
-  nopara: ['正文里没有对应段落', 'warn'],
+  same: ['另一种写作思路', 'ok'],                     // 正文换了说法，一字没动，并排显示正文那句
+  added: ['正文原缺，已参考提纲补写', 'fix'],          // 正文本来没有这一段，补写了一段
+  nopara: ['正文缺此分论点', 'warn'],                 // 正文里没有对应段落，也没补
 };
+// 提纲每条前面的「总论点：/分论点N：」标签：判定和后端 split_outline 一致（认标签，认不出按条数猜）
+const OL_LABEL = /^\s*(总论点|中心论点|分论点|论点)\s*[0-9一二三四五六]*\s*[：:、.．]\s*/;
+function olStrip(s) { return String(s || '').replace(OL_LABEL, '').trim(); }
+function olRoles(outline) {
+  const items = (outline || []).map(x => String(x || ''));
+  const head = items[0] || '';
+  const isThesis = /^\s*(总论点|中心论点)/.test(head) || (items.length >= 4 && !/^\s*分论点/.test(head));
+  let sub = 0;
+  return items.map((x, i) => (i === 0 && isThesis) ? '总论点：' : ('分论点' + (++sub) + '：'));
+}
 function olMatch(d, i) {
   // 认后端给的 oi（这条在提纲数组里的下标），别在这儿按「第一条是总论点」自己推算 ——
   // 提纲只有分论点时那个假设就不成立，一推整份对照错一格，比不显示更误导。
@@ -484,9 +502,9 @@ $('#wd-ed-save').onclick = async () => {
   b.disabled = false; b.textContent = '💾 保存';
 };
 $('#wd-align').onclick = async () => {
-  if (!await appConfirm('让 AI 逐段核一遍：提纲上的每条论点，正文段首到底亮出来没有。\n\n'
-    + '段首已经是论点句、只是换了说法的 —— 两边都不动，只标出正文里对应的那一句；\n'
-    + '段首只有引言、论点真没亮的 —— 把提纲那句补进段首。')) return;
+  if (!await appConfirm('重新核对提纲与正文的对应关系（提纲归提纲、全文归全文，正文里已有的段落不会被改写）：\n\n'
+    + '· 正文换了说法但讲的是同一条分论点 —— 正文一字不动，在提纲下并排显示「另一种写作思路」；\n'
+    + '· 某条分论点正文里完全没有对应段落 —— 参考提纲补写一段（全文仍不超过 1100 字）。')) return;
   const b = $('#wd-align');
   b.disabled = true; b.textContent = '对齐中…';
   try {

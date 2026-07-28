@@ -1516,6 +1516,8 @@ body.dark .wd-timu-b p{color:#c2cbd8;}
 #wr-backfill:disabled:hover{transform:none;border-color:var(--line);color:var(--text);}
 .wd-ol{padding-left:22px;line-height:1.9;font-size:14px;}
 .wd-ol li{margin-bottom:8px;}
+.wd-ol-role{color:var(--blue);font-weight:700;margin-right:2px;}
+body.dark .wd-ol-role{color:#7fb0ff;}
 /* 提纲 ↔ 正文 的对照：同一个论点，提纲写得直白、正文写得文气，两种写法都值得学，所以并排摆 */
 .wd-acts{display:flex;gap:8px;margin:0 0 10px;}
 .btn.wd-act{padding:6px 12px;font-size:13px;border-radius:9px;}

@@ -63,6 +63,7 @@ NOTE_DRAFT_KEY
 NTF_ICON
 NW_KIND
 OFFICE_EXT
+OL_LABEL
 PAD_BGICON
 PAD_COLORS
 PAD_INK
@@ -606,6 +607,8 @@ nwCur
 nwMarkup
 nwRender
 olMatch
+olRoles
+olStrip
 onChatPush
 onFriendPush
 openAI
