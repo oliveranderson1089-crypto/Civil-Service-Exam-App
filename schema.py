@@ -1,4 +1,4 @@
-"""建表 + 迁移：全部 77 张表的 schema 都在这儿。
+"""建表 + 迁移：全部 78 张表的 schema 都在这儿。
 
 原先埋在 app.py 中间（还被「AI 工具调用」的区段标题盖住了 —— 那个标题下面
 其实跟着 792 行 init_db）。schema 是独立关注点：改表结构不该翻业务代码，
@@ -152,6 +152,18 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(user_id, classic_id)
         );
+        -- 古诗复习卡（全局内容，供「今日复习 · 古诗」）：由 gen_gushi.py 建卡。
+        -- 两个入库条件在那儿卡死——topic 必须是常识常考话题、line 必须是该诗原文的子串，
+        -- 复习那边只管出卡不做判断。UNIQUE(classic_id,line) 让重跑脚本幂等。
+        CREATE TABLE IF NOT EXISTS gushi_cards(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            classic_id INTEGER NOT NULL,
+            line TEXT NOT NULL, topic TEXT, theme TEXT,
+            common TEXT, apply TEXT, freq INTEGER DEFAULT 0, source TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(classic_id, line)
+        );
+        CREATE INDEX IF NOT EXISTS idx_gushi_freq ON gushi_cards(freq);
         -- AI 讲解全局缓存（同一首诗只算一次，省钱）
         CREATE TABLE IF NOT EXISTS classic_ai(
             classic_id INTEGER PRIMARY KEY,
@@ -733,6 +745,24 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_bg_user ON bg_tasks(user_id, id DESC);
+        -- AI 调用记账：每次真实发出的请求一行（含重试）。写入方是 aimeter.py，
+        -- 它零依赖、脚本侧也会自己建这张表——两份定义由 tests/test_schema_drift.py 盯着。
+        CREATE TABLE IF NOT EXISTS ai_calls(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT DEFAULT (datetime('now','localtime')),
+            caller TEXT DEFAULT '',
+            tier TEXT DEFAULT '',
+            model TEXT DEFAULT '',
+            mode TEXT DEFAULT 'chat',
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            reasoning_tokens INTEGER DEFAULT 0,
+            elapsed_ms INTEGER DEFAULT 0,
+            ok INTEGER DEFAULT 1,
+            err_kind TEXT DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_calls_ts ON ai_calls(ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_ai_calls_caller ON ai_calls(caller, ts DESC);
         -- 范文推荐：一套仿真卷（材料按真题字数规格） + 各题完整参考答案
         CREATE TABLE IF NOT EXISTS essay_papers(
             id INTEGER PRIMARY KEY AUTOINCREMENT,

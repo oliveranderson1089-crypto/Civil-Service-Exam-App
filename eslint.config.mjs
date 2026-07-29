@@ -89,4 +89,18 @@ export default [
       "valid-typeof": "error",
     },
   },
+  {
+    // 后台是独立页面：admin.html 里的内联脚本先跑，把这几个工具函数放进全局，
+    // 随后加载的 js/admin-*.js 直接用。跟上面那份「app.js ↔ 外壳」的契约同理——
+    // 这里是「admin.html ↔ 后台分栏脚本」的契约，改名字就是在改协议。
+    files: ["static/js/admin-*.js"],
+    languageOptions: {
+      globals: {
+        $: "readonly",              // querySelector 简写
+        esc: "readonly",            // HTML 转义
+        toast: "readonly",
+        adminConfirm: "readonly",   // 项目规矩：不用原生 confirm
+      },
+    },
+  },
 ];

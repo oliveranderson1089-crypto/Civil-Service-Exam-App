@@ -39,6 +39,7 @@
   .ai-f input:focus{border-color:var(--blue);}
   .ai-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
   .ubtn.primary{background:var(--blue);border-color:var(--blue);color:#fff;}
+  .ubtn.on{background:var(--blue);border-color:var(--blue);color:#fff;}
   .ai-msg2{font-size:13px;margin-top:10px;white-space:pre-wrap;line-height:1.6;}
   .ai-msg2.ok{color:#1f9d57;}
   .ai-msg2.err{color:#c0392b;}
@@ -63,6 +64,88 @@
   .model-chip{display:inline-block;background:#eef3fa;color:#1a6fb5;border:1px solid #d4e2f3;
     border-radius:6px;padding:3px 8px;font-size:12px;margin:3px 4px 0 0;cursor:pointer;}
   .model-chip:hover{background:#1a6fb5;color:#fff;}
+  /* ---- 分栏导航 ---- */
+  .anav{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;-webkit-overflow-scrolling:touch;}
+  .anav::-webkit-scrollbar{display:none;}
+  .atab{flex:0 0 auto;border:1.5px solid var(--line);background:#fff;border-radius:20px;
+    padding:7px 15px;font-size:13.5px;cursor:pointer;color:#5a6b85;white-space:nowrap;}
+  .atab.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600;}
+  .aview{display:none;}
+  .aview.on{display:block;}
+  .aview>.view-title:first-child{margin-top:0;}
+  /* ---- 产出健康 ---- */
+  .hl-grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));}
+  .hl-card{background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:12px 14px;
+    border-left:4px solid #dfe4ea;}
+  .hl-card.ok{border-left-color:#2fa96a;}
+  .hl-card.warn{border-left-color:#e8a33d;}
+  .hl-card.down,.hl-card.unknown{border-left-color:#c0392b;}
+  .hl-top{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+  .hl-name{flex:1 1 auto;font-size:15px;}
+  .hl-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#c8cdd5;}
+  .hl-dot.ok{background:#2fa96a;}
+  .hl-dot.warn{background:#e8a33d;}
+  .hl-dot.down,.hl-dot.unknown{background:#c0392b;}
+  .hl-num{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:#5a6b85;}
+  .hl-num b{font-size:15px;color:#2c3540;margin-right:2px;}
+  .hl-note{font-size:12px;color:#96a0ad;margin-top:6px;line-height:1.6;}
+  .hl-hint{font-size:12.5px;color:#b23428;background:#fdf0ee;border-radius:7px;
+    padding:6px 9px;margin-top:8px;line-height:1.6;}
+  .hl-acts{display:flex;gap:6px;margin-top:9px;}
+  /* ---- AI 用量 ---- */
+  .st-tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
+  .st-tile{background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:13px 14px;}
+  .st-tile.bad .st-v{color:#c0392b;}
+  .st-v{font-size:23px;font-weight:600;color:#2c3540;line-height:1.2;}
+  .st-l{font-size:12.5px;color:#5a6b85;margin-top:3px;}
+  .st-s{font-size:11.5px;color:#96a0ad;margin-top:2px;}
+  .st-h{font-size:14px;color:#5a6b85;margin:22px 0 10px;font-weight:600;}
+  .st-bar{margin-bottom:11px;}
+  .st-bar-top{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:4px;}
+  .st-bar-top b{color:#2c3540;}
+  .st-bar-n{margin-left:auto;font-size:12px;color:#8a94a2;white-space:nowrap;}
+  .st-fail{font-size:11px;background:#fbe0dc;color:#b23428;border-radius:20px;padding:1px 7px;}
+  .st-bar-track{height:7px;background:#eef1f5;border-radius:20px;overflow:hidden;}
+  .st-bar-track i{display:block;height:100%;background:var(--blue);border-radius:20px;}
+  .st-spark{display:flex;align-items:flex-end;gap:4px;overflow-x:auto;padding-bottom:4px;}
+  .st-col{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:3px;width:30px;}
+  .st-col i{display:block;width:16px;background:var(--blue);border-radius:3px 3px 0 0;}
+  .st-col i.bad{background:#e8a33d;}
+  .st-col span{font-size:10px;color:#a3abb6;white-space:nowrap;}
+  .st-errs{display:flex;flex-wrap:wrap;gap:6px;}
+  .st-chip{background:#fdf0ee;color:#b23428;border-radius:20px;padding:4px 11px;font-size:12.5px;}
+  .st-recent{font-size:12.5px;color:#5a6b85;line-height:2;}
+  .st-recent .st-t{color:#a3abb6;margin-right:8px;}
+  /* ---- 内容质检 ---- */
+  .ql-card{background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:13px 14px;
+    border-left:4px solid #dfe4ea;}
+  .ql-card.ok{border-left-color:#2fa96a;}
+  .ql-card.warn{border-left-color:#e8a33d;}
+  .ql-card.bad,.ql-card.unknown{border-left-color:#c0392b;}
+  .ql-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .ql-num{font-size:13px;color:#5a6b85;}
+  .ql-num b{font-size:20px;color:#2c3540;margin-right:2px;}
+  .ql-pct{margin-left:8px;color:#8a94a2;}
+  .ql-runway{font-size:12.5px;color:#5a6b85;margin-top:3px;}
+  .ql-fix{display:flex;align-items:center;gap:8px;margin-top:9px;}
+  .ql-fix code{flex:1 1 auto;min-width:0;background:#f0f4f9;border-radius:7px;padding:6px 9px;
+    font-size:11.5px;font-family:ui-monospace,Menlo,Consolas,monospace;color:#3c4657;
+    overflow-x:auto;white-space:pre;}
+  /* ---- 备份容量 ---- */
+  .cp-bar{display:flex;height:16px;border-radius:20px;overflow:hidden;background:#eef1f5;}
+  .cp-bar i{display:block;height:100%;}
+  .cp-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:9px;font-size:12.5px;color:#5a6b85;}
+  .cp-legend span{display:flex;align-items:center;gap:5px;}
+  .cp-legend em{width:9px;height:9px;border-radius:3px;display:inline-block;}
+  .c1{background:#1a6fb5;} .c2{background:#3f9dd9;} .c3{background:#63c0b0;}
+  .c4{background:#e8a33d;} .c5{background:#eec06a;} .c6{background:#c76b6b;}
+  .cp-snaps{max-height:230px;overflow-y:auto;}
+  .cp-snap{display:flex;align-items:center;gap:10px;font-size:12.5px;padding:5px 2px;
+    border-bottom:1px solid var(--line);}
+  .cp-snap:last-child{border-bottom:none;}
+  .cp-snap span{flex:1 1 auto;min-width:0;word-break:break-all;font-family:ui-monospace,Menlo,monospace;}
+  .cp-snap i{color:#a3abb6;font-style:normal;white-space:nowrap;}
+  .cp-snap b{color:#2c3540;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -72,6 +155,79 @@
   <div class="topbar-actions"></div>
 </header>
 <main class="admin-main">
+  <nav class="anav">
+    <button class="atab on" data-v="health">产出健康</button>
+    <button class="atab" data-v="stats">AI 用量</button>
+    <button class="atab" data-v="quality">内容质检</button>
+    <button class="atab" data-v="capacity">备份容量</button>
+    <button class="atab" data-v="svc">服务</button>
+    <button class="atab" data-v="ai">AI 设置</button>
+    <button class="atab" data-v="reg">注册入口</button>
+    <button class="atab" data-v="users">用户</button>
+  </nav>
+
+<section class="aview on" id="v-health">
+  <h2 class="view-title">产出健康</h2>
+  <div class="ai-cfg" style="margin-bottom:12px;">
+    <p class="ai-tip" style="margin:0 0 10px;">看的是<b>库里有没有新东西</b>，不是「任务跑没跑」——
+      上游断供、抓到空、AI 返回空正文时，脚本照样正常退出，服务页面一片绿，这一屏才看得出来。
+      有问题的域会排在最前面，并给出「是任务报错、还是跑了但没产出」。</p>
+    <div class="svc-head">
+      <span id="hl-msg" class="ai-msg2" style="margin:0;flex:1 1 auto;"></span>
+      <button class="ubtn" id="hl-refresh">刷新</button>
+    </div>
+  </div>
+  <div class="hl-grid" id="hl-list"><p class="ai-tip">加载中…</p></div>
+  <div id="hl-journal" class="svc-log hidden"></div>
+</section>
+
+<section class="aview" id="v-stats">
+  <h2 class="view-title">AI 用量</h2>
+  <div class="ai-cfg" style="margin-bottom:12px;">
+    <p class="ai-tip" style="margin:0 0 10px;">十几个定时脚本和整个 Web 端共用一个 AI。
+      这一屏回答三件事：<b>调了多少次、谁在烧、失败的是哪一类</b>。</p>
+    <div class="svc-head">
+      <span id="st-win">
+        <button class="ubtn on" data-win="today">今天</button>
+        <button class="ubtn" data-win="7d">近 7 天</button>
+        <button class="ubtn" data-win="30d">近 30 天</button>
+      </span>
+      <span class="grow"></span>
+      <button class="ubtn" id="st-refresh">刷新</button>
+    </div>
+  </div>
+  <div id="st-body"><p class="ai-tip">加载中…</p></div>
+</section>
+
+<section class="aview" id="v-quality">
+  <h2 class="view-title">内容质检</h2>
+  <div class="ai-cfg" style="margin-bottom:12px;">
+    <p class="ai-tip" style="margin:0 0 10px;">真题库是全站的<b>标尺</b>（出题、每日测试、找点都拿它对标），
+      标尺歪了下游全跟着歪，而且是悄悄歪——缺答案的题照样能翻出来看，存疑的解析长得和正常的一模一样。
+      这一屏<b>只读、只报告</b>：改几千行的活（<code>--reset</code> / <code>--reparse</code> / 重跑 OCR）
+      不给按钮，只给该敲的命令，那些要在终端里看着全量新旧对比来做。</p>
+    <div class="svc-head">
+      <span id="ql-msg" class="ai-msg2" style="margin:0;flex:1 1 auto;"></span>
+      <button class="ubtn" id="ql-refresh">刷新</button>
+    </div>
+  </div>
+  <div class="hl-grid" id="ql-list"><p class="ai-tip">加载中…</p></div>
+</section>
+
+<section class="aview" id="v-capacity">
+  <h2 class="view-title">备份容量</h2>
+  <div class="ai-cfg" style="margin-bottom:12px;">
+    <p class="ai-tip" style="margin:0 0 10px;">备份每天 03:30 自动跑，但<b>跑得好不好在后台看不见</b>——
+      出事那天才发现最近一次备份是三周前，是这类系统最典型的死法。这一屏就是来盯它的。</p>
+    <div class="svc-head">
+      <span class="grow"></span>
+      <button class="ubtn" id="cp-refresh">刷新</button>
+    </div>
+  </div>
+  <div id="cp-body"><p class="ai-tip">加载中…</p></div>
+</section>
+
+<section class="aview" id="v-ai">
   <h2 class="view-title">AI 设置</h2>
   <div class="ai-cfg">
     <p class="ai-tip">接入云端大模型（默认 <b>DeepSeek</b>，OpenAI 兼容）。到 <b>platform.deepseek.com</b> 申请 API Key 填入即可；用于 AI 助手、古诗文释义、错题分析等。</p>
@@ -88,7 +244,10 @@
     <div id="ai-msg" class="ai-msg2"></div>
     <div id="ai-chips"></div>
   </div>
-  <h2 class="view-title" style="margin-top:26px;">注册入口</h2>
+</section>
+
+<section class="aview" id="v-reg">
+  <h2 class="view-title">注册入口</h2>
   <div class="ai-cfg">
     <p class="ai-tip">控制新用户能否自行注册。人齐之后建议<b>关闭</b>，防止陌生人注册账号消耗 AI 额度；现有账号登录不受影响，随时可重新开放。开放时可再设<b>邀请码</b>：填对暗号才能注册，把暗号私下发给朋友即可。</p>
     <label class="ai-f"><span>邀请码</span><input id="reg-invite" type="text" maxlength="32" placeholder="留空 = 开放注册时不需要邀请码" autocomplete="off"></label>
@@ -98,7 +257,10 @@
       <button class="ubtn primary" id="reg-toggle">…</button>
     </div>
   </div>
-  <h2 class="view-title" style="margin-top:26px;">服务管理</h2>
+</section>
+
+<section class="aview" id="v-svc">
+  <h2 class="view-title">服务管理</h2>
   <div class="ai-cfg">
     <p class="ai-tip">出问题时不用开终端：勾选要重启的服务点「重启选中」即可。
       定时任务跑完就是 <b>inactive</b>，那是正常的——只有标 <b>失败</b> 的才需要处理，点服务名可以看它的日志。</p>
@@ -118,12 +280,16 @@
       <div id="svc-oplog" style="font-size:12px;color:#77808d;margin-top:8px;line-height:1.8;"></div>
     </details>
   </div>
-  <h2 class="view-title" style="margin-top:26px;">用户管理 <span class="uadd" id="ucount"></span></h2>
+</section>
+
+<section class="aview" id="v-users">
+  <h2 class="view-title">用户管理 <span class="uadd" id="ucount"></span></h2>
   <table class="utable" id="utable">
     <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>密保</th><th>收录</th><th>资料</th><th>注册时间</th><th>操作</th></tr></thead>
     <tbody id="utbody"></tbody>
   </table>
   <div class="admin-cards" id="ucards"></div>
+</section>
 </main>
 <div id="secq-modal" class="modal hidden">
   <div class="modal-box">
@@ -431,7 +597,22 @@ async function loadOpLog() {
   } catch (_) {}
 }
 
+/* ---------------------------------------------------------------- 分栏切换 */
+/* 板块多了以后一页拉到底找不着东西。切换只管显示，数据仍在进页面时一次性拉齐——
+   量都很小，换来的是切 tab 不用等。选中的 tab 记在 URL hash 里，刷新后还在原处。 */
+function showView(v) {
+  document.querySelectorAll('.aview').forEach(s => s.classList.toggle('on', s.id === 'v-' + v));
+  document.querySelectorAll('.atab').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v);
+  window.scrollTo(0, 0);
+}
+document.querySelector('.anav').onclick = (e) => {
+  const b = e.target.closest('.atab'); if (b) showView(b.dataset.v);
+};
+
 (async () => {
+  const v = location.hash.slice(1);
+  if (v && document.getElementById('v-' + v)) showView(v);
   try { const me = await (await fetch('/api/me')).json(); MY_NAME = me.username; } catch (_) {}
   await load();
   await loadAI();
@@ -439,5 +620,9 @@ async function loadOpLog() {
   await loadSvc();
 })();
 </script>
+<script src="js/admin-health.js"></script>
+<script src="js/admin-stats.js"></script>
+<script src="js/admin-quality.js"></script>
+<script src="js/admin-capacity.js"></script>
 </body>
 </html>

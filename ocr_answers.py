@@ -36,6 +36,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
+import aimeter                                             # noqa: E402
 import realbank as R                                       # noqa: E402
 
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
@@ -116,8 +117,12 @@ def ocr_page(png, tries=3):
         url_of(V_BASE), data=json.dumps(payload).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + V_KEY})
     for k in range(tries):
+        # 视觉模型不经 aiclient（它只管 DeepSeek 文本），但 OCR 是「贵且不可重现」的
+        # 产物、一份卷子几十页，是实打实的大头。记账自己挂上，否则报表里整块看不见。
+        t = aimeter.Timer()
+        d = None
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:
+            with t, urllib.request.urlopen(req, timeout=180) as r:
                 d = json.loads(r.read().decode("utf-8"))
             txt = (d["choices"][0]["message"].get("content") or "").strip()
             m = re.search(r"\{.*\}", txt, re.S)
@@ -131,11 +136,20 @@ def ocr_page(png, tries=3):
                 a = (it.get("answer") or "").strip().upper()[:1]
                 if a in "ABCD":
                     out[seq] = a
-            return out
-        except Exception:
+        except Exception as e:
+            # 解析也在这个 try 里，所以记账**只能记一次**：成功那行必须等解析走完
+            # （放在拿到响应处的话，解析再抛异常就会为同一个请求记第二行，
+            # 调用数翻倍、失败率减半 —— aiclient 里踩过一模一样的坑）。
+            # usage 尽量带上：HTTP 成功、解析失败时 token 是真烧了的。
+            aimeter.record(tier="vision", model=V_MODEL, mode="vision",
+                           usage=(d or {}).get("usage"), elapsed_ms=t.ms, ok=False, err=e)
             if k == tries - 1:
                 return {}
             time.sleep(3 * (k + 1))
+        else:
+            aimeter.record(tier="vision", model=V_MODEL, mode="vision",
+                           usage=d.get("usage"), elapsed_ms=t.ms, ok=True)
+            return out
     return {}
 
 

@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 
 import aiclient
+import aimeter
 from core import CFG, log
 
 
@@ -107,20 +108,37 @@ def vision_chat(text, images, prefer="free", temperature=0.2, max_tokens=1500, t
                 payload["response_format"] = {"type": "json_object"}
             req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={
                 "Content-Type": "application/json", "Authorization": "Bearer " + conf["key"]})
+            # 视觉走的是智谱、不经 aiclient，但一样烧钱（图片 token 还特别贵），
+            # 所以记账要自己挂在这儿——否则后台的用量报表少掉一整类调用。
+            # mode="vision" 把它和文本调用分开；caller 由 aimeter 顺栈找，
+            # 会落到真正的业务模块（drill / docqa / attach），不是这个转发层。
+            t = aimeter.Timer()
+            d = None
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as r:
+                with t, urllib.request.urlopen(req, timeout=timeout) as r:
                     d = json.loads(r.read().decode("utf-8"))
-                return (d["choices"][0]["message"]["content"] or "").strip()
+                out = (d["choices"][0]["message"]["content"] or "").strip()
             except urllib.error.HTTPError as e:
+                aimeter.record(tier="vision", model=model, mode="vision",
+                               elapsed_ms=t.ms, ok=False, err=e)
                 last = "HTTP %d" % e.code
                 if e.code == 429 and attempt < 2:
                     time.sleep(2 + attempt * 2)
                     continue
                 break     # 其它错误：换下一个模型再试
             except Exception as e:
+                # 取 content 那步也在上面的 try 里（响应缺字段会 KeyError），所以
+                # 成功那行必须等它走完才记 —— 先记再解析的话，同一个请求会留下
+                # 「一行成功 + 一行失败」，调用数翻倍、失败率减半。
+                aimeter.record(tier="vision", model=model, mode="vision",
+                               usage=(d or {}).get("usage"), elapsed_ms=t.ms,
+                               ok=False, err=e)
                 last = str(e)
                 time.sleep(1)
                 continue
+            aimeter.record(tier="vision", model=model, mode="vision",
+                           usage=d.get("usage"), elapsed_ms=t.ms, ok=True)
+            return out
     raise RuntimeError("视觉识别失败（%s）" % last)
 
 

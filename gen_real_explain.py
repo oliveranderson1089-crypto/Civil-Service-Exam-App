@@ -38,6 +38,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
+import aimeter                                             # noqa: E402
 import aiclient                                            # noqa: E402
 import realbank as R                                       # noqa: E402
 
@@ -88,8 +89,20 @@ def _post(url, key, payload, timeout=180):
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+    # 这个脚本不走 aiclient（它要同时打两家做交叉核验，aiclient 只管 DeepSeek），
+    # 但它是 token 消耗大户，记账得自己挂上——不然后台报表里整块看不见。
+    # 两家由 model 名区分（deepseek-* 是出解析的，glm-* 是核验的）。
+    model = (payload or {}).get("model", "")
+    t = aimeter.Timer()
+    try:
+        with t, urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        aimeter.record(model=model, mode="chat", elapsed_ms=t.ms, ok=False, err=e)
+        raise
+    aimeter.record(model=model, mode="chat", usage=d.get("usage"),
+                   elapsed_ms=t.ms, ok=True)
+    return d
 
 
 def _url(base):

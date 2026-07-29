@@ -6,7 +6,7 @@
 - 每个板块：资料库（上传图片/文档/网页，应用内直接查看，Office 自动转 PDF）
 - 多用户 + 密保问题找回密码 + 管理员后台
 
-本文件只管三件事：建 Flask app、挂 53 个业务蓝图、守 before_request 鉴权。
+本文件只管三件事：建 Flask app、挂 60 个业务蓝图、守 before_request 鉴权。
 业务在 mods/ 各模块里，建表在 schema.py，共用地基在 core.py。
 依赖单向流动：app.py → mods/* → core.py，没有环。
 
@@ -27,11 +27,13 @@ from core import CFG, STATIC, UPLOADS, close_db, users_count
 from mods.admin import bp as admin_bp
 from mods.aichat import bp as aichat_bp
 from mods.aisession import bp as aisession_bp
+from mods.aistats import bp as aistats_bp
 from mods.annots import bp as annots_bp
 from mods.attach import bp as attach_bp
 from mods.auth import bp as auth_bp
 from mods.basics import bp as basics_bp
 from mods.bookmarks import bp as bookmarks_bp
+from mods.capacity import bp as capacity_bp
 from mods.changkao import bp as changkao_bp
 from mods.classics import bp as classics_bp
 from mods.classics_lookup import bp as classics_lookup_bp
@@ -49,6 +51,7 @@ from mods.find import bp as find_bp
 from mods.gaikuo import bp as gaikuo_bp
 from mods.gongwen import bp as gongwen_bp
 from mods.handwrite import bp as handwrite_bp
+from mods.health import bp as health_bp
 from mods.hyper import bp as hyper_bp
 from mods.kb import bp as kb_bp
 from mods.lianjie import bp as lianjie_bp
@@ -64,6 +67,7 @@ from mods.partydict import bp as partydict_bp
 from mods.pdfexport import bp as pdfexport_bp
 from mods.plan import bp as plan_bp
 from mods.policydocs import bp as policydocs_bp
+from mods.quality import bp as quality_bp
 from mods.quiz import bp as quiz_bp
 from mods.realq import bp as realq_bp
 from mods.review import bp as review_bp
@@ -98,11 +102,13 @@ app.teardown_appcontext(close_db)
 app.register_blueprint(admin_bp)
 app.register_blueprint(aichat_bp)
 app.register_blueprint(aisession_bp)
+app.register_blueprint(aistats_bp)
 app.register_blueprint(annots_bp)
 app.register_blueprint(attach_bp)
 app.register_blueprint(auth_bp)
 app.register_blueprint(basics_bp)
 app.register_blueprint(bookmarks_bp)
+app.register_blueprint(capacity_bp)
 app.register_blueprint(changkao_bp)
 app.register_blueprint(classics_bp)
 app.register_blueprint(classics_lookup_bp)
@@ -120,6 +126,7 @@ app.register_blueprint(find_bp)
 app.register_blueprint(gaikuo_bp)
 app.register_blueprint(gongwen_bp)
 app.register_blueprint(handwrite_bp)
+app.register_blueprint(health_bp)
 app.register_blueprint(hyper_bp)
 app.register_blueprint(kb_bp)
 app.register_blueprint(lianjie_bp)
@@ -135,6 +142,7 @@ app.register_blueprint(partydict_bp)
 app.register_blueprint(pdfexport_bp)
 app.register_blueprint(plan_bp)
 app.register_blueprint(policydocs_bp)
+app.register_blueprint(quality_bp)
 app.register_blueprint(quiz_bp)
 app.register_blueprint(realq_bp)
 app.register_blueprint(review_bp)

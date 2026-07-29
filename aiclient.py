@@ -35,6 +35,8 @@ import time
 import urllib.error
 import urllib.request
 
+import aimeter          # 记账，同样零依赖（只标准库）；出岔子也只是少一行账，见 aimeter.record
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 
@@ -260,6 +262,9 @@ def chat(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=120,
     model, healed = c["model"], False
     cap, grown = budget(model, max_tokens), False
     tried = 0
+    # 谁发起的这次调用，在进循环前就问清楚：记账点在下面的 except 里，
+    # 那时的调用栈已经是异常处理栈，caller() 未必还能看到业务模块那一帧。
+    who = aimeter.caller()
     while True:
         payload = {"model": model, "messages": messages, "temperature": temperature,
                    "max_tokens": cap, "stream": False}
@@ -267,10 +272,17 @@ def chat(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=120,
             payload["response_format"] = {"type": "json_object"}
         if extra:
             payload.update(extra)
+        t = aimeter.Timer()
         try:
-            with _open(c, payload, timeout) as r:
+            with t, _open(c, payload, timeout) as r:
                 d = json.loads(r.read().decode("utf-8"))
             starved, rt = _starved(d)
+            # 一次 HTTP 请求恰好记一行——记两行会让调用数翻倍、失败率减半。
+            # starved 是「HTTP 200 但正文空」：token 照烧所以 token 照记，
+            # 但它不是一次成功的调用，ok=0。成本和故障率两边都不失真。
+            aimeter.record(tier=tier, model=model, mode="chat", usage=d.get("usage"),
+                           elapsed_ms=t.ms, ok=not starved,
+                           err="starved" if starved else None, who=who)
             if starved and not grown and cap < HARD_CAP:
                 # 按实测的推理消耗来加，而不是盲目翻倍：这次烧了 rt，下次给它 3 倍的
                 # 推理空间再加上正文额度，一次到位，别连着重试好几轮浪费时间和钱。
@@ -286,6 +298,8 @@ def chat(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=120,
                 return d
             return (((d.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
         except urllib.error.HTTPError as e:
+            aimeter.record(tier=tier, model=model, mode="chat", elapsed_ms=t.ms,
+                           ok=False, err=e, who=who)
             detail = _detail(e)
             if _is_bad_model(e.code, detail) and not healed:
                 alt = pick_model(list_models(cfg), tier)
@@ -298,7 +312,9 @@ def chat(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=120,
                     cap = max(cap, budget(model, max_tokens))
                     continue
             raise                      # detail 已由 _detail() 挂在 e.gk_detail 上供上层用
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError) as e:
+            aimeter.record(tier=tier, model=model, mode="chat", elapsed_ms=t.ms,
+                           ok=False, err=e, who=who)
             # TimeoutError 必须单列：连接阶段超时会被 urllib 包成 URLError，可**读取阶段**
             # 超时（"The read operation timed out"）抛的是裸的 socket.timeout —— 它是
             # TimeoutError 的别名、不是 URLError 的子类，原来这条分支根本接不住，
@@ -351,6 +367,7 @@ def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
     model, healed = c["model"], False
     cap, grown = budget(model, max_tokens), False
     tried = 0
+    who = aimeter.caller()
     while True:
         payload = {"model": model, "messages": messages, "temperature": temperature,
                    "max_tokens": cap, "stream": True,
@@ -360,8 +377,9 @@ def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
             payload.update(extra)
         emitted = False
         text, slots, finish, usage = [], {}, "", {}
+        t = aimeter.Timer()
         try:
-            with _open(c, payload, timeout) as r:
+            with t, _open(c, payload, timeout) as r:
                 for raw in r:
                     line = raw.decode("utf-8", "ignore").strip()
                     if not line.startswith("data:"):
@@ -385,7 +403,16 @@ def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
                         yield "content", delta["content"]
                     if delta.get("tool_calls"):
                         _merge_tool_calls(slots, delta["tool_calls"])
+        except GeneratorExit:
+            # 客户端中途断开（用户关掉 SSE / 切走页面）。生成器在 yield 处收到这个，
+            # 它继承 BaseException，下面两条 except 都接不住——不单列的话，这次调用
+            # 既不算成本也不算故障，在账上凭空消失。已经吐出去的 token 是真收费的。
+            aimeter.record(tier=tier, model=model, mode="stream", usage=usage,
+                           elapsed_ms=t.ms, ok=False, err="aborted", who=who)
+            raise                      # GeneratorExit 必须放行，不能吞
         except urllib.error.HTTPError as e:
+            aimeter.record(tier=tier, model=model, mode="stream", usage=usage,
+                           elapsed_ms=t.ms, ok=False, err=e, who=who)
             detail = _detail(e)
             if _is_bad_model(e.code, detail) and not healed and not emitted:
                 alt = pick_model(list_models(cfg), tier)
@@ -396,7 +423,11 @@ def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
                     cap = max(cap, budget(model, max_tokens))
                     continue
             raise
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError) as e:
+            # 流式断在半路时 usage 多半是空的，但已吐出去的 token 照样收费——
+            # 有多少记多少，别因为记不全就整条丢掉。
+            aimeter.record(tier=tier, model=model, mode="stream", usage=usage,
+                           elapsed_ms=t.ms, ok=False, err=e, who=who)
             tried += 1
             if tried <= retries and not emitted:
                 time.sleep(tried)
@@ -404,7 +435,13 @@ def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
             raise
         tcs = [slots[i] for i in sorted(slots)]
         content = "".join(text)
-        if finish == "length" and not content and not tcs and not grown and cap < HARD_CAP:
+        # 这一趟连接走完了（token 已经烧掉），记一行——和 chat() 同一条口径：
+        # 一次请求一行，正文空串记 ok=0 但 token 照记。
+        starved = (finish == "length" and not content and not tcs)
+        aimeter.record(tier=tier, model=model, mode="stream", usage=usage,
+                       elapsed_ms=t.ms, ok=not starved,
+                       err="starved" if starved else None, who=who)
+        if starved and not grown and cap < HARD_CAP:
             # 跟 chat() 同一套自愈：推理段吃光额度、正文一个字没出 → 按实测消耗加额度重来。
             rt = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
             grown, cap = True, min(HARD_CAP, max(cap * 3, rt * 3 + max_tokens))
