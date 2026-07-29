@@ -15,6 +15,8 @@ CK_TO_ENTRY
 CLS_BADGE
 CONVERT_TYPES
 CS_COLOR
+CTX_MENU_IDS
+CTX_MENU_TRIGGERS
 DESKTOP_VER
 DOC
 DOCK_NAME
@@ -160,6 +162,7 @@ aiGrow
 aiHandleAttach
 aiHomeNavItems
 aiInitDock
+aiMenuBtn
 aiMenuCtx
 aiMsgs
 aiNewChat
@@ -178,6 +181,7 @@ aiTickStart
 aiTimer
 aiToolRun
 aiToolSend
+anchorMenu
 annAnchorAt
 annCtx
 annLocate
@@ -244,6 +248,7 @@ copyImage
 copyText
 crFid
 crFriendAvatar
+crGrow
 crInRoom
 crLastId
 crLastTime
@@ -448,6 +453,7 @@ fwReadMode
 gkDate
 goHome
 goPage
+growAndSync
 gwCard
 gwFmt
 gwForm
@@ -962,6 +968,7 @@ ssUrl
 stack
 state
 stripHtml
+syncSendState
 sysIsDark
 tdRecalcProg
 tdSetDone

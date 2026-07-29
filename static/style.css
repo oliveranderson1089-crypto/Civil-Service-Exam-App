@@ -658,6 +658,26 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
 .fc-file:hover{border-color:var(--blue);color:var(--blue);}
 .fc-tags{margin-top:9px;display:flex;flex-wrap:wrap;gap:6px;}
 .fc-tag{background:#f0f4f9;color:#5a6b85;font-size:12px;padding:2px 9px;border-radius:20px;}
+/* AI 助手写进小记的内容常带 markdown 语法（**加粗**、## 标题、- 列表…），
+   mdToHtml() 渲染成下面这些块元素，这里给个基本排版，别再原样露符号 */
+.fc-text.md>*:first-child{margin-top:0;}
+.fc-text.md>*:last-child{margin-bottom:0;}
+.fc-text.md p{margin:0 0 8px;}
+.fc-text.md h1,.fc-text.md h2,.fc-text.md h3,.fc-text.md h4,.fc-text.md h5,.fc-text.md h6{margin:14px 0 6px;line-height:1.4;font-weight:600;}
+.fc-text.md h1{font-size:1.3em;} .fc-text.md h2{font-size:1.18em;} .fc-text.md h3{font-size:1.08em;}
+.fc-text.md h4,.fc-text.md h5,.fc-text.md h6{font-size:1em;}
+.fc-text.md ul,.fc-text.md ol{margin:0 0 8px;padding-left:1.4em;}
+.fc-text.md li{margin:2px 0;}
+.fc-text.md blockquote{margin:0 0 8px;padding:2px 12px;border-left:3px solid var(--line);color:var(--muted);}
+.fc-text.md hr{border:none;border-top:1px solid var(--line);margin:12px 0;}
+.fc-text.md code{background:#f0f4f9;border-radius:4px;padding:1px 5px;font-size:.92em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+.fc-text.md pre.md-code{background:#0f1324;color:#e8eaf0;padding:10px 12px;border-radius:8px;overflow-x:auto;margin:8px 0;}
+.fc-text.md pre.md-code code{background:none;color:inherit;padding:0;}
+.fc-text.md strong{font-weight:700;}
+#cp-preview{min-height:132px;padding:4px 2px;font-size:15px;line-height:1.75;cursor:text;}
+#cp-preview.hidden{display:none;}
+.fc-empty-hint{color:var(--muted);}
+.cp-tool.active{background:#e3eaf3;color:var(--blue);}
 /* 桌面：编辑器在左、动态流在右 */
 @media(min-width:780px){
   .notes-content{display:flex;gap:18px;align-items:flex-start;}
@@ -687,6 +707,7 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
   .cp-bar{padding-bottom:12px;margin-bottom:12px;}
   .cp-tool{font-size:16px;padding:6px 10px;}
   #cp-content{flex:1;min-height:200px;resize:none;font-size:15.5px;line-height:1.8;}
+  #cp-preview{flex:1;min-height:200px;font-size:15.5px;line-height:1.8;overflow-y:auto;}
   .cp-foot{margin-top:14px;padding-top:12px;border-top:1px solid #f0f2f5;}
   .cp-foot .btn{padding:9px 26px;font-size:15px;}
   /* 动态流：右侧，独立滚动，单列宽卡片 */
@@ -834,7 +855,8 @@ body.mobile-ui .composer.cp-open .cp-mhead{display:flex;align-items:center;gap:1
 .cp-mhead .cpm-del{color:#e0524d;}
 body.mobile-ui .composer.cp-open .cp-bar{padding:10px 16px;margin:0;border-bottom:1px solid #f3f5f8;
   position:sticky;top:50px;background:#fff;z-index:2;}
-body.mobile-ui .composer.cp-open #cp-content{min-height:38vh;padding:14px 16px;border:none;font-size:16px;}
+body.mobile-ui .composer.cp-open #cp-content,
+body.mobile-ui .composer.cp-open #cp-preview{min-height:38vh;padding:14px 16px;border:none;font-size:16px;}
 body.mobile-ui .composer.cp-open .cp-todos,
 body.mobile-ui .composer.cp-open .cp-thumbs,
 body.mobile-ui .composer.cp-open .cp-files,
@@ -1070,8 +1092,9 @@ img,svg,video{max-width:100%;}
 .ai-msg.assistant hr{border:none;border-top:1px solid var(--line);margin:1em 0;}
 .ai-msg.assistant code{background:#eef0f3;padding:1px 5px;border-radius:4px;font-size:.9em;}
 .ai-msg.assistant pre.md-code{background:#0f1324;color:#e8eaf0;padding:10px 12px;border-radius:8px;overflow-x:auto;margin:.7em 0;}
-body.dark .ai-msg.assistant strong,body.dark .ai-msg.assistant b{color:#f0f4fa;}
-body.dark .ai-msg.assistant blockquote{border-color:#33405480;color:#9aa6b6;}
+body.dark .ai-msg.assistant strong,body.dark .ai-msg.assistant b,
+body.dark .fc-text.md strong{color:#f0f4fa;}
+body.dark .ai-msg.assistant blockquote,body.dark .fc-text.md blockquote{border-color:#33405480;color:#9aa6b6;}
 /* ---- LaTeX 数学公式（mdToHtml 里手写子集渲染，见 materials.js texToHtml）----
    分数线/根号线一律走 currentColor，明暗主题自动跟着文字色，不用单独写 body.dark */
 .tex{font-family:"Cambria Math","STIX Two Math","Latin Modern Math",Georgia,"Times New Roman",serif;
@@ -1101,12 +1124,26 @@ body.dark .ai-msg.assistant blockquote{border-color:#33405480;color:#9aa6b6;}
 .ai-typing{color:var(--muted);}
 .ai-input{display:flex;flex-direction:column;gap:7px;padding:8px 12px;padding-bottom:calc(8px + env(safe-area-inset-bottom));
   background:#fff;border-top:1px solid var(--line);align-items:stretch;max-width:860px;width:100%;margin:0 auto;position:relative;}
-#ai-text{width:100%;box-sizing:border-box;border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:15px;
+#ai-text{flex:1;min-width:0;box-sizing:border-box;border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:15px;
   outline:none;resize:none;overflow-y:auto;font-family:inherit;line-height:1.5;}
-/* 输入区：工具一行 + 文本框一行（上下排布，不再左右挤）。电脑=工具在上、框在下；手机=框在上、工具在下 */
+/* 输入区：工具一行（桌面常驻；手机收进 ➕ 弹出的小面板）+ 输入行（文本框、发送同一行，贴右下角，微信式） */
 .input-tools{display:flex;align-items:center;gap:8px;}
-.input-spacer{flex:1;}
-body.mobile-ui .ai-input,body.mobile-ui .cr-input{flex-direction:column-reverse;}
+body.mobile-ui .input-tools{display:none;position:fixed;z-index:130;padding:6px;border-radius:12px;
+  background:#fff;box-shadow:0 10px 30px rgba(20,30,50,.22);border:1px solid rgba(0,0,0,.06);}
+body.mobile-ui .input-tools:not(.hidden){display:flex;}
+body.dark.mobile-ui .input-tools{background:#141b29;border-color:#2a3345;}
+.input-row{display:flex;align-items:flex-end;gap:8px;}
+.input-row textarea{flex:1;min-width:0;width:auto;}
+.input-mic,.input-emoji,.input-plus{display:none;}   /* 桌面端不出现，工具都在上面 .input-tools 那行 */
+body.mobile-ui .input-mic,body.mobile-ui .input-emoji,body.mobile-ui .input-plus{
+  display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;
+  flex:0 0 auto;border:none;background:transparent;font-size:20px;padding:0;border-radius:50%;}
+body.mobile-ui .input-mic:active,body.mobile-ui .input-emoji:active,body.mobile-ui .input-plus:active{background:rgba(0,0,0,.06);}
+.input-mic[disabled],.input-emoji[disabled]{opacity:.4;cursor:default;}
+body.mobile-ui .ai-sendbtn,body.mobile-ui #cr-send{display:none;}
+body.mobile-ui .ai-input.has-text .input-mic,body.mobile-ui .ai-input.has-text .input-plus,
+body.mobile-ui .cr-input.has-text .input-mic,body.mobile-ui .cr-input.has-text .input-plus{display:none;}
+body.mobile-ui .ai-input.has-text #ai-send,body.mobile-ui .cr-input.has-text #cr-send{display:inline-flex;}
 body.mobile-ui .input-grip{display:none;}
 /* 输入框可拖高：顶边中间一条把手，拖动改高度（最小约 3 行、最高半屏）——聊天和 AI 助手共用 */
 .input-grip{position:absolute;top:-6px;left:0;right:0;height:13px;cursor:ns-resize;touch-action:none;
@@ -1806,7 +1843,7 @@ body.dark .item-note,body.dark .pv-ai,body.dark .pd-recite-btn,body.dark .blk.se
 body.dark .blk.table td,body.dark .sc-ex,body.dark .ckb-n{
   background:#182338 !important;color:#dbe3f0 !important;border-color:#31405c !important;}
 body.dark .gk-sent{border-left-color:var(--blue) !important;}
-body.dark .reader code,body.dark .ai-msg.assistant code,body.dark .md-table th,
+body.dark .reader code,body.dark .ai-msg.assistant code,body.dark .fc-text.md code,body.dark .md-table th,
 body.dark .item-cat,body.dark .hc-count,body.dark #aih-pcount,
 body.dark .reader-tools button,body.dark .iconbtn,body.dark .dtb,body.dark .doc-iconbtn{
   background:#232c3d !important;color:#cfd6e2 !important;}
@@ -3321,6 +3358,12 @@ body.dark .dv-list.grid .dv-thumb{background:#1b2433;}
 .dv-menu button:hover{background:rgba(74,163,223,.14);color:var(--blue);}
 body.dark .dv-menu{background:#141b29;}
 body.dark .dv-menu button{color:#cfd6e2;}
+/* 锚定小菜单：⋮ 菜单 / + 面板通用，贴着触发按钮弹出的小面板（取代原来占半屏的 note-sheet） */
+.ctxmenu{position:fixed;z-index:130;min-width:170px;max-width:260px;padding:4px;border-radius:12px;
+  background:#fff;box-shadow:0 10px 30px rgba(20,30,50,.22);border:1px solid rgba(0,0,0,.06);}
+.ctxmenu.hidden{display:none;}
+.ctxmenu .acm-list{padding-bottom:0;}
+body.dark .ctxmenu{background:#141b29;border-color:#2a3345;}
 /* 上传进度条 */
 .dv-prog{display:flex;align-items:center;gap:10px;margin:-4px 0 12px;}
 .dv-prog-track{flex:1;height:6px;border-radius:3px;background:var(--line);overflow:hidden;}
@@ -3596,3 +3639,18 @@ body.dark .rq-figs img{background:#e8ecf3;}
 .dt-sec{margin-left:8px;font-size:11px;color:var(--muted);background:var(--bg);
   padding:2px 7px;border-radius:9px;font-weight:400;white-space:nowrap;}
 .dt-score-sub{display:block;font-size:12px;color:var(--muted);font-weight:400;margin-top:4px;}
+
+/* ---- 真题批改：做题模式切换（模考 / 练习）---- */
+.slg-mode{display:flex;gap:8px;margin:0 0 12px;flex-wrap:wrap;}
+.slg-mode .chip{display:flex;flex-direction:column;align-items:flex-start;gap:2px;
+  padding:8px 14px;line-height:1.35;}
+.slg-mode .chip i{font-style:normal;font-size:11.5px;opacity:.72;}
+/* 练习模式的材料区沿用小题训练那套（.fr-mat/.fr-s），这里只管外框间距 */
+.slg-find{margin-bottom:14px;}
+.slg-picked{margin-bottom:12px;}
+body.dark .slg-mode .chip i{opacity:.65;}
+/* 沾边：这句确实相关，只是没能独立成一个采分点 —— 既不是找对也不是找错，
+   用琥珀色和绿(找对)/红(找错)/黄(找漏)区分开 */
+.fr-s.near{background:#ffe8cc;box-shadow:0 0 0 1px #e8912d inset;}
+.fr-sec.near{border-left-color:#e8912d;}
+body.dark .fr-s.near{background:#4a3418;}

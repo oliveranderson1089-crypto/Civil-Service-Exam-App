@@ -169,6 +169,7 @@ div.input-grip @pointermove
 div.input-grip @pointerup
 div.input-grip @pointercancel
 #ai-send .onclick
+#ai-plus .onclick
 #ai-panel @touchstart
 #ai-panel @touchend
 #aih-new .onclick
@@ -375,6 +376,8 @@ document @paste
 #cr-back .onclick
 #cr-msgs @click
 #cr-send .onclick
+#cr-plus .onclick
+#cr-text @input
 #cr-text @keydown
 #cr-file @change
 #chat-main @dragover
@@ -402,6 +405,7 @@ document @scroll
 #acct-logout .onclick
 document @visibilitychange
 window @focus
+document @click
 document @click
 #up-board @change
 #view-materials @dragover

@@ -9,7 +9,7 @@
  */
 /* global $, IS_MOBILE, ME, SKIN, api, appConfirm,
    back, c, clipFiles, composing, compressImage, dvIcon, esc,
-   fSize, init, lightbox, preview, push, stack,
+   fSize, growAndSync, init, lightbox, preview, push, stack,
    state, toast */
 
 /* ================= 聊天 ================= */
@@ -191,6 +191,10 @@ function crTimeLabel(t) {
 }
 $('#cr-msgs').addEventListener('click', e => { const im = e.target.closest('[data-lbimg]'); if (im) lightbox(im.dataset.lbimg); });
 $('#cr-send').onclick = crSendText;
+// 手机端微信式输入栏：➕ 只对应一个功能（发文件/图片），直接拉起选择器，不用再弹一层单项菜单
+$('#cr-plus').onclick = () => $('#cr-file').click();
+function crGrow() { growAndSync('#cr-text', '#cr-input'); }
+$('#cr-text').addEventListener('input', crGrow);
 // ⚠️ 打中文时按 Enter 是「确认候选词」，不能当发送 —— 不加 composing 守卫会导致边打字边误发、甚至连发好几条
 $('#cr-text').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey && !composing(e)) { e.preventDefault(); crSendText(); }
@@ -199,9 +203,9 @@ let crSending = false;      // 发送锁：一次动作只发一条，堵住「�
 async function crSendText() {
   if (crSending) return;
   const el = $('#cr-text'); const t = el.value.trim(); if (!t) return;
-  crSending = true; el.value = ''; if (el._grow) el._grow();
+  crSending = true; el.value = ''; crGrow();
   try { await api('/api/chat/' + crFid, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: t }) }); crLoad(false); }
-  catch (e) { toast(e.message, true); el.value = t; if (el._grow) el._grow(); }   // 失败把字还回去
+  catch (e) { toast(e.message, true); el.value = t; crGrow(); }   // 失败把字还回去
   crSending = false;
 }
 $('#cr-file').addEventListener('change', async e => {

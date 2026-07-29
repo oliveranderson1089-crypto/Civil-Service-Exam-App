@@ -108,7 +108,7 @@ $('#mat-list').addEventListener('click', async e => {
   const act = e.target.closest('[data-act]');
   if (act && act.dataset.act === 'menu') {
     e.stopPropagation();
-    openMatMenu(id, item.querySelector('.mat-name').textContent, item.dataset.ext);
+    openMatMenu(act, id, item.querySelector('.mat-name').textContent, item.dataset.ext);
     return;
   }
   if (act) {

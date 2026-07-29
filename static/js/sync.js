@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, AI_FOLDER, ALL_BOARDS, DESKTOP_VER, ME, aiCurProject, api,
+/* global $, AI_FOLDER, ALL_BOARDS, DESKTOP_VER, ME, aiCurProject, anchorMenu, api,
    appConfirm, appPrompt, chSwitch, chTab, crInRoom, crLoad,
    esc, fabClamp, init, inkHere, loadAiHome, loadCsBoard,
    loadDrive, loadEntries, loadFanwen, loadFeed, loadFeedTags, loadGaikuo,
@@ -45,7 +45,8 @@ function _syncEditing() {
   const v = stack.length ? stack[stack.length - 1].view : '';
   if (v === 'doc' || v === 'wqadd') return true;
   const cp = $('#cp-content'); if (cp && cp.value.trim()) return true;
-  if (document.querySelector('.modal:not(.hidden)') || document.querySelector('.note-sheet:not(.hidden)')) return true;
+  if (document.querySelector('.modal:not(.hidden)') || document.querySelector('.note-sheet:not(.hidden)')
+      || document.querySelector('.ctxmenu:not(.hidden)')) return true;
   return false;
 }
 async function checkSync() {
@@ -78,6 +79,21 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) chec
 window.addEventListener('focus', checkSync);
 // 聊天未读角标：每 15 秒问一次（比同步频些，聊天要及时点）
 setInterval(() => { if (ME && !document.hidden) refreshChatBadge(); }, 15000);
+
+/* 锚定小菜单（⋮ 菜单 / + 面板）：点菜单和触发按钮之外的任何地方就关闭。
+   一次性把几个 ctxmenu 一起收，别处点了别处的 ⋮ 也顺手把上一个关掉。
+   .input-tools（手机端由 ➕ 弹出的工具面板）没有唯一 id，按 class 一起处理。 */
+const CTX_MENU_IDS = ['mat-menu', 'ai-chatmenu', 'node-menu', 'ai-attsheet'];
+const CTX_MENU_TRIGGERS = '.mat-more, [data-aimenu], [data-nodedots], #ai-attach, ' +
+  '#ai-plus, #cr-plus, .input-tools, ' + CTX_MENU_IDS.map(id => '#' + id).join(', ');
+document.addEventListener('click', e => {
+  if (e.target.closest(CTX_MENU_TRIGGERS)) return;
+  CTX_MENU_IDS.forEach(id => $('#' + id).classList.add('hidden'));
+  // .input-tools 桌面端是常驻工具行，只有手机端（➕ 弹出）才需要点别处收起
+  if (document.body.classList.contains('mobile-ui')) {
+    document.querySelectorAll('.input-tools').forEach(el => el.classList.add('hidden'));
+  }
+});
 
 // 外部链接一律新开/交给系统浏览器，避免在应用内跳走后无法返回
 document.addEventListener('click', e => {
@@ -146,9 +162,10 @@ async function uploadDropped(files) {
 })();
 
 /* AI 会话卡 ⋮ 菜单：置顶/重命名/移动项目/移出项目/删除 */
-let aiMenuCtx = null;
-function openAiChatMenu(id, title, projId, starred) {
+let aiMenuCtx = null, aiMenuBtn = null;
+function openAiChatMenu(btn, id, title, projId, starred) {
   aiMenuCtx = { id, title, projId: projId ? +projId : null, starred };
+  aiMenuBtn = btn;
   const ps = $('#ai-panel')._projects || [];
   $('#acm-list').innerHTML = `
     <button data-acm="star">${starred ? '☆ 取消置顶' : '⭐ 置顶'}</button>
@@ -156,12 +173,9 @@ function openAiChatMenu(id, title, projId, starred) {
     ${ps.length ? `<button data-acm="move">${AI_FOLDER} 移动到项目 ›</button>` : ''}
     ${aiMenuCtx.projId ? '<button data-acm="unproj">📤 移出项目</button>' : ''}
     <button data-acm="del" class="acm-danger">🗑 删除对话</button>`;
-  $('#ai-chatmenu').classList.remove('hidden');
+  anchorMenu($('#ai-chatmenu'), btn);
 }
 $('#ai-chatmenu').addEventListener('click', async e => {
-  if (e.target.closest('[data-sheet-close]') || e.target.id === 'ai-chatmenu') {
-    $('#ai-chatmenu').classList.add('hidden'); return;
-  }
   const mv = e.target.closest('[data-acmproj]');
   if (mv && aiMenuCtx) {
     $('#ai-chatmenu').classList.add('hidden');
@@ -179,6 +193,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     const ps = $('#ai-panel')._projects || [];
     $('#acm-list').innerHTML = '<div class="acm-tip">移动到哪个项目：</div>'
       + ps.map(p => `<button data-acmproj="${p.id}">${AI_FOLDER} ${esc(p.name)}</button>`).join('');
+    if (aiMenuBtn) anchorMenu($('#ai-chatmenu'), aiMenuBtn);   // 项目列表比原菜单长，重新贴位防止探出屏幕
     return;
   }
   $('#ai-chatmenu').classList.add('hidden');
@@ -279,11 +294,10 @@ window.__shareProgress = pct => {
   toast(pct >= 100 ? '准备好了，选个应用发送吧' : '正在准备分享… ' + pct + '%');
 };
 let matMenuCtx = null;
-function openMatMenu(id, name, ext) {
+function openMatMenu(btn, id, name, ext) {
   matMenuCtx = { id, name, ext };
-  $('#mm-title').textContent = name;
   $('#ai-chatmenu').classList.add('hidden');
-  $('#mat-menu').classList.remove('hidden');
+  anchorMenu($('#mat-menu'), btn);
 }
 $('#mat-menu').addEventListener('click', async e => {
   const teamBtn = e.target.closest('[data-mm="team"]');
@@ -303,9 +317,6 @@ $('#mat-menu').addEventListener('click', async e => {
       loadMaterials();
     } catch (err) { toast(err.message, true); }
     return;
-  }
-  if (e.target.closest('[data-sheet-close]') || e.target.id === 'mat-menu') {
-    $('#mat-menu').classList.add('hidden'); return;
   }
   const b = e.target.closest('[data-mm]');
   if (!b || !matMenuCtx) return;

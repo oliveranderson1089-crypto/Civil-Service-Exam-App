@@ -7,10 +7,10 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, CAN_ABORT, IS_MOBILE, aiBack, api, appConfirm, appPrompt,
+/* global $, CAN_ABORT, IS_MOBILE, aiBack, anchorMenu, api, appConfirm, appPrompt,
    applyPush, avoidFab, back, c, composing, createDock,
    esc, loadClassics, loadDaily, loadEntries, loadFeed, loadPlan,
-   loadWrongq, lsGet, lsSet, mdToHtml, navHomeCard, openAiChatMenu, push, stack, toast */
+   loadWrongq, lsGet, lsSet, mdToHtml, navHomeCard, openAiChatMenu, push, stack, growAndSync, toast */
 
 /* ================= AI 助手 ================= */
 /* ---- 全局 AI 会话中心（仿 Claude：新对话 / 项目 / 最近） ---- */
@@ -149,11 +149,11 @@ $('#ai-atts').addEventListener('click', e => {
   const b = e.target.closest('[data-aiattdel]'); if (!b) return;
   aiAtts.splice(+b.dataset.aiattdel, 1); renderAiAtts();
 });
-$('#ai-attach').onclick = () => $('#ai-attsheet').classList.remove('hidden');
+$('#ai-attach').onclick = () => anchorMenu($('#ai-attsheet'), $('#ai-attach'));
 $('#ai-attsheet').addEventListener('click', e => {
-  if (e.target.closest('[data-sheet-close]') || e.target.id === 'ai-attsheet') { $('#ai-attsheet').classList.add('hidden'); return; }
   const b = e.target.closest('[data-aiatt]'); if (!b) return;
   $('#ai-attsheet').classList.add('hidden');
+  if (IS_MOBILE) $('#ai-input .input-tools').classList.add('hidden');   // 手机端：选完附件来源，➕ 弹出的工具面板也一起收起
   if (b.dataset.aiatt === 'photo') $('#ai-camfile').click();
   else if (b.dataset.aiatt === 'image') { $('#ai-attfile').accept = 'image/*'; $('#ai-attfile').click(); }
   else { $('#ai-attfile').accept = '.pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx'; $('#ai-attfile').click(); }
@@ -241,6 +241,7 @@ function aiToolSend(text) { $('#ai-text').value = text; aiGrow(); aiSend(); }
 $('#ai-tools').onclick = () => {
   renderAiTools(''); $('#ai-tool-filter').value = '';
   $('#ai-toolsheet').classList.remove('hidden');
+  if (IS_MOBILE) $('#ai-input .input-tools').classList.add('hidden');   // 手机端：➕ 弹出的工具面板让位给工具大面板
   if (!IS_MOBILE) setTimeout(() => $('#ai-tool-filter').focus(), 60);   // 手机端不自动聚焦，免得弹键盘遮列表
 };
 $('#ai-tool-filter').addEventListener('input', e => renderAiTools(e.target.value));
@@ -408,8 +409,7 @@ async function aiConfirm(a) {
     aiRunActions(d.actions);   // 跑它带回的 refresh（刷新对应列表）
   } catch (e) { toast(e.message || '删除失败', true); }
 }
-// 手机端不用拖高（_grow 未装），走回原来的自动增高（最高 120）；桌面端交给拖高逻辑
-function aiGrow() { const t = $('#ai-text'); if (!t) return; if (t._grow) { t._grow(); return; } t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
+function aiGrow() { growAndSync('#ai-text', '#ai-input'); }
 // 输入框可拖高（**仅桌面**）：顶边加一条把手，拖动改高度。最小约 3 行、最高半屏，记住上次高度。
 // 内容多时自动增高（不低于拖拽设定的高度、不超过半屏）。聊天和 AI 助手共用。
 function makeInputResizable(bar, ta, key) {
@@ -443,6 +443,8 @@ if (!IS_MOBILE) {
   makeInputResizable($('#cr-input'), $('#cr-text'), 'crInputH');
 }
 $('#ai-send').onclick = aiSend;
+// 手机端微信式输入栏：➕ 弹出工具小面板（🧰工具/📎附件/✍️手写/📷截图），桌面端这颗按钮本来就不显示
+$('#ai-plus').onclick = () => anchorMenu($('#ai-input').querySelector('.input-tools'), $('#ai-plus'));
 /* AI 入口在悬浮工具球里（#fab-ai），见文件末尾的悬浮球逻辑 */
 // AI 面板：从上方下滑关闭/返回上一层（替代点右上角✕）
 (function () {
@@ -489,7 +491,7 @@ $('#ai-panel').addEventListener('click', async e => {
   const menu = e.target.closest('[data-aimenu]');
   if (menu) {
     e.stopPropagation();
-    openAiChatMenu(+menu.dataset.aimenu, menu.dataset.atitle, menu.dataset.aproj, menu.dataset.astar === '1');
+    openAiChatMenu(menu, +menu.dataset.aimenu, menu.dataset.atitle, menu.dataset.aproj, menu.dataset.astar === '1');
     return;
   }
   const pdel = e.target.closest('[data-aipdel]');

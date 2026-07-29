@@ -90,9 +90,13 @@
             <button class="cp-tool tag-tool" data-cp="tag" title="标签">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>标签
             </button>
+            <button class="cp-tool" data-cp="preview" id="cp-preview-btn" title="预览 Markdown">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
             <select class="cp-board" id="cp-board" title="这条小记归到哪个板块"></select>
           </div>
-          <textarea id="cp-content" placeholder="记你想记…"></textarea>
+          <textarea id="cp-content" placeholder="记你想记…支持 Markdown：**加粗**、# 标题、- 列表…"></textarea>
+          <div id="cp-preview" class="fc-text md hidden"></div>
           <div id="cp-todos" class="cp-todos"></div>
           <div id="cp-imgs" class="cp-thumbs"></div>
           <div id="cp-files" class="cp-files"></div>
@@ -645,10 +649,14 @@
         <div class="cr-input hidden" id="cr-input">
           <div class="input-tools">
             <label class="cr-attbtn" title="发文件/图片">📎<input type="file" id="cr-file" multiple hidden></label>
-            <span class="input-spacer"></span>
+          </div>
+          <div class="input-row">
+            <button type="button" class="input-mic" disabled title="语音输入（暂未开放）">🎤</button>
+            <textarea id="cr-text" rows="1" placeholder="发消息…（可拖文件进来）"></textarea>
+            <button type="button" class="input-emoji" disabled title="表情（暂未开放）">🙂</button>
+            <button type="button" id="cr-plus" class="input-plus">➕</button>
             <button class="btn primary" id="cr-send">发送</button>
           </div>
-          <textarea id="cr-text" rows="1" placeholder="发消息…（可拖文件进来）"></textarea>
         </div>
         <div id="cr-empty" class="cr-empty">💬 选一个会话，开始聊天</div>
       </section>
@@ -1058,6 +1066,16 @@
   <section id="view-slgrade" class="view hidden">
     <div id="slg-type" class="slg-type"></div>
     <div id="slg-fixed" class="slg-fixed hidden"></div>
+    <!-- 做题模式：模考=直接写（对应考场真实情境）；练习=先在材料上找点、判完再写。
+         只有真题的小题才有得选，自由练没有预标采分点。 -->
+    <div id="slg-mode" class="slg-mode hidden">
+      <button class="chip tiny on" data-slgm="exam">📝 模考模式<i>直接作答，还原考场</i></button>
+      <button class="chip tiny" data-slgm="drill">🖍 练习模式<i>先找点，判完再写</i></button>
+    </div>
+    <div id="slg-find" class="slg-find hidden"></div>
+    <div id="slg-body">
+    <!-- 练习模式下带过来的「你勾到的句子」，照着这些写（模考模式下始终隐藏） -->
+    <div id="slg-picked" class="slg-picked hidden"></div>
     <div id="slg-manual">
       <label class="slg-lb">题干 <span>（必填，把题目要求原样贴进来）</span></label>
       <textarea id="slg-q" rows="3" placeholder="如：请根据给定资料，概括冯教授团队振兴乡村文明的做法。"></textarea>
@@ -1076,6 +1094,7 @@
       <button class="btn primary" id="slg-go">开始批改</button>
     </div>
     <p class="slg-tip">批改会消耗 AI 调用（批注 + 参考范文各一次），通常 30~60 秒。</p>
+    </div>
   </section>
 
   <section id="view-slresult" class="view hidden">
@@ -1502,14 +1521,8 @@
 </div>
 
 <!-- 目录节点菜单（重命名/新建/删除） -->
-<div class="note-sheet hidden" id="node-menu">
-  <div class="ns-mask" data-sheet-close></div>
-  <div class="ns-panel">
-    <div class="ns-handle"></div>
-    <div class="ns-title" id="node-menu-title"></div>
-    <div class="blk-conv-list" id="node-menu-list"></div>
-    <button class="ns-cancel" data-sheet-close>取消</button>
-  </div>
+<div class="ctxmenu hidden" id="node-menu">
+  <div class="blk-conv-list" id="node-menu-list"></div>
 </div>
 
 <!-- 输入框（重命名等，替代 prompt） -->
@@ -1576,10 +1589,14 @@
         <button id="ai-attach" class="ai-attbtn" title="上传图片/文件">📎</button>
         <button type="button" class="ai-attbtn hw-open-btn" data-hw="ai-text" title="手写输入（写完自动转文字）">✍️</button>
         <button type="button" class="ai-attbtn hidden" id="ai-shot" title="截图（可用手写笔圈选）">📷</button>
-        <span class="input-spacer"></span>
+      </div>
+      <div class="input-row">
+        <button type="button" class="input-mic" disabled title="语音输入（暂未开放）">🎤</button>
+        <textarea id="ai-text" rows="1" placeholder="问点什么…（可附图片/文件）"></textarea>
+        <button type="button" class="input-emoji" disabled title="表情（暂未开放）">🙂</button>
+        <button type="button" id="ai-plus" class="input-plus">➕</button>
         <button id="ai-send" class="ai-sendbtn">发送</button>
       </div>
-      <textarea id="ai-text" rows="1" placeholder="问点什么…（可附图片/文件）"></textarea>
     </div>
     <input id="ai-attfile" type="file" accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.txt" hidden>
     <input id="ai-camfile" type="file" accept="image/*" capture="environment" hidden>
@@ -1587,16 +1604,11 @@
 </div>
 
 <!-- AI 附件来源选择 -->
-<div id="ai-attsheet" class="note-sheet hidden" style="z-index:130;">
-  <div class="ns-mask" data-sheet-close></div>
-  <div class="ns-panel">
-    <div class="ns-handle"></div>
-    <div class="ns-title">添加附件（AI 会读取其中文字）</div>
-    <div class="acm-list">
-      <button data-aiatt="photo">📷 拍照</button>
-      <button data-aiatt="image">🖼️ 选图片</button>
-      <button data-aiatt="file">📄 选文件（PDF/Word/文本）</button>
-    </div>
+<div id="ai-attsheet" class="ctxmenu hidden">
+  <div class="acm-list">
+    <button data-aiatt="photo">📷 拍照</button>
+    <button data-aiatt="image">🖼️ 选图片</button>
+    <button data-aiatt="file">📄 选文件（PDF/Word/文本）</button>
   </div>
 </div>
 
@@ -1612,29 +1624,19 @@
 </div>
 
 <!-- AI 对话操作菜单 -->
-<div id="ai-chatmenu" class="note-sheet hidden">
-  <div class="ns-mask" data-sheet-close></div>
-  <div class="ns-panel">
-    <div class="ns-handle"></div>
-    <div class="ns-title">对话操作</div>
-    <div id="acm-list" class="acm-list"></div>
-  </div>
+<div id="ai-chatmenu" class="ctxmenu hidden">
+  <div id="acm-list" class="acm-list"></div>
 </div>
 
 <!-- 资料条目操作菜单 -->
-<div id="mat-menu" class="note-sheet hidden" style="z-index:130;">
-  <div class="ns-mask" data-sheet-close></div>
-  <div class="ns-panel">
-    <div class="ns-handle"></div>
-    <div class="ns-title" id="mm-title">资料操作</div>
-    <div class="acm-list">
-      <button data-mm="share">📤 分享到其他应用</button>
-      <button data-mm="team">👥 共享给队友</button>
-      <button data-mm="rename">✏️ 重命名</button>
-      <button data-mm="dup">🗐 复制一份</button>
-      <button data-mm="dl">⬇️ 下载</button>
-      <button data-mm="del" class="acm-danger">🗑 删除</button>
-    </div>
+<div id="mat-menu" class="ctxmenu hidden">
+  <div class="acm-list">
+    <button data-mm="share">📤 分享到其他应用</button>
+    <button data-mm="team">👥 共享给队友</button>
+    <button data-mm="rename">✏️ 重命名</button>
+    <button data-mm="dup">🗐 复制一份</button>
+    <button data-mm="dl">⬇️ 下载</button>
+    <button data-mm="del" class="acm-danger">🗑 删除</button>
   </div>
 </div>
 

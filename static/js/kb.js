@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, OFFICE_EXT, _svg, api, appConfirm,
+/* global $, IC, OFFICE_EXT, _svg, anchorMenu, api, appConfirm,
    back, c, composing, esc, fmtSize, iconFor,
    openAI, openSearch, openViewerUrl, push, stack, toast */
 
@@ -153,7 +153,7 @@ function renderTree() {
 }
 $('#nb-tree').addEventListener('click', e => {
   const dots = e.target.closest('[data-nodedots]');
-  if (dots) { e.stopPropagation(); openNodeMenu(+dots.dataset.nodedots); return; }
+  if (dots) { e.stopPropagation(); openNodeMenu(dots, +dots.dataset.nodedots); return; }
   const row = e.target.closest('[data-node]'); if (!row) return;
   const id = +row.dataset.node;
   if (row.dataset.type === 'group') { KB.openGroups[id] = !KB.openGroups[id]; renderTree(); }
@@ -195,19 +195,17 @@ $('#kb-sheet').addEventListener('click', async e => {
 
 /* 节点菜单：重命名 / 新建子项 / 删除 */
 let nodeMenuId = null;
-function openNodeMenu(id) {
+function openNodeMenu(btn, id) {
   const n = findNode(id); if (!n) return;
   nodeMenuId = id;
-  $('#node-menu-title').textContent = n.title || (n.type === 'group' ? '未命名分组' : '无标题文档');
   let html = `<button data-nm="rename"><span class="ci">${IC.edit}</span>重命名</button>`;
   if (n.type === 'group') html += `<button data-nm="add"><span class="ci">${ICON_PLUS}</span>在此分组内新建</button>`;
   if (n.type === 'doc') html += `<button data-nm="open"><span class="ci">${ICON_DOCF}</span>打开文档</button>`;
   html += `<button data-nm="del" style="color:#e0524d"><span class="ci">${IC.del}</span>删除</button>`;
   $('#node-menu-list').innerHTML = html;
-  $('#node-menu').classList.remove('hidden');
+  anchorMenu($('#node-menu'), btn);
 }
 $('#node-menu').addEventListener('click', async e => {
-  if (e.target.closest('[data-sheet-close]')) { $('#node-menu').classList.add('hidden'); return; }
   const b = e.target.closest('[data-nm]'); if (!b) return;
   const act = b.dataset.nm, id = nodeMenuId, n = findNode(id);
   $('#node-menu').classList.add('hidden');

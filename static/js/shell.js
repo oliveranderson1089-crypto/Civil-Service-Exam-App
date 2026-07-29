@@ -73,12 +73,14 @@ window.appBack = function () {
   if (padEl && !padEl.classList.contains('hidden')) { padClose(); return true; }
   // 幻灯片播放优先退出
   if (!$('#slideshow').classList.contains('hidden')) { closeSlideshow(); return true; }
+  // 0) 任意底部弹层 / 锚定小菜单（小记新建、知识库 +、块菜单、插入面板；资料库⋮、AI 会话⋮、
+  //    知识库节点⋮、AI 附件来源等锚定菜单）——要放在 AI 面板分支之前，否则 AI 会话⋮菜单/
+  //    附件来源开着时按返回会被 aiBack() 当成"退出会话"处理掉，而不是先关掉这个小菜单
+  const sheets = [...document.querySelectorAll('.note-sheet:not(.hidden), .ctxmenu:not(.hidden)')];
+  if (sheets.length) { sheets[sheets.length - 1].classList.add('hidden'); return true; }
   // AI 面板
   const aip = $('#ai-panel');
   if (aip && !aip.classList.contains('hidden')) { return aiBack(); }
-  // 0) 任意底部弹层（小记新建 / 知识库 + / 块菜单 / 插入面板）
-  const sheets = [...document.querySelectorAll('.note-sheet:not(.hidden)')];
-  if (sheets.length) { sheets[sheets.length - 1].classList.add('hidden'); return true; }
   // 2) 全屏小记编辑器
   const cp = document.querySelector('.composer.cp-open');
   if (cp) { newDraft(); return true; }

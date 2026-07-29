@@ -140,6 +140,30 @@ function clipFiles(e) {
   if (fs.length) return fs;
   return [...(cd.items || [])].filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean);
 }
+/* 锚定小菜单：把 el 弹在 btn 附近（贴左对齐、贴下方 4px）；
+   靠近视口底部/右侧时翻到上方/收边，别让菜单探出屏幕。⋮ 菜单、+号面板共用这一套。 */
+function anchorMenu(el, btn) {
+  el.classList.remove('hidden');
+  const r = btn.getBoundingClientRect();
+  const w = el.offsetWidth || 180, h = el.offsetHeight || 160;
+  let top = r.bottom + 4;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+  el.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+  el.style.top = top + 'px';
+}
+// 手机端聊天/AI 输入栏：有没有内容决定显示「麦克风+➕」还是「发送」（微信式）
+function syncSendState(box) {
+  const ta = box && box.querySelector('textarea');
+  if (box) box.classList.toggle('has-text', !!(ta && ta.value.trim()));
+}
+// 输入框自增高（桌面走拖高逻辑装的 t._grow，手机走紧凑自动增高，最高 120）+ 同步发送态。
+// 聊天、AI 助手的输入框共用这一套，各自套一层同名壳函数（aiGrow/crGrow）传自己的 id。
+function growAndSync(taSel, boxSel) {
+  const t = $(taSel); if (!t) return;
+  if (t._grow) t._grow();
+  else { t.style.height = 'auto'; t.style.height = Math.min(120, t.scrollHeight) + 'px'; }
+  syncSendState($(boxSel));
+}
 // 线性 SVG 图标
 const _svg = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const IC = {
