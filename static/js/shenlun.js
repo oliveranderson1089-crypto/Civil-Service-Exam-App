@@ -8,7 +8,10 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, IC, IS_MOBILE, api, appConfirm, c,
-   esc, matOpen, openEssays, push, state, toast */
+   esc, frCheckBody, frMatHtml, matOpen, openEssays, push, state, toast */
+/* frMatHtml / frCheckBody 来自 find.js（它在 index.html 里先加载）：
+   真题批改的「练习模式」和小题训练的找点是同一件事 —— 同一套采分点、同一套判定、
+   同一套按句渲染。渲染规则必须共用一份，两边各写一套迟早会判得不一样。 */
 
 /* ================= 申论：真题卷 + 题型讲义 + AI 逐点批改 ================= */
 let slType = null, slQuestion = null, slPaper = null;
@@ -212,6 +215,12 @@ $('#slg-a').addEventListener('input', slCountWords);
 
 function openSlGrade(t) {          // 自由练：自己贴题干和材料
   $('#slg-mat').classList.add('hidden');
+  // 自由练没有预标采分点（题干材料是临时贴的），无从判定找点 —— 不给模式选择
+  $('#slg-mode').classList.add('hidden');
+  $('#slg-find').classList.add('hidden');
+  $('#slg-picked').classList.add('hidden');
+  $('#slg-body').classList.remove('hidden');
+  slMode = 'exam';
   slType = t; slQuestion = null;
   push({ view: 'slgrade', title: t.name + ' · 批改' });
   $('#slg-type').innerHTML = `<span class="slg-badge" style="background:${t.color}">${esc(t.name)}</span>`;
@@ -223,6 +232,7 @@ function openSlGrade(t) {          // 自由练：自己贴题干和材料
 }
 function openSlGradeQ(q) {         // 真题：题干/材料/满分/字数都锁定，只写答案
   slQuestion = q; slType = null;
+  slFind = null; slPicked = new Set();   // 换了题，练习模式的找点进度不能带到新题上
   push({ view: 'slgrade', title: `第${q.seq}题 · ${q.type_name}` });
   $('#slg-type').innerHTML = `<span class="slg-badge" style="background:#2b6fd6">第 ${q.seq} 题 · ${esc(q.type_name)}</span>`;
   $('#slg-manual').classList.add('hidden');
@@ -235,7 +245,137 @@ function openSlGradeQ(q) {         // 真题：题干/材料/满分/字数都锁
   const mat = (slPaper && slPaper.material) || '';
   $('#slg-mat').classList.toggle('hidden', !mat);
   $('#slg-mat').onclick = () => matOpen(mat, 'p' + (slPaper ? slPaper.id : 0));
+  // 真题小题才有模式可选（自由练没有预标采分点，无从判定找点）
+  $('#slg-mode').classList.remove('hidden');
+  slSetMode('exam', { silent: true });
   if (mat && !IS_MOBILE) matOpen(mat, 'p' + slPaper.id);      // 电脑端直接半屏摆出来
+}
+
+/* ---- 两种做题模式 ----
+   模考模式 = 现有流程：直接写、直接批，还原考场情境。
+   练习模式 = 先在给定资料上勾要点、判**找漏/找错/找重**，再照着写 —— 平时练用。
+   判定复用真题预标的那套采分点（P2 已存进 shenlun_questions.points），
+   和小题训练是**同一套采分点、同一套判法**，两个模块练出来的标准才是一个。 */
+let slMode = 'exam', slFind = null, slPicked = new Set(), slDrag = null;
+
+function slSetMode(m, opt = {}) {
+  slMode = m;
+  document.querySelectorAll('#slg-mode [data-slgm]').forEach(
+    b => b.classList.toggle('on', b.dataset.slgm === m));
+  const drill = m === 'drill';
+  $('#slg-find').classList.toggle('hidden', !drill);
+  $('#slg-body').classList.toggle('hidden', drill);   // 找点没判完前先不给写
+  // 切回模考就得把练习模式的痕迹收干净，否则「你勾到的句子」会挂在模考页面上
+  if (!drill) $('#slg-picked').classList.add('hidden');
+  // 同一道题来回切模式不能把已经勾的点/判定结果冲掉，只有这道题还没读过找点数据才去拉
+  if (drill && !slFind) slLoadFind();
+  else if (drill) slRenderFind();
+}
+$('#slg-mode').addEventListener('click', e => {
+  const b = e.target.closest('[data-slgm]'); if (!b) return;
+  if (b.dataset.slgm === slMode) return;
+  slSetMode(b.dataset.slgm);
+});
+
+async function slLoadFind() {
+  if (!slQuestion) return;
+  slFind = null; slPicked = new Set();
+  $('#slg-find').innerHTML = `<p class="empty">正在准备这道题的要点…<br>
+    <i>第一次进练习模式要先标一遍采分点（约 2~3 分钟），之后再进就秒开。</i></p>`;
+  try {
+    slFind = await api(`/api/shenlun/question/${slQuestion.id}/find`);
+    slFind.check = null;
+    slRenderFind();
+  } catch (e) {
+    $('#slg-find').innerHTML = `<p class="empty">${esc(e.message)}</p>
+      <button class="btn" id="slg-back-exam">← 用模考模式作答</button>`;
+    $('#slg-back-exam').onclick = () => slSetMode('exam');
+  }
+}
+
+function slRenderFind() {
+  const f = slFind, c = f.check;
+  const mk = c ? { ok: c.okSents, bad: c.wrongSents, miss: c.missSents, near: c.nearSents } : null;
+  const what = f.is_essay ? '立意 / 分论点 / 论据' : '要点';
+  $('#slg-find').innerHTML = `
+    <div class="fr-tip">🖍 在材料里<b>点句子</b>勾出你认为的${esc(what)}（按住拖可以连选）。
+      ${f.is_essay
+        ? '大作文没有采分点，这一步找的是<b>动笔前的备料</b>：题目那句话的出处、可当分论点的侧面、能直接引的案例数据。'
+        : '这一步<b>只找不写</b>。'}
+      共 <b>${f.n_points}</b> 个${esc(what)}，你勾了 <b id="slg-n">${slPicked.size}</b> 句。
+      ${(f.refs || []).length ? `<i>（本题只看给定资料 ${f.refs.join('、')}）</i>` : ''}</div>
+    <div id="slg-mat-sents" class="fr-mat">${frMatHtml(f.sents, slPicked, mk)}</div>
+    ${c ? frCheckBody(c) : ''}
+    <div class="fr-acts">
+      ${c ? '<button class="btn" id="slg-redo">🔄 重新找一遍</button>' : ''}
+      <button class="btn primary" id="slg-check">${c ? '改完了，重新判定' : '看看我找得对不对'}</button>
+      ${c ? '<button class="btn" id="slg-towrite">下一步：照着写 →</button>' : ''}
+    </div>`;
+  $('#slg-check').onclick = slDoCheck;
+  if (c) {
+    $('#slg-redo').onclick = () => { slFind.check = null; slPicked = new Set(); slRenderFind(); };
+    $('#slg-towrite').onclick = () => {
+      // 漏掉的点补进勾画，不然照着写注定还是漏（和小题训练一个处理）
+      c.missSents.forEach(i => slPicked.add(i));
+      c.wrongSents.forEach(i => slPicked.delete(i));
+      $('#slg-find').classList.add('hidden');
+      $('#slg-body').classList.remove('hidden');
+      const picked = slFind.sents.filter(s => slPicked.has(s.i));
+      $('#slg-picked').innerHTML = `<div class="fr-sec-t">🖍 你勾到的（照着这些写）</div>`
+        + `<div class="fr-picked">${picked.map(s => `<div>· ${esc(s.t)}</div>`).join('')
+          || '<i>你没勾到任何要点</i>'}</div>`;
+      $('#slg-picked').classList.remove('hidden');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+  }
+}
+
+// 勾画：点一句=选中/取消，按住拖过多句=连选（和小题训练同一套手势）
+$('#slg-find').addEventListener('pointerdown', e => {
+  const s = e.target.closest('[data-fs]'); if (!s) return;
+  const i = +s.dataset.fs;
+  slDrag = slPicked.has(i) ? 'off' : 'on';
+  slToggle(i, slDrag === 'on');
+  e.preventDefault();
+});
+$('#slg-find').addEventListener('pointerover', e => {
+  if (!slDrag) return;
+  const s = e.target.closest('[data-fs]'); if (!s) return;
+  slToggle(+s.dataset.fs, slDrag === 'on');
+});
+document.addEventListener('pointerup', () => { slDrag = null; });
+function slToggle(i, on) {
+  if (on) slPicked.add(i); else slPicked.delete(i);
+  const el = $('#slg-find').querySelector(`[data-fs="${i}"]`);
+  if (el) el.classList.toggle('on', on);
+  const n = $('#slg-n'); if (n) n.textContent = slPicked.size;
+}
+// 点「就在这句」跳到原文
+$('#slg-find').addEventListener('click', e => {
+  const g = e.target.closest('[data-fsgo]'); if (!g) return;
+  const el = $('#slg-find').querySelector(`[data-fs="${g.dataset.fsgo}"]`);
+  if (el) {
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400);
+  }
+});
+
+async function slDoCheck() {
+  if (!slPicked.size) { toast('先在材料里勾几句', true); return; }
+  const b = $('#slg-check'); const old = b.textContent;
+  b.disabled = true; b.textContent = '判定中…';
+  try {
+    const r = await api(`/api/shenlun/question/${slQuestion.id}/check`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sents: [...slPicked] }),
+    });
+    r.okSents = new Set(r.ok.flatMap(x => x.sents));
+    r.wrongSents = new Set(r.wrong.map(x => x.i));
+    r.missSents = new Set(r.missed.flatMap(x => x.sents));
+    r.nearSents = new Set((r.near || []).map(x => x.i));
+    slFind.check = r;
+    slRenderFind();
+  } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = old; }
 }
 $('#slg-go').onclick = async () => {
   const answer = $('#slg-a').value.trim();

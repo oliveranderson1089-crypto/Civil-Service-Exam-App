@@ -243,8 +243,9 @@ function frMatHtml(sents, picked, mk) {
     if (s.head) { html += `<span class="fr-s fr-h">${esc(s.t)}</span>`; return; }
     const cls = ['fr-s'];
     if (picked.has(s.i)) cls.push('on');
-    if (mk) {                                    // 判完了：把对/错/漏直接标在原文上
+    if (mk) {                                    // 判完了：把对/沾边/错/漏直接标在原文上
       if (mk.ok.has(s.i)) cls.push('ok');
+      else if (mk.near && mk.near.has(s.i)) cls.push('near');
       else if (mk.bad.has(s.i)) cls.push('bad');
       else if (mk.miss.has(s.i)) cls.push('miss');
     }
@@ -259,10 +260,10 @@ function frMat() {
   // 没法对着原文看自己漏在哪；现在批改页把材料当成一个页签，还带着找对/错/漏的着色。
   const box = $('#fr-mat');
   box.classList.toggle('hidden', fdStep === 3 && fdTab !== 'mat');
-  const mk = fdCheck ? { ok: fdCheck.okSents, bad: fdCheck.wrongSents, miss: fdCheck.missSents } : null;
+  const mk = fdCheck ? { ok: fdCheck.okSents, bad: fdCheck.wrongSents, miss: fdCheck.missSents, near: fdCheck.nearSents } : null;
   box.innerHTML = (fdStep === 3
     ? `<div class="fr-sec-t">📄 给定资料${fdPaper.material_words ? `（${fdPaper.material_words} 字）` : ''}
-       <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏</i></div>` : '')
+       <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏 · 橙=沾边</i></div>` : '')
     + frMatHtml(fdPaper.sents, fdPicked, mk);
 }
 
@@ -366,18 +367,21 @@ function frCheckBody(r) {
         <span class="fr-acc${r.acc < 60 ? ' bad' : ''}">${r.acc}%</span></div>
       ${r.missed.length ? `<div class="fr-sec miss"><div class="fr-sec-t">❌ 找漏了 ${r.missed.length} 个</div>
         ${r.missed.map(x => `<div class="fr-item">
-          <b>[${x.score} 分] ${esc(x.point)}</b>
+          <b>${x.score ? `[${x.score} 分] ` : ""}${esc(x.point)}</b>
           <div class="fr-ev" data-fsgo="${x.sents[0]}">↗ 就在这句：${esc(x.evidence.slice(0, 50))}…</div>
         </div>`).join('')}</div>` : ''}
       ${r.wrong.length ? `<div class="fr-sec bad"><div class="fr-sec-t">⚠️ 找错了 ${r.wrong.length} 处
           <i>（这些是干扰信息，不是采分点）</i></div>
         ${r.wrong.map(x => `<div class="fr-item"><div class="fr-ev" data-fsgo="${x.i}">↗ ${esc(x.t.slice(0, 50))}…</div></div>`).join('')}</div>` : ''}
+      ${(r.near || []).length ? `<div class="fr-sec near"><div class="fr-sec-t">🟡 沾边 ${r.near.length} 处
+          <i>（这几句确实相关，只是没能独立成一个采分点 —— 不算找错）</i></div>
+        ${r.near.map(x => `<div class="fr-item"><div class="fr-ev" data-fsgo="${x.i}">↗ ${esc(x.t.slice(0, 50))}…</div></div>`).join('')}</div>` : ''}
       ${r.dup.length ? `<div class="fr-sec dup"><div class="fr-sec-t">🔁 找重了 ${r.dup.length} 处</div>
         ${r.dup.map(x => `<div class="fr-item"><b>${esc(x.point)}</b>
           <div class="fr-ev">这一个点你勾了 ${x.sents.length} 句 —— 材料里换了个说法而已，答案里只算一个点</div>
         </div>`).join('')}</div>` : ''}
       ${r.ok.length ? `<div class="fr-sec ok"><div class="fr-sec-t">✅ 找对了 ${r.ok.length} 个</div>
-        ${r.ok.map(x => `<div class="fr-item"><b>[${x.score} 分] ${esc(x.point)}</b></div>`).join('')}</div>` : ''}
+        ${r.ok.map(x => `<div class="fr-item"><b>${x.score ? `[${x.score} 分] ` : ""}${esc(x.point)}</b></div>`).join('')}</div>` : ''}
     </div>`;
 }
 function frToStep2() {
@@ -401,6 +405,7 @@ async function frDoCheck() {
     r.okSents = new Set(r.ok.flatMap(x => x.sents));
     r.wrongSents = new Set(r.wrong.map(x => x.i));
     r.missSents = new Set(r.missed.flatMap(x => x.sents));
+    r.nearSents = new Set((r.near || []).map(x => x.i));   // 沾边：相关但没独立成点
     fdCheck = r;
     frMat();
     frFoot();
@@ -577,7 +582,7 @@ function frFindRecapHtml(fr) {
   </div>`;
 }
 /* 一条记录的完整回看：不只是「分数 + 评语」，而是把当时那一遍**重演**出来 ——
-   材料上还留着当时的勾画和判定着色（绿=找对/红=找错/黄=找漏），照着能看出
+   材料上还留着当时的勾画和判定着色（绿=找对/红=找错/黄=找漏/橙=沾边），照着能看出
    「我当时为什么会漏这个点」。着色用记录里的采分点快照算，采分点后来被重标也不影响。 */
 let fdRec = null, fdRecTab = 'find';
 async function openFindRec(rid) {
@@ -609,7 +614,7 @@ function frRecRender() {
   $('#frd-mat').classList.toggle('hidden', !showMat);
   $('#frd-mat').innerHTML = showMat
     ? `<div class="fr-sec-t">📄 给定资料${d.material_words ? `（${d.material_words} 字）` : ''}
-       <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏</i></div>`
+       <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏 · 橙=沾边</i></div>`
       + frMatHtml(d.sents, new Set(d.marks), {
         ok: new Set(d.mark_ok), bad: new Set(d.mark_bad), miss: new Set(d.mark_miss) })
     : '';

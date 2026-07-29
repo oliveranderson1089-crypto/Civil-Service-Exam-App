@@ -944,7 +944,10 @@ def init_db():
     #   reference  出题时就把参考答案生成好存下来（由采分点拼装，见 mods/find.py 的
     #              _find_reference），批改和回看直接取，不用每次再调一次 AI。
     #   points_old 重标采分点时（audit_find.py --rerun --apply）备份旧的那套，能回退。
-    for col in ("reference", "points_old"):
+    #   near       扫描时认为「含要点」、但收口时没能独立成点的句子。**它们不是干扰信息**，
+    #              勾中了不该判「找错」。实测扫出的候选有一半以上会被丢弃（贯彻执行 14~17
+    #              个候选只留 5~7 个点），把这些一律当干扰信息，用户勾对了反而被判错。
+    for col in ("reference", "points_old", "near"):
         if col not in _cols(con, "find_papers"):
             con.execute("ALTER TABLE find_papers ADD COLUMN %s TEXT" % col)
     # 采分点会被「重标」改掉，改完历史记录里的勾画就和新采分点对不上了 —— 回看会串。
@@ -955,8 +958,9 @@ def init_db():
     # 现场提炼有三个毛病：同一份答案两次批改可能不同分（标尺本身在变）、说不出漏的点
     # 在材料第几句（没有原文锚点）、和小题训练是两套标准。预标之后三个一起解决。
     # 首次批改这道题时惰性生成并缓存（上传时同步做会让上传变成好几分钟）。
-    if "points" not in _cols(con, "shenlun_questions"):
-        con.execute("ALTER TABLE shenlun_questions ADD COLUMN points TEXT")
+    for col in ("points", "near"):
+        if col not in _cols(con, "shenlun_questions"):
+            con.execute("ALTER TABLE shenlun_questions ADD COLUMN %s TEXT" % col)
     # 每日时政：补「重点标注」列（在原文里划出考点，不用通读全文）
     if "marks" not in _cols(con, "news_items"):
         con.execute("ALTER TABLE news_items ADD COLUMN marks TEXT")

@@ -139,3 +139,54 @@ def test_跨句依据要打省略号不能硬粘():
     assert _ev_text(ss, [1, 2, 5, 6]) == "第1句。第2句。……第5句。第6句。"
     assert _ev_text(ss, [3]) == "第3句。"
     assert _ev_text(ss, []) == ""
+
+
+def test_大作文选备料要保三类且铺开位置():
+    """跳过合并后落到 `cands[:n_hi]` 兜底，等于按材料顺序截断 —— 实测 34 句的材料
+    12 条备料全挤在句 5~24，题干引语的出处（句 33，立意的根）被截没了。
+    这正是当初给小题修好的「集中在前段」，在大作文这条路上又被引回来一次。
+    """
+    from mods.find import _zw_select
+    # 前面全是论据，立意只有最后一条 —— 按位置截断必然把它丢掉
+    cands = [{"sents": [i], "sent": i, "point": "【论据】证据%d" % i, "evidence": "x"}
+             for i in range(20)]
+    cands.append({"sents": [33], "sent": 33, "point": "【立意】题干那句话的出处", "evidence": "y"})
+    cands.append({"sents": [30], "sent": 30, "point": "【分论点】某个侧面", "evidence": "z"})
+    got = _zw_select(cands, 8)
+    pts = [c["point"] for c in got]
+    assert any(p.startswith("【立意】") for p in pts), "立意被截没了 —— 它最要紧也最容易被论据淹掉"
+    assert any(p.startswith("【分论点】") for p in pts), "分论点一条都没留"
+    assert len(got) <= 8, "超出名额上限"
+    assert [c["sents"][0] for c in got] == sorted(c["sents"][0] for c in got), "该按材料顺序排"
+    assert max(c["sents"][0] for c in got) > 20, "备料仍全挤在材料前段，没铺开"
+
+
+class Test沾边判定:
+    """勾了但没进采分点的句子，要再分「沾边」和「真找错」。
+
+    原来一刀切：不在采分点里 = 找错 = 「这些是干扰信息」。**这个反馈是错的。**
+    实测（audit_find.py --baseline，5 道题各连出 3 次）扫描扫出的候选有一半以上会在
+    收口时被丢掉 —— 贯彻执行 14~17 个候选只留 5~7 个点。被丢掉的句子确实含要点，
+    只是这一次标定没让它独立成点（「设施农业」和「星光合作社」都是正当举措，只有一个入选）。
+    用户勾中它却被告知「这是干扰信息」，等于教错了。
+    """
+
+    def test_近似句判沾边而不是找错(self):
+        from mods.find import _find_split_wrong
+        near, wrong = _find_split_wrong({"near": "[5, 7]"}, [3, 5, 7, 9], {3})
+        assert near == [5, 7], "扫描认过的句子该判沾边，实际 %s" % near
+        assert wrong == [9], "只有两边都不沾的才是真找错，实际 %s" % wrong
+
+    def test_采分点内的句子不进沾边也不进找错(self):
+        from mods.find import _find_split_wrong
+        near, wrong = _find_split_wrong({"near": "[5]"}, [1, 5], {1})
+        assert 1 not in near and 1 not in wrong, "已命中采分点的句子不该再被归类"
+        assert near == [5]
+
+    def test_老题目没有near列时退回老行为(self):
+        """这一列是后加的，存量题目没有 —— 不能因此炸，也不能凭空冒出沾边。"""
+        from mods.find import _find_split_wrong
+        for row in ({"near": None}, {"near": ""}, {"near": "坏掉的json"}):
+            near, wrong = _find_split_wrong(row, [2, 4], set())
+            assert near == [], "没有 near 数据却报了沾边：%s" % near
+            assert wrong == [2, 4], "老题目该维持原来的「全判找错」行为"

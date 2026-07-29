@@ -167,6 +167,17 @@ def _find_needs_more(cov):
     return cov["max_gap"] >= _FIND_GAP_MAX or cov["coverage"] < _FIND_COV_MIN
 
 
+# 标采分点用的题型表 = 小题训练那四种 + **大作文**。
+# 大作文不进 FIND_TYPES（小题训练只练找点+写点，大作文不属于那儿），但真题批改的
+# **练习模式**要给它也配一套「找点」—— 议论文动笔前同样得先从材料里定位：题目引的那句话
+# 出自哪儿、有哪些侧面可以当分论点、哪些案例数据能直接引。所以单开一张表，只在这儿用。
+_PT_TYPES = dict(FIND_TYPES, zuowen=(
+    "文章写作（大作文）", 35, 1000, 1200,
+    "从材料里立意、自选角度成文 —— 论点要从材料来，论据要有材料支撑"))
+# 大作文的点数不按分值算（35 分照每 2~3 分一个点会算出十几个点，没意义）：
+# 议论文动笔前圈出来的东西，六到十条正好够搭一篇三分论点的文章。
+_PT_N = {"zuowen": (6, 10)}
+
 _FIND_TYPE_FOCUS = {
     "guina": "抓「做法／措施／表现／成效」",
     "zonghe": "抓「是什么—为什么—怎么样」各层的要点",
@@ -180,6 +191,17 @@ _FIND_TYPE_FOCUS = {
               "对策是你从问题推出来的，材料里往往没有现成原话，这很正常，不要因此跳过问题段；"
               "材料里若另有现成的做法或他山之石（别地的成功经验），也各落一个点"),
     "guanche": "抓「正文该写进去的内容要点」（由头、举措、成效、号召）",
+    # 大作文没有「采分点」—— 它的找点是**动笔前的备料**：论点从哪儿来、论据拿什么撑。
+    # 判卷时四个维度（立意/结构/论证/语言）里，「立意」和「论证与材料运用」两项直接取决于
+    # 有没有把这些句子找出来，所以这一步值得单独练。
+    "zuowen": ("抓「立意与论据」，分三类，每条 point 用「【类别】…」开头标明是哪一类：\n"
+               "   · 【立意】题干引用的那句话在材料里的**出处及其阐释**，以及点明主旨、"
+               "揭示核心矛盾的句子 —— 总论点的根，找不到它整篇就跑题\n"
+               "   · 【分论点】材料里体现这个主题**不同侧面**的句子（不同主体、不同层面、"
+               "正面反面），一个侧面一条，这是分论点的来源\n"
+               "   · 【论据】能直接写进文章的**具体案例、数据、人物原话** —— "
+               "议论文最缺的就是这个，空谈道理拿不到分\n"
+               "   三类都要有，别全挑成一类；纯背景铺垫、与主题无关的细节不算"),
 }
 
 
@@ -231,6 +253,20 @@ _FIND_SYS = ("你是申论阅卷组组长，负责制定这道题的标准答案
              "每个点必须指明出自材料第几句、并照抄该句原文作依据，绝不改写、不编造。"
              "严格输出 JSON。")
 
+# 大作文整条链路都要换一套说法。只改 _FIND_TYPE_FOCUS 是不够的 —— 实测那样改完，
+# 标出来的还是「认识传统工艺成本高效率低但品牌价值独特」这种**综合分析式的要点**，
+# 【立意】【分论点】【论据】三个标签一个都没出现：因为它被塞进的是「找出可以**得分**的
+# 要点」这个框架，后面合并那步又按「像阅卷组定评分细则、合计正好 N 分」重新收口一遍，
+# 大作文的口径被这两层采分点框架冲掉了。所以系统提示、任务说法、合并规则都得分开。
+_ZW_SYS = ("你是申论大作文的指导老师。学生动笔前要先从给定资料里把**备料**圈出来："
+           "总论点的根在哪句、有哪些侧面可以做分论点、哪些案例数据能直接引用。"
+           "每条都必须指明出自材料第几句、并照抄该句原文作依据，绝不改写、不编造。"
+           "严格输出 JSON。")
+
+
+def _is_zw(qtype):
+    return qtype == "zuowen"
+
 
 def _find_scan(name, stem, sents, qtype):
     """Pass 1：逐块扫描候选要点。**这一步不定分值、不去重**，只求把全材料过一遍。
@@ -239,26 +275,38 @@ def _find_scan(name, stem, sents, qtype):
     信息密集、好照抄的段落里凑够数就收工 —— 实测 11 道题里 8 道有整块材料零覆盖，
     最狠的一道 58 句材料前 32 句一个点没有。先按块逼它表态，凑数的动机就没了。"""
     n_blk = (len(sents) - 1) // _FIND_BLOCK + 1
+    zw = _is_zw(qtype)
+    task = ("**逐块**找出动笔前必须圈出来的**备料**（大作文没有采分点，别按采分点的路子写）"
+            if zw else "**逐块**找出可以得分的要点")
+    what = "备料" if zw else "要点"
+    # 类别标签必须写在 **point 字段的说明里**。实测只写在上面那段 focus 里不管用 ——
+    # 模型填 point 时看的是字段说明，照着「概括后的表述」写，标签一条都不带。
+    point_rule = ("**必须以【立意】或【分论点】或【论据】开头**标明这是哪一类，"
+                  "再接 10~28 字的表述。例：「【论据】巴黎展会限量丝巾售价 500 欧元被抢购」。"
+                  "**三类缺一不可**：材料里论据最多、最好找，但只挑论据等于没找立意 —— "
+                  "**题干引用的那句话在材料里的原句（往往在材料末尾的总结处）必须标成【立意】**，"
+                  "找不到它整篇文章就会跑题"
+                  if zw else "概括后的要点表述（10~28 字，点到关键词，**不是照抄原文**）")
     d, err = _find_json(
-        [{"role": "system", "content": _FIND_SYS},
+        [{"role": "system", "content": _ZW_SYS if zw else _FIND_SYS},
          {"role": "user", "content":
           "下面是一道申论**%s**的题干和给定资料。资料已按每 %d 句切成 %d 块，每句前面是句号。\n\n"
           "【题干】%s\n\n【给定资料】\n%s\n\n"
-          "【任务】**逐块**找出可以得分的要点，%s。\n"
+          "【任务】%s，%s。\n"
           "1. **必须把第 1 块到第 %d 块每一块都过一遍**，一块都不许跳过。某一块确实全是背景铺垫、"
           "无关细节、同义重复、反面例子这类干扰信息，就把这一块的 points 写成空数组 —— "
           "但你得明确表态，不能不提这一块。\n"
-          "2. 每个要点给：\n"
-          "   · sent：这个要点出自**哪一句**的句号（就是材料里 [] 里的数字）。跨句总结的，"
+          "2. 每个%s给：\n"
+          "   · sent：它出自**哪一句**的句号（就是材料里 [] 里的数字）。跨句总结的，"
           "填**最能支撑它的那一句**。\n"
-          "   · point：概括后的要点表述（10~28 字，动宾结构、点到关键词，**不是照抄原文**）\n"
+          "   · point：%s\n"
           "   · evidence：把 sent 那一句**开头的 10~20 个字原封不动复制**过来（用来核对你没报错句号，"
           "所以一个字都不能改、不能概括；**不用抄整句**）\n"
-          "3. 要点要具体：一个要点只讲一件事，别写「加强管理」「提升水平」这种空话（空话不给分）。\n"
-          "4. 允许一块出多个要点，也允许一块零要点 —— 按材料实际情况来，别为了均匀硬凑。\n\n"
+          "3. 要具体：一条只讲一件事，别写「加强管理」「提升水平」这种空话。\n"
+          "4. 允许一块出多条，也允许一块零条 —— 按材料实际情况来，别为了均匀硬凑。\n\n"
           '只输出 JSON：{"blocks":[{"block":1,"points":[{"sent":0,"point":"","evidence":""}]}]}'
           % (name, _FIND_BLOCK, n_blk, stem, _find_numbered(sents)[:14000],
-             _FIND_TYPE_FOCUS.get(qtype, ""), n_blk)}],
+             task, _FIND_TYPE_FOCUS.get(qtype, ""), n_blk, what, point_rule)}],
         # 这里给的是**正文额度**（推理段由 aiclient.budget() 另外加）。
         # 论正文，这段 JSON 撑死两三千 token：二十来个点 × (句号 + 10~28 字概括 + 十来字依据)，
         # evidence 只抄原句开头、不整句抄。但给到 8000 是有意的 ——
@@ -292,10 +340,13 @@ def _find_fill(name, stem, sents, qtype, blanks, have):
           "【题干】%s\n\n【已有要点】\n%s\n\n【还没被覆盖的材料】\n%s\n\n"
           "【要求】%s。真有独立要点就补出来；确实全是背景铺垫／无关细节／和已有要点重复的，"
           "就返回空数组 —— **不要为了填满而硬凑**，凑出来的空话点会把练习者带偏。\n"
-          "每个点给 sent（句号）、point（10~28 字概括）、evidence（照抄该句**开头 10~20 字**）。\n\n"
+          "每个点给 sent（句号）、point（%s）、evidence（照抄该句**开头 10~20 字**）。\n\n"
           '只输出 JSON：{"points":[{"sent":0,"point":"","evidence":""}]}'
           % (name, stem, "\n".join("· " + p["point"] for p in have),
-             seg[:9000], _FIND_TYPE_FOCUS.get(qtype, ""))}],
+             seg[:9000], _FIND_TYPE_FOCUS.get(qtype, ""),
+             # 补出来的也得带类别标签，否则同一道题里一半有标签一半没有
+             ("以【立意】/【分论点】/【论据】开头 + 10~28 字表述"
+              if _is_zw(qtype) else "10~28 字概括"))}],
         # 补点也是提取，同扫描档位；额度同理留够推理（要判断空白段里到底有没有独立要点）
         max_tokens=4000, what="定向补点", tier=_SCAN_TIER)
     return [] if err else (d.get("points") or [])
@@ -376,13 +427,16 @@ def _find_points(qtype, stem, material, full):
     单独抽出来是为了能被 audit_find.py --rerun 直接调：那儿要在**不写库**的前提下
     拿新旧两套流程各跑一遍做对比。所以这里的 err 一律是普通 dict 而非 jsonify ——
     脱离 Flask 应用上下文调 jsonify 会当场抛 "Working outside of application context"。"""
-    name = FIND_TYPES[qtype][0]
-    pts_full = full or FIND_TYPES[qtype][1]
+    name = _PT_TYPES[qtype][0]
+    pts_full = full or _PT_TYPES[qtype][1]
     if qtype == "guanche":                          # 贯彻执行：格式另占约 1/4，采分点只分内容那部分
         pts_full = pts_full - max(2, round(pts_full * 0.25))
-    # 采分点个数按分值定，贴近真题阅卷（约每 2~3 分一个点，按要点/关键词给分）
-    n_lo = max(4, round(pts_full / 3.0))
-    n_hi = min(10, max(n_lo + 2, round(pts_full / 2.0)))
+    if qtype in _PT_N:                              # 大作文这类不按分值折算点数（见 _PT_N）
+        n_lo, n_hi = _PT_N[qtype]
+    else:
+        # 采分点个数按分值定，贴近真题阅卷（约每 2~3 分一个点，按要点/关键词给分）
+        n_lo = max(4, round(pts_full / 3.0))
+        n_hi = min(10, max(n_lo + 2, round(pts_full / 2.0)))
     sents = _find_sents(material)
 
     cands, err = _find_scan(name, stem, sents, qtype)
@@ -401,15 +455,22 @@ def _find_points(qtype, stem, material, full):
         cands += add
         filled = len(add)
 
-    points, dropped = _find_finalize(name, stem, sents, cands, pts_full, n_lo, n_hi)
+    points, dropped = _find_finalize(name, stem, sents, cands, pts_full, n_lo, n_hi, qtype)
     if len(points) < 3:
         return None, None, ({"error": "AI 标出的采分点太少或对不上原文，请重试"}, 502)
 
     cov = _find_coverage(sents, points)
+    # 扫描认为「含要点」、但收口时没能独立成点的句子。**它们不是干扰信息** ——
+    # 实测扫出的候选有一半以上会被丢掉（贯彻执行 14~17 个候选只留 5~7 个点），
+    # 把它们一律当干扰信息，用户勾中了会被判「找错」，而那句其实是对的，
+    # 只是这一次标定没让它独立成点。存下来，判定时给第三种结果「沾边」。
+    in_pts = {i for p in points for i in p["sents"]}
+    near = sorted({i for c in cands for i in c["sents"]} - in_pts)
     info = {"n_sents": len(sents), "n_scan": n_scan, "n_filled": filled,
-            "n_cands": len(cands), "dropped": dropped, "cov": cov}
-    log.info("find 出题 [%s] %d 句 → 扫出 %d（补 %d）→ 采分点 %d，coverage %d/%d，max_gap %d%s",
-             name, len(sents), n_scan, filled, len(points),
+            "n_cands": len(cands), "dropped": dropped, "cov": cov, "near": near}
+    log.info("find 出题 [%s] %d 句 → 扫出 %d（补 %d）→ 采分点 %d（另 %d 句沾边），"
+             "coverage %d/%d，max_gap %d%s",
+             name, len(sents), n_scan, filled, len(points), len(near),
              cov["cov_blocks"], cov["n_blocks"], cov["max_gap"],
              "，丢弃 %d 个锚不上的候选" % dropped if dropped else "")
     return points, info, None
@@ -492,7 +553,7 @@ def _find_reference(qtype, name, stem, points, wmin, wmax, doctype=""):
 def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requirement=""):
     """出一套采分点并落库，返回 (paper_id, err)。参考答案在这一步一并生成存下来。"""
     name, dfull, dmin, dmax = FIND_TYPES[qtype][0], FIND_TYPES[qtype][1], FIND_TYPES[qtype][2], FIND_TYPES[qtype][3]
-    points, _info, err = _find_points(qtype, stem, material, full)
+    points, info, err = _find_points(qtype, stem, material, full)
     if err:
         return None, err
     lo, hi = wmin or dmin, wmax or dmax
@@ -510,9 +571,10 @@ def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requi
         ref = ""
     cur = db.execute(
         "INSERT INTO find_papers(user_id,qtype,type_name,stem,requirement,full,word_min,word_max,"
-        "material,points,source,reference) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "material,points,source,reference,near) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (uid_, qtype, name, stem, requirement, full or dfull, lo, hi,
-         material, json.dumps(points, ensure_ascii=False), source, ref))
+         material, json.dumps(points, ensure_ascii=False), source, ref,
+         json.dumps(info["near"])))
     db.commit()
     return cur.lastrowid, None
 
@@ -583,9 +645,56 @@ def _find_guard(sents, points, cands, n_hi):
     return sorted(points, key=lambda p: p["sents"][0])   # 按材料顺序排，读起来顺
 
 
-def _find_finalize(name, stem, sents, cands, pts_full, n_lo, n_hi):
-    """合并定分 + 落成最终采分点。合并这一步失败就退回「直接用候选」，不让一道题白出。"""
-    merged = _find_merge(name, stem, cands, pts_full, n_lo, n_hi) if len(cands) > n_hi else None
+_ZW_CATS = ("【立意】", "【分论点】", "【论据】")
+
+
+def _zw_select(cands, n_hi):
+    """大作文跳过合并后，从候选里挑最终备料。**不能按位置取前 n 条。**
+
+    实测踩过：跳过合并后落到 `cands[:n_hi]` 这个兜底，等于按材料顺序截断 ——
+    34 句的材料，12 条备料全挤在句 5~24，而上一轮标到过的句 33
+    「处理好不同因素之间的关系是长远发展的关键」（题干引语的出处、立意的根）被截没了。
+    这正是当初给小题修好的「集中在前段」，在大作文这条路上又被我引回来一次。
+
+    所以按两条挑：
+      1. **每一类先保底**（立意 / 分论点 / 论据各先拿一条）—— 三类缺一不可，
+         尤其【立意】只会有一两条，最容易被淹掉，而它恰恰是最要紧的；
+      2. 余下名额**按材料位置铺开**（等距取），别让备料全挤在开头。
+    """
+    def cat(c):
+        p = c.get("point") or ""
+        for k in _ZW_CATS:
+            if p.startswith(k):
+                return k
+        return ""
+    picked, used = [], set()
+    for k in _ZW_CATS:                            # 每类保底一条，立意优先
+        for c in cands:
+            if cat(c) == k and id(c) not in used:
+                picked.append(c); used.add(id(c)); break
+    rest = [c for c in cands if id(c) not in used]
+    room = max(0, n_hi - len(picked))
+    if rest and room:
+        # 等距取，让剩下的名额铺满整篇材料而不是全挤在前面
+        step = max(1, len(rest) / float(room))
+        for j in range(room):
+            c = rest[min(len(rest) - 1, int(j * step))]
+            if id(c) not in used:
+                picked.append(c); used.add(id(c))
+    return sorted(picked, key=lambda c: c["sents"][0])
+
+
+def _find_finalize(name, stem, sents, cands, pts_full, n_lo, n_hi, qtype=""):
+    """合并定分 + 落成最终采分点。合并这一步失败就退回「直接用候选」，不让一道题白出。
+
+    **大作文不走合并**：那一步的口径是「像阅卷组定评分细则、把同一维度的点并起来、
+    合计正好 N 分」，专为采分点设计。大作文要的是三类互不相干的备料
+    （立意 / 分论点 / 论据），并起来就毁了 —— 实测第一版没跳过，扫描明明分了类，
+    合并完出来的是「认识传统工艺成本高效率低但品牌价值独特」这种综合分析式要点，
+    三个类别标签一个都没剩下。备料本来就该各是各的，扫出来是什么就留什么。"""
+    zw = _is_zw(qtype)
+    merged = (None if zw else
+              _find_merge(name, stem, cands, pts_full, n_lo, n_hi) if len(cands) > n_hi else None)
     points, dropped, seen = [], 0, set()
     for m in (merged or []):
         pt = (m.get("point") or "").strip()
@@ -604,10 +713,16 @@ def _find_finalize(name, stem, sents, cands, pts_full, n_lo, n_hi):
         points.append({"point": pt, "evidence": _ev_text(sents, hit),
                        "score": float(m.get("score") or 0), "sents": hit})
     if not points:                                # 没合并（候选本来就不多）或合并失败 → 直接用候选
-        for c in cands[:n_hi]:
+        for c in (_zw_select(cands, n_hi) if zw else cands[:n_hi]):
             points.append({"point": c["point"], "evidence": c["evidence"],
                            "score": 0.0, "sents": c["sents"]})
     points = _find_guard(sents, points, cands, n_hi)   # 合并砍掉的覆盖面，在这儿补回来
+    if zw:
+        # 大作文的「点」是备料不是采分点，摊分值没有意义（35 分摊到 6 条备料上，
+        # 页面显示「[5.8 分] 【论据】…」只会误导人以为找到它就能得分）。一律留 0，前端不显示。
+        for p in points:
+            p["score"] = 0.0
+        return points, dropped
     # 分值按满分重新配比，保证一道题所有采分点相加正好 = 满分（AI 给的分常不配平）。
     # 补回来的点 score=0，只按 AI 那份配比会让它们白干活 —— 先按均分兜个底再一起配比。
     avg = (sum(p["score"] for p in points) / sum(1 for p in points if p["score"])) \
@@ -873,6 +988,30 @@ def find_paper(pid):
                     "sents": [{"i": i, "p": s["p"], "t": s["t"]} for i, s in enumerate(sents)]})
 
 
+def _find_split_wrong(row, picked, in_points):
+    """勾了但不在采分点里的句子，再分成「沾边」和「真找错」。
+
+    原来是一刀切：不在采分点里 = 找错 = 「这些是干扰信息」。**这个反馈是错的。**
+    实测（audit_find.py --baseline）扫描扫出的候选有一半以上会在收口时被丢掉 ——
+    贯彻执行 14~17 个候选只留 5~7 个点。被丢掉的那些句子**确实含要点**，只是这一次
+    标定没让它独立成点（比如「设施农业」和「星光合作社」都是正当举措，但只有一个入选）。
+    用户勾中它，得到「这是干扰信息」的反馈，等于教错了。
+
+    所以第三种结果：**沾边** —— 这句相关，但没能独立成一个采分点。
+    near 是出题时存下来的（候选句 − 最终采分点句），老题目没有这列就退回老行为。
+    """
+    try:
+        near_set = set(json.loads(row["near"] or "[]"))
+    except Exception:
+        near_set = set()
+    near, wrong = [], []
+    for i in picked:
+        if i in in_points:
+            continue
+        (near if i in near_set else wrong).append(i)
+    return near, wrong
+
+
 @bp.post("/api/find/check")
 def find_check():
     """第一步判定：我勾画的这些句子，找对了没有？找漏了什么？找错了什么？找重了什么？"""
@@ -896,9 +1035,8 @@ def find_check():
 
     got_points = [i for i, g in enumerate(hit_by_point) if g]
     missed = [i for i, g in enumerate(hit_by_point) if not g]
-    # 找错：勾了但不属于任何采分点 —— 这就是被干扰信息骗了
     all_pt_sents = {i for p in points for i in p["sents"]}
-    wrong = [i for i in picked if i not in all_pt_sents]
+    near, wrong = _find_split_wrong(r, picked, all_pt_sents)
     # 找重：同一个采分点勾了不止一句（同义重复／把整段都涂了）
     dup = [{"point": points[i]["point"], "sents": g} for i, g in enumerate(hit_by_point) if len(g) > 1]
 
@@ -911,6 +1049,7 @@ def find_check():
                     "sents": points[i]["sents"],
                     "evidence": points[i]["evidence"]} for i in missed],
         "wrong": [{"i": i, "t": sents[i]["t"]} for i in wrong if i < len(sents)],
+        "near": [{"i": i, "t": sents[i]["t"]} for i in near if i < len(sents)],
         "dup": dup,
     })
 
@@ -1418,35 +1557,108 @@ def _sl_std_points(db, qrow, qtype, question, material, full):
 
     自由练（没有 qrow）不预标：那是用户临时贴的题干和材料，标了也没地方存、下次还是新的。
     """
-    if not qrow or not material or qtype not in FIND_TYPES:
-        return [], []
+    if not qrow or not material or qtype not in _PT_TYPES:
+        return [], [], ""
     mats = _split_materials(material)
     refs = _q_mat_refs(question, mats)
+    qmat = _q_scoped_material(question, mats, material)
     try:
         cached = json.loads(qrow["points"] or "[]")
     except Exception:
         cached = []
     if cached:
-        return cached, refs
+        return cached, refs, qmat
     # **一题一则**：shenlun_papers.material 存的是整份卷子的给定资料（材料一到五全在里面），
     # 而一道小题通常只对应其中某一则。不切就会拿整份去标 —— 实测一道 15 分的归纳概括，
     # 291 句材料标出 6 个点、coverage 10/42、max_gap 211，依据里全是别的题的材料
     # （问的是这一题，摘的是隔壁「鲁师傅烧饼」那则）。
     # 切法直接复用上传小题那条管线：按编号切成多则，只喂题干里引用的那一则。
-    qmat = _q_scoped_material(question, mats, material)
     points, info, err = _find_points(qtype, question, qmat, full)
     if err:
         # 标不出来不该让整次批改失败 —— 退回「现场提炼」那条老路，照样能批
         log.warning("真题第 %s 题预标采分点失败，本次退回现场提炼：%s",
                     qrow["seq"], err[0].get("error") if isinstance(err, tuple) else err)
-        return [], refs
-    db.execute("UPDATE shenlun_questions SET points=? WHERE id=?",
-               (json.dumps(points, ensure_ascii=False), qrow["id"]))
+        return [], refs, qmat
+    db.execute("UPDATE shenlun_questions SET points=?, near=? WHERE id=?",
+               (json.dumps(points, ensure_ascii=False),
+                json.dumps(info["near"]), qrow["id"]))
     db.commit()
     log.info("真题第 %s 题预标采分点 %d 个（给定资料%s，%d 句），coverage %d/%d，max_gap %d",
              qrow["seq"], len(points), refs or "全部", info["n_sents"],
              info["cov"]["cov_blocks"], info["cov"]["n_blocks"], info["cov"]["max_gap"])
-    return points, refs
+    return points, refs, qmat
+
+
+def _sl_q(db, qid):
+    """真题某一小题（连它所在卷子的材料）。取不到返回 None。"""
+    return db.execute(
+        "SELECT q.*, p.material, p.id pid FROM shenlun_questions q "
+        "JOIN shenlun_papers p ON p.id=q.paper_id WHERE q.id=? AND p.user_id=?",
+        (qid, uid())).fetchone()
+
+
+@bp.get("/api/shenlun/question/<int:qid>/find")
+def sl_find_sents(qid):
+    """练习模式第一步：把这道题对应的那一则材料**按句**下发，供勾画。
+
+    **点的内容绝不下发**，只给个数 —— 跟小题训练那边一个道理，下发了前端一翻就看见答案。
+    首次调用会惰性预标一次（约 2~3 分钟），之后走缓存。
+    """
+    db = get_db()
+    q = _sl_q(db, qid)
+    if not q:
+        return jsonify({"error": "题目不存在"}), 404
+    pts, refs, qmat = _sl_std_points(db, q, q["qtype"], q["stem"] or "", q["material"] or "", q["full"])
+    if not pts:
+        return jsonify({"error": "这道题还标不出可勾画的要点，先用模考模式作答吧"}), 400
+    sents = _find_sents(qmat)
+    return jsonify({
+        "id": q["id"], "seq": q["seq"], "qtype": q["qtype"], "type_name": q["type_name"],
+        "stem": q["stem"], "full": q["full"], "word_min": q["word_min"], "word_max": q["word_max"],
+        "n_points": len(pts), "refs": refs, "material_words": _sl_words(qmat),
+        "is_essay": q["qtype"] == "zuowen",
+        "sents": [{"i": i, "p": s["p"], "t": s["t"], "head": s["head"]}
+                  for i, s in enumerate(sents)]})
+
+
+@bp.post("/api/shenlun/question/<int:qid>/check")
+def sl_find_check(qid):
+    """练习模式第一步的判定：找对/找漏/找错/找重。判法与小题训练完全一致 ——
+    两个模块用同一套采分点、同一套判定，练出来的标准才是一个。"""
+    d = request.get_json(silent=True) or {}
+    picked = sorted({int(x) for x in (d.get("sents") or [])})
+    db = get_db()
+    q = _sl_q(db, qid)
+    if not q:
+        return jsonify({"error": "题目不存在"}), 404
+    if not picked:
+        return jsonify({"error": "先在材料里勾画你认为的要点句"}), 400
+    points, _refs, qmat = _sl_std_points(db, q, q["qtype"], q["stem"] or "",
+                                         q["material"] or "", q["full"])
+    if not points:
+        return jsonify({"error": "这道题没有可判定的要点"}), 400
+    # _sl_std_points 若是这道题第一次标，会顺带把 near 写库；q 是调用前取的快照，
+    # 这里还没重新查就直接用会拿到 None——沾边全被误判成找错，重新取一遍拿到刚写的值
+    q = _sl_q(db, qid)
+    sents = _find_sents(qmat)
+
+    hit_by_point = [[i for i in picked if i in set(p["sents"])] for p in points]
+    got = [i for i, g in enumerate(hit_by_point) if g]
+    missed = [i for i, g in enumerate(hit_by_point) if not g]
+    all_pt = {i for p in points for i in p["sents"]}
+    near, wrong = _find_split_wrong(q, picked, all_pt)   # 沾边 vs 真找错，同小题一套口径
+    dup = [{"point": points[i]["point"], "sents": g}
+           for i, g in enumerate(hit_by_point) if len(g) > 1]
+    return jsonify({
+        "total": len(points), "found": len(got),
+        "acc": round(100.0 * len(got) / len(points)) if points else 0,
+        "ok": [{"point": points[i]["point"], "score": points[i]["score"],
+                "sents": hit_by_point[i]} for i in got],
+        "missed": [{"point": points[i]["point"], "score": points[i]["score"],
+                    "sents": points[i]["sents"], "evidence": points[i]["evidence"]} for i in missed],
+        "wrong": [{"i": i, "t": sents[i]["t"]} for i in wrong if i < len(sents)],
+        "near": [{"i": i, "t": sents[i]["t"]} for i in near if i < len(sents)],
+        "dup": dup})
 
 
 @bp.post("/api/shenlun/grade")
@@ -1484,8 +1696,10 @@ def shenlun_grade():
     wmax = int((qrow["word_max"] if qrow else 0) or d.get("word_max") or t["word_max"])
     words = _sl_words(answer)
 
+    # 大作文的批改口径不动（还是立意/结构/论证/语言四维）—— 它的预标「点」是给
+    # **练习模式的找点**用的备料，不是采分点，不能拿去当判分标尺。
     is_essay = key == "zuowen"
-    std, std_refs = ([], []) if is_essay else _sl_std_points(db, qrow, key, question, material, full)
+    std, std_refs = ([], []) if is_essay else _sl_std_points(db, qrow, key, question, material, full)[:2]
     if is_essay:
         dims = "、".join("%s（0-%d 分）" % (n, m) for n, m in _SL_DIMS)
         rubric = ("按固定的四个维度打分，points 里每个维度一条，顺序不变：%s。\n"

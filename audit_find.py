@@ -28,17 +28,44 @@ import json
 import sqlite3
 import sys
 
-from mods.find import (_FIND_COV_MIN, _FIND_GAP_MAX, _find_coverage,
-                       _find_needs_more, _find_points, _find_sents)
+from mods.find import (_FIND_COV_MIN, _FIND_GAP_MAX, _ZW_CATS, _find_coverage,
+                       _find_needs_more, _find_points, _find_sents,
+                       _q_scoped_material, _split_materials)
 
 DB = "app.db"
+
+
+def load_sl(con, ids=None):
+    """真题批改那边的题（shenlun_questions），主要为了测**大作文** —— 它只存在于那张表。
+
+    材料要按「一题一则」切过再量：shenlun_papers.material 是整份卷子的给定资料，
+    不切的话一道题会拿 291 句去标，量出来的数字没有意义。
+    """
+    sql = ("SELECT q.id, q.seq, q.qtype, q.type_name, q.full, q.stem, q.points, "
+           "q.word_min, q.word_max, p.material, p.title source "
+           "FROM shenlun_questions q JOIN shenlun_papers p ON p.id=q.paper_id")
+    args = []
+    if ids:
+        sql += " WHERE q.id IN (%s)" % ",".join("?" * len(ids))
+        args = ids
+    out = []
+    for r in con.execute(sql + " ORDER BY q.id", args):
+        d = dict(r)
+        d["material"] = _q_scoped_material(r["stem"] or "", _split_materials(r["material"] or ""),
+                                           r["material"] or "")
+        try:
+            pts = json.loads(r["points"] or "[]")
+        except Exception:
+            pts = []
+        out.append({"row": d, "sents": _find_sents(d["material"]), "points": pts, "sl": True})
+    return out
 
 
 def load(con, ids=None):
     """把题目连同它的采分点、切好的句子一起取出来。"""
     # word_min/word_max/reference 是 --backfill-ref 要用的（参考答案按题目字数区间收口）
     sql = ("SELECT id, qtype, type_name, full, source, stem, material, points, "
-           "word_min, word_max, reference FROM find_papers")
+           "word_min, word_max, reference, near FROM find_papers")
     args = []
     if ids:
         sql += " WHERE id IN (%s)" % ",".join("?" * len(ids))
@@ -129,6 +156,7 @@ def repeat(con, items, n):
       · 0/n 覆盖 —— 稳定不中，多半是干扰信息（正常）
       · 中间的 —— **摇摆句**，说明这个维度时有时无，正是选偏的指纹
     摇摆句越多，说明这道题的采分点越不可复现；同一个人练两遍会被判出两套标准。"""
+    stats = []
     for it in items:
         r, sents = it["row"], it["sents"]
         idx = [i for i, s in enumerate(sents) if not s.get("head")]
@@ -149,20 +177,73 @@ def repeat(con, items, n):
             print("  第%d次：%d 点 · coverage %d/%d · max_gap %d"
                   % (k + 1, len(pts), c["cov_blocks"], c["n_blocks"], c["max_gap"]))
         if ok < 2:
-            print("  成功次数不足，测不出稳定性"); continue
+            print("  成功次数不足，测不出稳定性")
+            stats.append({"row": r, "ok": ok, "n": n})
+            continue
         always = [i for i in idx if freq[i] == ok]
         never = [i for i in idx if freq[i] == 0]
         waver = [i for i in idx if 0 < freq[i] < ok]
+        pct = 100.0 * len(waver) / len(idx)
         print("  ── 稳定命中 %d 句 · 稳定不中 %d 句 · **摇摆 %d 句**（占可勾画句 %.0f%%）"
-              % (len(always), len(never), len(waver), 100.0 * len(waver) / len(idx)))
+              % (len(always), len(never), len(waver), pct))
         for i in waver:
             print("     %d/%d  [句%d] %s" % (freq[i], ok, i, sents[i]["t"][:56]))
+        st = {"row": r, "ok": ok, "n": n, "waver": pct, "n_sents": len(idx),
+              "pts": [len(p) for p in runs],
+              "gap": [_find_coverage(sents, p)["max_gap"] for p in runs]}
+        # 大作文另看一件事：**每一轮是否都找到【立意】**。它只会有一两条、最容易被
+        # 一堆论据淹掉，可它恰恰是总论点的根 —— 找不到它整篇就跑题。摇摆句占比看不出这个。
+        if r["qtype"] == "zuowen":
+            st["cats"] = [{k: sum(1 for p in pts if (p["point"] or "").startswith(k))
+                           for k in _ZW_CATS} for pts in runs]
+            print("  ── 三类齐全度：" + " | ".join(
+                "第%d次 %s" % (k + 1, "·".join("%s%d" % (c.strip("【】"), v)
+                                              for c, v in cs.items()))
+                for k, cs in enumerate(st["cats"])))
+            miss = [k + 1 for k, cs in enumerate(st["cats"]) if not cs.get("【立意】")]
+            if miss:
+                print("     ⚠ 第 %s 次没找到【立意】—— 总论点没有根，整篇会跑题"
+                      % "、".join(map(str, miss)))
+        stats.append(st)
         # 逐轮列出采分点，人眼一扫就能看出哪个维度这轮有、那轮没有
         for k, pts in enumerate(runs, 1):
             print("  第%d次采分点：" % k)
             for p in pts:
                 print("     · %s ← 句%s" % (p["point"], p["sents"]))
-    return 0
+    return stats
+
+
+def _summary(stats):
+    """一张总表。单题的细节前面已经打过了，这里只留能横向比的数字。"""
+    print("\n" + "=" * 96)
+    print("稳定性基线（摇摆句 = 有几轮标中、有几轮没标中的句子，占比越高说明采分点越不可复现）")
+    print("%-5s %-10s %-5s %-9s %-9s %-8s %s" %
+          ("id", "题型", "句数", "点数(轮次)", "max_gap", "摇摆句", "备注"))
+    print("-" * 96)
+    for s in stats:
+        r = s["row"]
+        if "waver" not in s:
+            print("%-5s %-10s %-5s %-9s %-9s %-8s %s"
+                  % (r["id"], (r["type_name"] or "")[:5], "-", "-", "-", "-",
+                     "✗ %d/%d 轮失败，测不出" % (s["n"] - s["ok"], s["n"])))
+            continue
+        note = ""
+        if s.get("cats"):
+            bad = sum(1 for c in s["cats"] if not c.get("【立意】"))
+            note = "立意齐全 %d/%d 轮" % (len(s["cats"]) - bad, len(s["cats"]))
+        flag = "  ⚠" if s["waver"] >= 20 else ""
+        print("%-5s %-10s %-5s %-9s %-9s %-8s %s%s"
+              % (r["id"], (r["type_name"] or "")[:5], s["n_sents"],
+                 "%d~%d" % (min(s["pts"]), max(s["pts"])),
+                 "%d~%d" % (min(s["gap"]), max(s["gap"])),
+                 "%.0f%%" % s["waver"], note, flag))
+    print("-" * 96)
+    good = [s for s in stats if "waver" in s]
+    if good:
+        print("摇摆句占比：最低 %.0f%% · 最高 %.0f%% · 中位 %.0f%%"
+              % (min(s["waver"] for s in good), max(s["waver"] for s in good),
+                 sorted(s["waver"] for s in good)[len(good) // 2]))
+    print("（⚠ = 摇摆句 ≥20%，这道题的采分点值得再看一眼；大作文另看「立意齐全几轮」）")
 
 
 def _fmt(cov, n_pts):
@@ -205,12 +286,60 @@ def rerun(con, items, apply_=False):
             print("     %d. [%.3g 分] %s  ← 句%s" % (k, p["score"], p["point"], p["sents"]))
             print("        原文：%s" % (p.get("evidence") or "")[:70])
         if apply_:
-            con.execute("UPDATE find_papers SET points_old=COALESCE(points_old,points), points=? "
-                        "WHERE id=?", (json.dumps(pts, ensure_ascii=False), r["id"]))
+            # near 必须跟着一起写：它是「扫描认过、但没能独立成点」的句子，判定时用来
+            # 把「沾边」和「真找错」分开。漏写过一次 —— 重标跑了 22 分钟，points 换了
+            # 一遍（还抽差了几道），near 却全是空，等于白跑。
+            con.execute("UPDATE find_papers SET points_old=COALESCE(points_old,points), points=?, "
+                        "near=? WHERE id=?",
+                        (json.dumps(pts, ensure_ascii=False),
+                         json.dumps(info["near"]), r["id"]))
             con.commit()
             print("  ✓ 已写回（旧采分点存进 points_old）")
     print("\n%s\n改善 %d · 持平 %d · 变差 %d · 失败 %d" % ("=" * 60, won, same, lost, failed))
     return lost + failed
+
+
+def backfill_near(con, items, force=False):
+    """给存量题目补 near，**完全不动已有的采分点**。
+
+    为什么要单独一条路径、而不是用 `--rerun --apply` 顺带补：
+    重标是**重新抽一次签**。`--baseline` 量出来采分点的摇摆率有 31~53%，重标一道
+    原本标得不错的题，很可能抽到更差的一版 —— 实测 11 道重标下来「改善 3 · 持平 3 ·
+    变差 4」，为了拿 near 把好签也重抽了，得不偿失。
+
+    而 near 根本不需要重新定点：
+        near = 扫描扫出的候选句 − 现有采分点已覆盖的句子
+    扫描是独立的一步，跟最终选了哪几个点无关。所以只跑扫描（外加覆盖不足时的补点），
+    拿候选算 near，采分点原样不动。**一道题一次 AI 调用**，比重标省一半以上。
+    """
+    from mods.find import (_PT_TYPES, _find_coverage, _find_fill, _find_needs_more,
+                           _find_norm, _find_scan)
+    done = skipped = failed = 0
+    for it in items:
+        r, pts = it["row"], it["points"]
+        if not pts or r["qtype"] not in _PT_TYPES:
+            print("[id=%d] 没有采分点，跳过" % r["id"]); skipped += 1; continue
+        if (r["near"] or "").strip() and not force:
+            print("[id=%d] 已有 near，跳过" % r["id"]); skipped += 1; continue
+        sents = it["sents"]
+        name = _PT_TYPES[r["qtype"]][0]
+        cands, err = _find_scan(name, r["stem"] or "", sents, r["qtype"])
+        if err:
+            print("[id=%d] ✗ 扫描失败：%s" % (r["id"], err[0].get("error"))); failed += 1; continue
+        cands = _find_norm(sents, cands)
+        cov = _find_coverage(sents, [{"sents": c["sents"]} for c in cands])
+        if _find_needs_more(cov):          # 空白处再补一轮，让 near 也铺得开
+            cands += _find_norm(sents, _find_fill(name, r["stem"] or "", sents, r["qtype"],
+                                                  cov["blanks"], cands), exist=cands)
+        in_pts = {i for p in pts for i in (p.get("sents") or [])}
+        near = sorted({i for c in cands for i in c["sents"]} - in_pts)
+        con.execute("UPDATE find_papers SET near=? WHERE id=?", (json.dumps(near), r["id"]))
+        con.commit()
+        print("[id=%d] ✓ %-6s 采分点 %d 个（未改动）· 沾边 %d 句"
+              % (r["id"], r["type_name"][:4], len(pts), len(near)))
+        done += 1
+    print("\n补齐 %d · 跳过 %d · 失败 %d" % (done, skipped, failed))
+    return failed
 
 
 def backfill_ref(con, items, force=False):
@@ -238,6 +367,26 @@ def backfill_ref(con, items, force=False):
     return failed
 
 
+def pick_baseline(con):
+    """各题型各挑一道，凑一份能横向比的样本。
+
+    挑的规则：**优先真题**（AI 命制的材料自带出题痕迹，量出来的稳定性偏乐观），
+    每个题型只取一道，再从真题批改那边补上**大作文** —— 它只存在于 shenlun_questions，
+    而且是唯一走「备料」口径的题型，最该单独盯。
+    """
+    items, seen = [], set()
+    rows = list(con.execute(
+        "SELECT id, qtype FROM find_papers ORDER BY (source LIKE '真题%') DESC, id"))
+    for r in rows:
+        if r["qtype"] not in seen:
+            seen.add(r["qtype"]); items.append(("find", r["id"]))
+    zw = con.execute("SELECT id FROM shenlun_questions WHERE qtype='zuowen' "
+                     "ORDER BY id LIMIT 1").fetchone()
+    if zw:
+        items.append(("sl", zw["id"]))
+    return items
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=DB)
@@ -248,17 +397,37 @@ def main():
     ap.add_argument("--apply", action="store_true", help="配合 --rerun：把新采分点写回数据库")
     ap.add_argument("--backfill-ref", nargs="*", type=int, metavar="ID",
                     help="给存量题目补参考答案（不给 id 就全部）。会写库")
-    ap.add_argument("--force", action="store_true", help="配合 --backfill-ref：已有的也重生成")
+    ap.add_argument("--backfill-near", nargs="*", type=int, metavar="ID",
+                    help="给存量题目补 near（沾边句），**不动采分点**。不给 id 就全部")
+    ap.add_argument("--force", action="store_true",
+                    help="配合 --backfill-ref / --backfill-near：已有的也重做")
     ap.add_argument("--repeat", nargs=2, metavar=("ID", "N"),
                     help="同一道题连出 N 次，量维度选偏（摇摆句占比）。真调 AI，不写库")
+    ap.add_argument("--sl", action="store_true",
+                    help="配合 --repeat：ID 指的是 shenlun_questions（真题批改，大作文在这儿）")
+    ap.add_argument("--baseline", type=int, metavar="N",
+                    help="各题型各挑一道（含大作文），每道连出 N 次，打一张稳定性基线总表")
     ap.add_argument("--check", action="store_true", help="有不达标的题就退出码 1")
     a = ap.parse_args()
 
     con = sqlite3.connect(a.db)
     con.row_factory = sqlite3.Row
 
+    if a.baseline:
+        stats = []
+        for kind, qid in pick_baseline(con):
+            items = (load_sl(con, [qid]) if kind == "sl" else load(con, [qid]))
+            stats += repeat(con, items, a.baseline)
+        _summary(stats)
+        return 0
+
     if a.repeat:
-        return repeat(con, load(con, [int(a.repeat[0])]), int(a.repeat[1]))
+        loader = load_sl if a.sl else load
+        _summary(repeat(con, loader(con, [int(a.repeat[0])]), int(a.repeat[1])))
+        return 0
+
+    if a.backfill_near is not None:
+        return 1 if backfill_near(con, load(con, a.backfill_near or None), a.force) else 0
 
     if a.backfill_ref is not None:
         return 1 if backfill_ref(con, load(con, a.backfill_ref or None), a.force) else 0
