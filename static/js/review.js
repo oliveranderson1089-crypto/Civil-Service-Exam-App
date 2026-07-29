@@ -11,8 +11,8 @@
    refreshReviewBadge, toast */
 
 /* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
-const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文' };
-const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e' };
+const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文', gushi: '古诗' };
+const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e', gushi: '#8a5a2b' };
 // 跟 mods/review.py 的 REVIEW_INTERVALS 是同一张表。这儿必须留一份副本：
 // 「认识 → N 天后」是点之前就要显示的预告，那时还没调接口、拿不到后端算的 interval。
 // 两份手抄迟早走散（后端注释里记着同样的教训：白名单抄了第二份，结果加新来源时漏改一处），
@@ -23,7 +23,7 @@ let rvQueue = [], rvTotal = 0, rvDoneN = 0;
 let rvAll = [], rvGroup = 'word', rvDoneToday = {};
 /* 每日复习量：一天能背多少因人而异。堆太多就不想背了 —— 超出上限的**不会丢**，
    只是今天不出现（到期时间不变，明天照样在）。0 = 不限。 */
-const RV_LNAME = { word: '词语句子', daily: '每日积累', annot: '批注', wrongq: '错题' };
+const RV_LNAME = { word: '词语句子', daily: '每日积累', gushi: '古诗', annot: '批注', wrongq: '错题' };
 let rvLim = null, rvPool = null;
 function rvLimRender() {
   if (!rvLim) return;
@@ -79,7 +79,7 @@ async function loadReview() {
     });
     if (!rvAll.length) { $('#rv-empty').classList.remove('hidden'); refreshReviewBadge(); return; }
     // 默认停在第一个有内容的板块
-    if (!(g[rvGroup] > 0)) rvGroup = ['word', 'daily', 'wrongq'].find(k => g[k] > 0) || 'word';
+    if (!(g[rvGroup] > 0)) rvGroup = ['word', 'daily', 'gushi', 'wrongq'].find(k => g[k] > 0) || 'word';
     rvSelect(rvGroup);
   } catch (e) { toast(e.message, true); }
 }
@@ -96,7 +96,7 @@ function rvSelect(group) {
     const lim = (rvLim || {})[group] || 0;
     $('#rv-empty').innerHTML = done > 0
       ? `<p class="empty">✅ 「${RV_LNAME[group] || ''}」今日已完成 <b>${done}</b> 条${lim ? '（每日量 ' + lim + '）' : ''}，明天见～<br><span style="font-size:13px;color:var(--muted)">想多背可到「每日复习量」调高上限。</span></p>`
-      : '<p class="empty">🎉 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p>';
+      : '<p class="empty">🎉 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、古诗、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p>';
     $('#rv-empty').classList.remove('hidden');
     return;
   }
@@ -125,6 +125,10 @@ function rvShow() {
   $('#rvf-sub').textContent = it.front_sub || '';
   $('#rvb-body').innerHTML = emKey(it.back || '');
   $('#rv-back').classList.add('hidden');
+  // 古诗要回忆的是「名句 + 考点」，不是「内容要点」——提示语说清楚该想什么
+  $('#rvf-hint').textContent = it.kind === 'gushi'
+    ? '先默出名句，再想常识考点和申论用法 · 点击卡片对答案'
+    : '请回忆内容要点 · 点击卡片显示答案';
   $('#rvf-hint').classList.remove('hidden');
   $('#rv-btns').classList.add('hidden');
   const nd = RV_INTERVALS[Math.min(it.stage + 1, RV_INTERVALS.length - 1)];

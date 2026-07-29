@@ -70,6 +70,8 @@ class TestCrawlNews:
     ("crawl_news.py", "xiyu_items"),
     ("gen_changshi.py", "changshi_items"),
     ("build_classics.py", "classics"),
+    # 古诗复习卡：脚本先建、复习接口直接查 —— 又一处 news_items.board 形状的地方
+    ("gen_gushi.py", "gushi_cards"),
     # 真题库：脚本先建、app 直接查 —— 正是 news_items.board 那类事故的形状
     ("ingest_real.py", "real_papers"),
     ("ingest_real.py", "real_raw"),

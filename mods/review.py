@@ -84,6 +84,41 @@ def _review_due(db, u, today):
             "front": r["title"] or "", "front_sub": "常考 · " + (r["board"] or ""),
             "back": back or "（无释义）"})
 
+    # 古诗（全局内容，人人都背）：只收「常识常考的话题类型 ＋ 篇中有能当申论素材的句子」的诗。
+    # 两个条件都在 gen_gushi.py 入库时卡死（话题白名单 ＋ 名句必须是原文子串），这儿只管出卡 ——
+    # 判定放在出卡时就成了「每天现算一遍」，而且核不上原文的坏卡照样会漏到脸上。
+    # 配额跟常考同一套办法：已进复习轮的照常按到期出，没背过的按考频滚动补足，背熟一批自动往后推。
+    _lg = _rv_limits(db, u)["gushi"]
+    g_seen = {k[1] for k in states if k[0] == "gushi"}
+    g_quota = float("inf") if _lg == 0 else max(10, _lg)
+    for r in db.execute(
+            "SELECT g.id, g.line, g.topic, g.theme, g.common, g.apply, "
+            "c.title, c.author, c.dynasty, c.content, c.translation "
+            "FROM gushi_cards g JOIN classics c ON c.id=g.classic_id "
+            "ORDER BY COALESCE(g.freq,0) DESC, g.id"):
+        if r["id"] not in g_seen:
+            if g_quota <= 0:
+                continue
+            g_quota -= 1
+        # 正面只给篇名和话题，名句要靠自己背出来 —— 名句写在正面就等于没考
+        back = "「" + (r["line"] or "") + "」"
+        if r["common"]:
+            back += "\n\n📖 常识考点：" + r["common"]
+        if r["apply"]:
+            back += "\n\n✍️ 申论怎么用：" + r["apply"]
+        body = (r["content"] or "").strip()
+        if body:
+            back += "\n\n【全文】" + body[:200]
+        if r["translation"]:
+            back += "\n\n【译文】" + r["translation"][:160]
+        who = ((r["dynasty"] or "") + " · " + (r["author"] or "")).strip(" ·")
+        check("gushi", r["id"], "2000-01-01", {          # 全局内容，不按收录时间等一天
+            "title": r["title"] or "", "sub": r["topic"] or "古诗",
+            "body": (r["line"] or "")[:90],
+            "front": "《" + (r["title"] or "") + "》",
+            "front_sub": (who + " · " + (r["topic"] or "")).strip(" ·"),
+            "back": back})
+
     for r in db.execute("SELECT * FROM wrong_questions WHERE user_id=?", (u,)):
         back = "\n".join(x for x in [
             ("【知识点】" + r["points"]) if r["points"] else "",
@@ -158,11 +193,14 @@ def _review_due(db, u, today):
 # 复习分组：词语句子 / 每日积累 / 错题，分开背，不混在一副牌里。
 # 加新来源时**只改这里**：/api/review/done 的白名单直接取自它（见那儿的注释）。
 RV_GROUP = {"entry": "word", "classic": "word", "changkao": "word", "sucai": "daily",
-            "annot": "annot", "wrongq": "wrongq"}
-RV_NAMES = {"word": "词语句子", "daily": "每日积累", "annot": "批注", "wrongq": "错题"}
+            "gushi": "gushi", "annot": "annot", "wrongq": "wrongq"}
+RV_NAMES = {"word": "词语句子", "daily": "每日积累", "gushi": "古诗",
+            "annot": "批注", "wrongq": "错题"}
 # 每日复习量默认值（0 = 不限）。批注单独一组：跟「每日积累」挤一个额度的话，素材排在前面，
 # 20 条一占满，圈过的重点一条也出不来（实测过 —— 7 条批注全被截掉）。
-RV_LIMIT_DEF = {"word": 40, "daily": 20, "annot": 10, "wrongq": 10}
+# 古诗同理单开一组：并进「词语句子」的话，前面 40 条成语一占满就永远轮不到诗。
+# 5 首是**一天背得完**的量：整首诗＋考点＋申论用法，比背一个成语重得多。
+RV_LIMIT_DEF = {"word": 40, "daily": 20, "gushi": 5, "annot": 10, "wrongq": 10}
 RV_GROUPS = list(RV_LIMIT_DEF)                             # 分组名单只此一份，别再手抄
 
 
@@ -214,7 +252,8 @@ def review_today():
     due = _review_due(db, uid(), today)
     # 组内先后。changkao 以前没写在这儿，靠默认值排到 9（最末），跟别的组混着看不出问题；
     # 现在显式排在 word 组末位 —— 自己收录的词先背，常考的填满剩下的额度。
-    order = {"entry": 0, "classic": 1, "changkao": 2, "sucai": 3, "annot": 4, "wrongq": 5}
+    order = {"entry": 0, "classic": 1, "changkao": 2, "sucai": 3, "gushi": 4,
+             "annot": 5, "wrongq": 6}
     # 组内排序：**已经在复习轮里的排前面**（stage>0 说明背过一遍了，别让它一直往后堆），
     # 然后才是新词。被上限截掉的不动 next_due —— 只是今天不出现，明天照样在。
     due.sort(key=lambda x: (order.get(x["kind"], 9), -int(x.get("stage") or 0), x["id"]))

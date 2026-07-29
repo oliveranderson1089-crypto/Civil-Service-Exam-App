@@ -355,3 +355,102 @@ class TestChangkaoPool:
         one = self._pool()["成语"][0]
         _done(auth_client, "changkao", one, "forget")  # 忘记 → 今天就该再出现
         assert one in self._pool()["成语"], "忘记的常考词没回到今天的复习里"
+
+
+def _mk_gushi(n, freq_desc=True):
+    """造古诗卡：一首诗 + 一张卡。名句、常识考点、申论用法都要有——
+    这三样正是「古诗」这一路的立身之本（用户要的两个特点就落在 topic 和 line 上）。"""
+    con = _db()
+    con.execute("DELETE FROM gushi_cards")
+    con.execute("DELETE FROM classics WHERE title LIKE '测试诗%'")
+    ids = []
+    for i in range(n):
+        cid = con.execute(
+            "INSERT INTO classics(category,title,author,dynasty,content,translation) "
+            "VALUES(?,?,?,?,?,?)",
+            ("唐诗", f"测试诗{i}", f"诗人{i}", "唐", f"名句{i}甲，名句{i}乙。", f"译文{i}")).lastrowid
+        cur = con.execute(
+            "INSERT INTO gushi_cards(classic_id,line,topic,theme,common,apply,freq,source) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (cid, f"名句{i}甲，名句{i}乙", "传统节日", "家国情怀", f"考点{i}", f"申论用法{i}",
+             (n - i) if freq_desc else 0, "seed"))
+        ids.append(cur.lastrowid)
+    con.commit()
+    con.close()
+    return ids
+
+
+class TestGushiPool:
+    """今日复习的「古诗」板块。选诗的两个条件（常识常考话题 + 有可当申论素材的名句）
+    在 gen_gushi.py 入库时就卡死了，所以这儿盯的是出卡这一段：
+    别跟成语挤一个额度、别把名句写在正面、别背熟一批就没下文。"""
+
+    @pytest.fixture(autouse=True)
+    def _no_gushi(self):
+        yield
+        con = _db()
+        con.execute("DELETE FROM gushi_cards")
+        con.execute("DELETE FROM classics WHERE title LIKE '测试诗%'")
+        con.commit()
+        con.close()
+
+    def _pool(self):
+        con = _db()
+        con.row_factory = sqlite3.Row
+        try:
+            due = rvmod._review_due(con, _uid(), TODAY)
+        finally:
+            con.close()
+        return [it for it in due if it["kind"] == "gushi"]
+
+    def test_古诗有自己的额度不跟成语抢(self, auth_client):
+        """并进「词语句子」的话，前面 40 条成语一占满，诗一首也出不来。"""
+        _mk_changkao(300, 20)
+        _mk_gushi(8)
+        _set_limits(auth_client, word=40, gushi=5)
+        j = _today(auth_client)
+        assert j["groups"]["gushi"] == 5, f"古诗被成语挤掉了：{j['groups']}"
+        assert j["groups"]["word"] == 40
+        assert all(it["group"] == "gushi" for it in j["items"] if it["kind"] == "gushi")
+        con = _db()
+        con.execute("DELETE FROM changkao_items")
+        con.commit()
+        con.close()
+
+    def test_正面不给名句背面才给(self, auth_client):
+        _mk_gushi(1)
+        it = self._pool()[0]
+        assert "名句0甲" not in (it["front"] + it["front_sub"]), \
+            "名句写在正面就等于没考——该默出来的东西提前给了"
+        assert "《测试诗0》" == it["front"]
+        assert "传统节日" in it["front_sub"], "话题类型要露在正面，提示这首考什么"
+        assert "名句0甲，名句0乙" in it["back"]
+        assert "考点0" in it["back"] and "申论用法0" in it["back"], \
+            "常识考点和申论用法是这张卡的全部价值，背面必须有"
+
+    def test_按考频先背高频的(self, auth_client):
+        ids = _mk_gushi(12)
+        _set_limits(auth_client, gushi=5)
+        got = [it["id"] for it in _today(auth_client)["items"] if it["kind"] == "gushi"]
+        assert got == ids[:5], f"没按 freq 从高到低出卡：{got}"
+
+    def test_背熟一批就补新的进来(self, auth_client):
+        ids = _mk_gushi(12)
+        _set_limits(auth_client, gushi=5)
+        first = [it["id"] for it in self._pool()]
+        for i in first:
+            _done(auth_client, "gushi", i)
+        second = [it["id"] for it in self._pool()]
+        assert second, "背熟一批之后再没有新诗了——池子没往后滚"
+        assert not (set(second) & set(first)), "补进来的还是刚背过的那批"
+
+    def test_不限就是真的不限(self, auth_client):
+        _mk_gushi(30)
+        _set_limits(auth_client, gushi=0)
+        assert len(self._pool()) == 30, "不限额时仍有古诗被挡在池子外"
+
+    def test_古诗提交得动并按遗忘曲线往后推(self, auth_client):
+        gid = _mk_gushi(1)[0]
+        j = _done(auth_client, "gushi", gid).get_json()
+        assert j["stage"] == 1 and j["interval"] == rvmod.REVIEW_INTERVALS[1]
+        assert not self._pool(), "推到 2 天后了还在今天的池子里"

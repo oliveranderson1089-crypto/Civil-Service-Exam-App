@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify
 
 from core import get_db, log, uid
-from mods.review import RV_GROUP, RV_GROUPS, _review_due
+from mods.review import RV_GROUP, RV_GROUPS, RV_NAMES, _review_due
 
 bp = Blueprint("notifications", __name__)
 
@@ -74,8 +74,10 @@ def _gen_notifications(db):
         g = dict.fromkeys(RV_GROUPS, 0)
         for it in due:
             g[RV_GROUP.get(it["kind"], "wrongq")] += 1
+        # 明细按 RV_NAMES 现拼，别手抄组名：原先写死「词语句子·每日积累·错题」，
+        # 后来加的批注、古诗在这条通知里根本不露面。只列有货的组，省得一串 0。
         _n(db, "review", today, "今天有 %d 条要复习" % len(due),
-           "词语句子 %d · 每日积累 %d · 错题 %d" % (g["word"], g["daily"], g["wrongq"]), "review")
+           " · ".join("%s %d" % (RV_NAMES[k], g[k]) for k in RV_GROUPS if g[k]), "review")
 
     # 今日学习计划
     pl = db.execute("SELECT COUNT(*) n, SUM(done) d, SUM(minutes) m FROM plan_items "

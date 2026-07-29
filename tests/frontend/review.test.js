@@ -95,7 +95,7 @@ test('分组名字只有一份（原先 RV_GROUP_NAME / RV_LNAME 一字不差地
   assert.ok(!/RV_GROUP_NAME/.test(js), '重复的分组名映射又回来了');
   const m = js.match(/const RV_LNAME = \{([^}]+)\}/);
   assert.ok(m, 'RV_LNAME 没了？');
-  for (const g of ['word', 'daily', 'annot', 'wrongq']) {
+  for (const g of ['word', 'daily', 'gushi', 'annot', 'wrongq']) {
     assert.ok(m[1].includes(g + ':'), `分组 ${g} 没名字，界面上会显示 undefined`);
   }
 });
