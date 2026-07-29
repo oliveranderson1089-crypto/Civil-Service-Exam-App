@@ -43,6 +43,22 @@ def test_抽取只留真招考():
         assert not any(bad in t for t in got), "%s 混进来了：%s" % (bad, got)
 
 
+def test_人行和政策性银行不算商业银行招聘():
+    """「银行」一刀切会把人行招录也丢掉——那是国考序列、每年和国考同期报名，
+       公考人必看。而且丢得悄无声息：页面上只表现为「今年怎么没有人行」。"""
+    html = "".join(
+        '<li><a href="/2026/0728/%d.html">%s</a></li>' % (i, t) for i, t in enumerate([
+            "中国人民银行2026年度招收人员公告",
+            "中国人民银行成都分行2026年度考试录用公告",
+            "国家开发银行2026年度校园招聘公告",
+            "2026年民生银行总行社会招聘公告",
+            "2026年渤海银行沈阳分行社会招聘公告"]))
+    got = _titles(C.extract("<ul>%s</ul>" % html, PAGE))
+    assert sum("人民银行" in t for t in got) == 2, got
+    assert any("国家开发银行" in t for t in got), got
+    assert not any(x in t for t in got for x in ("民生银行", "渤海银行")), got
+
+
 def test_标题两头的角标和日期都要切掉():
     rows = C.extract(LIST_HTML, PAGE)
     t = [x for x in _titles(rows) if "北京" in x][0]

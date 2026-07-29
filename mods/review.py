@@ -50,37 +50,39 @@ def _review_due(db, u, today):
     #     「已进复习轮的照常按到期出 ＋ 没背过的按考频补足配额」，背熟一批自动往后推一批。
     _lw = _rv_limits(db, u)["word"]
     ck_seen = {k[1] for k in states if k[0] == "changkao"}   # 已在复习轮里的，不占新词配额
-    ck_quota = {"成语": 894 if _lw == 0 else max(40, _lw),    # 一次放多少「没背过的」进来
-                "实词": 99 if _lw == 0 else max(15, _lw // 2)}
-    if max(ck_quota.values()) > 0:
-        # ORDER BY board 在前，保证同板块的行连在一起，配额才扣得准
-        for r in db.execute(
-                "SELECT id, board, title, content, note, example, example_src, meaning "
-                "FROM changkao_items WHERE board IN ('成语','实词') "
-                "ORDER BY board, COALESCE(freq,0) DESC, id"):
-            if r["id"] not in ck_seen:
-                if ck_quota.get(r["board"], 0) <= 0:
-                    continue
-                ck_quota[r["board"]] -= 1
-            body = (r["content"] or "").strip()
-            # 实词的 content 是「常用搭配」，词义单独放在 meaning —— 背面先给词义、再给搭配，才记得住
-            mean = (r["meaning"] or "").strip()
-            parts = []
-            if mean:
-                parts.append(("释义：" if r["board"] == "实词" else "") + mean)
-            if body:
-                parts.append(("搭配：" + body) if r["board"] == "实词" and mean else body)
-            back = "\n".join(parts)
-            if r["note"]:
-                back += "\n\n📌 " + r["note"]
-            if r["example"]:                       # 光有释义记不住怎么用，背面给个例句
-                back += "\n\n✍️ 例句：" + r["example"] + (
-                    ("\n　　—— " + r["example_src"]) if r["example_src"] else "")
-            check("changkao", r["id"], "2000-01-01", {          # 全局内容，不按收录时间等一天
-                "title": r["title"] or "", "sub": r["board"] or "常考",
-                "body": (mean or body)[:90],
-                "front": r["title"] or "", "front_sub": "常考 · " + (r["board"] or ""),
-                "back": back or "（无释义）"})
+    # 一次放多少「没背过的」进来。0（不限）就是**真的**不限：别在这儿写词库现有条数当上限，
+    # 词库一涨就又变成隐形天花板 —— 上一版写死 894 就是这么把新成语挡在外面的。
+    inf = float("inf")
+    ck_quota = {"成语": inf if _lw == 0 else max(40, _lw),
+                "实词": inf if _lw == 0 else max(15, _lw // 2)}
+    # ORDER BY board 在前，保证同板块的行连在一起，配额才扣得准
+    for r in db.execute(
+            "SELECT id, board, title, content, note, example, example_src, meaning "
+            "FROM changkao_items WHERE board IN ('成语','实词') "
+            "ORDER BY board, COALESCE(freq,0) DESC, id"):
+        if r["id"] not in ck_seen:
+            if ck_quota.get(r["board"], 0) <= 0:
+                continue
+            ck_quota[r["board"]] -= 1
+        body = (r["content"] or "").strip()
+        # 实词的 content 是「常用搭配」，词义单独放在 meaning —— 背面先给词义、再给搭配，才记得住
+        mean = (r["meaning"] or "").strip()
+        parts = []
+        if mean:
+            parts.append(("释义：" if r["board"] == "实词" else "") + mean)
+        if body:
+            parts.append(("搭配：" + body) if r["board"] == "实词" and mean else body)
+        back = "\n".join(parts)
+        if r["note"]:
+            back += "\n\n📌 " + r["note"]
+        if r["example"]:                       # 光有释义记不住怎么用，背面给个例句
+            back += "\n\n✍️ 例句：" + r["example"] + (
+                ("\n　　—— " + r["example_src"]) if r["example_src"] else "")
+        check("changkao", r["id"], "2000-01-01", {          # 全局内容，不按收录时间等一天
+            "title": r["title"] or "", "sub": r["board"] or "常考",
+            "body": (mean or body)[:90],
+            "front": r["title"] or "", "front_sub": "常考 · " + (r["board"] or ""),
+            "back": back or "（无释义）"})
 
     for r in db.execute("SELECT * FROM wrong_questions WHERE user_id=?", (u,)):
         back = "\n".join(x for x in [

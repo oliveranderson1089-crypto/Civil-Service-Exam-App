@@ -97,3 +97,54 @@ test('这套配对真能抓到走散（变异自检 —— 别让测试变成摆
   assert.deepStrictEqual(drift, ['行政执法'],
     '前端偷偷加了个板块却没被发现 —— members() 或配对逻辑坏了');
 });
+
+/* index.html 的 <section id="view-X"> ↔ shell.js 的 VIEWS —— 又一份手抄的清单。
+ *
+ * render() 只遍历 VIEWS 去摘 hidden。漏登记的那个 section 就永远 hidden：
+ * 顶栏标题是 push() 直接给的，照常显示 —— 于是「标题对、内容一片空白」，
+ * 看起来像接口没数据，其实数据好好躺在库里。全国考情就是这么空了一场。
+ *
+ * 反向也钉住：VIEWS 里有、HTML 里没有那个 section，render() 会在
+ * $('#view-X').classList 上炸 null，整个导航当场瘫掉。
+ */
+test('每个 view-* 的 section 都要登记进 VIEWS（漏了 = 那一页永远空白）', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'static/index.html'), 'utf8');
+  const shell = fs.readFileSync(path.join(ROOT, 'static/js/shell.js'), 'utf8');
+
+  const inHtml = new Set([...html.matchAll(/<section[^>]*\bid="view-([a-z0-9]+)"/g)].map(m => m[1]));
+  const m = shell.match(/const VIEWS = \[([^\]]*)\]/);
+  assert.ok(m, 'shell.js 里找不到 VIEWS —— 抓取正则失效了');
+  const inViews = new Set([...m[1].matchAll(/'([a-z0-9]+)'/g)].map(x => x[1]));
+
+  assert.ok(inHtml.size >= 60, `只扫到 ${inHtml.size} 个 section —— 正则失效了？`);
+  assert.deepStrictEqual(
+    { 有页面没登记: [...inHtml].filter(v => !inViews.has(v)).sort(),
+      登记了没页面: [...inViews].filter(v => !inHtml.has(v)).sort() },
+    { 有页面没登记: [], 登记了没页面: [] });
+});
+
+/* 标题有两条来路，有一条就行：TITLES 里的默认值，或 push({view, title}) 现给的。
+ * 缺 TITLES 键本身不是病 —— chat/drive/fanwen 的标题要运行时才知道（进的哪个会话、
+ * 哪个目录），本来就该由 push 给。真正会露出来的是**两条路都没有**：
+ * 顶栏退化成「公考助手」，用户不知道自己在哪一页。 */
+test('每个视图的标题至少有一条来路（TITLES 或 push 传参，都没有 = 顶栏显示「公考助手」）', () => {
+  const shell = fs.readFileSync(path.join(ROOT, 'static/js/shell.js'), 'utf8');
+  const views = [...shell.match(/const VIEWS = \[([^\]]*)\]/)[1].matchAll(/'([a-z0-9]+)'/g)].map(x => x[1]);
+  const titles = shell.match(/const TITLES = \{([^}]*)\}/);
+  assert.ok(titles, 'shell.js 里找不到 TITLES');
+  const keyed = new Set([...titles[1].matchAll(/([a-z0-9]+):/g)].map(x => x[1]));
+
+  // 扫全部 push({ view: 'X', … })，记下哪些视图**存在**不带 title 的入口
+  const bare = new Set();
+  for (const f of fs.readdirSync(path.join(ROOT, 'static/js'))) {
+    if (!f.endsWith('.js')) continue;
+    const src = fs.readFileSync(path.join(ROOT, 'static/js', f), 'utf8');
+    for (const m of src.matchAll(/push\(\{([^}]*)\}/g)) {
+      const v = m[1].match(/view:\s*'([a-z0-9]+)'/);
+      if (v && !/\btitle:/.test(m[1])) bare.add(v[1]);
+    }
+  }
+  assert.ok(bare.size + keyed.size >= views.length / 2, 'push/TITLES 抓取正则失效了？');
+  assert.deepStrictEqual(views.filter(v => !keyed.has(v) && bare.has(v)).sort(), [],
+    '这些视图既不在 TITLES、push 也没传 title —— 顶栏会显示「公考助手」');
+});

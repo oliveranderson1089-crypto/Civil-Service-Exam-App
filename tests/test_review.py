@@ -342,6 +342,13 @@ class TestChangkaoPool:
         assert second, "背熟一批之后就再也没有新成语了——池子没往后滚"
         assert not (set(second) & set(first)), "补进来的还是刚背过的那批"
 
+    def test_不限就是真的不限(self, auth_client):
+        """word=0 时别拿「词库现在有多少条」当上限——词库一涨就又成了隐形天花板。"""
+        n = 950                                   # 比旧代码写死的 894 多
+        _mk_changkao(n, 3)
+        _set_limits(auth_client, word=0)
+        assert len(self._pool()["成语"]) == n, "不限额时仍有成语被挡在池子外"
+
     def test_已进轮的到期照常回来(self, auth_client):
         _mk_changkao(50, 5)
         _set_limits(auth_client, word=40)

@@ -343,4 +343,49 @@ def test_客户端中途断开也要把这一轮存下来(auth_client, monkeypat
     r.close()                       # …然后断开
     msgs = auth_client.get("/api/aichat/chats/%d" % cid).get_json()["msgs"]
     assert [m["role"] for m in msgs] == ["user", "assistant"], "断开后这一轮不能凭空消失"
-    assert "已收录" in msgs[1]["content"]
+    # 存下来的是「断开那一刻已经吐出去的字」，并且明说它可能不全 —— 不能假装是完整回答
+    assert "已收录成功。".startswith(msgs[1]["content"].split("\n")[0])
+    assert "连接中断" in msgs[1]["content"]
+    assert auth_client.get("/api/aichat/chats/%d" % cid).get_json()["title"] == "收录筚路蓝缕"
+
+
+def test_流式下正文被推理段挤空也会加额度重试(monkeypatch):
+    """跟 chat() 同一套自愈：finish_reason=length 且正文空、无 tool_calls，
+    按实测的推理消耗把额度提上去重试一次——这段逻辑在 stream() 里是重新写的，
+    不是共用 chat() 那份，得单独钉住，别看着像抄对了其实漏了哪个条件。"""
+    calls = []
+
+    def fake_open(c, payload, timeout):
+        calls.append(payload["max_tokens"])
+        if len(calls) == 1:
+            # 第一次：推理段吃满、正文空、finish_reason=length
+            return _FakeResp([
+                ("data: " + json.dumps({
+                    "choices": [{"delta": {}, "finish_reason": "length"}],
+                    "usage": {"completion_tokens_details": {"reasoning_tokens": 190}}
+                })).encode(), b"", b"data: [DONE]"])
+        return _sse(_delta(content="好"))
+
+    monkeypatch.setattr(aiclient, "_open", fake_open)
+    out = list(aiclient.stream([], cfg=CFG, max_tokens=50))
+    assert len(calls) == 2, "该重试一次，没重试或重试超一次都不对"
+    assert calls[1] > calls[0], "没按推理段实测消耗把额度提上去，下次还会白白再截断一次"
+    assert out[-1][1]["content"] == "好"
+
+
+def test_流式下正文被截断且已加过额度就不再加(monkeypatch):
+    """跟 chat() 一样只自愈一次：grown 标记防止陷入「一直截断、一直加额度」的死循环。"""
+    calls = []
+
+    def fake_open(c, payload, timeout):
+        calls.append(payload["max_tokens"])
+        return _FakeResp([
+            ("data: " + json.dumps({
+                "choices": [{"delta": {}, "finish_reason": "length"}],
+                "usage": {"completion_tokens_details": {"reasoning_tokens": 190}}
+            })).encode(), b"", b"data: [DONE]"])
+
+    monkeypatch.setattr(aiclient, "_open", fake_open)
+    msg = list(aiclient.stream([], cfg=CFG, max_tokens=50))[-1][1]
+    assert len(calls) == 2, "只该自愈一次；一直空正文就该老实报出截断，不能无限重试"
+    assert msg["content"] == ""

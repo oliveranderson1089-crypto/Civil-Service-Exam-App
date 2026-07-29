@@ -1,6 +1,6 @@
 // 网络优先：在线总是拿最新页面/样式/脚本，断网才用缓存兜底。
 // （避免旧的「缓存优先」导致更新后还显示旧样式）
-const CACHE = 'gongkao-v193';   // 全国考情 + 成文重生成确认 + 分享/复制图片
+const CACHE = 'gongkao-v194';   // 修全国考情空白（v193 漏把 exam 登记进 VIEWS）
 
 self.addEventListener('install', e => { self.skipWaiting(); });
 
