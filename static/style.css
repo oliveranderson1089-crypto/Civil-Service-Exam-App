@@ -660,6 +660,8 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
 .fc-tag{background:#f0f4f9;color:#5a6b85;font-size:12px;padding:2px 9px;border-radius:20px;}
 /* AI 助手写进小记的内容常带 markdown 语法（**加粗**、## 标题、- 列表…），
    mdToHtml() 渲染成下面这些块元素，这里给个基本排版，别再原样露符号 */
+/* markdown 渲染后换行由 <br>/块级标签负责，pre-wrap 会让源码里的空白再叠一层 */
+.fc-text.md{white-space:normal;}
 .fc-text.md>*:first-child{margin-top:0;}
 .fc-text.md>*:last-child{margin-bottom:0;}
 .fc-text.md p{margin:0 0 8px;}

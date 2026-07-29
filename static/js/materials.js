@@ -466,7 +466,12 @@ function extractInlineMath(str, hold) {
     .replace(/\$([^$\n]+?)\$/g, (m, x) => hold(texToHtml(x)))            // $...$
     .replace(//g, '$');                                            // \$ 还原成普通美元
 }
-function mdToHtml(src) {
+/* opts.breaks：把段落内的单换行渲染成 <br>。
+   AI 生成的内容是规范 markdown（段落间空行分隔），单换行本来就该折叠成空格 —— 默认行为。
+   但用户**手写**的纯文本（小记）里，换行就是换行：默认行为会把一篇多行笔记
+   压成一整行跑马灯，所以那边要显式开这个开关。 */
+function mdToHtml(src, opts) {
+  const breaks = !!(opts && opts.breaks);
   const E = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const inline = s => {
     // 行内代码与数学公式先抽成占位（私有区字符 … 能安全穿过下面的转义与
@@ -485,7 +490,15 @@ function mdToHtml(src) {
   };
   const lines = src.replace(/\r\n/g, '\n').split('\n');
   let html = '', inCode = false, codeBuf = [], listType = null, para = [], i = 0;
-  const flushPara = () => { if (para.length) { html += '<p>' + inline(para.join(' ')) + '</p>'; para = []; } };
+  const flushPara = () => {
+    if (!para.length) return;
+    // 先用 \n 连接再转 <br>：inline() 里的 E() 不碰 \n，直接拿 '<br>' 去 join
+    // 会被转义成字面量 &lt;br&gt;。
+    let t = inline(para.join(breaks ? '\n' : ' '));
+    if (breaks) t = t.replace(/\n/g, '<br>');
+    html += '<p>' + t + '</p>';
+    para = [];
+  };
   const closeList = () => { if (listType) { html += '</' + listType + '>'; listType = null; } };
   for (i = 0; i < lines.length; i++) {
     const line = lines[i];

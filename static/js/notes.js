@@ -9,7 +9,7 @@
  */
 /* global $, IC, IS_MOBILE, KB, OFFICE_EXT, SECTIONS,
    api, appConfirm, c, composing, createDock, deskMsg,
-   esc, fmtTime, iconFor, lsGet, lsSet, openAI,
+   esc, fmtTime, iconFor, lsGet, lsSet, mdToHtml, openAI,
    openViewerUrl, push, stack, toast */
 
 /* ================= 小记（仿语雀） ================= */
@@ -158,6 +158,9 @@ function loadDraft(n) {
   $('#cp-content').focus();
 }
 function renderComposer() {
+  const pv = $('#cp-preview'); if (pv && !pv.classList.contains('hidden')) {
+    pv.classList.add('hidden'); $('#cp-content').classList.remove('hidden'); $('#cp-preview-btn').classList.remove('active');
+  }
   const cb = $('#cp-board');
   if (cb) cb.value = (draft.board != null ? draft.board : curNoteBoard) || '';
   $('#cp-todos').innerHTML = draft.todos.map((t, i) =>
@@ -194,8 +197,20 @@ document.querySelector('.cp-bar').addEventListener('click', e => {
     const ins = document.querySelectorAll('.cp-todo-text'); if (ins.length) ins[ins.length - 1].focus();
   } else if (t === 'tag') {
     showTagInput();
+  } else if (t === 'preview') {
+    toggleMdPreview();
   }
 });
+function toggleMdPreview() {
+  const ta = $('#cp-content'), pv = $('#cp-preview'), btn = $('#cp-preview-btn');
+  const showingPreview = !pv.classList.contains('hidden');
+  if (showingPreview) {
+    pv.classList.add('hidden'); ta.classList.remove('hidden'); btn.classList.remove('active'); ta.focus();
+  } else {
+    pv.innerHTML = mdToHtml(ta.value, { breaks: true }) || '<p class="fc-empty-hint">没有内容</p>';
+    ta.classList.add('hidden'); pv.classList.remove('hidden'); btn.classList.add('active');
+  }
+}
 /* 行内标签输入（替代原生 prompt，仿语雀） */
 function showTagInput() {
   const inp = $('#cp-taginput');
@@ -585,7 +600,7 @@ function feedCard(n) {
     <div class="fc-time">更新于 ${fmtTime(n.updated_at)}
       <span class="fc-acts"><button class="fc-edit" data-edit="${n.id}" title="编辑">${IC.edit}</button><button class="fc-del" data-del="${n.id}" title="删除">${IC.del}</button></span>
     </div>
-    ${n.content ? `<div class="fc-text">${esc(n.content)}</div>` : ''}
+    ${n.content ? `<div class="fc-text md">${mdToHtml(n.content, { breaks: true })}</div>` : ''}
     ${todos}${imgs}${files}${tags}
   </div>`;
 }
