@@ -3656,3 +3656,67 @@ body.dark .slg-mode .chip i{opacity:.65;}
 .fr-s.near{background:#ffe8cc;box-shadow:0 0 0 1px #e8912d inset;}
 .fr-sec.near{border-left-color:#e8912d;}
 body.dark .fr-s.near{background:#4a3418;}
+
+/* ---- 机构讲义：优路精讲 / 三色速记 / 考点对照 ---- */
+#view-bktree,#view-bknode,#view-bkcmp{max-width:920px;margin:0 auto;}
+.bk-head{margin-bottom:14px;}
+.bk-head-t{font-size:19px;font-weight:700;color:var(--text);line-height:1.4;}
+.bk-head-d{font-size:12.5px;color:var(--muted);margin-bottom:4px;}
+.bk-group{background:var(--card);border:1px solid var(--line);border-radius:13px;
+  margin-bottom:10px;overflow:hidden;box-shadow:var(--shadow);}
+.bk-group-h{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:13px 16px;cursor:pointer;font-weight:700;font-size:15px;}
+.bk-group-h::before{content:'▾';color:var(--muted);font-size:12px;margin-right:8px;transition:.15s;}
+.bk-group-h.fold::before{transform:rotate(-90deg);}
+.bk-group-b{border-top:1px solid var(--line);}
+.bk-group-b.fold{display:none;}
+.bk-leaf{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:12px 16px;cursor:pointer;border-bottom:1px solid var(--line);}
+.bk-leaf:last-child{border-bottom:none;}
+.bk-leaf:active{background:var(--bg);}
+.bk-leaf-t{font-size:14.5px;color:var(--text);}
+.bk-leaf-n{font-size:11.5px;color:var(--muted);white-space:nowrap;}
+#view-bkcmp .bk-leaf{background:var(--card);border:1px solid var(--line);border-radius:11px;
+  margin-bottom:8px;box-shadow:var(--shadow);}
+/* 正文块：讲解 / 例题 / 解析三种样式 */
+.bk-block{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:13px 16px;margin-bottom:10px;box-shadow:var(--shadow);}
+.bk-block .bk-body{font-size:15px;line-height:1.9;color:#333;word-break:break-word;}
+.bk-block .bk-body p{margin:.35em 0;}
+.bk-block.bk-ex{background:#fbfaf5;border-color:#eee5cf;}
+.bk-block.bk-ans{background:#f6faf7;border-color:#d8ebdf;}
+.bk-tag{display:inline-block;font-size:11px;font-weight:700;color:#fff;background:var(--muted);
+  border-radius:6px;padding:1px 7px;margin-bottom:6px;}
+.bk-block.bk-ex .bk-tag{background:#c99a2e;}
+.bk-block.bk-ans .bk-tag{background:#3f9c68;}
+/* 三色笔记的红蓝绿：原书就是靠颜色分层的，这是这套资料的核心，别改成统一色 */
+mark.bk-r{background:none;color:#d92b2b;font-weight:600;}
+mark.bk-b{background:none;color:#1f4fa8;font-weight:600;}
+mark.bk-g{background:none;color:#2f8a4a;font-weight:600;}
+.bk-nav{display:flex;justify-content:space-between;gap:10px;margin-top:14px;}
+.bk-nav .btn{max-width:47%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 对照：宽屏并排，窄屏上下（优路在上、三色在下，和「先详解后速记」的读法一致） */
+.bk-cmp{display:grid;gap:12px;grid-template-columns:1fr;}
+@media(min-width:860px){.bk-cmp{grid-template-columns:1fr 1fr;align-items:start;}}
+.bk-side-h{font-size:13px;font-weight:700;margin-bottom:8px;padding-left:9px;
+  border-left:3px solid var(--blue);color:var(--blue);}
+.bk-side.bk-s .bk-side-h{border-left-color:#c9902e;color:#b8801d;}
+.bk-side-t{font-size:14px;font-weight:700;margin:10px 0 6px;color:var(--text);}
+body.dark .bk-block{background:#232833;border-color:#2f3543;}
+body.dark .bk-block .bk-body{color:#c9d1de;}
+body.dark .bk-block.bk-ex{background:#2b2921;border-color:#3d3830;}
+body.dark .bk-block.bk-ans{background:#1f2a24;border-color:#2c3d33;}
+body.dark .bk-group,body.dark #view-bkcmp .bk-leaf{background:#232833;border-color:#2f3543;}
+body.dark mark.bk-r{color:#ff7b7b;} body.dark mark.bk-b{color:#79aaff;} body.dark mark.bk-g{color:#6cc98a;}
+.bk-pagebtn{margin-top:10px;font-size:12px;color:var(--blue);background:none;border:1px dashed #c3d7ea;
+  border-radius:8px;padding:4px 10px;cursor:pointer;}
+.bk-pageimg{display:block;width:100%;margin-top:10px;border:1px solid var(--line);border-radius:9px;background:#fff;}
+body.dark .bk-pagebtn{border-color:#37506b;} body.dark .bk-pageimg{border-color:#2f3543;}
+/* 学完就练：考点正文和对照页底部的真题入口 */
+.bk-practice{background:linear-gradient(135deg,#eef6ff,#f6fbff);border:1px solid #d7e6f6;
+  border-radius:13px;padding:14px 16px;margin-top:14px;}
+.bk-practice-t{font-size:14.5px;font-weight:700;color:var(--blue);}
+.bk-practice-d{font-size:12.5px;color:var(--muted);margin:4px 0 10px;}
+.bk-practice-btns{display:flex;gap:8px;flex-wrap:wrap;}
+.bk-practice-btns .btn{flex:1;min-width:88px;}
+body.dark .bk-practice{background:#1e2733;border-color:#2c3d52;}

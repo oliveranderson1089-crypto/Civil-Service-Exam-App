@@ -125,15 +125,22 @@ def real_papers():
     return jsonify({"items": [dict(r) for r in rows]})
 
 
-def _pick(db, u, mode, n, module="", qtype="", pkey=""):
-    """挑题。**顺序就是这个模块的价值所在**，不是随便抽。"""
+def _pick(db, u, mode, n, module="", qtype="", pkey="", qtypes=None):
+    """挑题。**顺序就是这个模块的价值所在**，不是随便抽。
+
+    qtypes（列表）是给「基础知识点 → 练本考点」用的：一个考点常对应真题里的
+    好几个题型（「排列组合与概率问题」← 排列组合 + 概率），得一起出。
+    单个 qtype 的老用法原样保留。
+    """
     where, wargs = [SERVABLE], []
     if module:
         where.append("q.module=?")
         wargs.append(module)
-    if qtype:
-        where.append("COALESCE(NULLIF(q.qtype,''), e.qtype, '')=?")
-        wargs.append(qtype)
+    picked = [x for x in (qtypes or []) if x] or ([qtype] if qtype else [])
+    if picked:
+        where.append("COALESCE(NULLIF(q.qtype,''), e.qtype, '') IN (%s)"
+                     % ",".join("?" * len(picked)))
+        wargs.extend(picked)
 
     if mode == "paper":
         # 整卷模考要**按卷面题号出**。原先没有任何 ORDER BY，返回的是 real_questions.id
@@ -191,9 +198,11 @@ def real_quiz():
     except (TypeError, ValueError):
         n = 10
     exam_mode = bool(d.get("exam"))
+    qts = d.get("qtypes")
     items = _pick(get_db(), uid(), mode, n,
                   module=(d.get("module") or "").strip(), qtype=(d.get("qtype") or "").strip(),
-                  pkey=(d.get("pkey") or "").strip())
+                  pkey=(d.get("pkey") or "").strip(),
+                  qtypes=[str(x).strip() for x in qts] if isinstance(qts, list) else None)
     if not items:
         return jsonify({"error": "这个范围里没有可做的真题（答案存疑的题不会发出来）"}), 404
     # 测试模式下答案和解析都不下发（_pub 会剥掉），交卷时由服务端按库里的答案判分 ——

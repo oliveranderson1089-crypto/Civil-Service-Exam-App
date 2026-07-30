@@ -192,6 +192,82 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_bp_user ON board_points(user_id, board);
+        -- ---------------------------------------------------------------
+        -- 机构讲义版基础知识点：优路讲义(youlu) + 三色笔记(sanse) 两套并行。
+        -- board_kb 那一坨 AI 文本留着当「补讲」，这里是有目录、有考点粒度的真资料。
+        -- 全局共享（不按 user_id 分）：讲义是同一份书，各人看到的一样。
+        CREATE TABLE IF NOT EXISTS basic_sources(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,          -- 'youlu' | 'sanse'
+            board TEXT NOT NULL,           -- 行测板块名，和 ALL_BOARDS 对齐
+            title TEXT,                    -- 书名，展示用
+            file_id INTEGER,               -- drive_files.id（资料就躺在应用云盘里）
+            stored_name TEXT,              -- drive 里的哈希文件名，重解析时按它找原文件
+            pages INTEGER DEFAULT 0,
+            page_offset INTEGER DEFAULT 0, -- 目录页码 → PDF 页码的偏移（正文前有封面/目录）
+            sha256 TEXT,
+            imported_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(source, board)
+        );
+        -- 原文层：一页一行，只灌一次。改解析规则一律 --reparse 从这儿重来，
+        -- 不再碰 PDF —— 真题库那边「改解析器却重跑 OCR」的教训。
+        CREATE TABLE IF NOT EXISTS basic_raw(
+            source_id INTEGER NOT NULL, page INTEGER NOT NULL,
+            text TEXT,                     -- pdftotext -layout 的纯文本
+            xml TEXT,                      -- pdftohtml -xml：带字号/颜色，三色靠它
+            PRIMARY KEY(source_id, page)
+        );
+        -- 考点树：章 → 节 → 考点。topic_id 是两套资料唯一的交汇点，
+        -- 对照视图按它并排；没对齐的节点在各自独立视图里照常可看。
+        CREATE TABLE IF NOT EXISTS basic_nodes(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL, source TEXT, board TEXT,
+            parent_id INTEGER, level INTEGER DEFAULT 1,
+            title TEXT, sort INTEGER DEFAULT 0,
+            page_from INTEGER, page_to INTEGER,
+            topic_id INTEGER,
+            nkey TEXT,                     -- 归一化标题，规则对齐和 --reparse 认回 id 都靠它
+            UNIQUE(source_id, nkey)
+        );
+        CREATE INDEX IF NOT EXISTS idx_bn_tree ON basic_nodes(source_id, parent_id, sort);
+        CREATE INDEX IF NOT EXISTS idx_bn_board ON basic_nodes(board, source);
+        CREATE INDEX IF NOT EXISTS idx_bn_topic ON basic_nodes(topic_id);
+        -- 正文块：一个考点下按语义切成若干块，前端按 kind 上不同样式。
+        CREATE TABLE IF NOT EXISTS basic_blocks(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id INTEGER NOT NULL, sort INTEGER DEFAULT 0,
+            kind TEXT,                     -- concept|skill|steps|tip|example|answer|note
+            content_md TEXT,
+            color_json TEXT,               -- 三色的红/蓝/绿标记区间，渲染成 <mark>
+            fig_json TEXT,                 -- 图形推理裁出来的图（sha 列表），judge 篇才有
+            page INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_bb_node ON basic_blocks(node_id, sort);
+        -- 统一考点：对照视图的主线。
+        -- **不是靠标题匹配凑出来的**：实测两套书的考点维度就不一样（优路言语按题型
+        -- 「查找细节能力」，三色按思维「转折关系思维」，完全同名 0 个），所以这里是
+        -- 一份独立的板块考点大纲，两套资料各自往上挂。
+        CREATE TABLE IF NOT EXISTS basic_topics(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            board TEXT NOT NULL, name TEXT NOT NULL,
+            sort INTEGER DEFAULT 0,
+            aliases_json TEXT DEFAULT '[]',
+            UNIQUE(board, name)
+        );
+        -- 考点 ←→ 资料节点，多对多（一个考点两边各挂几条很正常）。
+        -- **按 nkey 挂、不按 node_id**：--reparse 会重建 basic_nodes，id 全变，
+        -- 挂 id 的话每次重解析都把对齐结果清零。nkey 跟着内容走，才留得住。
+        -- 主键**必须带 source**：nkey 只在一册内唯一（UNIQUE(source_id,nkey)），
+        -- 两套书出现同名同序的节点时，少了 source 会互相顶掉，
+        -- 而查询那头是 ON n.nkey=m.nkey AND n.source=m.source —— 被顶掉的那套直接查不到。
+        CREATE TABLE IF NOT EXISTS basic_map(
+            topic_id INTEGER NOT NULL,
+            board TEXT, source TEXT NOT NULL, nkey TEXT NOT NULL,
+            by TEXT DEFAULT 'ai',          -- rule|ai|manual，manual 最高，重跑不覆盖
+            confidence REAL DEFAULT 0.8,
+            PRIMARY KEY(topic_id, source, nkey)
+        );
+        CREATE INDEX IF NOT EXISTS idx_bmap_nkey ON basic_map(nkey);
         -- 党建理论学习词典（爬自共产党员网 12371.cn，全局共享）
         CREATE TABLE IF NOT EXISTS party_dict(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -881,6 +957,37 @@ def init_db():
     # 每日复习量：一天能背多少是因人而异的，原来写死 120 条（只能改环境变量），堆起来就不想背了
     if "rv_limits" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN rv_limits TEXT")
+    # 考点大纲要按考试顺序排（不是按建表顺序），对照视图靠它排目录
+    if "sort" not in _cols(con, "basic_topics"):
+        con.execute("ALTER TABLE basic_topics ADD COLUMN sort INTEGER DEFAULT 0")
+    # 「学完这个考点，练这个考点的真题」靠它。**存 qtype 列表、不给 7606 道题逐题打标签**：
+    # real_questions 的 qtype 已经细到「语境分析 / 排列组合 / 削弱论证」，和考点大纲几乎同名，
+    # 一个考点记下它对应哪几个 qtype 就够，还能人工校正；逐题打标签要跑一遍 AI 且改不动。
+    if "qtypes_json" not in _cols(con, "basic_topics"):
+        con.execute("ALTER TABLE basic_topics ADD COLUMN qtypes_json TEXT DEFAULT '[]'")
+    # 正文块跨页很常见（讲解在页脚断开、下一页接着写），只记一个页码的话「看原书这一页」
+    # 会指到块**结尾**那一页 —— 图形推理的「章节演练」十道题横跨 6 页，点开看到的是
+    # 下一节的开头，和题对不上。所以补一个 page_to，前端展示整段范围。
+    if "page_to" not in _cols(con, "basic_blocks"):
+        con.execute("ALTER TABLE basic_blocks ADD COLUMN page_to INTEGER")
+        con.execute("UPDATE basic_blocks SET page_to=page WHERE page_to IS NULL")
+    # basic_map 早期主键漏了 source（见建表处注释），重建一次把它补进主键
+    _sql = con.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='basic_map'"
+                       ).fetchone()
+    if _sql and "PRIMARY KEY(topic_id, source, nkey)" not in _sql[0]:
+        con.executescript("""
+            CREATE TABLE basic_map_new(
+                topic_id INTEGER NOT NULL,
+                board TEXT, source TEXT NOT NULL, nkey TEXT NOT NULL,
+                by TEXT DEFAULT 'ai', confidence REAL DEFAULT 0.8,
+                PRIMARY KEY(topic_id, source, nkey)
+            );
+            INSERT OR IGNORE INTO basic_map_new(topic_id,board,source,nkey,"by",confidence)
+                SELECT topic_id,board,COALESCE(source,''),nkey,"by",confidence FROM basic_map;
+            DROP TABLE basic_map;
+            ALTER TABLE basic_map_new RENAME TO basic_map;
+            CREATE INDEX IF NOT EXISTS idx_bmap_nkey ON basic_map(nkey);
+        """)
     # 专项练加了难度档，统计要按难度分开（不然入门刷出来的高正确率会盖住真实水平）
     if "level" not in _cols(con, "drill_log"):
         con.execute("ALTER TABLE drill_log ADD COLUMN level TEXT DEFAULT 'mid'")
