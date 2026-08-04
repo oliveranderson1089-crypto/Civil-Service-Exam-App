@@ -2971,6 +2971,8 @@ body.dark .fr-sec.fr-recap{background:#182234;}
 .fr-s{cursor:pointer;border-radius:4px;padding:1px 0;transition:background .12s;}
 .fr-s:hover{background:#eef4fb;}
 .fr-s.on{background:#ffe9a8;box-shadow:0 0 0 1px #f0c14b inset;}
+/* 手机上连点两下才算勾：第一下先亮成「待定」，虚线框和实勾（.on）一眼能分开 */
+.fr-s.pre{background:#fff6dd;box-shadow:0 0 0 1px #f0c14b inset;outline:1px dashed #d9a51b;outline-offset:1px;}
 .fr-s.ok{background:#c8ebd6;box-shadow:0 0 0 1px #4ca97a inset;}
 .fr-s.bad{background:#f8d2c8;box-shadow:0 0 0 1px #d9704f inset;}
 .fr-s.miss{background:#ffeec2;box-shadow:0 0 0 1px #e0a63c inset;text-decoration:underline wavy #e0a63c;}
@@ -2999,7 +3001,9 @@ body.dark .fr-sec.fr-recap{background:#182234;}
   padding:8px 11px;margin-bottom:10px;}
 .fr-sec.fr-fmt{background:#eef4fb;}
 #fr-ans{width:100%;min-height:180px;font-size:15px;line-height:1.9;}
-.fr-wc{text-align:right;font-size:12px;color:var(--muted);margin:4px 0 10px;}
+/* 字数那行同时放手写入口：左按钮右字数（和申论作答页的 .slg-toolbar 一个形状） */
+.fr-wc{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  text-align:right;font-size:12px;color:var(--muted);margin:4px 0 10px;}
 .fr-acts{display:flex;gap:10px;}
 .fr-final{font-size:15px;}
 .fr-final b{font-size:34px;color:var(--blue);}
@@ -3017,6 +3021,7 @@ body.dark .fr-sec.fr-recap{background:#182234;}
 body.dark .fd-gen,body.dark .fr-mat{background:#141b29;}
 body.dark .fd-type.on{background:#1a2434;}
 body.dark .fr-s.on{background:#5c4a12;box-shadow:0 0 0 1px #a3862c inset;}
+body.dark .fr-s.pre{background:#3a2f0c;box-shadow:0 0 0 1px #a3862c inset;outline:1px dashed #c9a13c;}
 body.dark .fr-s.ok{background:#1c3d2c;box-shadow:0 0 0 1px #3f7d5e inset;}
 body.dark .fr-s.bad{background:#4a2018;box-shadow:0 0 0 1px #a3583f inset;}
 body.dark .fr-s.miss{background:#4a3812;box-shadow:0 0 0 1px #a3782c inset;}

@@ -328,6 +328,7 @@ function frMat() {
     ? `<div class="fr-sec-t">📄 给定资料${fdPaper.material_words ? `（${fdPaper.material_words} 字）` : ''}
        <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏 · 橙=沾边</i></div>` : '')
     + frMatHtml(fdPaper.sents, fdPicked, mk);
+  frTapMark(null);      // 重渲染把 DOM 换掉了，待定的那一下跟着作废
 }
 
 // 批改结果的页签：真题批改那边就是这么摆的（维度评分/参考范文/原题材料/作答原文），
@@ -339,10 +340,38 @@ function frTabBar() {
 }
 
 // 勾画：点一句 = 选中/取消；按住拖过多句 = 连着选（鼠标和手写笔都走 pointer 事件）
+//
+// 手指是另一回事：材料是要滑着看的，手指落下就选 = 每滑一下都误勾一片。
+// 所以触摸走「连点两下才算数」——第一下只把这句标成**待定**（虚线框，进不了 fdPicked），
+// FD_TAP_MS 内再点同一句才真的勾上/取消；期间手指挪了位置、挪到别的句子上、
+// 或者浏览器判成滚动（pointercancel），这一下就不算点。触摸也不做拖动连选：
+// 拖 = 滑页面，两件事抢不到一起。鼠标/手写笔完全照旧。
+const FD_TAP_MS = 600;
+const fdCoarse = () => !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+const FD_TAP_SLOP = 10;                          // 手指抖这么多以内还算「点」，超了算滑
+let fdTapI = null, fdTapTimer = null, fdDown = null;
+
+// 待定态纯粹是给眼睛看的提示：只加/去 class，不动 fdPicked
+function frTapMark(i) {
+  clearTimeout(fdTapTimer);
+  const box = $('#fr-mat');
+  if (box) box.querySelectorAll('.fr-s.pre').forEach(el => el.classList.remove('pre'));
+  fdTapI = i == null ? null : i;
+  if (fdTapI == null) return;
+  const el = box && box.querySelector(`[data-fs="${i}"]`);
+  if (el) el.classList.add('pre');
+  fdTapTimer = setTimeout(() => frTapMark(null), FD_TAP_MS);
+}
+
 $('#fr-mat').addEventListener('pointerdown', e => {
   if (fdStep !== 1) return;
   const s = e.target.closest('[data-fs]'); if (!s) return;
   const i = +s.dataset.fs;
+  if (e.pointerType === 'touch') {
+    // 不 preventDefault：页面照常滑：选不选等抬手时再算
+    fdDown = { i, x: e.clientX, y: e.clientY };
+    return;
+  }
   fdDrag = fdPicked.has(i) ? 'off' : 'on';       // 起手是选中的 → 这一拖都是取消
   frToggle(i, fdDrag === 'on');
   e.preventDefault();
@@ -352,6 +381,17 @@ $('#fr-mat').addEventListener('pointerover', e => {
   const s = e.target.closest('[data-fs]'); if (!s) return;
   frToggle(+s.dataset.fs, fdDrag === 'on');
 });
+$('#fr-mat').addEventListener('pointerup', e => {
+  const d = fdDown; fdDown = null;
+  if (e.pointerType !== 'touch' || !d || fdStep !== 1) return;
+  const s = e.target.closest('[data-fs]');
+  if (!s || +s.dataset.fs !== d.i) return;                          // 抬手时已经在别的句子上 = 在滑
+  if (Math.abs(e.clientX - d.x) > FD_TAP_SLOP
+    || Math.abs(e.clientY - d.y) > FD_TAP_SLOP) return;             // 挪太多 = 在滑
+  if (fdTapI === d.i) { frTapMark(null); frToggle(d.i, !fdPicked.has(d.i)); }  // 第二下：真勾/真取消
+  else frTapMark(d.i);                                              // 第一下：只待定
+});
+document.addEventListener('pointercancel', () => { fdDown = null; });   // 滚动接管了这一指
 document.addEventListener('pointerup', () => { fdDrag = null; });
 function frToggle(i, on) {
   if (on) fdPicked.add(i); else fdPicked.delete(i);
@@ -364,8 +404,11 @@ function frFoot() {
   const p = fdPaper;
   if (fdStep === 1) {
     // 判定过就把结果一并摆回来（回退到这一步时不该只剩个光秃秃的按钮）
+    // 手机上的手势和电脑不是一套，提示语也得跟着换（fdCoarse 认的是「粗指针」= 手指）
     $('#fr-foot').innerHTML = `
-      <div class="fr-tip">🖍 在材料里<b>点句子</b>勾出你认为的要点（按住拖可以连选）。
+      <div class="fr-tip">🖍 在材料里${fdCoarse()
+        ? '<b>连点两下</b>句子勾出你认为的要点（点一下只是待定，再点一下才算勾上，滑动不会误勾）'
+        : '<b>点句子</b>勾出你认为的要点（按住拖可以连选）'}。
         这一步<b>只找不写</b> —— 共 ${p.n_points} 个采分点，你勾了 <b id="fr-n">${fdPicked.size}</b> 句。</div>`
       + (fdCheck ? frCheckBody(fdCheck) : '')
       + `<div class="fr-acts">
@@ -391,7 +434,10 @@ function frFoot() {
       ${gc && p.doctype_fmt ? `<div class="fr-fmt-tip">📋 <b>${esc(p.doctype)}</b>格式骨架：${esc(p.doctype_fmt)}</div>` : ''}
       <div class="fr-picked">${picked.map(s => `<div>· ${esc(s.t)}</div>`).join('') || '<i>你没勾到任何要点</i>'}</div>
       <textarea id="fr-ans" placeholder="一、…\n二、…\n三、…"></textarea>
-      <div class="fr-wc"><span id="fr-wc">0</span> / ${p.word_max} 字</div>
+      <div class="fr-wc">
+        <button type="button" class="hw-open-btn" data-hw="fr-ans">✍️ 手写输入</button>
+        <span><span id="fr-wc">0</span> / ${p.word_max} 字</span>
+      </div>
       <div class="fr-acts">
         <button class="btn" id="fr-prev">← 回上一步改勾画</button>
         <button class="btn primary" id="fr-grade">交给我批</button>
