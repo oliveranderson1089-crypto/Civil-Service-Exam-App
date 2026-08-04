@@ -27,6 +27,7 @@ const EXPORTS = [
   'mdToHtml', 'mdSafeHref',
   'feedCard', 'addTagsFrom', 'draft', 'boardOptions',
   'slWords', 'slCountWords', 'slSetupAnswer',
+  'loadYyMine',
 ];
 
 function boot(opts = {}) {

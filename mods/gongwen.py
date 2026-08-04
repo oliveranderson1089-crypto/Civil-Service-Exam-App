@@ -1018,24 +1018,46 @@ def _gen_yy_compose(db, date):
 @bp.get("/api/write/yylist")
 def write_yylist():
     """按「类别 → 文种」把已有的范文和提纲摆出来 —— 哪个文种还没见过，一眼看见。"""
-    rows = [_e_row(r) for r in get_db().execute(
+    db = get_db()
+    rows = [_e_row(r) for r in db.execute(
         "SELECT * FROM daily_essays WHERE mode='yingyong' ORDER BY id DESC")]
+    # 真题参考答案按文种归好，和自产范文摆在一起。
+    # **这一步是范文入库的意义所在**：自产的和真题答案能并排比，才知道差在哪；
+    # 只灌进库不接界面，等于白灌。
+    real_fan = {}
+    try:
+        for r in db.execute("SELECT id, doctype, title, example, note, freq FROM yy_items "
+                            "WHERE kind='范文' ORDER BY freq DESC, id DESC"):
+            real_fan.setdefault(r["doctype"] or "", []).append(
+                {"id": r["id"], "title": r["example"] or r["title"],
+                 "src": r["title"], "note": r["note"] or ""})
+    except sqlite3.Error:
+        real_fan = {}                     # 表还没建就当没有，不影响这个页面
+    # 按 form 分桶，**桶按需建**。原来写的是 by[k][f]，而 by[k] 只预置了 full/outline
+    # 两个键——库里 form 的取值不止这两种（还有「只写部分内容」的 part），
+    # 一条 part 记录就是一个 KeyError，整个应用文列表页 500 打不开。
+    # 实测线上就一条 part，把这个页面崩了 17 次。分桶按实际取值来，别按假设来。
     by = {}
     for r in rows:
         k = (r["spec"] or {}).get("doctype") or r["topic"]
-        by.setdefault(k, {"full": [], "outline": []})
         f = (r["spec"] or {}).get("form") or "full"
-        by[k][f].append({"id": r["id"], "title": r["title"],
-                         "scene": (r["spec"] or {}).get("scene") or "", "words": r["words"]})
+        by.setdefault(k, {}).setdefault(f, []).append(
+            {"id": r["id"], "title": r["title"], "form": f,
+             "scene": (r["spec"] or {}).get("scene") or "", "words": r["words"]})
     cats = []
     for c in GW_CATS:
         ds = []
         for g in GW_DOCTYPES:
             if g["cat"] != c:
                 continue
-            got = by.get(g["k"]) or {"full": [], "outline": []}
+            got = by.get(g["k"]) or {}
+            # 除提纲外的形态（full、part、以及以后可能新增的）都当范文摆出来：
+            # 宁可多摆一个片段，也不能因为不认识这个 form 就把整条记录悄悄吞掉。
             ds.append({"k": g["k"], "d": g["d"], "fmt": g["fmt"],
-                       "full": got["full"], "outline": got["outline"]})
+                       "freq": g.get("freq", 0), "freq_all": g.get("freq_all", 0),
+                       "full": [x for fm in sorted(got) if fm != "outline" for x in got[fm]],
+                       "outline": got.get("outline") or [],
+                       "real": real_fan.get(g["k"], [])})
         cats.append({"cat": c, "doctypes": ds})
     n_full = sum(1 for g in GW_DOCTYPES if (by.get(g["k"]) or {}).get("full"))
     n_out = sum(1 for g in GW_DOCTYPES if (by.get(g["k"]) or {}).get("outline"))
@@ -1098,6 +1120,31 @@ def write_yingyong():
     if err:
         return err
     return jsonify(_e_row(db.execute("SELECT * FROM daily_essays WHERE id=?", (eid,)).fetchone()))
+
+
+@bp.get("/api/write/yingyong/mine")
+def write_yy_mine():
+    """自选成文写过的，按时间倒序摆出来。
+
+    这些一直存在库里（mode='yingyong'），但自选成文那个面板只有一张空表单：
+    写完当场看完，一返回就回到表单，那篇再也找不着——得去「文种大全」里按文种翻。
+    一篇要跑一次 AI，找不回来等于白写，所以入口就放在写它的那一页。
+    一键铺开的也在这个 mode 里，一并摆出来（自选的最新，永远在最上面）。"""
+    db = get_db()
+    items = []
+    for r in db.execute("SELECT id,date,topic,title,words,spec FROM daily_essays "
+                        "WHERE mode='yingyong' ORDER BY id DESC LIMIT 60"):
+        try:
+            sp = json.loads(r["spec"] or "{}")
+        except Exception:                 # spec 坏了不能连累整个列表，当没有就是
+            log.debug("daily_essays.spec 不是合法 JSON，按空处理", exc_info=True)
+            sp = {}
+        items.append({"id": r["id"], "date": r["date"] or "", "words": r["words"],
+                      "title": r["title"] or "",
+                      "doctype": sp.get("doctype") or r["topic"] or "",
+                      "scene": sp.get("scene") or "",
+                      "form": sp.get("form") or "full"})
+    return jsonify({"items": items})
 
 
 # ---- 应用文 · 每日成文（AI 每天出一道应用文题，一天一篇，可补齐往期）----
@@ -1500,6 +1547,160 @@ def gongwen_ai():
     db.commit()
     r = db.execute("SELECT * FROM gongwen_items WHERE scene=?", (scene,)).fetchone()
     return jsonify(dict(r))
+
+
+@bp.get("/api/write/realfan/<int:iid>")
+def write_realfan(iid):
+    """看一份真题参考答案：正文 + 出处 + 原题题干和要求。
+
+    题干要一起给——**范文脱离题目没法学**。看到「这道题要求 500 字、
+    要内容全面条理清晰」，才看得懂答案为什么这么写。
+    """
+    db = get_db()
+    r = db.execute("SELECT * FROM yy_items WHERE id=? AND kind='范文'", (iid,)).fetchone()
+    if not r:
+        return jsonify({"error": "范文不存在"}), 404
+    out = {"id": r["id"], "doctype": r["doctype"], "title": r["example"] or r["title"],
+           "src": r["title"], "content": r["text"], "note": r["note"] or "",
+           "src_ref": r["src_ref"] or ""}
+    # 按 src_ref（形如「2025国考 Q3」）把原题捞回来
+    m = re.match(r"^(\d{4})(\S+?)\s*Q(\d+)$", (r["src_ref"] or "").strip())
+    if m:
+        # **必须带上文种一起匹配**。src_ref 形如「2020国考 Q5」没有卷种，
+        # 而 2020 国考有省级/地市两份卷子、都有第 5 题——只按 (年份,考试,题号) 取，
+        # LIMIT 1 会随便挑一份，实测把讲话稿的范文配上了推荐材料的题干。
+        q = db.execute(
+            "SELECT q.stem, q.require, q.score, q.words, p.name FROM slreal_questions q "
+            "JOIN slreal_papers p ON p.id=q.paper_id "
+            "WHERE p.year=? AND p.exam=? AND q.seq=? AND q.qkind='贯彻执行' "
+            "AND q.doctype=? AND q.answer!='' LIMIT 1",
+            (int(m.group(1)), m.group(2), int(m.group(3)), r["doctype"] or "")).fetchone()
+        if q:
+            out["stem"] = q["stem"]
+            out["require"] = q["require"]
+            out["score"], out["limit"] = q["score"], q["words"]
+            out["paper"] = q["name"]
+    return jsonify(out)
+
+
+@bp.get("/api/gongwen/yylib")
+def gongwen_yylib():
+    """应用文素材库：按「文种 → 部件」两级下钻。
+
+    文种**按真题频次排序**，并把「考过几次」显示出来——这是这个页面最要紧的一点：
+    让「该练什么」有依据，而不是按录入顺序排。零频的老文种（通知/倡议书/新闻稿）
+    照样列出来但排在后面，标「近五年未考」。
+
+    不传 doctype 时给目录（文种 + 每个文种下各部件的条数）；
+    传了就给那一格的条目。空的格子也要能看见——库里哪块没素材，是这个页面该回答的问题。
+    """
+    db = get_db()
+    kind = (request.args.get("kind") or "").strip()
+    doctype = (request.args.get("doctype") or "").strip()
+    part = (request.args.get("part") or "").strip()
+
+    if doctype:
+        where, args = ["(doctype=? OR doctype='')"], [doctype]
+        if part:
+            where.append("part=?")
+            args.append(part)
+        if kind:
+            where.append("kind=?")
+            args.append(kind)
+        rows = db.execute(
+            "SELECT id, kind, doctype, part, title, text, note, example, src, src_ref, freq "
+            "FROM yy_items WHERE %s ORDER BY freq DESC, id LIMIT 200" % " AND ".join(where),
+            args).fetchall()
+        items = []
+        for r in rows:
+            d = dict(r)
+            # 错例和得体的正文都是成对 JSON，摊开给前端（前端不该解析业务 JSON）
+            if r["kind"] in ("错例", "得体"):
+                try:
+                    p = json.loads(r["text"] or "{}")
+                    if r["kind"] == "错例":
+                        d["bad"], d["good"] = p.get("bad", ""), p.get("good", "")
+                    else:
+                        d["good"], d["bad"] = p.get("do", ""), p.get("dont", "")
+                    d["text"] = ""
+                except Exception:
+                    pass
+            items.append(d)
+        return jsonify({"items": items, "doctype": doctype, "part": part})
+
+    # 目录：每个文种 × 部件的条数
+    grid = {}
+    for r in db.execute("SELECT doctype, part, kind, COUNT(*) c FROM yy_items "
+                        + ("WHERE kind=? " if kind else "")
+                        + "GROUP BY doctype, part, kind", ([kind] if kind else [])):
+        grid.setdefault(r["doctype"] or "", {}).setdefault(r["part"] or "", 0)
+        grid[r["doctype"] or ""][r["part"] or ""] += r["c"]
+
+    cats = []
+    for g in sorted(GW_DOCTYPES, key=lambda x: (-x.get("freq", 0), -x.get("freq_all", 0), x["k"])):
+        cells = grid.get(g["k"], {})
+        parts = [{"part": p, "n": cells.get(p, 0), "req": bool(req)}
+                 for p, req in parts_of(g["k"])]
+        # 库里挂在这个文种下、但不属于它 parts 的部件也列出来（数据和定义不一致要看得见）
+        for p, n in sorted(cells.items(), key=lambda x: -x[1]):
+            if p and p not in {x["part"] for x in parts}:
+                parts.append({"part": p, "n": n, "req": False, "extra": True})
+        cats.append({"k": g["k"], "fam": g.get("fam", ""), "cat": g["cat"],
+                     "d": g["d"], "freq": g.get("freq", 0),
+                     "freq_all": g.get("freq_all", 0),
+                     "parts_src": g.get("parts_src", "prior"),
+                     "n": sum(cells.values()), "parts": parts})
+    kinds = {r[0] or "": r[1] for r in db.execute(
+        "SELECT kind, COUNT(*) FROM yy_items GROUP BY kind")}
+    return jsonify({"cats": cats, "kinds": kinds, "total": sum(kinds.values()),
+                    "generic": grid.get("", {})})
+
+
+@bp.get("/api/gongwen/errquiz")
+def gongwen_errquiz():
+    """应用文错例小测：**零 AI 调用**——错例本身就是题。
+
+    题型是判断题：随机给「错句」或「改正后的句子」，让你判这样写对不对，
+    然后给出为什么。为什么不做四选一：库里只有 4 类检查项，选项一轮就背下来了，
+    变成考「记住了几类」而不是考「认不认得出」。判断题反过来——每次面对的是
+    一句具体的话，要真的看出它哪里不合规范。
+
+    一半给错句一半给改正（`want_bad` 按位置定，不用随机数——同一份卷子刷新不该变）。
+    只给「错句」的话，做几道就摸出规律「反正都选错」，等于没考。
+    """
+    n = max(4, min(20, int(request.args.get("n") or 10)))
+    db = get_db()
+    # 按检查项轮着取，别让占 85% 的「分条方式」霸满一份卷子
+    rows = db.execute("SELECT id, doctype, part, title, text, note FROM yy_items "
+                      "WHERE kind='错例' ORDER BY freq DESC, RANDOM()").fetchall()
+    by_chk = {}
+    for r in rows:
+        by_chk.setdefault((r["title"] or "").split("·")[0], []).append(r)
+    picked, keys = [], sorted(by_chk, key=lambda k: -len(by_chk[k]))
+    while len(picked) < n and any(by_chk[k] for k in keys):
+        for k in keys:
+            if by_chk[k] and len(picked) < n:
+                picked.append(by_chk[k].pop(0))
+
+    out = []
+    for i, r in enumerate(picked):
+        try:
+            pair = json.loads(r["text"] or "{}")
+        except Exception:
+            continue
+        bad, good = (pair.get("bad") or "").strip(), (pair.get("good") or "").strip()
+        if not bad or not good:
+            continue
+        want_bad = (i % 2 == 0)
+        out.append({
+            "id": r["id"], "seq": i + 1,
+            "check": (r["title"] or "").split("·")[0],
+            "where": " · ".join(x for x in [r["doctype"] or "", r["part"] or ""] if x),
+            "text": bad if want_bad else good,
+            "answer": "wrong" if want_bad else "right",   # 客户端判分（自学用，不防作弊）
+            "bad": bad, "good": good, "why": r["note"] or "",
+        })
+    return jsonify({"items": out, "total": len(out)})
 
 
 @bp.delete("/api/gongwen/<int:gid>")

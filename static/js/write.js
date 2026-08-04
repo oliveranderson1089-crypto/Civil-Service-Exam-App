@@ -225,7 +225,34 @@ async function loadWrGw() {
   $('#yy-scenes').innerHTML = '<span class="gw-sug-t">常用：</span>' + gwSpec.scenes.map(s =>
     `<button class="chip tiny" data-gws="${esc(s)}">${esc(s)}</button>`).join('');
   gwFmt();
+  loadYyMine();
   // 文种大全（yy-cats）现在是独立的一个导航栏，各自加载，这里不再连带拉它
+}
+// 自选成文写过的都留着。以前这一页只有一张空表单：写完当场看完，一返回就回到表单，
+// 那篇再也找不着——其实一直在库里，只是入口在「文种大全」里、要按文种翻。
+// 一篇要跑一次 AI，找不回来等于白写，所以列表就摆在写它的这一页。
+async function loadYyMine() {
+  const box = $('#yy-mine'); if (!box) return;
+  box.innerHTML = box.innerHTML || '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/write/yingyong/mine');
+    $('#yy-mine-t').textContent = `✍️ 我写过的${d.items.length ? '（' + d.items.length + '）' : ''}`;
+    box.innerHTML = d.items.length ? d.items.map(x => {
+      // date 这个 mode 下存的是时间戳（同一天能写好几篇，光有日期分不出是哪篇）
+      const t = x.date || '';
+      const when = fmtDay(t.slice(0, 10)) + (t.length > 12 ? ' ' + t.slice(11, 16) : '');
+      return `
+      <div class="wr-day done" data-weid="${x.id}">
+        <div class="wr-day-d">🗓 ${esc(when)}</div>
+        <div class="wr-day-m"><b>${esc(x.title || '')}</b>
+          <span class="wr-tag">${x.form === 'outline' ? '🧭 提纲' : '📄 范文'} · ${esc(x.doctype || '')}</span>
+          ${x.scene ? `<span class="wr-tag">${esc(x.scene)}</span>` : ''}
+          <span class="wr-w">${x.words} 字</span></div>
+        <button class="btn tiny" data-yydel="${x.id}">🗑 删掉</button>
+      </div>`;
+    }).join('')
+      : '<p class="empty">还没写过。上面写的每一篇都会留在这儿，返回后随时点开。</p>';
+  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 function gwFmt() {
   const d = gwSpec.doctypes.find(x => x.k === gwType); if (!d) return;
@@ -248,7 +275,10 @@ async function loadYyCats() {
         ${c.doctypes.map(t => `
           <div class="yy-dt">
             <div class="yy-dt-h">
-              <b>${esc(t.k)}</b><span class="yy-dt-d">${esc(t.d)}</span>
+              <b>${esc(t.k)}</b>${t.freq ? `<span class="yl-freq">真题考过 ${t.freq} 次</span>`
+                : (t.freq_all ? '<span class="yl-freq old">2018 后未考</span>'
+                              : '<span class="yl-freq zero">近五年未考</span>')}
+              <span class="yy-dt-d">${esc(t.d)}</span>
             </div>
             <div class="yy-dt-b">
               ${t.outline.length
@@ -256,8 +286,12 @@ async function loadYyCats() {
                 : '<span class="yy-pill none">🧭 提纲 · 还没有</span>'}
               ${t.full.length
                 ? t.full.map(f => `<button class="yy-pill" data-weid="${f.id}"
-                    title="${esc(f.title || '')}">📄 ${esc(f.scene || f.title || '范文')}</button>`).join('')
+                    title="${esc((f.form === 'part' ? '只写部分内容：' : '') + (f.title || ''))}"
+                    >${f.form === 'part' ? '✂️' : '📄'} ${esc(f.scene || f.title || '范文')}</button>`).join('')
                 : '<span class="yy-pill none">📄 范文 · 还没有</span>'}
+              ${(t.real || []).map(f => `<button class="yy-pill real" data-wrfan="${f.id}"
+                  title="${esc(f.src + ' ｜ ' + (f.note || ''))}"
+                  >🏛 真题范文${f.title ? '：' + esc(f.title.slice(0, 14)) : ''}</button>`).join('')}
             </div>
           </div>`).join('')}
       </div>`).join('');
@@ -290,6 +324,31 @@ function yyWatch(tid) {
   }, 3000);
 }
 
+// 真题参考答案。**题干和要求要一起显示**——范文脱离题目没法学：
+// 看到「这道题 20 分、限 500 字、要内容全面条理清晰」，才看得懂答案为什么这么写。
+async function openRealFan(id) {
+  push({ view: 'writed', title: '真题参考答案' });
+  const box = $('#wd-text');
+  $('#wd-head').innerHTML = '<p class="empty">加载中…</p>';
+  $('#wd-acts').classList.add('hidden');
+  document.querySelectorAll('#wd-tabs .tk-tab').forEach(x => x.classList.add('hidden'));
+  ['#wd-used', '#wd-outline', '#wd-editor'].forEach(k => $(k).classList.add('hidden'));
+  box.classList.remove('hidden');
+  try {
+    const d = await api('/api/write/realfan/' + id);
+    $('#wd-head').innerHTML = `<h2>${esc(d.title || d.doctype || '真题参考答案')}</h2>
+      <div class="wd-meta">🏛 ${esc(d.src || '')}
+        ${d.score ? ` · ${d.score} 分` : ''}${d.limit ? ` · 限 ${d.limit} 字` : ''}
+        ${d.paper ? `<br><span class="yl-src">${esc(d.paper)}</span>` : ''}</div>`;
+    box.innerHTML = `
+      ${d.stem ? `<div class="rf-stem"><b>原题</b>${esc(d.stem)}</div>` : ''}
+      ${d.require ? `<div class="rf-req"><b>作答要求</b>${esc(d.require)}</div>` : ''}
+      <div class="rf-ans"><b>参考答案</b>${esc(d.content || '').split('\n')
+        .filter(x => x.trim()).map(x => `<p>${esc(x.trim())}</p>`).join('')}</div>
+      ${d.note ? `<div class="ye-why">💡 ${esc(d.note)}</div>` : ''}`;
+  } catch (err) { toast(err.message, true); }
+}
+
 function yyPaneClick(e) {
   const t = e.target.closest('[data-gwt]');
   if (t) { gwType = t.dataset.gwt; loadWrGw(); return; }
@@ -307,11 +366,27 @@ function yyPaneClick(e) {
   }
   const s = e.target.closest('[data-gws]');
   if (s) { $('#yy-scene').value = s.dataset.gws; return; }
+  // 删按钮在卡片里面，要抢在 data-weid 前面判，否则点它只会把这篇打开
+  const del = e.target.closest('[data-yydel]');
+  if (del) { yyDel(del); return; }
   const c = e.target.closest('[data-weid]');
   if (c) openWrited(+c.dataset.weid);
+  const rf = e.target.closest('[data-wrfan]');
+  if (rf) openRealFan(+rf.dataset.wrfan);
+}
+// 删了就没了（重写一篇要再跑一次 AI），先问一句
+async function yyDel(btn) {
+  const ttl = (btn.closest('.wr-day').querySelector('b') || {}).textContent || '';
+  if (!await appConfirm(`${ttl ? '「' + ttl + '」' : '这一篇'}删掉后找不回来，要重新写得再跑一次 AI。确定删？`,
+    { title: '删掉这一篇', okText: '删掉' })) return;
+  btn.disabled = true;
+  try {
+    await api('/api/write/' + btn.dataset.yydel, { method: 'DELETE' });
+    loadYyMine(); toast('删了');
+  } catch (e) { toast(e.message, true); btn.disabled = false; }
 }
 $('#wr-yycat').addEventListener('click', yyPaneClick);       // 文种大全：点提纲/范文打开
-$('#wr-yywrite').addEventListener('click', yyPaneClick);     // 自选成文：文种/表单/生成
+$('#wr-yywrite').addEventListener('click', yyPaneClick);     // 自选成文：文种/表单/生成 + 我写过的
 $('#yy-go').onclick = async () => {
   const scene = $('#yy-scene').value.trim();
   if (!scene) { toast('先说清楚就什么事发文', true); return; }
@@ -324,7 +399,8 @@ $('#yy-go').onclick = async () => {
         role: $('#yy-role').value.trim(), audience: $('#yy-aud').value.trim(),
       }),
     });
-    openWrited(d.id); loadYyCats();
+    // 列表当场刷掉（返回时 render 只管显隐、不重拉内容），返回就看得见刚写的这篇在最上面
+    openWrited(d.id); loadYyMine(); loadYyCats();
   } catch (e) { toast(e.message, true); }
   b.disabled = false; b.textContent = '✍️ 写这一篇';
 };
@@ -515,6 +591,7 @@ $('#wd-ed-save').onclick = async () => {
       }),
     });
     wdEdit(false); toast('改好了');
+    loadYyMine();      // 标题/字数改了，「我写过的」那张卡也要跟着变（返回时不会重拉）
   } catch (e) { toast(e.message, true); }
   b.disabled = false; b.textContent = '💾 保存';
 };

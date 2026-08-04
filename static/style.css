@@ -3785,3 +3785,12 @@ body.dark .bk-practice{background:#1e2733;border-color:#2c3d52;}
   background: var(--blue-fill); border-color: var(--blue); color: #fff;
   box-shadow: 0 3px 10px rgba(43,111,214,.3); }
 
+/* 真题参考答案查看 */
+.yy-pill.real { background: rgba(37,99,235,.1); border-color: rgba(37,99,235,.35); }
+.rf-stem, .rf-req { background: var(--bg2, #f6f7f9); border-radius: 8px; padding: 10px 12px;
+  margin: 8px 0; font-size: 13px; line-height: 1.7; }
+.rf-stem b, .rf-req b, .rf-ans b { display: block; font-size: 12px; color: var(--muted, #6b7280);
+  margin-bottom: 4px; }
+.rf-ans { margin-top: 12px; line-height: 1.9; }
+.rf-ans p { margin: 0 0 10px; }
+
