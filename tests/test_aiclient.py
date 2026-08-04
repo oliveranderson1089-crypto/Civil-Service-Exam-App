@@ -11,6 +11,9 @@
 """
 import json
 import re
+import socket
+import threading
+import time
 import urllib.error
 from io import BytesIO
 from pathlib import Path
@@ -124,6 +127,18 @@ class Test额度:
         assert not aiclient.is_reasoning(model), model
         assert aiclient.budget(model, 600) == 600
 
+    def test_推理段余量够装下实测峰值(self):
+        """REASON_MIN 是拿 ai_calls 的账定的，不是拍的——所以别再拍小回去。
+
+        成功调用里推理段的实际用量：fast 档最高 14140、pro 档最高 18668。
+        原来定的 4000 让应用文批改（正文额度 3500 → 总额度 10500）有 13% 的调用
+        把额度一口气烧干、正文一个字没出：白等 120~180 秒 + 白烧一万个 token，
+        然后才由加额度重试再跑一遍。用户那头看到的就是「批改老是失败、还特别慢」。
+        往宽了给不多花钱（模型写完就停），给窄了要赔上一整轮。
+        """
+        assert aiclient.budget("deepseek-v4-pro", 3500) - 3500 >= 18668
+        assert aiclient.budget("deepseek-v4-flash", 1600) - 1600 >= 14140
+
     def test_额度不越过接口上限(self):
         assert aiclient.budget("deepseek-v4-pro", 300000) == aiclient.HARD_CAP
         assert aiclient.budget("deepseek-chat", 500000) == aiclient.HARD_CAP
@@ -132,11 +147,11 @@ class Test额度:
         """budget() 算对了但没接进 payload 的话，线上照样是空正文。"""
         seen = []
 
-        def fake(req, **k):
-            seen.append(json.loads(req.data)["max_tokens"])
+        def fake(c, payload, timeout):
+            seen.append(payload["max_tokens"])
             return _FakeResp(_ok("ok"))
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(aiclient, "_open", fake)
         aiclient.chat([], cfg={"ai_model": "deepseek-v4-flash", "ai_key": "k"}, max_tokens=200)
         assert seen == [aiclient.budget("deepseek-v4-flash", 200)]
 
@@ -146,7 +161,7 @@ class Test调用:
            "ai_base": "https://x.test", "ai_key": "k"}
 
     def test_正常返回正文(self, monkeypatch):
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen",
+        monkeypatch.setattr(aiclient, "_open",
                             lambda *a, **k: _FakeResp(_ok(" 答案 ")))
         assert aiclient.chat([{"role": "user", "content": "hi"}], cfg=self.CFG) == "答案"
 
@@ -160,13 +175,13 @@ class Test调用:
                             lambda *a, **k: ["deepseek-v4-flash", "deepseek-v4-pro"])
         seen = []
 
-        def fake_urlopen(req, **k):
-            seen.append(json.loads(req.data)["model"])
+        def fake_open(c, payload, timeout):
+            seen.append(payload["model"])
             if seen[-1] == "old-name":
                 raise _http_error(400, '{"error":{"message":"Model Not Exist"}}')
             return _FakeResp(_ok("救回来了"))
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(aiclient, "_open", fake_open)
         assert aiclient.chat([], cfg=self.CFG) == "救回来了"
         assert seen == ["old-name", "deepseek-v4-flash"], "应当换成清单里的 fast 档重试"
 
@@ -180,24 +195,24 @@ class Test调用:
         monkeypatch.setattr(aiclient, "list_models", lambda *a, **k: ["deepseek-v4-flash"])
         seen = []
 
-        def fake(req, **k):
-            seen.append(json.loads(req.data)["model"])
+        def fake(c, payload, timeout):
+            seen.append(payload["model"])
             if seen[-1] == "old-name":
                 raise _http_error(400, '{"error":{"message":"Model Not Exist"}}')
             return _FakeResp(_ok("救回来了"))
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(aiclient, "_open", fake)
         assert aiclient.chat([], cfg=self.CFG, retries=0) == "救回来了"
 
     def test_只探活一次不会无限换名(self, monkeypatch):
         monkeypatch.setattr(aiclient, "list_models", lambda *a, **k: ["another"])
         n = []
 
-        def always_bad(req, **k):
+        def always_bad(c, payload, timeout):
             n.append(1)
             raise _http_error(400, '{"error":{"message":"model not found"}}')
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", always_bad)
+        monkeypatch.setattr(aiclient, "_open", always_bad)
         with pytest.raises(urllib.error.HTTPError):
             aiclient.chat([], cfg=self.CFG)
         assert len(n) == 2, "第一次 + 探活后一次，不能再多"
@@ -212,23 +227,23 @@ class Test调用:
         """
         n = []
 
-        def flaky(req, **k):
+        def flaky(c, payload, timeout):
             n.append(1)
             if len(n) == 1:
                 raise TimeoutError("The read operation timed out")
             return _FakeResp(_ok("第二次成功"))
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", flaky)
+        monkeypatch.setattr(aiclient, "_open", flaky)
         monkeypatch.setattr(aiclient.time, "sleep", lambda *_: None)
         assert aiclient.chat([], cfg=self.CFG) == "第二次成功"
         assert len(n) == 2, "读超时该重试一次，实际调了 %d 次" % len(n)
 
     def test_读取超时重试用尽后照样抛出去(self, monkeypatch):
         """能重试不等于能吞掉：一直超时就得让上层看见，而不是返回空串。"""
-        def always_slow(req, **k):
+        def always_slow(c, payload, timeout):
             raise TimeoutError("The read operation timed out")
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", always_slow)
+        monkeypatch.setattr(aiclient, "_open", always_slow)
         monkeypatch.setattr(aiclient.time, "sleep", lambda *_: None)
         with pytest.raises(TimeoutError):
             aiclient.chat([], cfg=self.CFG)
@@ -239,10 +254,10 @@ class Test调用:
         monkeypatch.setattr(aiclient, "list_models",
                             lambda *a, **k: called.append(1) or [])
 
-        def broke(req, **k):
+        def broke(c, payload, timeout):
             raise _http_error(402, '{"error":{"message":"Insufficient Balance"}}')
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", broke)
+        monkeypatch.setattr(aiclient, "_open", broke)
         with pytest.raises(urllib.error.HTTPError):
             aiclient.chat([], cfg=self.CFG, retries=0)
         assert not called, "402 不该触发探活"
@@ -251,7 +266,7 @@ class Test调用:
         """deepseek-v4 会先产 reasoning_content。max_tokens 给小了正文就是空串，
         上游 json.loads('') 只会得到一句莫名其妙的解析失败。"""
         monkeypatch.setattr(
-            aiclient.urllib.request, "urlopen",
+            aiclient, "_open",
             lambda *a, **k: _FakeResp({
                 "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
                 "usage": {"completion_tokens_details": {"reasoning_tokens": 199}}}))
@@ -267,15 +282,15 @@ class Test调用:
         """
         seen = []
 
-        def fake(req, **k):
-            seen.append(json.loads(req.data)["max_tokens"])
+        def fake(c, payload, timeout):
+            seen.append(payload["max_tokens"])
             if len(seen) == 1:
                 return _FakeResp({
                     "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
                     "usage": {"completion_tokens_details": {"reasoning_tokens": 2001}}})
             return _FakeResp(_ok("这回写出来了"))
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(aiclient, "_open", fake)
         cfg = dict(self.CFG, ai_model="deepseek-v4-flash")
         assert aiclient.chat([], cfg=cfg, max_tokens=2000, retries=0) == "这回写出来了"
         assert len(seen) == 2, "该重试一次"
@@ -286,13 +301,13 @@ class Test调用:
         为了救一次截断反而把请求打成 400，是把一个能报错的问题换成一个更难查的。"""
         seen = []
 
-        def fake(req, **k):
-            seen.append(json.loads(req.data)["max_tokens"])
+        def fake(c, payload, timeout):
+            seen.append(payload["max_tokens"])
             return _FakeResp({
                 "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
                 "usage": {"completion_tokens_details": {"reasoning_tokens": 300000}}})
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(aiclient, "_open", fake)
         cfg = dict(self.CFG, ai_model="deepseek-v4-flash")
         with pytest.raises(RuntimeError, match="截断"):
             aiclient.chat([], cfg=cfg, max_tokens=200000, retries=0)
@@ -303,11 +318,11 @@ class Test调用:
         这种情况再跑一遍只是多花一次钱，捞回来的还未必更多。"""
         n = []
 
-        def fake(req, **k):
+        def fake(c, payload, timeout):
             n.append(1)
             return _FakeResp(_ok('{"items":[{"title":"写到一半', finish="length"))
 
-        monkeypatch.setattr(aiclient.urllib.request, "urlopen", fake)
+        monkeypatch.setattr(aiclient, "_open", fake)
         cfg = dict(self.CFG, ai_model="deepseek-v4-flash")
         assert aiclient.chat([], cfg=cfg, retries=0).startswith('{"items"')
         assert len(n) == 1, "半截正文该原样交给上游 salvage，不该重试"
@@ -316,6 +331,216 @@ class Test调用:
         assert "余额" in aiclient.error_message(_http_error(402, ""))
         assert "Key" in aiclient.error_message(_http_error(401, ""))
         assert "模型名" in aiclient.error_message(_http_error(400, ""))
+        # 裸 OSError 不经 URLError 包装，漏掉的话用户看到的是
+        # "AI 调用失败：[Errno 104] Connection reset by peer"
+        assert "连接中断" in aiclient.error_message(ConnectionResetError(104, "reset"))
+
+    def test_连接被RST会重试且算作网络故障(self, monkeypatch):
+        """ConnectionResetError 既不是 URLError 也不是 TimeoutError。
+
+        原来那条 `except (URLError, TimeoutError)` 接不住它，于是对端一 RST，
+        这次调用**既不记账也不重试**，直接把一句英文 errno 冒到业务层。
+        """
+        import aimeter
+        n = []
+
+        def flaky(c, payload, timeout):
+            n.append(1)
+            if len(n) == 1:
+                raise ConnectionResetError(104, "Connection reset by peer")
+            return _FakeResp(_ok("第二次成功"))
+
+        monkeypatch.setattr(aiclient, "_open", flaky)
+        monkeypatch.setattr(aiclient.time, "sleep", lambda *_: None)
+        assert aiclient.chat([], cfg=self.CFG) == "第二次成功"
+        assert len(n) == 2, "RST 该重试一次"
+        assert aimeter.err_kind(ConnectionResetError(104, "x")) == "network"
+
+
+# ---------------------------------------------------------------- 连接阶段
+class Test连接阶段:
+    """「连不上」和「模型在想」必须用两份独立的预算。
+
+    这一族盯的是 2026-08 那次线上故障：urlopen 只有一个 timeout，连接、TLS 握手、
+    读取共用一份，于是握手静默卡死时，整份**读取**预算被它一个人吃光——
+    AI 助手每次尝试卡满 33.4 秒（连吃 3 次 = 100 秒白等、成功率 36.7%），
+    小题批改每次尝试卡满 300 秒。ai_calls 里每条 err_kind=timeout 的 elapsed_ms
+    都精确等于调用方配的 timeout，一个 token 都没收到，就是这么查出来的。
+    """
+
+    CFG = {"ai_model": "deepseek-v4-flash", "ai_base": "https://x.test", "ai_key": "k"}
+
+    @staticmethod
+    def _deaf_server():
+        """接了 TCP 就晾着、永不回 ServerHello —— 复现线上那句
+        `_ssl.c:1063: The handshake operation timed out`。"""
+        srv = socket.socket()
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(8)
+        held = []
+
+        def loop():
+            while True:
+                try:
+                    held.append(srv.accept()[0])
+                except OSError:
+                    return
+
+        threading.Thread(target=loop, daemon=True).start()
+        return srv, srv.getsockname()[1], held
+
+    def test_握手卡死不吃读取预算(self, monkeypatch):
+        """这条红了，就说明连接阶段又跟读取共用一份超时了。"""
+        srv, port, _ = self._deaf_server()
+        try:
+            monkeypatch.setattr(aiclient, "CONNECT_TIMEOUT", 1)
+            monkeypatch.setattr(aiclient, "_addrs", lambda *a, **k: ["127.0.0.1"])
+            cfg = dict(self.CFG, ai_base="https://api.deepseek.com:%d" % port)
+            t0 = time.time()
+            with pytest.raises(urllib.error.URLError):
+                # 读取预算 300 秒（批改就是这个数）：握手卡死绝不能等满 300 秒
+                aiclient.chat([], cfg=cfg, retries=0, timeout=300)
+            dt = time.time() - t0
+        finally:
+            srv.close()
+        assert dt < 30, "握手卡死等了 %.1f 秒，连接阶段没有独立限时" % dt
+
+    def test_钉IP真的生效了(self, monkeypatch):
+        """`_Pinned` 稍不留神就会静默失效，那才是最坏的情况——看不出来。
+
+        http.client 在 HTTPConnection.__init__ 里做的是
+        `self._create_connection = socket.create_connection`（实例属性），
+        它会把同名的**子类方法**整个盖掉。写成方法的话这里一声不响地退回普通连接，
+        换 IP 自愈全部失灵，而日志上什么都看不出来。
+        用一个解析不出来的域名当靶子：钉 IP 只要没生效，就会是 DNS 错误。
+        """
+        srv, port, held = self._deaf_server()
+        try:
+            conn = aiclient._Pinned("nonexistent.invalid", "127.0.0.1",
+                                    port=port, timeout=1)
+            with pytest.raises(OSError) as ei:
+                conn.connect()          # 对端不握手，这里必然失败——要看的是它连到了哪
+            assert "Name or service not known" not in str(ei.value), \
+                "走了 DNS，说明钉 IP 没生效（多半是被实例属性盖掉了）"
+            time.sleep(0.2)
+            assert held, "本地靶子没收到连接，钉 IP 没生效"
+        finally:
+            srv.close()
+
+    def test_一个IP握手卡死就换下一个(self, monkeypatch):
+        """api.deepseek.com 背后挂着十几个 IP，卡死的往往只是其中一两个。
+
+        socket.create_connection 只在**连接失败**时才往下一个地址走，握手失败不算，
+        所以原来的重试次次撞在同一个坏 IP 上——线上就是连着失败三次。
+        """
+        tried = []
+
+        def fake_connect(url, ip, timeout):
+            tried.append(ip)
+            if ip in ("1.1.1.1", "2.2.2.2"):
+                raise TimeoutError("_ssl.c:1063: The handshake operation timed out")
+            return _FakeConn(), "/v1/chat/completions"
+
+        monkeypatch.setattr(aiclient, "_addrs",
+                            lambda *a, **k: ["1.1.1.1", "2.2.2.2", "3.3.3.3"])
+        monkeypatch.setattr(aiclient, "_connect", fake_connect)
+        monkeypatch.setattr(aiclient.random, "randrange", lambda n: 0)
+        assert aiclient.chat([], cfg=self.CFG, retries=0) == "换IP救回来了"
+        assert tried == ["1.1.1.1", "2.2.2.2", "3.3.3.3"]
+
+    def test_全部IP都连不上时归类为超时(self, monkeypatch):
+        """包成 URLError(原异常) 才能让 err_kind 和用户话术都认出「这是超时」。"""
+        import aimeter
+        monkeypatch.setattr(aiclient, "_addrs", lambda *a, **k: ["1.1.1.1", "2.2.2.2"])
+        monkeypatch.setattr(aiclient, "_connect", _raise_handshake_timeout)
+        monkeypatch.setattr(aiclient.time, "sleep", lambda *_: None)
+        with pytest.raises(urllib.error.URLError) as ei:
+            aiclient.chat([], cfg=self.CFG, retries=0)
+        assert aimeter.err_kind(ei.value) == "timeout"
+        assert "超时" in aiclient.error_message(ei.value)
+
+    def test_请求发出去之后不再换IP(self, monkeypatch):
+        """换 IP 只在连接阶段做。请求都发出去了还闷头重发，
+        「出一道题」会变成出两道、「加入错题本」会加两条。"""
+        tried = []
+
+        def fake_connect(url, ip, timeout):
+            tried.append(ip)
+            return _FakeConn(fail_on_request=True), "/x"
+
+        monkeypatch.setattr(aiclient, "_addrs", lambda *a, **k: ["1.1.1.1", "2.2.2.2"])
+        monkeypatch.setattr(aiclient, "_connect", fake_connect)
+        monkeypatch.setattr(aiclient.time, "sleep", lambda *_: None)
+        with pytest.raises(OSError):
+            aiclient.chat([], cfg=self.CFG, retries=0)
+        assert len(tried) == 1, "请求已发出，不该在 _open 里换 IP 重发"
+
+    def test_地址被重定向时说清楚该改哪(self, monkeypatch):
+        """urlopen 会自动跟重定向，http.client 不会。
+
+        不单列的话，跳转页的 HTML 会被当成回复正文带到上游，报出来是
+        「AI 返回格式异常」——一句指不到根因、也不知道该改哪儿的话。
+        """
+        class _Redir(_FakeConn):
+            def getresponse(self):
+                r = _FakeHTTPResp({})
+                r.status = 301
+                r.getheader = lambda h: "https://api.deepseek.com/v1/chat/completions"
+                return r
+
+        monkeypatch.setattr(aiclient, "_addrs", lambda *a, **k: ["1.1.1.1"])
+        monkeypatch.setattr(aiclient, "_connect", lambda *a: (_Redir(), "/x"))
+        with pytest.raises(RuntimeError, match="重定向"):
+            aiclient.chat([], cfg=self.CFG, retries=0)
+
+    def test_走代理时交回urllib(self, monkeypatch):
+        """代理下「连哪个 IP」由代理说了算，钉 IP 没有意义还会连错地方。"""
+        monkeypatch.setattr(aiclient.urllib.request, "getproxies",
+                            lambda: {"https": "http://127.0.0.1:7897"})
+        monkeypatch.setattr(aiclient.urllib.request, "proxy_bypass", lambda h: False)
+        used = []
+        monkeypatch.setattr(aiclient.urllib.request, "urlopen",
+                            lambda req, **k: used.append(req.full_url) or _FakeResp(_ok("走代理")))
+        monkeypatch.setattr(aiclient, "_connect",
+                            lambda *a: pytest.fail("走代理时不该自己建连接"))
+        assert aiclient.chat([], cfg=self.CFG, retries=0) == "走代理"
+        assert used == ["https://x.test/v1/chat/completions"]
+
+
+class _FakeConn:
+    """假连接：握手已过，剩下发请求/读响应。"""
+
+    def __init__(self, fail_on_request=False):
+        self.sock = type("S", (), {"settimeout": lambda self, t: None})()
+        self._fail = fail_on_request
+
+    def request(self, method, path, body=None, headers=None):
+        if self._fail:
+            raise ConnectionResetError(104, "Connection reset by peer")
+
+    def getresponse(self):
+        return _FakeHTTPResp(_ok("换IP救回来了"))
+
+    def close(self):
+        pass
+
+
+class _FakeHTTPResp:
+    status, reason, msg = 200, "OK", {}
+
+    def __init__(self, payload):
+        self._b = json.dumps(payload).encode()
+
+    def read(self):
+        return self._b
+
+    def close(self):
+        pass
+
+
+def _raise_handshake_timeout(url, ip, timeout):
+    raise TimeoutError("_ssl.c:1063: The handshake operation timed out")
 
 
 # ---------------------------------------------------------------- 全局约束

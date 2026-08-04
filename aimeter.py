@@ -113,6 +113,10 @@ def err_kind(exc):
         return "timeout"
     if isinstance(exc, urllib.error.URLError):
         return "network"
+    # 连接被对端 RST、TLS 报错这些都是裸 OSError，不经 URLError 包装。
+    # 不单列的话它们全落进 "other"，报表上就看不出「这是网络问题」。
+    if isinstance(exc, OSError):
+        return "network"
     return "other"
 
 

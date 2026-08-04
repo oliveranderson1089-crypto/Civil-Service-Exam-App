@@ -26,13 +26,22 @@ DeepSeek 把 deepseek-chat 下线时，主应用改完了，这 8 个脚本还�
 **额度也归这儿管**：业务传的 max_tokens 一律当「正文额度」，推理模型要烧的
 reasoning_content 由 budget() 另外加，截断了还会自己加额度重试一次。理由见下面
 REASON_MIN 那一段——三十多处调用方各自去猜推理段要多少 token 是不现实的。
+
+**连接阶段也归这儿管**：见下面 CONNECT_TIMEOUT 那一段——「连不上」和「模型在想」
+必须用两份独立的预算，混成一个数是本文件历史上最贵的一个 bug。
 """
+import http.client
+import io
 import json
 import os
+import random
 import re
+import socket
+import ssl
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import aimeter          # 记账，同样零依赖（只标准库）；出岔子也只是少一行账，见 aimeter.record
@@ -176,7 +185,15 @@ _REASONING = re.compile(r"(?:^|[-_/])(?:v[4-9]\d*|r1|reasoner|think\w*)", re.I)
 # 推理段起码留 REASON_MIN；正文额度大的任务（出题、扫材料）推理通常也更长，
 # 所以再按倍数放。**max_tokens 是上限不是花销**：给宽了不会多花钱（模型该写多长
 # 写多长），给窄了正文直接是空串。所以这里一律往宽了给。
-REASON_MIN = 4000
+#
+# REASON_MIN 原来是 4000，**定小了**——这句话是 ai_calls 的账算出来的，不是拍的：
+# 成功调用里推理段的实际用量，fast 档最高 14140、pro 档最高 18668；而应用文批改
+# （max_tokens=3500 → 额度 10500）有 13% 的调用把 10500 一口气烧干、正文一个字没出。
+# 代价不是"截断"这么轻：每次 starved 都是白等 120~180 秒 + 白烧一万个 token，
+# 然后才由下面的加额度重试再跑一遍，用户看到的就是"批改老是失败、还特别慢"。
+# 24000 覆盖实测峰值还留三成余量。往宽了给不多花一分钱（模型写完就停），
+# 而给窄了要赔上一整轮的时间和 token——这买卖是单向的。
+REASON_MIN = 24000
 REASON_RATIO = 2
 
 
@@ -209,14 +226,166 @@ def _starved(d):
     return True, rt
 
 
+# ---------------------------------------------------------------- 连接阶段：连不上 ≠ 模型在想
+# 业务传的 timeout 是**读取**预算（"模型最多可以想多久"），批改类给到 300 秒。
+# 可 urllib.request.urlopen 只认一个 timeout：连接、TLS 握手、读取共用这一份。
+# 于是线上故障全长一个样（2026-07 的账查出来的，ai_calls 里每一条 err_kind=timeout
+# 的 elapsed_ms 都**精确等于**调用方配的 timeout，一个 token 都没收到）：
+#     journal: URLError(TimeoutError('_ssl.c:1063: The handshake operation timed out'))
+#     · AI 助手  每次尝试卡满 33.4 秒（=100 秒预算 ÷ 3 次），连吃 3 次 = 100 秒白等
+#     · 小题批改 每次尝试卡满 300 秒，用户对着转圈等 5 分钟，最后一句"超时"
+# TCP 是通的（实测 12 个 IP 全部 0.05~0.11 秒握完手），是握手静默卡死。
+# 也就是说：整份读取预算被**握手**一个人吃光了，而握手根本用不了那么久。
+#
+# 所以连接阶段单独给一份小预算，并且失败了**换一个 IP** 再来——api.deepseek.com
+# 背后挂着十几个 IP，卡死的往往只是其中一两个，而 socket.create_connection 一旦
+# TCP 连上就不会再换地址了（它只在**连接失败**时才往下一个走，握手失败不算）。
+# 原来的重试次次撞在同一个 IP 上，所以才会一连失败三次。
+CONNECT_TIMEOUT = 8         # 实测握手 0.05~0.11 秒，8 秒是 70 倍余量；卡死的一秒也等不出结果
+CONNECT_TRIES = 3           # 最坏 24 秒，仍远小于任何一处的读取预算
+
+_addr_cache = {"host": "", "at": 0.0, "ips": []}
+
+
+def _addrs(host, port, ttl=60):
+    """域名背后的 IP 列表，缓存 60 秒。解析不出来就返回空，退回让系统自己选。"""
+    now = time.time()
+    if _addr_cache["host"] == host and _addr_cache["ips"] and now - _addr_cache["at"] < ttl:
+        return _addr_cache["ips"]
+    try:
+        ips = sorted({i[4][0] for i in
+                      socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)})
+    except Exception as e:
+        _log("解析 %s 失败：%s" % (host, e))
+        return []
+    if ips:
+        _addr_cache.update(host=host, at=now, ips=ips)
+    return ips
+
+
+class _Pinned(http.client.HTTPSConnection):
+    """连到指定 IP，但 SNI 和证书校验照旧按域名走——换 IP 不能换成不验证书。
+
+    **必须在 __init__ 里覆盖实例属性**，不能写成子类方法：http.client 在
+    HTTPConnection.__init__ 里做的是 `self._create_connection = socket.create_connection`
+    （3.14 的 http/client.py:908），实例属性会把同名的子类方法整个盖掉。
+    写成方法的话这里一声不响地退回普通连接——钉 IP 全部失效，而且看不出来。
+    """
+
+    def __init__(self, host, ip, **kw):
+        super().__init__(host, **kw)
+        self._create_connection = (
+            lambda address, timeout, source_address:
+            socket.create_connection((ip, address[1]), timeout, source_address))
+
+
+class _Resp:
+    """响应 + 它底下那条连接。只 close 响应的话 socket 要留到 GC 才释放，
+    而流式那条一次对话能开四五次连接。`with _open(...) as r` 拿到的是响应本身。"""
+
+    def __init__(self, r, conn):
+        self.r, self.conn = r, conn
+
+    def __enter__(self):
+        return self.r
+
+    def __exit__(self, *exc):
+        try:
+            self.r.close()
+        finally:
+            self.conn.close()
+        return False
+
+
+def _via_proxy(url):
+    """这个地址是不是要走代理。走代理就交回 urllib——代理下「连哪个 IP」由代理说了算，
+    我们钉 IP 没有意义。服务和定时器都是直连（NO_PROXY=*），只有人在终端里手跑脚本
+    才会撞上代理。"""
+    p = urllib.parse.urlsplit(url)
+    if not urllib.request.getproxies().get(p.scheme):
+        return False
+    try:
+        return not urllib.request.proxy_bypass(p.hostname)
+    except Exception:
+        return True
+
+
+def _connect(url, ip, timeout):
+    """建连接（TCP + TLS 都在 timeout 之内），返回 (连接, 请求路径)。"""
+    p = urllib.parse.urlsplit(url)
+    port = p.port or (443 if p.scheme == "https" else 80)
+    if p.scheme != "https":
+        conn = http.client.HTTPConnection(p.hostname, port, timeout=timeout)
+    elif ip:
+        conn = _Pinned(p.hostname, ip, port=port, timeout=timeout)
+    else:
+        conn = http.client.HTTPSConnection(p.hostname, port, timeout=timeout)
+    conn.connect()
+    return conn, (p.path or "/") + (("?" + p.query) if p.query else "")
+
+
 def _open(c, payload, timeout):
     """发出去并拿到响应对象。流式那条要边读边处理，不能像 chat() 那样一口气 read()，
-    所以建请求这段得单独拎出来给两边共用。"""
-    req = urllib.request.Request(
-        c["url"], data=json.dumps(payload).encode("utf-8"), method="POST",
-        headers={"Content-Type": "application/json",
-                 "Authorization": "Bearer " + c["key"]})
-    return urllib.request.urlopen(req, timeout=timeout)
+    所以建请求这段得单独拎出来给两边共用。
+
+    timeout 只管**读取**：连接和握手用上面那份小预算，失败就换 IP 重来。
+    换 IP 只在连接阶段做——请求一旦发出去，重不重试是 chat()/stream() 的事，
+    在这儿闷头重发会把「出一道题」变成出两道。
+    """
+    body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json",
+               "Authorization": "Bearer " + c["key"]}
+    if _via_proxy(c["url"]):
+        req = urllib.request.Request(c["url"], data=body, method="POST", headers=headers)
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    p = urllib.parse.urlsplit(c["url"])
+    ips = _addrs(p.hostname, p.port or 443) or [None]
+    # 随机起点：13 个定时器脚本几乎同时醒来，都从 ips[0] 开始的话，
+    # 坏的那个 IP 会被所有进程一起撞上。
+    start = random.randrange(len(ips))
+    # 连接阶段整体也别超过调用方那份读取预算：对话那条只给 33 秒，
+    # 花 24 秒在连接上就没时间听回答了。批改那种 300 秒的取不到这个下限。
+    ct = max(2.0, min(CONNECT_TIMEOUT, (timeout or CONNECT_TIMEOUT) / CONNECT_TRIES))
+    last = None
+    for k in range(min(CONNECT_TRIES, len(ips))):
+        ip = ips[(start + k) % len(ips)]
+        try:
+            conn, path = _connect(c["url"], ip, ct)
+        except OSError as e:            # TimeoutError / ssl.SSLError 都是 OSError 的子类
+            last = e
+            more = k + 1 < min(CONNECT_TRIES, len(ips))
+            _log("连 %s 失败（%s）%s" % (ip or p.hostname, e,
+                                        "，换个 IP 重来" if more else "，没有别的 IP 可换了"))
+            continue
+        # 握手过了，剩下的路交给调用方那份长得多的读取预算
+        conn.sock.settimeout(timeout)
+        try:
+            conn.request("POST", path, body=body, headers=headers)
+            r = conn.getresponse()
+        except Exception:
+            conn.close()
+            raise
+        if 300 <= r.status < 400:
+            # urlopen 会自动跟重定向，http.client 不会。不单列的话，跳转页的 HTML
+            # 会被当成回复正文一路带到上游，报出来是「AI 返回格式异常」——查不到根因。
+            # 后台的接口地址是人手填的，把 https 写成 http、或域名少一段都会跳转。
+            loc = r.getheader("Location") or "别处"
+            r.read()
+            conn.close()
+            raise RuntimeError("AI 接口地址 %s 被重定向到 %s（常见于 https 写成了 http）；"
+                               "请到「后台 → AI 设置」把地址直接填成最终地址"
+                               % (c["url"], loc))
+        if r.status >= 400:
+            # body 当场读干净再关连接：HTTPError 的 fp 只能读一次，_detail() 在上层等着它。
+            detail = r.read()
+            conn.close()
+            raise urllib.error.HTTPError(c["url"], r.status, r.reason, r.msg,
+                                         io.BytesIO(detail))
+        return _Resp(r, conn)
+    # 包成 URLError(原异常) —— 跟 urlopen 原来抛的形状一致，上层那几处
+    # `except (URLError, TimeoutError)` 和 aimeter.err_kind 的超时判定都不用改。
+    raise urllib.error.URLError(last or OSError("连不上 %s" % p.hostname))
 
 
 def _detail(e):
@@ -312,14 +481,18 @@ def chat(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=120,
                     cap = max(cap, budget(model, max_tokens))
                     continue
             raise                      # detail 已由 _detail() 挂在 e.gk_detail 上供上层用
-        except (urllib.error.URLError, TimeoutError) as e:
+        except OSError as e:
             aimeter.record(tier=tier, model=model, mode="chat", elapsed_ms=t.ms,
                            ok=False, err=e, who=who)
-            # TimeoutError 必须单列：连接阶段超时会被 urllib 包成 URLError，可**读取阶段**
-            # 超时（"The read operation timed out"）抛的是裸的 socket.timeout —— 它是
-            # TimeoutError 的别名、不是 URLError 的子类，原来这条分支根本接不住，
-            # 一次网络抖动就让整轮调用失败。实测小题出题连跑 4 次，有 1 次栽在这儿，
-            # 整道题白出。长任务（出题/批改）耗时越久越容易撞上，越该重试。
+            # 接 OSError 这一整族，而不是列举 (URLError, TimeoutError)：网络出岔子的形状
+            # 太多，列举法每漏一种，那种异常就**既不记账也不重试**地直接冒到业务层。
+            # 已经踩到的三种：
+            #   · 读取阶段超时抛裸 TimeoutError（socket.timeout 的别名，不是 URLError 子类）
+            #   · 对端中途 RST 抛 ConnectionResetError
+            #   · TLS 层出错抛 ssl.SSLError
+            # 三者都是 OSError 的子类，URLError 自己也是（class URLError(OSError)），
+            # 所以这一条既涵盖旧的两种、又不再漏。HTTPError 是 URLError 的子类，
+            # 但它在上面一条已经先接走了，顺序不能反。
             tried += 1
             if tried <= retries:
                 time.sleep(tried)
@@ -423,7 +596,8 @@ def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
                     cap = max(cap, budget(model, max_tokens))
                     continue
             raise
-        except (urllib.error.URLError, TimeoutError) as e:
+        except OSError as e:
+            # 同 chat()：接 OSError 这一整族，别列举——漏掉的那种会既不记账也不重试。
             # 流式断在半路时 usage 多半是空的，但已吐出去的 token 照样收费——
             # 有多少记多少，别因为记不全就整条丢掉。
             aimeter.record(tier=tier, model=model, mode="stream", usage=usage,
@@ -470,6 +644,10 @@ def error_message(e):
         return "AI 服务响应超时（网络不稳），请再发一次"
     if isinstance(e, urllib.error.URLError):
         return "连不上 AI 服务：" + str(e.reason)
+    # 裸 OSError（对端 RST、TLS 报错）不经 URLError 包装，漏掉的话用户看到的是
+    # "AI 调用失败：[Errno 104] Connection reset by peer"——又是一句看不懂的英文。
+    if isinstance(e, OSError):
+        return "与 AI 服务的连接中断（网络不稳），请再发一次"
     return "AI 调用失败：" + str(e)
 
 
