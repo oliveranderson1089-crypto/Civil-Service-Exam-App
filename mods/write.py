@@ -249,7 +249,11 @@ def _compose_dirs(db, p, n_hist=40, n_out=4):
 
 def _compress(content):
     """字数超上限时叫 AI 精简到 ≤ WRITE_MAX，保住结构、分论点句和素材，只删冗余修饰。
-       和补素材循环分开：那个是「缺什么补什么」，这个是「多了就删」，混在一起两头够不着。"""
+       和补素材循环分开：那个是「缺什么补什么」，这个是「多了就删」，混在一起两头够不着。
+
+       档位 fast：正文**整篇原样喂进去**了，这一步不产出新内容、只做删减，不需要旗舰的
+       立意和选材能力——那些活已经在上面写正文时花过 pro 的钱了。删坏了也有兜底：
+       下面三条返回路径全都退回原文，最坏情况是这篇不精简，不会出残篇。"""
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论阅卷组的范文作者。这次只做精简压缩，严格输出 JSON。"},
          {"role": "user", "content":
@@ -258,7 +262,7 @@ def _compress(content):
           "开头的总论点、结尾的升华都要留。\n\n【正文】\n%s\n\n"
           '只输出 JSON：{"content":"精简后的正文全文，用 \\n 分段"}'
           % (WRITE_MAX, WRITE_MIN, content)}],
-        temperature=0.3, max_tokens=4000, timeout=300, json_mode=True, tier="pro")
+        temperature=0.3, max_tokens=4000, timeout=300, json_mode=True, tier="fast")
     if err:
         return content
     try:

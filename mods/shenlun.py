@@ -143,7 +143,11 @@ def _split_paper(text):
 
 
 def _classify_questions(qs):
-    """一次 AI 调用给所有小题定题型（题干短，很便宜）。"""
+    """一次 AI 调用给所有小题定题型（题干短，很便宜）。
+
+    档位 fast：这是**分类 + 抄写**，不是判断——题型从固定的五选一里挑，满分和字数区间
+    本来就明明白白写在题干里（「（15分）」「不超过200字」），照抄出来即可。
+    原来挂在 pro 上是误配：pro 该留给命题/写作/批改那些「模型自己要想出内容」的活。"""
     lines = ["%d. %s" % (q["seq"], q["body"][:300].replace("\n", " ")) for q in qs]
     prompt = ("下面是一份申论真题的各道小题。请判断每题的题型，只能从这五个里选：\n"
               "guina=归纳概括题，zonghe=综合分析题，duice=提出对策题，guanche=贯彻执行题（要写公文/文书），"
@@ -154,7 +158,7 @@ def _classify_questions(qs):
               + "\n\n".join(lines))
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论教研老师，熟悉各题型的判别特征，严格输出 JSON。"},
-         {"role": "user", "content": prompt}], temperature=0.1, max_tokens=1200, json_mode=True, tier="pro")
+         {"role": "user", "content": prompt}], temperature=0.1, max_tokens=1200, json_mode=True, tier="fast")
     if err:
         return {}
     try:
