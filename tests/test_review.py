@@ -33,7 +33,8 @@ def _uid(username="tester"):
 def _clean(auth_client):
     """每条用例前把复习相关的表清空——库是 session 级共享的。"""
     con = _db()
-    for t in ("review_state", "entries", "annotations", "sucai_items", "wrong_questions"):
+    for t in ("review_state", "entries", "annotations", "sucai_items", "wrong_questions",
+              "gushi_log"):
         con.execute(f"DELETE FROM {t}")
     con.commit()
     con.close()
@@ -454,3 +455,71 @@ class TestGushiPool:
         j = _done(auth_client, "gushi", gid).get_json()
         assert j["stage"] == 1 and j["interval"] == rvmod.REVIEW_INTERVALS[1]
         assert not self._pool(), "推到 2 天后了还在今天的池子里"
+
+
+class TestGushiLog:
+    """「常考 · 古诗积累」的每日流水。今日复习每天新出的古诗卡自动汇进去，一天一段。
+
+    盯三件事：
+    - 记的是**第一次露面那天**，不是最近一次复习那天（不然回头看全挤在同一天，
+      「哪天新背的」就没了 —— 这也是不直接读 review_state.last_done 的原因）；
+    - 被每日上限截掉的不算今天的（它今天没露面）；
+    - 翻开看过就算，不必点完「认识」（/today 就记，不是等 /done）。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_gushi(self):
+        yield
+        con = _db()
+        con.execute("DELETE FROM gushi_cards")
+        con.execute("DELETE FROM classics WHERE title LIKE '测试诗%'")
+        con.commit()
+        con.close()
+
+    def _board(self, client):
+        return client.get("/api/changkao/items?board=古诗积累").get_json()["items"]
+
+    def test_今天出的诗自动进积累(self, auth_client):
+        _mk_gushi(3)
+        _set_limits(auth_client, gushi=5)
+        _today(auth_client)                       # 只是打开复习页，没点「认识」
+        got = self._board(auth_client)
+        assert len(got) == 3, f"今日复习出的古诗没汇进积累：{got}"
+        assert all(it["day"] == TODAY for it in got)
+        one = got[0]
+        assert one["title"].startswith("《测试诗") and "名句" in one["content"]
+        assert one["common"] and one["apply"], "考点和申论用法要带上，不然还得再点开一遍"
+        assert one["cid"], "得给诗的 id，不然点开看不了全文"
+
+    def test_被上限截掉的不算今天的(self, auth_client):
+        _mk_gushi(9)
+        _set_limits(auth_client, gushi=4)
+        _today(auth_client)
+        assert len(self._board(auth_client)) == 4, "今天没露面的诗也被记进流水了"
+
+    def test_再复习一遍不改首次日期(self, auth_client):
+        """这条是这张表存在的理由：日期跟着 last_done 走的话，第二天全挤到第二天。"""
+        ids = _mk_gushi(2)
+        _set_limits(auth_client, gushi=5)
+        _today(auth_client)
+        con = _db()                               # 把它们改成「昨天进来的」
+        con.execute("UPDATE gushi_log SET added_on=?", (YESTERDAY,))
+        con.commit()
+        con.close()
+        _today(auth_client)                       # 今天再打开一次
+        _done(auth_client, "gushi", ids[0])       # 再背一遍
+        got = self._board(auth_client)
+        assert [it["day"] for it in got] == [YESTERDAY, YESTERDAY], \
+            f"首次日期被今天覆盖了：{[(it['id'], it['day']) for it in got]}"
+
+    def test_板块条数和收藏都对得上(self, auth_client):
+        ids = _mk_gushi(2)
+        _set_limits(auth_client, gushi=5)
+        _today(auth_client)
+        boards = {b["key"]: b for b in auth_client.get("/api/changkao/boards").get_json()["boards"]}
+        assert boards["古诗积累"]["count"] == 2
+        r = auth_client.post("/api/changkao/star", json={"board": "古诗积累", "id": ids[0]})
+        assert r.get_json().get("starred") is True, r.get_json()
+        stars = auth_client.get("/api/changkao/stars").get_json()
+        assert any(b["board"] == "古诗积累" and b["items"][0]["item_id"] == ids[0]
+                   for b in stars["boards"]), stars

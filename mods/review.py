@@ -253,6 +253,28 @@ def _rv_limits(db, u):
     return out
 
 
+def _gushi_log(db, u, ids, today):
+    """把今天**真出现在**「今日复习 · 古诗」里的卡记进流水，供「常考 · 古诗积累」按天回看。
+
+    只记第一次露面的日期（INSERT OR IGNORE），后面再复习几遍都不动 ——
+    这一条不能改成跟着 review_state.last_done 走：那个每复习一次就被覆盖，
+    过几天回头看，所有卡的日期都挤在最近一次复习那天，「哪天新背的」就分不出来了。
+    被每日上限截掉的不记（它今天没露面，明天照样会出来，那天再记）。
+    """
+    if not ids:
+        return
+    # 先看差集再写：/today 每次打开首页都会调（角标那次也走这儿），而池子里的卡
+    # 背熟前天天都在，一律 INSERT OR IGNORE 的话每次都白提交一遍事务。
+    have = {r["card_id"] for r in db.execute(
+        "SELECT card_id FROM gushi_log WHERE user_id=? AND card_id IN (%s)"
+        % ",".join("?" * len(ids)), [u] + [int(i) for i in ids])}
+    new = [(u, int(i), today) for i in ids if int(i) not in have]
+    if not new:
+        return
+    db.executemany("INSERT OR IGNORE INTO gushi_log(user_id,card_id,added_on) VALUES(?,?,?)", new)
+    db.commit()
+
+
 @bp.get("/api/review/limits")
 def review_limits_get():
     db = get_db()
@@ -314,6 +336,9 @@ def review_today():
             continue
         used[g] += 1
         kept.append(it)
+    # 今天出的古诗卡记一笔流水（首日才写）。放在这儿而不是 /done：翻开看过就算「今天新更的」，
+    # 三张卡没点完也不该从积累里漏掉。首页角标那次调用（?count=1）走的是同一份 kept，一样算。
+    _gushi_log(db, uid(), [it["id"] for it in kept if it["kind"] == "gushi"], today)
     resp = {"today": today, "count": len(kept),
             "groups": used, "pool": pool, "limits": lim, "done_today": done_today}
     # 首页角标只要 count（原先连整份 items 一起回，80KB 只为显示一个数字）。
@@ -349,4 +374,6 @@ def review_done():
     db.execute("INSERT OR REPLACE INTO review_state(user_id,kind,item_id,stage,next_due,last_done) "
                "VALUES(?,?,?,?,?,?)", (uid(), kind, rid, stage, nd, today))
     db.commit()
+    if kind == "gushi":          # 兜底：正常在 /today 就记上了，这儿防漏（也是幂等的）
+        _gushi_log(db, uid(), [rid], today)
     return jsonify({"stage": stage, "next_due": nd, "interval": iv, "result": result})

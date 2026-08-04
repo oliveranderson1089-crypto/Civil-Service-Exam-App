@@ -1,6 +1,8 @@
-"""常考：高频考点合集（成语 / 实词 / 上位词 / 古诗文）。
+"""常考：高频考点合集（成语 / 实词 / 上位词 / 古诗文 / 每日古诗积累 / 常识 / 提法）。
 
 按真题考频排序，比自己零散收录的更该背。
+「每日古诗积累」是唯一一块**按天长出来**的：内容由「今日复习 · 古诗」每天新出的卡自动汇入
+（记流水的地方在 mods/review.py 的 _gushi_log），这儿只负责按天读出来。
 """
 import json
 import re
@@ -19,6 +21,8 @@ CK_BOARDS = [
     {"key": "实词", "name": "实词搭配", "icon": "edit", "desc": "老师讲义 · 常见动宾搭配"},
     {"key": "上位词", "name": "上位词", "icon": "layers", "desc": "概括词提示 · 下位词归类"},
     {"key": "古诗文", "name": "高频古诗文", "icon": "book", "desc": "按考频排序的名篇名句"},
+    # 唯一一块「按天长出来」的：内容来自「今日复习 · 古诗」每天新出的卡，自动汇入（见 mods/review.py 的 _gushi_log）
+    {"key": "古诗积累", "name": "每日古诗积累", "icon": "clock", "desc": "今日复习的古诗 · 按天归档"},
     {"key": "常识", "name": "高频常识", "icon": "bulb", "desc": "常识判断反复出现的考点"},
     {"key": "提法", "name": "高频提法", "icon": "feather", "desc": "时政新提法 · 申论高频表述"},
 ]
@@ -31,6 +35,9 @@ def changkao_boards():
               db.execute("SELECT board, COUNT(*) c FROM changkao_items GROUP BY board")}
     counts["古诗文"] = db.execute("SELECT COUNT(*) FROM classics WHERE freq>=100").fetchone()[0]
     counts["上位词"] = db.execute("SELECT COUNT(*) FROM hyper_items").fetchone()[0]
+    # 古诗积累是**每人一份**（背到哪天算哪天），别跟前面几块的全局条数混着数
+    counts["古诗积累"] = db.execute("SELECT COUNT(*) FROM gushi_log WHERE user_id=?",
+                                (uid(),)).fetchone()[0]
     return jsonify({"boards": [dict(b, count=counts.get(b["key"], 0)) for b in CK_BOARDS]})
 
 
@@ -46,6 +53,22 @@ def changkao_items():
             {"id": r["id"], "title": r["title"],
              "content": (r["content"] or "").split("\n")[0][:60],
              "note": ((r["dynasty"] or "") + " · " + (r["author"] or "")).strip(" ·")} for r in rows]})
+    if board == "古诗积累":
+        # 按「进复习的那天」倒序：最近背的排最前，前端按 day 分隔成一天一段。
+        # id 用**卡的 id**（跟 review 那边的 kind='gushi' 同一套），收藏/取回都对得上。
+        rows = db.execute(
+            "SELECT g.id, g.line, g.topic, g.theme, g.common, g.apply, "
+            "l.added_on, c.id cid, c.title, c.author, c.dynasty "
+            "FROM gushi_log l JOIN gushi_cards g ON g.id=l.card_id "
+            "JOIN classics c ON c.id=g.classic_id WHERE l.user_id=? "
+            "ORDER BY l.added_on DESC, l.card_id DESC", (uid(),)).fetchall()
+        return jsonify({"board": board, "kind": "gushilog", "items": [
+            {"id": r["id"], "cid": r["cid"], "day": r["added_on"] or "",
+             "title": "《%s》" % (r["title"] or ""), "content": r["line"] or "",
+             "note": " · ".join(x for x in [r["dynasty"] or "", r["author"] or "",
+                                            r["topic"] or ""] if x),
+             "common": r["common"] or "", "apply": r["apply"] or "",
+             "theme": r["theme"] or ""} for r in rows]})
     if board == "上位词":
         rows = db.execute("SELECT id, hyper, subs, note FROM hyper_items ORDER BY id DESC LIMIT 300").fetchall()
         return jsonify({"board": board, "kind": "hyper", "items": [
@@ -58,19 +81,27 @@ def changkao_items():
 
 # ⚠️ 别叫 CK_BOARDS —— 那个名字已经被上面的板块元数据（字典列表）占了，
 #    重名会把它整个盖掉，changkao_boards 里的 b["key"] 就会拿字符串去取下标。
-CK_STAR_BOARDS = ["成语", "实词", "上位词", "古诗文", "常识", "提法"]
+CK_STAR_BOARDS = ["成语", "实词", "上位词", "古诗文", "常识", "提法", "古诗积累"]
 # 成语/实词收藏时，同步收进「言语理解 → 成语词语积累」，并落到对应分类里
 CK_TO_ENTRY = {"成语": "成语", "实词": "词语"}
 
 
 def _ck_one(db, board, iid):
-    """按 (板块, id) 取回那一条 —— 六个模块散在三张表里，这里统一取。"""
+    """按 (板块, id) 取回那一条 —— 七个模块散在四张表里，这里统一取。"""
     if board == "古诗文":
         r = db.execute("SELECT id, title, author, dynasty, content FROM classics WHERE id=?", (iid,)).fetchone()
         if not r:
             return None
         return {"title": r["title"], "content": (r["content"] or "").split("\n")[0][:60],
                 "note": ((r["dynasty"] or "") + " · " + (r["author"] or "")).strip(" ·")}
+    if board == "古诗积累":
+        r = db.execute("SELECT g.line, g.topic, c.title, c.author, c.dynasty FROM gushi_cards g "
+                       "JOIN classics c ON c.id=g.classic_id WHERE g.id=?", (iid,)).fetchone()
+        if not r:
+            return None
+        return {"title": "《%s》" % (r["title"] or ""), "content": r["line"] or "",
+                "note": " · ".join(x for x in [r["dynasty"] or "", r["author"] or "",
+                                               r["topic"] or ""] if x)}
     if board == "上位词":
         r = db.execute("SELECT hyper, subs, note FROM hyper_items WHERE id=?", (iid,)).fetchone()
         return {"title": r["hyper"], "content": r["subs"], "note": r["note"]} if r else None

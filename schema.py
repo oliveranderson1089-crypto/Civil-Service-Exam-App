@@ -164,6 +164,19 @@ def init_db():
             UNIQUE(classic_id, line)
         );
         CREATE INDEX IF NOT EXISTS idx_gushi_freq ON gushi_cards(freq);
+        -- 「今日复习 · 古诗」的每日流水：每天新出现在复习里的卡，第一次露面就记一条，
+        -- 供「常考 · 古诗积累」按天回看背过哪些。
+        -- 为什么不直接读 review_state：那儿只有 last_done，每复习一次就被覆盖，
+        -- 过几天再看，全部卡片的日期都挤到最近一次复习那天，「哪天新背的」就没了。
+        -- added_on 只写第一次（INSERT OR IGNORE），之后再复习也不动。
+        CREATE TABLE IF NOT EXISTS gushi_log(
+            user_id INTEGER NOT NULL,
+            card_id INTEGER NOT NULL,
+            added_on TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, card_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_gushilog_day ON gushi_log(user_id, added_on);
         -- AI 讲解全局缓存（同一首诗只算一次，省钱）
         CREATE TABLE IF NOT EXISTS classic_ai(
             classic_id INTEGER PRIMARY KEY,

@@ -32,7 +32,7 @@ async function loadCkBoards() {
       <div class="home-card ck-card ck-star-card" data-ckb="收藏">
         <div class="hc-logo hc-star">★</div>
         <div class="hc-name">我的收藏</div>
-        <div class="hc-desc">${nStar} 条 · 六个模块收藏的都在这</div>
+        <div class="hc-desc">${nStar} 条 · 各模块收藏的都在这</div>
       </div>` + '</div>';
   } catch (e) { $('#ck-boards').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
@@ -57,7 +57,7 @@ $('#ck-daily').addEventListener('click', () => openCkBoard('上位词'));
 let ckBoard = '', ckItems = [], ckKind = 'text';
 async function openCkBoard(key) {
   ckBoard = key;
-  await loadCkStarred();                        // 六个模块都要标★
+  await loadCkStarred();                        // 各模块都要标★
   push({ view: 'ckboard', title: key === '上位词' ? '上位词积累' : (key === '收藏' ? '我的收藏' : '常考 · ' + key) });
   $('#ckb-search').value = '';
   $('#ckb-ai').classList.toggle('hidden', key !== '上位词');
@@ -76,12 +76,16 @@ async function openCkBoard(key) {
     }
     const d = await api('/api/changkao/items?board=' + encodeURIComponent(key));
     ckItems = d.items; ckKind = d.kind;
+    const days = key === '古诗积累' ? new Set(d.items.map(x => x.day)).size : 0;
     $('#ckb-head').innerHTML = `<span class="ckb-n">${d.items.length} 条</span>` +
-      (key === '上位词' ? '<span class="ckb-tip">逻辑填空里题干出现上位词，答案必须与它同类</span>' : '');
+      (key === '上位词' ? '<span class="ckb-tip">逻辑填空里题干出现上位词，答案必须与它同类</span>' : '') +
+      (key === '古诗积累'
+        ? `<span class="ckb-n">${days} 天</span>` +
+          '<span class="ckb-tip">「今日复习 · 古诗」每天新出的诗自动收进来</span>' : '');
     renderCkList();
   } catch (e) { $('#ckb-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
-// 收藏是**六个模块通用**的（key = "板块:id"）。成语/实词额外同步进「成语词语积累」——
+// 收藏是**各模块通用**的（key = "板块:id"）。成语/实词额外同步进「成语词语积累」——
 // 收藏就是为了拿去背，散在两处等于没收。
 let ckStarred = new Set();
 async function loadCkStarred() {
@@ -97,9 +101,12 @@ function renderCkList() {
   if (!list.length) {
     $('#ckb-list').innerHTML = ckBoard === '收藏'
       ? '<p class="empty">还没收藏。进任一模块，点卡片上的 ☆ 就收进来了。</p>'
-      : '<p class="empty">没有匹配的内容</p>';
+      : (ckBoard === '古诗积累' && !q)
+        ? '<p class="empty">还是空的。去「今日复习 · 古诗」背一轮，当天新出的诗会自动收进这里。</p>'
+        : '<p class="empty">没有匹配的内容</p>';
     return;
   }
+  let ckDay = '';                                   // 古诗积累：一天一段，段首插日期条
   $('#ckb-list').innerHTML = list.map(it => {
     const b = it._b || ckBoard;                       // 收藏页里每条来自不同板块
     const key = b + ':' + it.id;
@@ -107,7 +114,13 @@ function renderCkList() {
     const freq = it.freq && b === '成语' ? `<span class="cki-freq">考频 ${it.freq}</span>` : '';
     const note = (it.note || '').replace(/^考频 \d+ 次(\s·\s)?/, '');   // 考频已单独成徽章
     const tip = CK_TO_ENTRY[b] ? '收藏 → 同时收进「成语词语积累」' : '收藏';
-    return `<div class="gk-card ck-item" data-cki="${it.id}" data-ckbd="${esc(b)}">
+    let head = '';
+    if (b === '古诗积累' && it.day !== ckDay) {
+      ckDay = it.day;
+      head = `<div class="cki-day">${esc(ckDayLabel(it.day))}</div>`;
+    }
+    return head + `<div class="gk-card ck-item" data-cki="${it.id}"
+      data-ckbd="${esc(b)}"${it.cid ? ` data-ckcid="${it.cid}"` : ''}>
       <div class="cki-t">${esc(it.title)}${freq}
         ${ckBoard === '收藏' ? `<span class="cki-from">${esc(b)}</span>` : ''}
         <button class="cki-star${on ? ' on' : ''}" data-ckstar="${esc(b)}:${it.id}"
@@ -115,18 +128,31 @@ function renderCkList() {
         ${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
       ${it.meaning ? `<div class="cki-mean"><b>释义</b>${esc(it.meaning)}</div>` : ''}
       ${it.content ? `<div class="cki-c">${b === '实词' && it.meaning ? '<span class="cki-c-lab">搭配</span>' : ''}${esc(it.content)}</div>` : ''}
-      ${note ? `<div class="cki-n">${(ckKind === 'classic' || b === '古诗文') ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
+      ${note ? `<div class="cki-n">${(ckKind === 'classic' || b === '古诗文' || b === '古诗积累') ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
+      ${it.common ? `<div class="cki-gs"><b>常识考点</b>${esc(it.common)}</div>` : ''}
+      ${it.apply ? `<div class="cki-gs"><b>申论怎么用</b>${esc(it.apply)}</div>` : ''}
       ${(b === '上位词') ? '<div class="cki-more">点开看每个下位词的典故 / 出处 / 怎么考 ›</div>'
-        : (b === '成语' || b === '实词') ? '<div class="cki-more">点开看典故 / 出处 / 怎么考 ›</div>' : ''}
+        : (b === '成语' || b === '实词') ? '<div class="cki-more">点开看典故 / 出处 / 怎么考 ›</div>'
+          : (b === '古诗积累') ? '<div class="cki-more">点开看全诗 / 译文 / 赏析 ›</div>' : ''}
     </div>`;
   }).join('');
 }
 // 这两类收藏时会同步进「言语理解 → 成语词语积累」的对应分类（服务端 CK_TO_ENTRY 也有一份）
 const CK_TO_ENTRY = { '成语': '成语', '实词': '词语' };
+// 古诗积累的日期条：近几天说人话，远的给日期（YYYY-MM-DD 直接拼 T00:00:00，别交给 new Date(str) 猜时区）
+function ckDayLabel(day) {
+  if (!day) return '日期不明';
+  const d = Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(day + 'T00:00:00').getTime()) / 86400000);
+  const md = day.slice(5).replace('-', ' 月 ') + ' 日';
+  if (d === 0) return '今天 · ' + md;
+  if (d === 1) return '昨天 · ' + md;
+  if (d > 1 && d <= 6) return d + ' 天前 · ' + md;
+  return day;
+}
 $('#ckb-search').addEventListener('input', renderCkList);
 $('#ckb-list').addEventListener('click', async e => {
   const star = e.target.closest('[data-ckstar]');
-  if (star) {                                   // 收藏 / 取消收藏（六个模块通用）
+  if (star) {                                   // 收藏 / 取消收藏（各模块通用）
     e.stopPropagation();
     const [b, id] = star.dataset.ckstar.split(':');
     star.disabled = true;
@@ -161,7 +187,9 @@ $('#ckb-list').addEventListener('click', async e => {
   const it = e.target.closest('[data-cki]');
   if (!it) return;
   const b = it.dataset.ckbd || ckBoard;
-  if (b === '古诗文') openClassicDetail(+it.dataset.cki);
+  // 古诗积累里 data-cki 是**卡的 id**（要和复习/收藏对得上），点开要用诗的 id，走 data-ckcid
+  if (b === '古诗积累') { if (it.dataset.ckcid) openClassicDetail(+it.dataset.ckcid); }
+  else if (b === '古诗文') openClassicDetail(+it.dataset.cki);
   else if (b === '上位词') openHyper(+it.dataset.cki);              // 上位词：点开看典故/来源
   else if (b === '成语' || b === '实词') openCkStory(+it.dataset.cki);   // 成语/实词：点开看典故
 });
