@@ -24,6 +24,12 @@ let rqRecItems = [];                  // 做题记录回看页当前这一组的
    选择记在本地：每次进来都要重选一遍的话，这个开关等于没加。 */
 let rqN = +localStorage.getItem('rq_n') || 10;
 const RQ_NS = [5, 10, 20, 30, 50];
+/* 整卷的两种打法（和巩固测试、专项练一个词汇表）：
+   exam=测试模式，答案不下发、交卷才判分，顶上挂总倒计时 —— 就是原来的「整卷模考」；
+   study=背题模式，选完即揭晓答案和解析。一整套 130 道的卷子第一遍往往是拿来「过一遍原卷」的，
+   逼着人做完两小时才看见答案，这一遍的收获全压在交卷后那一屏里，题早忘了。
+   记在本地：一个人的打法是稳定的，每次进来重选一遍等于没加。 */
+let rqPaperMode = localStorage.getItem('rq_paper_mode') === 'study' ? 'study' : 'exam';
 
 async function openRealq() {
   push({ view: 'realq', title: '历年真题' });
@@ -63,7 +69,7 @@ function renderRealqHome() {
     <div class="rq-go">
       <button class="rq-big" data-rqgo="smart">
         <b>智能刷</b><span>${d.due ? `${d.due} 道该重刷 · 排在最前` : '没做过的优先'}</span></button>
-      <button class="rq-big alt" data-rqgo="papers"><b>整卷模考</b><span>按年份/卷种，卷面原序</span></button>
+      <button class="rq-big alt" data-rqgo="papers"><b>整卷真题</b><span>按年份/卷种 · 背题或模考</span></button>
     </div>
     <button class="btn tiny" id="rq-recs">📋 做题记录</button>
 
@@ -101,8 +107,15 @@ async function openRealPapers() {
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/real/papers');
-    box.innerHTML = `<div class="rq-sec">整卷模考 · ${d.items.length} 份卷子</div>
-      <p class="rq-hint">按卷面原序出题，做完一次性判分。中途可以退出，做过的题会记进进度。</p>
+    box.innerHTML = `<div class="rq-sec">整卷 · ${d.items.length} 份卷子</div>
+      <div class="dt-bar">
+        <div class="dt-modes" id="rq-pmodes">
+          <button class="dt-mbtn${rqPaperMode === 'study' ? ' on' : ''}" data-rqpm="study">📖 背题模式</button>
+          <button class="dt-mbtn${rqPaperMode === 'exam' ? ' on' : ''}" data-rqpm="exam">📝 测试模式</button>
+        </div>
+        <div class="dt-mhint" id="rq-pmhint">${rqPmHint()}</div>
+      </div>
+      <p class="rq-hint">按卷面原序出题。中途可以退出，做过的题会记进进度。</p>
       ${d.items.map(p => `
         <button class="rq-paper" data-pkey="${esc(p.pkey)}"
                 data-pnm="${esc(`${p.year} ${p.exam}${p.paper ? ' · ' + p.paper : ''}`)}">
@@ -113,11 +126,33 @@ async function openRealPapers() {
   } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
 
+function rqPmHint() {
+  return rqPaperMode === 'study'
+    ? '做一题立刻显示这题答案与解析，边做边记；不挂总倒计时'
+    : '答案不提前下发，整卷做完交卷、由服务端判分，顶上走总倒计时，更像考场';
+}
+
 $('#rq-body').addEventListener('click', e => {
+  const m = e.target.closest('[data-rqpm]');
+  if (m) {
+    rqPaperMode = m.dataset.rqpm;
+    localStorage.setItem('rq_paper_mode', rqPaperMode);
+    /* 只改按钮和这行说明，**不重拉卷子列表**：接口要现算每份卷的已做进度，
+       为了换个开关重跑一遍，切两下就是两次白等。 */
+    document.querySelectorAll('#rq-pmodes .dt-mbtn').forEach(b =>
+      b.classList.toggle('on', b === m));
+    $('#rq-pmhint').textContent = rqPmHint();
+    return;
+  }
   const p = e.target.closest('[data-pkey]');
   if (!p) return;
-  // 整卷=**真模考**：exam:true 让服务端不下发答案，做完一次性判分（界面上就是这么承诺的）
-  rqStart({ mode: 'paper', pkey: p.dataset.pkey, n: 140, exam: true }, p.dataset.pnm);
+  // 测试模式=**真模考**：exam:true 让服务端不下发答案，做完一次性判分。
+  // 背题模式走 exam:false，和「按题型刷」同一条路——选完即揭晓（见 rqRender 的 reveal）。
+  const isExam = rqPaperMode === 'exam';
+  /* 标题带上模式：做题记录里同一份卷子可能既背过又考过，只写年份分不出哪次是哪次
+     （scope 服务端截 60 字，这个后缀进得去）。 */
+  rqStart({ mode: 'paper', pkey: p.dataset.pkey, n: 140, exam: isExam },
+    p.dataset.pnm + (isExam ? '' : ' · 背题'));
 });
 
 async function rqStart(body, title) {
@@ -196,7 +231,10 @@ function rqRender() {
     : '';
   $('#rq-next').classList.toggle('hidden', !chosen);
   $('#rq-next').textContent = rqIdx + 1 >= rqItems.length ? '交卷看结果' : '下一题 →';
-  $('#rq-quit').textContent = rqExam ? `交卷（已答 ${Object.keys(rqAns).length}/${rqItems.length}）` : '交卷';
+  /* 整卷（130 道）一次做不完是常态，背题模式也要能看见「已答几道」再决定是不是先交 ——
+     所以进度按 paper 判，不按 rqExam：背题模式下 rqExam 是 false，只看它就只剩一个光秃秃的「交卷」。 */
+  $('#rq-quit').textContent = (rqExam || rqMode === 'paper')
+    ? `交卷（已答 ${Object.keys(rqAns).length}/${rqItems.length}）` : '交卷';
 }
 
 /* 解析版式：**关键点排最前**，步骤一行一步，错项逐条。

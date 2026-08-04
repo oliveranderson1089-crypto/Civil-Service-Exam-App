@@ -3511,6 +3511,10 @@ body.dark .ms-frow{background:#1a2233;color:#cfd5e0;}
   cursor:pointer;color:inherit;}
 .rq-opt .rq-l{flex:0 0 22px;height:22px;border-radius:50%;background:var(--line);
   display:grid;place-items:center;font-size:12px;font-weight:700;}
+/* 「我选了这个」——测试模式下答案不揭晓，这个蓝色是唯一的作答反馈，缺了它点选项等于没反应。
+   必须排在 .right/.wrong 之前：揭晓时两个类同时在，对错的红绿要盖过选中的蓝。 */
+.rq-opt.chosen{border-color:var(--blue);background:#eef5fc;}
+.rq-opt.chosen .rq-l{background:var(--blue);color:#fff;}
 .rq-opt.right{border-color:#40c057;background:rgba(64,192,87,.09);}
 .rq-opt.right .rq-l{background:#40c057;color:#fff;}
 .rq-opt.wrong{border-color:#fa5252;background:rgba(250,82,82,.09);}
@@ -3539,6 +3543,11 @@ body.dark .ms-frow{background:#1a2233;color:#cfd5e0;}
 .rq-score span{display:block;font-size:13px;color:var(--muted);margin-top:4px;}
 .hc-logo.hc-real{background:linear-gradient(135deg,#4c6ef5,#22b8cf);}
 body.dark .rq-stat,body.dark .rq-t,body.dark .rq-paper,body.dark .rq-opt{background:#141b29;}
+/* ⚠️ 上面那条 body.dark .rq-opt 特异性比 .rq-opt.chosen 高，暗色下会把选中/对错的底色
+   整片压回 #141b29。所以这三个状态要在**这一行之后**再写一遍，否则暗色主题下只剩边框。 */
+body.dark .rq-opt.chosen{background:#182333;border-color:#3a6ea5;}
+body.dark .rq-opt.right{background:rgba(64,192,87,.14);}
+body.dark .rq-opt.wrong{background:rgba(250,82,82,.14);}
 .rq-review{margin-top:22px;text-align:left;}
 .rq-rv{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;}
 .rq-rv.bad{border-color:rgba(250,82,82,.45);}
