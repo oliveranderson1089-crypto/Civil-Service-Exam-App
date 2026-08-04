@@ -23,6 +23,10 @@ from core import STATIC
 
 # 只认「js/xxx.js」这种相对 src，且整行就一个 script 标签（index.html 末尾那 56 行就是）
 _SCRIPT_RE = re.compile(r'[ \t]*<script src="(js/[^"]+\.js)"></script>[ \t]*\n?')
+# style.css 也挂内容指纹。它本来靠固定 URL + no-cache 回源校验，链路上（Cloudflare 隧道、
+# 安卓 WebView）只要有一层没照做，就会出现「JS 更新了、CSS 还是旧的」这种半新不旧的状态，
+# 排查起来极其费劲。URL 里带上哈希，改了必然重取。
+_CSS_RE = re.compile(r'href="style\.css(?:\?[^"]*)?"')
 
 _LOCK = threading.Lock()
 _CACHE = {"mtime": None, "js": b"", "js_gz": b"", "etag": "", "html": ""}
@@ -40,7 +44,8 @@ def _rebuild():
     if not srcs:
         raise RuntimeError("index.html 里没找到 <script src=js/*.js> 标签，放弃打包")
     files = [Path(STATIC) / s for s in srcs]
-    mtime = _newest_mtime([idx, *files])
+    css = Path(STATIC) / "style.css"
+    mtime = _newest_mtime([idx, *files] + ([css] if css.exists() else []))
 
     parts = []
     for src, f in zip(srcs, files):
@@ -59,16 +64,22 @@ def _rebuild():
         return one if seen[0] == 1 else ""
 
     html_b = _SCRIPT_RE.sub(_repl, html)
+    if css.exists():
+        cssv = hashlib.sha1(css.read_bytes()).hexdigest()[:16]
+        html_b = _CSS_RE.sub(f'href="style.css?v={cssv}"', html_b)
 
     _CACHE.update(mtime=mtime, js=js, js_gz=gzip.compress(js, 6),
                   etag='"' + etag + '"', html=html_b)
 
 
 def _ensure_fresh():
-    """有改动才重拼（改了某个 js / index.html 就自动失效）；线程安全。"""
+    """有改动才重拼（改了某个 js / index.html / style.css 就自动失效）；线程安全。"""
     idx = Path(STATIC) / "index.html"
     srcs = _SCRIPT_RE.findall(idx.read_text(encoding="utf-8"))
     files = [idx] + [Path(STATIC) / s for s in srcs]
+    css = Path(STATIC) / "style.css"
+    if css.exists():
+        files.append(css)
     mtime = _newest_mtime(files)
     if _CACHE["mtime"] != mtime:
         with _LOCK:
