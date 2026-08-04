@@ -754,6 +754,26 @@
     <div id="gw-list" class="gw-list"></div>
   </section>
 
+  <!-- ===== 应用文 · 素材库（文种 → 部件 两级下钻） ===== -->
+  <section id="view-yylib" class="view hidden">
+    <div class="pd-intro">按「<b>文种 → 结构部件</b>」两级下钻。文种<b>按真题频次排序</b>并标出考过几次——
+      「该练什么」要有依据，不按录入顺序排。<b>空格子照样列出来</b>：哪块还没素材，正是这页要回答的。</div>
+    <div id="yl-kinds" class="date-strip"></div>
+    <div class="wr-bar"><span id="yl-total" class="wr-bfmsg"></span></div>
+    <div id="yl-body"></div>
+  </section>
+
+  <!-- ===== 应用文 · 改错小测（错例判断题，零 AI 调用） ===== -->
+  <section id="view-yyerr" class="view hidden">
+    <div class="pd-intro">格式错例判断题：给你一句写法，判断<b>这样写对不对</b>，再看为什么扣分。
+      错例来自自产范文的格式检查，判据都有真题实证（如「一是…二是…」只有讲话稿能用）。</div>
+    <div id="ye-bar" class="wr-bar hidden">
+      <span id="ye-prog" class="wr-bfmsg"></span>
+      <span id="ye-score" class="wr-bfmsg"></span>
+    </div>
+    <div id="ye-body"></div>
+  </section>
+
   <!-- ===== 小题训练：找点 + 写点 ===== -->
   <section id="view-find" class="view hidden">
     <div class="pd-intro">归纳概括 / 综合分析 / 提出对策，难点是<b>同一个</b>：从材料里<b>把要点找出来</b>。
@@ -1889,6 +1909,8 @@
 <script src="js/news.js"></script>
 <script src="js/exam.js"></script>
 <script src="js/gongwen.js"></script>
+<script src="js/yylib.js"></script>
+<script src="js/yyerr.js"></script>
 <script src="js/handwrite.js"></script>
 <script src="js/find.js"></script>
 <script src="js/realq.js"></script>

@@ -188,6 +188,24 @@ def api_search():
         results.append({"type": "gongwen", "id": r["id"], "title": r["scene"] or "应用文表述",
                         "board": "应用文上位词 · " + (r["doctype"] or ""), "term": r["scene"] or "",
                         "snippet": _snippet(r["phrases"] or r["note"] or r["example"] or "", q)})
+    # 应用文素材库（错例 / 表述 / 骨架…按 kind 分）。
+    # 错例的可搜内容在 text 那个 JSON 里（{"bad":…,"good":…}），所以 LIKE 直接扫它——
+    # 搜「一是」要能搜到「这么写是错的」，这正是错例最该被搜到的时机。
+    for r in db.execute("SELECT id,kind,doctype,part,title,text,note FROM yy_items "
+                        "WHERE title LIKE ? OR text LIKE ? OR note LIKE ? OR doctype LIKE ? "
+                        "ORDER BY freq DESC, id LIMIT 12", (like, like, like, like)):
+        body = r["text"] or ""
+        if r["kind"] == "错例":
+            try:
+                d = json.loads(body or "{}")
+                body = "✗ %s ／ ✓ %s" % (d.get("bad", ""), d.get("good", ""))
+            except Exception:
+                pass
+        results.append({"type": "yy", "id": r["id"],
+                        "title": (r["title"] or r["kind"] or "应用文素材")[:40],
+                        "board": "应用文·%s · %s" % (
+                            r["kind"] or "", " ".join(x for x in [r["doctype"], r["part"]] if x)),
+                        "snippet": _snippet(body or r["note"] or "", q)})
     # 上位词（常考·逻辑填空）
     for r in db.execute("SELECT id,hyper,subs,note FROM hyper_items "
                         "WHERE hyper LIKE ? OR subs LIKE ? OR note LIKE ? OR example LIKE ? LIMIT 10",

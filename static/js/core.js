@@ -218,6 +218,8 @@ const BOARD_FEATURES = {
     { key: 'wapp', name: '应用文成文', desc: '14 文种四大类 · 每日成文 + 提纲纲要 · 用当天素材写', icon: 'edit' },
     { key: 'gaikuo', name: '概括句积累', desc: '每日更新 · 材料表述→规范概括句', icon: 'edit' },
     { key: 'gongwen', name: '应用文上位词', desc: '公文规范上位表述 · 按场景归类 · AI 归纳', icon: 'layers' },
+    { key: 'yylib', name: '应用文素材库', desc: '文种按真题频次排 · 下钻到结构部件', icon: 'clip' },
+    { key: 'yyerr', name: '应用文改错', desc: '真题实证的格式错例 · 判断这样写对不对', icon: 'target' },
   ],
   '议论文': [
     { key: 'write', name: '成文', desc: '素材 → 大作文 · 每日成文 / 综合应用', icon: 'edit' },

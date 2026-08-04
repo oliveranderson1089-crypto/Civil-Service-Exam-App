@@ -19,11 +19,12 @@
    openTasks, openTheory, openVideos, openWorks, openWrite, openWrongq,
    padClose, qtPause, qtResume, qtTotalPause, qtTotalResume,
    qz, refreshChatBadge, refreshNtfDot, saveDoc, setViewerFull,
-   stack, state, toast, toggleNoteSearch, openRealq, refreshRealqBadge */
+   stack, state, toast, toggleNoteSearch, openRealq, refreshRealqBadge,
+   openYyErr, openYyLib */
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'bktree', 'bknode', 'bkcmp', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'exam', 'gaikuo', 'gongwen', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'realq', 'realrun', 'realrec', 'realrecd', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'fanwen', 'fanwend', 'drive', 'chat'];
-const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', bktree: '', bknode: '', bkcmp: '考点对照', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', exam: '全国考情', gaikuo: '概括句积累', gongwen: '应用文上位词', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', realq: '历年真题', realrun: '', realrec: '做题记录', realrecd: '回看这一组', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', findwrong: '错题记录', videos: '每日新闻视频' };
+const VIEWS = ['home', 'section', 'board', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'bktree', 'bknode', 'bkcmp', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'exam', 'gaikuo', 'gongwen', 'yyerr', 'yylib', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'realq', 'realrun', 'realrec', 'realrecd', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'fanwen', 'fanwend', 'drive', 'chat'];
+const TITLES = { home: '公考助手', section: '', board: '', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', bktree: '', bknode: '', bkcmp: '考点对照', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', exam: '全国考情', gaikuo: '概括句积累', gongwen: '应用文上位词', yyerr: '应用文改错', yylib: '应用文素材库', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', realq: '历年真题', realrun: '', realrec: '做题记录', realrecd: '回看这一组', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', findwrong: '错题记录', videos: '每日新闻视频' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -435,6 +436,8 @@ $('#board-features').addEventListener('click', e => {
   else if (c.dataset.feat === 'videos') openVideos();
   else if (c.dataset.feat === 'gaikuo') openGaikuo();
   else if (c.dataset.feat === 'gongwen') openGongwen();
+  else if (c.dataset.feat === 'yyerr') openYyErr();
+  else if (c.dataset.feat === 'yylib') openYyLib();
   else if (c.dataset.feat === 'drill') openDrill(curBoardFeat);
   else if (c.dataset.feat === 'write') openWrite('daily');
   else if (c.dataset.feat === 'wapp') openWrite('yingyong');

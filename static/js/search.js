@@ -15,7 +15,7 @@
    openNews, openNewsItem, openNotebook, openNotes, openPartyDict, openPlanLog,
    openPolicyDoc, openPolicyDocs, openReview, openSection, openShenlun, openSucai,
    openTasks, openThBoard, openTheory, openViewer, openWorkDetail, openWorks,
-   openWqDetail, openWrongq, push, state, tkSwitch, toast */
+   openWqDetail, openWrongq, openYyLib, push, state, tkSwitch, toast */
 
 /* ================= 全文搜索 ================= */
 let searchData = { q: '', filter: 'all', results: [] };
@@ -60,7 +60,7 @@ function hl(text, q) {
   catch (_) { return t; }
 }
 const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能',
-  draft: '草稿本', essay: '范文', gongwen: '应用文', changkao: '常考', theory: '理论', xiyu: '习语', work: '经典著作',
+  draft: '草稿本', essay: '范文', gongwen: '应用文', yy: '应用文素材', changkao: '常考', theory: '理论', xiyu: '习语', work: '经典著作',
   annot: '批注' };
 // 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
 const FEATURES = [
@@ -171,6 +171,9 @@ $('#search-results').addEventListener('click', async e => {
     setTimeout(() => openDraft(r.id), 80);
   } else if (r.type === 'essay') {
     openEssay(r.id);
+  } else if (r.type === 'yy') {
+    // 落到素材库那个文种的格子里。doctype 从 board（「应用文·错例 · 简报 主体·举措」）里取
+    openYyLib((r.board || '').split(' · ')[1]?.split(' ')[0] || '');
   } else if (r.type === 'gongwen') {
     openGongwen();
     setTimeout(() => { $('#gw-q').value = r.term || r.title; $('#gw-q').dispatchEvent(new Event('input')); }, 120);

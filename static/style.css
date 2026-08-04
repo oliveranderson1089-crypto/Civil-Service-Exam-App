@@ -3720,3 +3720,49 @@ body.dark .bk-pagebtn{border-color:#37506b;} body.dark .bk-pageimg{border-color:
 .bk-practice-btns{display:flex;gap:8px;flex-wrap:wrap;}
 .bk-practice-btns .btn{flex:1;min-width:88px;}
 body.dark .bk-practice{background:#1e2733;border-color:#2c3d52;}
+
+/* ===== 应用文改错（错例判断题） ===== */
+.ye-card { background: var(--card, #fff); border-radius: 12px; padding: 16px; margin: 10px 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.ye-meta { font-size: 12px; color: var(--muted, #6b7280); margin-bottom: 8px; }
+.ye-q { font-size: 14px; color: var(--muted, #6b7280); margin: 6px 0; }
+.ye-text { font-size: 16px; line-height: 1.8; padding: 12px; border-radius: 8px;
+  background: rgba(124,58,237,.06); border-left: 3px solid #7c3aed; white-space: pre-wrap; }
+.ye-btns { display: flex; gap: 10px; margin-top: 14px; }
+.ye-pick { flex: 1; font-size: 16px; padding: 12px; }
+.ye-fb { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
+.ye-fb.ok { background: rgba(16,185,129,.12); color: #047857; }
+.ye-fb.no { background: rgba(239,68,68,.12); color: #b91c1c; }
+.ye-pair { margin-top: 12px; font-size: 14px; line-height: 1.7; }
+.ye-bad { color: #b91c1c; }
+.ye-good { color: #047857; margin-top: 4px; }
+.ye-why { margin-top: 10px; font-size: 13px; color: var(--muted, #6b7280); line-height: 1.7; }
+.ye-sum { font-size: 20px; font-weight: 600; margin-bottom: 12px; }
+
+/* ===== 应用文素材库（文种 → 部件） ===== */
+.yl-dt { background: var(--card, #fff); border-radius: 12px; padding: 14px; margin: 10px 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.yl-dt.hollow { opacity: .62; }           /* 一条素材都没有的文种，看得出是空的 */
+.yl-dt-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }
+.yl-dt-d { font-size: 12px; color: var(--muted, #6b7280); margin: 4px 0 8px; }
+.yl-freq { font-size: 11px; padding: 2px 7px; border-radius: 10px;
+  background: rgba(16,185,129,.14); color: #047857; }
+.yl-freq.old { background: rgba(245,158,11,.16); color: #b45309; }
+.yl-freq.zero { background: rgba(107,114,128,.14); color: #4b5563; }
+.yl-evi { font-size: 11px; padding: 2px 7px; border-radius: 10px;
+  background: rgba(37,99,235,.12); color: #1d4ed8; }
+.yl-cnt { margin-left: auto; font-size: 12px; color: var(--muted, #6b7280); }
+.yl-cells { display: flex; flex-wrap: wrap; gap: 6px; }
+.yl-cell { font-size: 12px; padding: 5px 9px; border-radius: 8px; border: 1px solid var(--line, #e5e7eb);
+  background: var(--card, #fff); cursor: pointer; }
+.yl-cell.req b { color: #dc2626; }        /* 必需部件标个星 */
+.yl-cell.empty { opacity: .45; cursor: default; }
+.yl-cell.extra { border-style: dashed; }  /* 库里有、但不在这个文种的部件清单里 */
+.yl-cell .yl-n { margin-left: 5px; color: var(--muted, #6b7280); }
+.yl-crumb { display: flex; align-items: center; gap: 10px; margin: 8px 0 12px; font-size: 14px; }
+.yl-item { background: var(--card, #fff); border-radius: 10px; padding: 12px; margin: 8px 0;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.yl-item-h { font-size: 12px; color: var(--muted, #6b7280); margin-bottom: 6px; }
+.yl-text { font-size: 14px; line-height: 1.7; }
+.yl-src { font-size: 11px; color: var(--muted, #9ca3af); margin-top: 6px; }
+

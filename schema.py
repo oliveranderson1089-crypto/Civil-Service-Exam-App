@@ -774,6 +774,61 @@ def init_db():
             source TEXT DEFAULT 'seed',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+        -- 应用文素材库：按「文种 × 结构部件」索引（见 docs/应用文素材库-设计.md）
+        -- 和 gongwen_items 分开建，不是重复——那张表是 scene UNIQUE 的上位词库，
+        -- 被成文链路 / /api/gongwen / search.py / agent_tools 四处消费，改它的结构
+        -- 属于「共用符号」类风险。这里新起一张，那 16 条种子**复制**进来，原表照常服务。
+        CREATE TABLE IF NOT EXISTS yy_items(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT,          -- 骨架/表述/情景/要点/得体/错例/要求/范文
+            doctype TEXT,       -- 文种；'' = 通用（如「结尾·收束」多数文种共用）
+            part TEXT,          -- 结构部件，取自 GW_SLOTS(·GW_ROLES)；'' = 不挂部件
+            cat TEXT,           -- 文种族，doctype='' 时用它限定适用范围
+            domain TEXT,        -- 治理领域：基层治理/民生保障/生态环保/营商环境…（要点类用）
+            title TEXT,         -- 一句话标签
+            text TEXT,          -- 正文，形状按 kind 定（表述串 / 三要素 JSON / 错例对 JSON…）
+            note TEXT, example TEXT,
+            src TEXT,           -- seed/ai/policy/news/essay/real/user
+            src_ref TEXT,       -- 可溯源：policy_docs:3、daily_essays:97、real:2026国考副省Q3
+            freq INTEGER DEFAULT 0,   -- 被成文实际用中的次数（回写，不是估的）
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(kind, doctype, part, title)
+        );
+        CREATE INDEX IF NOT EXISTS idx_yy_pick ON yy_items(kind, doctype, part);
+        -- 申论历年真题（云盘里的卷子解析进来，见 ingest_shenlun.py）。
+        -- 为什么不复用现成的两张：
+        --   · real_papers/real_questions 是**行测**的，带 options/answer 字母，
+        --     申论没有选项。混进去会让组卷器捞到没选项的题（真题库那次「形状分派」
+        --     的坑就是这么来的，四处都得按形状分派才不崩）。
+        --   · shenlun_papers/shenlun_questions 是**用户自己上传**要批改的（user_id NOT NULL），
+        --     不是全站共享的题库。
+        -- 所以单起一对，名字和两边都不撞。
+        CREATE TABLE IF NOT EXISTS slreal_papers(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id INTEGER UNIQUE,     -- drive_files.id，重跑靠它认出「这份处理过了」
+            name TEXT, folder TEXT, ext TEXT,
+            exam TEXT,                  -- 国考 / 四川 / 山东 / 多省联考
+            year INTEGER, kind TEXT,    -- 副省级 / 地市级 / 行政执法 / 县乡 / 省市 / A类…
+            era TEXT,                   -- new = 2018 年起（可当标尺）/ old
+            has_answer INTEGER DEFAULT 0,
+            material TEXT,              -- 给定资料全文
+            n_q INTEGER DEFAULT 0, n_ans INTEGER DEFAULT 0,
+            anchor TEXT,                -- 参考答案是靠哪个锚点切开的
+            status TEXT, note TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS slreal_questions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER NOT NULL, seq INTEGER,
+            qkind TEXT,                 -- 贯彻执行/归纳概括/综合分析/提出对策/文章论述
+            doctype TEXT, family TEXT, form TEXT,   -- 应用文才有：文种/文种族/full|outline|part
+            stem TEXT, require TEXT,
+            score INTEGER DEFAULT 0, words INTEGER DEFAULT 0,
+            answer TEXT, ans_note TEXT, -- 参考答案 / 答案说明（只有少数卷子带）
+            label_src TEXT,             -- human=人工标注 / rule=规则判的，别混着当真
+            UNIQUE(paper_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_slreal_q ON slreal_questions(qkind, doctype);
         -- 理论基础（马原/毛中特/习思想…）
         CREATE TABLE IF NOT EXISTS theory_items(
             id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -300,6 +300,72 @@ def _t_plan_progress(args, db):
     return _j({"连续学习天数": st["streak"], "累计学习天数": st["total"], "最近计划": logs}), None
 
 
+# ================================================================ 应用文素材库
+@tool("search_yy",
+      "查应用文（贯彻执行题）素材库：按**文种 + 结构部件**取骨架、规范表述、格式错例等。"
+      "用户问「简报的开头怎么写／写通知有哪些常见错误／汇报要有哪几块／"
+      "『一是二是』能不能用」这类**应用文格式**问题时调用。"
+      "注意：文种带真题频次（freq），可以据此回答「这个文种值不值得练」。",
+      {"type": "object", "properties": {
+          "doctype": {"type": "string", "description": "文种，如 简报／汇报／经验交流材料／公开信，可空"},
+          "part": {"type": "string", "description": "结构部件，如 标题／称谓／开头·缘由／主体·举措／落款，可空"},
+          "kind": {"type": "string",
+                   "enum": ["骨架", "表述", "情景", "要点", "得体", "错例", "要求", "范文"],
+                   "description": "素材类型，可空。目前库里主要是「错例」"},
+          "keyword": {"type": "string", "description": "内容关键词，可空"},
+          "limit": {"type": "integer", "description": "最多返回几条，默认 8"}},
+       }, kind="read")
+def _t_yy(args, db):
+    from mods.gongwen import GW_MAP, parts_of
+    dt = (args.get("doctype") or "").strip()
+    out = {}
+    if dt and dt in GW_MAP:
+        g = GW_MAP[dt]
+        # 先把这个文种的「该长什么样」交代清楚——用户问格式，这才是正面回答；
+        # 素材条目是佐证。freq 一并给：能据此说「这个文种近五年考过几次」。
+        out["文种"] = {
+            "名称": dt, "说明": g["d"], "格式骨架": g["fmt"],
+            "字数": "%d~%d 字" % (g["min"], g["max"]),
+            "真题频次": "2018 年起考过 %d 次（全部年份 %d 次）" % (
+                g.get("freq", 0), g.get("freq_all", 0)),
+            "部件": ["%s%s" % (p, "（必需）" if r else "") for p, r in parts_of(dt)],
+            "依据": "部件清单有真题参考答案支撑" if g.get("parts_src") == "real"
+                    else "部件清单是先验设定，真题样本还不够（n<3），仅供参考",
+        }
+    sql, p = "SELECT kind, doctype, part, title, text, note FROM yy_items WHERE 1=1", []
+    for col, key in (("doctype", "doctype"), ("part", "part"), ("kind", "kind")):
+        if args.get(key):
+            sql += " AND %s=?" % col
+            p.append(args[key].strip())
+    if args.get("keyword"):
+        sql += " AND (title LIKE ? OR text LIKE ? OR note LIKE ?)"
+        p += [_like(args["keyword"])] * 3
+    sql += " ORDER BY freq DESC, id LIMIT ?"
+    p.append(min(int(args.get("limit") or 8), 20))
+    items = []
+    for r in db.execute(sql, p):
+        it = {"类型": r[0], "文种": r[1] or "通用", "部件": r[2] or ""}
+        if r[0] in ("错例", "得体"):             # 都是成对的，摊开才说得清
+            try:
+                d = json.loads(r[4] or "{}")
+                if r[0] == "错例":
+                    it["错误写法"], it["正确写法"] = d.get("bad", ""), d.get("good", "")
+                else:
+                    it["该这么写"], it["不能这么写"] = d.get("do", ""), d.get("dont", "")
+            except Exception:
+                it["内容"] = _snip(r[4], 100)
+        else:
+            it["内容"] = _snip(r[4], 120)
+        if r[5]:
+            it["为什么"] = _snip(r[5], 110)
+        items.append(it)
+    out["count"] = len(items)
+    out["items"] = items
+    if not items and not out.get("文种"):
+        out["提示"] = "素材库里没有匹配的条目。库目前只有「错例」一类，其余类型还没灌。"
+    return _j(out), None
+
+
 # ================================================================ 写作素材
 @tool("search_sucai",
       "在每日写作素材库里搜（人物事例、理论论据、衔接表达等），供申论/作文用。"

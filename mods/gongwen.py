@@ -32,52 +32,297 @@ bp = Blueprint("gongwen", __name__)
 # 文种按「考什么」分四大类。每种都带一个**示范情景**（demo）——
 # 第一次一键铺开时就用它，目的是先把「这个文种长什么样、格式怎么摆」看明白；
 # 之后再针对同一文种换话题积累。
+
+# ---- 结构部件：两级 ----
+# 这套词表**不是拍脑袋列的**，是把 63 篇自产应用文的逐段批注全聚合出来定的
+# （docs/data/yy_parts_agg.py，可重跑）。实测数据推翻了原先"一张扁平清单"的想法：
+# 408 条批注里出现了 **119 种**部件名，其中 79 种只出现 1 次。稳定核心只有 8 个
+# （落款45 称谓44 主体·举措39 标题37 开头·缘由34 结尾·号召15 结尾·收束14 主体·成效13），
+# 剩下全是同一块的不同叫法。所以拆成两级：一级槽位是闭集，二级角色是受控词表。
+GW_SLOTS = ["标题", "主送机关", "称谓", "开头", "主体", "结尾", "落款"]
+GW_ROLES = {
+    "开头": ["缘由", "目的", "点题", "概述", "导语"],
+    "主体": ["举措", "成效", "问题", "建议", "背景", "启示", "目标", "保障",
+             "内容介绍", "析原因", "提办法", "评价意义",
+             # 这两个是回测 63 篇时补的，各有 2 条实据：
+             # 「引出事项」是公文标准件（gongwen_items 种子里就有「过渡·引出事项」），
+             # 「下一步」是汇报的标准收尾块（"下一步打算"）
+             "引出事项", "下一步"],
+    "结尾": ["号召", "要求", "收束", "引导阅读", "展望"],
+}
+# 两张别名表，分工不同——混成一张会写出一堆判不准的分支（第一版就是那么写的）：
+#   · GW_PART_ALIAS：**整个名字**的别名，右边是规范名（有测试盯着必须已规范）
+#   · _ROLE_ALIAS：**二级角色词**的别名，只在「槽位·角色」的角色位上替换
+# 「导语」挂在开头下是因为新闻稿 3/3 篇都标了它——它是文种专属部件，不是通用槽位。
+GW_PART_ALIAS = {
+    "正文": "主体", "正文开头": "开头", "正文主体": "主体", "正文结尾": "结尾",
+    "正文结语": "结尾·收束", "结语": "结尾·收束", "结束语": "结尾·收束",
+    "开场": "开头", "开场白": "开头", "导语": "开头·导语", "过渡": "主体",
+    "落款与日期": "落款", "落款单位": "落款", "落款日期": "落款",
+    "做法": "主体·举措", "成效": "主体·成效", "概述": "开头·概述",
+    "背景": "主体·背景", "启示": "主体·启示", "建议": "主体·建议",
+    "指导思想": "主体·目标", "工作目标": "主体·目标", "主要措施": "主体·举措",
+    "组织保障": "主体·保障", "倡议内容": "主体·举措", "具体倡议": "主体·举措",
+    "意义阐述": "主体·评价意义", "问题剖析": "主体·问题", "改进举措": "主体·举措",
+    "成效介绍": "主体·成效",
+}
+_ROLE_ALIAS = {
+    "做法": "举措", "做法分条": "举措", "主要措施": "举措", "工作举措": "举措",
+    "具体举措": "举措", "改进举措": "举措", "倡议内容": "举措", "对策": "举措",
+    "对策建议": "建议", "具体建议": "建议", "存在问题": "问题", "问题剖析": "问题",
+    "工作目标": "目标", "指导思想": "目标", "组织保障": "保障", "工作要求": "要求",
+    "报道内容": "内容介绍", "内容": "内容介绍", "意义": "评价意义",
+    "意义阐述": "评价意义", "评价": "评价意义",
+    "敬语": "收束", "敬礼": "收束", "结语": "收束", "总结": "收束",
+    "号召阅读": "引导阅读", "引导": "引导阅读", "缘由与目的": "缘由", "点明主题": "点题",
+    "现状": "成效", "现状与成效": "成效",
+    "亮观点": "点题", "原因": "析原因",     # 回测 63 篇时补的
+}
+# 合成名的连接词：「主体·举措及成效」是两块糊在一起，要拆开
+_COMPOSITE = re.compile(r"(?:与|及|\+|和)")
+# 尾部序号：「主体·举措一」「主体·举措2」「建议三」都是同一块加了个号
+_TAIL_NUM = re.compile(r"[一二三四五六七八九十1-9]$")
+# 「主体段落二」这种裸写法，直接落到槽位
+_BARE = {"主体段落": "主体", "开头段落": "开头", "结尾段落": "结尾", "主体部分": "主体"}
+
+
+def _clean(p):
+    p = re.sub(r"\s+", "", p or "")
+    p = re.sub(r"[（(].*?[)）]", "", p)               # 「落款（署名+日期）」→「落款」
+    return p.replace("・", "·").replace("/", "·").replace("-", "·").strip("·")
+
+
+def _norm_one(p, _depth=0):
+    """把一个部件名收成规范形式。认不出的角色**退到槽位级**，不丢——
+    丢了等于这条批注白标（实测 119 种名字里 79 种是一次性的，全丢就没数据了）。"""
+    p = _clean(p)
+    if not p or _depth > 2:
+        return p if _depth else ""
+    if p in GW_PART_ALIAS:                            # 整名别名优先
+        return GW_PART_ALIAS[p]
+    if p.startswith("正文·"):                         # 另一套命名法：剥掉前缀让里面自己定槽位
+        got = _norm_one(p[3:], _depth + 1)
+        return got if got else "主体"
+    for bare, slot in _BARE.items():
+        if p.startswith(bare):
+            return slot
+    if "·" not in p:
+        base = _TAIL_NUM.sub("", p) or p
+        if base in GW_PART_ALIAS:
+            return GW_PART_ALIAS[base]
+        if base in GW_SLOTS:
+            return base
+        # 「结尾号召」：分隔符丢了，但前缀是个槽位名——补上「·」再走两级那条路
+        for slot in GW_SLOTS:
+            if base.startswith(slot) and len(base) > len(slot):
+                return _norm_one(slot + "·" + base[len(slot):], _depth + 1)
+        role = _ROLE_ALIAS.get(base, base)            # 裸角色：挂到它所属的槽位上
+        for slot, roles in GW_ROLES.items():
+            if role in roles:
+                return slot + "·" + role
+        return base
+    slot, role = p.split("·", 1)
+    slot = GW_PART_ALIAS.get(slot, slot)
+    if "·" in slot:                                   # 别名指到了两级名（如「导语」→「开头·导语」）
+        return slot
+    if slot not in GW_SLOTS:
+        return _norm_one(slot, _depth + 1)
+    role = _ROLE_ALIAS.get(role, _TAIL_NUM.sub("", role) or role)
+    role = _ROLE_ALIAS.get(role, role)                # 砍完序号可能才认出别名
+    if role in GW_ROLES.get(slot, []):
+        return slot + "·" + role
+    return slot                                       # 认不出的角色退到槽位级
+
+
+def norm_part(p, split=False):
+    """部件名归一化。split=True 时把合成名拆成多条（返回 list），否则返回第一条。
+
+    三条规则都是 63 篇实测出来的：尾部序号 13 种/22 条、`正文·` 前缀 23 种/26 条、
+    合成名 18 种/23 条，加起来 54 种名字 71 条能机械收掉。
+    """
+    raw = re.sub(r"\s+", "", p or "")
+    raw = re.sub(r"[（(].*?[)）]", "", raw)
+    if not raw:
+        return [] if split else ""
+    parts, seen = [], set()
+    head = ""
+    for i, piece in enumerate(_COMPOSITE.split(raw)):
+        if not piece:
+            continue
+        # 「主体·举措及成效」拆开后第二段是裸的「成效」，要继承前一段的槽位
+        if i and "·" not in piece and head:
+            piece = head + "·" + piece
+        got = _norm_one(piece)
+        if not got:
+            continue
+        if "·" in got:
+            head = got.split("·")[0]
+        elif got in GW_SLOTS:
+            head = got
+        if got not in seen:
+            seen.add(got)
+            parts.append(got)
+    if split:
+        return parts
+    return parts[0] if parts else ""
+
+
+def parts_of(doctype):
+    """取某文种的部件清单 [(部件, 是否必需)]。文种不认识就给一份通用骨架。"""
+    g = GW_MAP.get(doctype)
+    if g and g.get("parts"):
+        return g["parts"]
+    return [("标题", 1), ("开头·缘由", 1), ("主体·举措", 1), ("结尾·收束", 1)]
+
+
 GW_DOCTYPES = [
     # ---- 宣传演讲类：面向人，讲究感染力和现场感 ----
-    dict(k="讲话稿", cat="宣传演讲类", d="领导在某场合讲，有听众、有现场感",
-         fmt="标题 / 称谓（同志们）/ 正文（开场→分条讲→结尾鼓劲）/ 无落款", min=500, max=800,
+    dict(k="讲话稿", parts_src="real", parts_n=9, fam="交流材料", freq=1, freq_all=7, cat="宣传演讲类", d="领导在某场合讲，有听众、有现场感",
+         fmt="标题 / 称谓（同志们）/ 开头（开场点题）→ 主体（分条讲）→ 结尾（鼓劲号召）/ 无落款",
+         parts=[("标题", 1), ("称谓", 1), ("开头·点题", 1), ("主体·举措", 1),
+                ("结尾·号召", 1)],
+         min=500, max=800,
          demo=dict(scene="全区基层治理推进会", role="区政府分管副区长", audience="各街道、各部门负责同志")),
-    dict(k="宣传稿", cat="宣传演讲类", d="贴在社区、发在公众号，给群众看的",
-         fmt="标题 / 正文（引出→讲清楚→号召）/ 落款", min=400, max=600,
+    dict(k="宣传稿", parts_src="real", parts_n=4, fam="宣传", freq=4, freq_all=5, cat="宣传演讲类", d="贴在社区、发在公众号，给群众看的",
+         fmt="标题 / 开头（引出）→ 主体（讲清楚）→ 结尾（号召）/ 落款", min=400, max=600,
+         parts=[("标题", 1), ("开头·缘由", 1), ("主体·举措", 1), ("主体·成效", 0),
+                ("结尾·号召", 1), ("落款", 1)],
          demo=dict(scene="垃圾分类进社区", role="社区居委会工作人员", audience="全体社区居民")),
-    dict(k="公开信", cat="宣传演讲类", d="以组织名义写给公众，语气恳切、有来有往",
-         fmt="标题 / 称谓 / 正文（缘由→说明→呼吁）/ 落款（署名+日期）", min=400, max=600,
+    dict(k="公开信", fam="公开信", freq=2, freq_all=3, cat="宣传演讲类", d="以组织名义写给公众，语气恳切、有来有往",
+         fmt="标题 / 称谓 / 开头（缘由）→ 主体（说明）→ 结尾（呼吁号召）/ 落款（署名+日期）",
+         parts=[("标题", 1), ("称谓", 1), ("开头·缘由", 1), ("主体·成效", 0),
+                ("主体·问题", 0), ("主体·举措", 1), ("结尾·号召", 1), ("落款", 1)],
+         min=400, max=600,
          demo=dict(scene="致全市市民的文明养犬公开信", role="市城市管理局", audience="全体市民")),
-    dict(k="新闻稿", cat="宣传演讲类", d="报道一件事，客观、有导语、有数据和引语",
-         fmt="标题（实题）/ 导语（何时·何地·何事·何果）/ 主体（展开+数据+引语）/ 结语", min=400, max=600,
+    dict(k="新闻稿", fam="", freq=0, freq_all=0, cat="宣传演讲类", d="报道一件事，客观、有导语、有数据和引语",
+         fmt="标题（实题）/ 开头·导语（何时·何地·何事·何果）/ 主体（展开+数据+引语）/ 结尾（结语）",
+         parts=[("标题", 1), ("开头·导语", 1), ("主体·内容介绍", 1), ("主体·成效", 0),
+                ("结尾·展望", 0)],
+         min=400, max=600,
          demo=dict(scene="我区数字政务服务大厅正式启用", role="区融媒体中心记者", audience="社会公众")),
-    dict(k="倡议书", cat="宣传演讲类", d="面向公众发出号召，靠感染力不靠命令",
-         fmt="标题 / 称谓 / 正文（缘由→倡议内容分条→号召）/ 落款", min=400, max=600,
+    dict(k="倡议书", fam="倡议", freq=0, freq_all=2, cat="宣传演讲类", d="面向公众发出号召，靠感染力不靠命令",
+         fmt="标题 / 称谓 / 开头（缘由）→ 主体（倡议内容分条）→ 结尾（号召）/ 落款",
+         parts=[("标题", 1), ("称谓", 1), ("开头·缘由", 1), ("主体·举措", 1),
+                ("结尾·号召", 1), ("落款", 0)],
+         min=400, max=600,
          demo=dict(scene="节约用水", role="市水务局", audience="全体市民")),
     # ---- 总结说明类：面向上级/同行，讲究条理和成效 ----
-    dict(k="汇报", cat="总结说明类", d="把一段工作向上级说清楚：做了什么、效果如何、下一步",
-         fmt="标题 / 称谓 / 正文（概述→做法分条→成效→下一步）/ 落款", min=500, max=800,
+    # ---- P1b：「落款」按真题参考答案从必需降为可选 ----
+    # ⚠️ 只在**极值**上改判（0% 或 100%），卡在 80% 阈值附近的一律等样本够了再说。
+    # 这条纪律是被自己打脸打出来的：先按 汇报 标题 67%(2/3) 降成可选，
+    # 补完 OCR 数据后样本变 5，标题变 **80%(4/5)** —— 判定直接翻转。
+    # 3 个样本里多一条就是 ±33 个百分点，够不着 80% 这种边界判定。
+    # 所以「标题」那几处降级全部撤回了；下面的「落款」保留，因为它是 0%（0/9、0/5、0/3）
+    # 且有全样本 17% 兜底，极值判定不受一两条样本影响。
+    # 36 份真题参考答案实测：落款·署名整体只占 **17%**，只看成篇（full）也只 26%（6/23）。
+    # 而 P0b 里我是照 63 篇**自产**范文标的必需——自产范文 92% 都写落款，
+    # 那是模型在过度套用公文习惯，不是考试要求。
+    # 按文种族看（**只动 n≥3 的**，样本不足的一律不碰）：
+    #     交流材料 0/9 · 推荐/参评 0/4 · 简报 0/3 · 汇报 0/3   ← 都没写
+    #     公开信 2/2 · 宣传 2/4 · 介绍 1/3                     ← 写了
+    # 这不是噪声，是一条讲得通的规律：**面向内部/上级的文种不写落款，面向公众的才写**。
+    # 所以只降 汇报 / 简报；公开信保持必需；
+    # 调研报告 / 方案 / 建议书 / 通知 的样本 ≤1，**不动**（见设计文档 3.8）。
+    # 汇报的「称谓」同理：3/3 份都没写，一并降为可选。
+    dict(k="汇报", parts_src="real", parts_n=3, fam="汇报", freq=5, freq_all=5, cat="总结说明类", d="把一段工作向上级说清楚：做了什么、效果如何、下一步",
+         fmt="标题 / 称谓 / 开头（概述）→ 主体（做法分条→成效）→ 结尾（下一步收束）/ 落款",
+         parts=[("标题", 1), ("称谓", 0), ("开头·概述", 1), ("主体·举措", 1),
+                ("主体·成效", 1), ("主体·问题", 0), ("结尾·收束", 1), ("落款", 0)],
+         min=500, max=800,
          demo=dict(scene="老旧小区改造工作", role="区住建局", audience="市住建局")),
-    dict(k="调研报告", cat="总结说明类", d="调查了什么、发现什么问题、建议怎么办",
-         fmt="标题 / 正文（背景→现状→问题→建议）/ 落款", min=500, max=800,
+    dict(k="调研报告", fam="调研报告", freq=4, freq_all=4, cat="总结说明类", d="调查了什么、发现什么问题、建议怎么办",
+         fmt="标题 / 开头（背景缘由）→ 主体（现状成效→问题→建议）→ 结尾（收束）/ 落款",
+         parts=[("标题", 1), ("开头·缘由", 1), ("主体·背景", 0), ("主体·成效", 1),
+                ("主体·问题", 1), ("主体·建议", 1), ("结尾·收束", 1), ("落款", 1)],
+         min=500, max=800,
          demo=dict(scene="农村电商发展现状调研", role="县商务局调研组", audience="县政府")),
-    dict(k="简报", cat="总结说明类", d="短平快，一件事一页纸，给上级看",
-         fmt="标题 / 正文（概述→做法分条→成效）/ 落款", min=400, max=600,
+    dict(k="简报", parts_src="real", parts_n=3, fam="简报", freq=4, freq_all=4, cat="总结说明类", d="短平快，一件事一页纸，给上级看",
+         fmt="标题 / 开头（概述）→ 主体（做法分条→成效）→ 结尾（收束）/ 落款", min=400, max=600,
+         parts=[("标题", 1), ("开头·概述", 1), ("主体·举措", 1), ("主体·成效", 1),
+                ("结尾·收束", 0), ("落款", 0)],
          demo=dict(scene="防汛应急演练", role="县应急管理局", audience="县委县政府")),
-    dict(k="案例介绍", cat="总结说明类", d="讲一个能被别人学走的做法：背景→做法→成效→启示",
-         fmt="标题 / 正文（背景→做法→成效→启示）", min=400, max=600,
+    dict(k="案例介绍", parts_src="real", parts_n=4, fam="推荐/参评", freq=5, freq_all=4, cat="总结说明类", d="讲一个能被别人学走的做法：背景→做法→成效→启示",
+         fmt="标题 / 开头（背景）→ 主体（做法→成效→启示）", min=400, max=600,
+         parts=[("标题", 1), ("开头·缘由", 1), ("主体·背景", 0), ("主体·举措", 1),
+                ("主体·成效", 1), ("主体·启示", 1)],
          demo=dict(scene="某镇「一网通办」便民服务经验", role="镇政府办公室", audience="全县各乡镇")),
-    dict(k="编者按", cat="总结说明类", d="放在文章前面的一小段，点题+评价+引导读下去",
-         fmt="短标题或无标题 / 正文（点明主题→评价意义→引导阅读）", min=200, max=400,
+    dict(k="编者按", fam="编者按", freq=2, freq_all=2, cat="总结说明类", d="放在文章前面的一小段，点题+评价+引导读下去",
+         fmt="短标题或无标题 / 开头（点明主题）→ 主体（评价意义）→ 结尾（引导阅读）",
+         parts=[("标题", 0), ("开头·点题", 1), ("主体·评价意义", 1),
+                ("结尾·引导阅读", 1)],
+         min=200, max=400,
          demo=dict(scene="为一组基层减负报道写编者按", role="报社编辑", audience="读者")),
     # ---- 方案建议类：面向执行，讲究可落地 ----
-    dict(k="方案", cat="方案建议类", d="怎么干的通盘安排：目标、措施、分工、保障",
-         fmt="标题 / 正文（指导思想→工作目标→主要措施→组织保障）/ 落款", min=500, max=800,
+    dict(k="方案", fam="方案", freq=2, freq_all=2, cat="方案建议类", d="怎么干的通盘安排：目标、措施、分工、保障",
+         fmt="标题 / 开头（指导思想·缘由）→ 主体（工作目标→主要措施→组织保障）→ 结尾（工作要求）/ 落款",
+         parts=[("标题", 1), ("开头·缘由", 1), ("主体·目标", 1), ("主体·举措", 1),
+                ("主体·保障", 1), ("结尾·要求", 1), ("落款", 1)],
+         min=500, max=800,
          demo=dict(scene="社区养老服务提升行动", role="街道办事处", audience="辖区各社区")),
-    dict(k="建议书", cat="方案建议类", d="向某单位提意见，要有理有据、可执行",
-         fmt="标题 / 称谓 / 正文（问题→建议分条→结语）/ 落款", min=400, max=600,
+    dict(k="建议书", fam="建议", freq=2, freq_all=2, cat="方案建议类", d="向某单位提意见，要有理有据、可执行",
+         fmt="标题 / 称谓 / 开头（缘由问题）→ 主体（建议分条）→ 结尾（收束）/ 落款（署名+日期）",
+         parts=[("标题", 1), ("称谓", 1), ("开头·缘由", 1), ("主体·问题", 0),
+                ("主体·建议", 1), ("结尾·收束", 1), ("落款", 1)],
+         min=400, max=600,
          demo=dict(scene="改善校园周边交通秩序", role="学校家长委员会", audience="区交警大队")),
-    dict(k="通知", cat="方案建议类", d="上级发给下级，告知事项并要求落实",
-         fmt="标题（发文机关+事由+文种）/ 主送机关 / 正文（缘由→事项→要求）/ 落款", min=400, max=600,
+    dict(k="通知", fam="通知", freq=0, freq_all=1, cat="方案建议类", d="上级发给下级，告知事项并要求落实",
+         fmt="标题（发文机关+事由+文种）/ 主送机关 / 开头（缘由依据）→ 主体（事项分条）→ 结尾（要求）/ 落款",
+         parts=[("标题", 1), ("主送机关", 1), ("开头·缘由", 1), ("主体·举措", 1),
+                ("结尾·要求", 1), ("落款", 1)],
+         min=400, max=600,
          demo=dict(scene="开展安全生产大检查", role="市安全生产委员会办公室", audience="各县区、各成员单位")),
+    # ---- P1 新增：真题考过、但原清单里没有的文种 ----
+    # 加不删是刻意的：删掉会让已经写好的 63 篇范文在「文种大全」里变成孤儿。
+    # 零频的老文种（通知/倡议书/新闻稿）留着但 freq=0，界面按 freq 排序自然靠后。
+    dict(k="经验交流材料", parts_src="real", parts_n=9, fam="交流材料", freq=8, freq_all=13, cat="总结说明类",
+         d="把本单位的做法写成能被别人学走的材料，在会上交流——**真题最高频的文种**",
+         fmt="标题 / 开头（缘由概述）→ 主体（做法分条+成效）→ 结尾（收束）",
+         parts=[("标题", 1), ("开头·概述", 1), ("主体·举措", 1), ("主体·成效", 1),
+                ("结尾·收束", 0)],
+         min=400, max=800,
+         demo=dict(scene="打通基层法律服务「最后一公里」座谈会", role="花湖区政府办工作人员",
+                   audience="参会各单位")),
+    dict(k="推荐材料", parts_src="real", parts_n=4, fam="推荐/参评", freq=5, freq_all=4, cat="总结说明类",
+         d="为评选推荐一个集体/做法：亮成绩、给依据，比案例介绍更紧",
+         fmt="标题 / 开头（推荐缘由）→ 主体（做法+成效+亮点）→ 结尾（收束）",
+         parts=[("标题", 1), ("开头·缘由", 1), ("主体·举措", 1), ("主体·成效", 1),
+                ("主体·启示", 0)],
+         min=300, max=500,
+         demo=dict(scene="全省政务服务先进集体评选", role="B市政务服务局",
+                   audience="A省评选办")),
+    dict(k="情况介绍", parts_src="real", parts_n=3, fam="介绍", freq=2, freq_all=6, cat="总结说明类",
+         d="把一件事/一个模式说清楚给外人听：是什么、怎么运行、效果如何",
+         fmt="标题 / 开头（点题）→ 主体（内容介绍+成效）→ 结尾（收束）",
+         parts=[("标题", 1), ("开头·点题", 1), ("主体·内容介绍", 1), ("主体·成效", 0),
+                ("结尾·收束", 0)],
+         min=400, max=500,
+         demo=dict(scene="「工业上楼」模式", role="B省工信厅工作人员", audience="来访考察团")),
+    dict(k="提案", fam="提案", freq=1, freq_all=1, cat="方案建议类",
+         d="政协委员提交的提案：案由 + 具体建议，两块分明",
+         fmt="标题 / 开头（案由：问题与依据）→ 主体（建议分条）/ 落款",
+         parts=[("标题", 1), ("开头·缘由", 1), ("主体·问题", 1), ("主体·建议", 1),
+                ("落款", 0)],
+         min=400, max=500,
+         demo=dict(scene="助推「元科普」，促进科普与科研共发展", role="S市政协委员",
+                   audience="市政协")),
+    dict(k="工作指南", fam="指南", freq=1, freq_all=1, cat="方案建议类",
+         d="给一线用的操作手册：分工作事项，每项写清具体做什么",
+         fmt="标题 / 主体（工作事项分条，每项含具体工作内容）",
+         parts=[("标题", 1), ("主体·举措", 1)],
+         min=400, max=500,
+         demo=dict(scene="平安夜市安全巡查工作指南", role="B市大帆夜市综合服务办公室",
+                   audience="夜市巡查工作人员")),
+    dict(k="谈话提纲", fam="谈话", freq=1, freq_all=1, cat="方案建议类",
+         d="当面反馈用的提纲：成效、问题、改进建议，说给对方听",
+         fmt="标题 / 主体（成效→问题→改进建议）",
+         parts=[("标题", 0), ("主体·成效", 1), ("主体·问题", 1), ("主体·建议", 1)],
+         min=400, max=450,
+         demo=dict(scene="现场指导后向企业负责人反馈", role="指导组", audience="西瑞药业负责人")),
     # ---- 观点主张类：面向读者，讲究观点鲜明 ----
-    dict(k="短评", cat="观点主张类", d="就一件事表态：观点鲜明、篇幅短、有回味",
-         fmt="标题 / 正文（亮观点→析原因→提办法）", min=300, max=500,
+    dict(k="短评", fam="短评", freq=3, freq_all=3, cat="观点主张类", d="就一件事表态：观点鲜明、篇幅短、有回味",
+         fmt="标题 / 开头（亮观点点题）→ 主体（析原因→提办法）→ 结尾（收束号召）", min=300, max=500,
+         parts=[("标题", 1), ("开头·点题", 1), ("主体·析原因", 1), ("主体·提办法", 1),
+                ("结尾·号召", 1)],
          demo=dict(scene="如何看待「指尖上的形式主义」", role="评论员", audience="读者")),
 ]
 GW_CATS = ["宣传演讲类", "总结说明类", "方案建议类", "观点主张类"]
@@ -86,35 +331,70 @@ GW_MAP = {d["k"]: d for d in GW_DOCTYPES}
 # ---- 应用文成文的字数：上限统一 ≤500 字，下限按「文种 + 题位」灵活定 ----
 # 真题里同一题材，放在第二题和第四题，要求字数差很多——用「题位档」建模这件事：
 #   越靠后的题（分值越大）字数要求越大。三档对应小题位/中题位/大题位。
-MAX_YY_WORDS = 500
+MAX_YY_WORDS = 500          # 保留给老调用点；新逻辑用 YY_HARD_CAP，见下
+# ---- P1：字数模型换成真题实测 ----
+# 原来的 MAX_YY_WORDS=500 是**错的硬顶**：30 套近五年真题里，应用文字数最小 250、
+# 中位 450、**最大 1000**（2022 国考行执第 5 题公开信，要求 800-1000 字），
+# 600 字以上占 11%。硬顶 500 会把这类题在训练中彻底屏蔽掉。
+YY_HARD_CAP = 1000
+# 按**分值**建档，不按"题位"——题位是猜的，分值是题面上写着的。
+# 数字来自 docs/data/yy-真题标注.tsv 和 slreal_questions 的实测中位数（n=28~38）。
+# 沿用 P2 那条经验：**给模型区间没用、要给具体数字**，所以每档除了区间还带一个 target。
+SCORE_BANDS = {
+    15: (250, 350, 300),
+    20: (400, 500, 450),
+    25: (400, 550, 500),
+    30: (450, 1000, 600),
+}
+# 参考答案实际写到字数上限的多少：30 份实测比例中位 **0.94**，最小 0.78 最大 1.58。
+# 也就是说标准答案**不顶着上限写**，而是写到 90~95%。提示词里给这个目标比给上限有用。
+ANS_FILL = 0.94
 POS_BANDS = {
     "small": (200, 320),    # 靠前的小题位（如第一、二题）
     "medium": (280, 420),   # 中间题位（如第三题）
     "large": (360, 500),    # 靠后的大题位（如第四题·贯彻执行主力题）
 }
 POS_LABEL = {"small": "小题位（如第一二题）", "medium": "中题位（如第三题）", "large": "大题位（如第四题）"}
-# 有的文种天生就短，放在大题位也不该硬撑到 500 —— 给它们各自的自然上限
-GW_CAP = {"短评": 380, "编者按": 380, "简报": 420, "新闻稿": 450, "案例介绍": 450,
-          "宣传稿": 460, "公开信": 470, "倡议书": 470, "建议书": 480}
+# 文种各自的自然上限。**P1 按真题实测重标过**——原来这几个数是估的，而且估低了：
+# 短评估 380，真题实考 400/450/500；公开信估 470，真题实考 500~1000。
+# 现在的数字取「该文种族真题字数最大值」，样本不足的（n<2）留空走通用上限。
+# 实测（去重后 n=同族题数）：交流材料 250~800、公开信 500~1000、方案 600、
+# 编者按 300~400、推荐参评 300~500、其余多在 400~500。
+GW_CAP = {"编者按": 400, "短评": 500, "简报": 500, "案例介绍": 500, "推荐材料": 500,
+          "宣传稿": 500, "倡议书": 500, "建议书": 500, "调研报告": 500, "汇报": 500,
+          "情况介绍": 500, "谈话提纲": 450, "提案": 500, "工作指南": 500,
+          "通知": 500, "方案": 600, "经验交流材料": 800, "讲话稿": 800,
+          "公开信": 1000, "新闻稿": 500}
 
 
 # 「一是…二是…」是口头汇报的分条法，写进应用文正文就是扣分项——公文分条要用「一、二、」。
 # 提示词说了不算数：这套说法在模型的公文语料里太根深蒂固，实测还是会往外冒。所以出稿之后
 # 再过一道硬替换，让规则**落到字面上**而不是停在提示词里。
+#
+# **但口语文种要豁免。** P1 拿 30 份真题参考答案回测：用「一是…二是…」的只有 1 场考试，
+# 而它正好是**讲话稿**（2015 国考，「各位领导、同志们：大家好！」）。这印证了上面那句
+# 「一是是口头汇报的说法」——反过来说，真的是"口头讲"的文种，这么写就是对的，
+# 不该被改掉。改了反而把现场感抹平。
+GW_SPOKEN = {"讲话稿"}
 _XSHI = re.compile(r"(^|[\n。；;：:，,、])([一二三四五六七八九十])是(?=[^，。；\s])")
 # 「，一、加强领导」这种标点在公文里不存在：分条项之间是断句的，前面的逗号/顿号/分号
 # 一并升成句号。冒号和换行保留（「现提出如下意见：一、…」本来就对）。
 _SEP_UP = "，,、；;"
 
 
-def fix_fentiao(s):
+def fix_fentiao(s, doctype=None):
     """把成串的「一是…二是…」改写成「一、…二、…」。
 
     只在**确实成串**时才动手，判据是「一是」和「二是」都真的落在分条位置上（句首或标点后）。
     单看字面含不含「二是」不够——「任务一是重点、二是难点」里的「一是」是正常汉语的
     「一 + 是」，只改后半句会得到一个不伦不类的「任务一是重点。二、难点」。
+
+    doctype 属于 GW_SPOKEN（口语文种）时原样返回——真题参考答案里讲话稿就是这么写的。
+    不传 doctype 时照旧全改，老调用点行为不变。
     """
     if not s or "一是" not in s or "二是" not in s:
+        return s
+    if doctype in GW_SPOKEN:
         return s
     hits = list(_XSHI.finditer(s))
     if not {"一", "二"} <= {m.group(2) for m in hits}:
@@ -132,25 +412,186 @@ def fix_fentiao(s):
     return "".join(out)
 
 
-def _word_band(doctype, pos):
-    """按题位档取字数区间，再用文种自然上限和 500 硬顶收一下。返回 (下限, 上限)。"""
-    lo, hi = POS_BANDS.get(pos, POS_BANDS["medium"])
-    hi = min(hi, GW_CAP.get(doctype, MAX_YY_WORDS), MAX_YY_WORDS)
+def _word_band(doctype, pos, score=None):
+    """字数区间。给了 score 就按**分值档**（真题实测），否则按老的题位档。
+    返回 (下限, 上限)。硬顶从 500 抬到 YY_HARD_CAP=1000（真题最大值）。"""
+    if score and score in SCORE_BANDS:
+        lo, hi, _t = SCORE_BANDS[score]
+    elif score:                          # 分值不在档上，取最近的一档
+        near = min(SCORE_BANDS, key=lambda k: abs(k - score))
+        lo, hi, _t = SCORE_BANDS[near]
+    else:
+        lo, hi = POS_BANDS.get(pos, POS_BANDS["medium"])
+    hi = min(hi, GW_CAP.get(doctype, YY_HARD_CAP), YY_HARD_CAP)
     lo = max(150, min(lo, hi - 60))     # 保证下限 < 上限、且留出至少 60 字区间
     return lo, hi
 
 
+def _phrase_pool(db, doctype, limit=40):
+    """按 (文种, 部件) 取规范表述，取不到退回全表。
+
+    两个来源都查：新库 `yy_items`（kind='表述'，按 part 挂）和老表 `gongwen_items`
+    （scene 字段本身就是部件名，如「开头·缘由（依据）」）。老表保持原样不动——
+    它被成文链路、/api/gongwen、search.py、agent_tools 四处消费，改结构风险大。
+    """
+    want = {p for p, _req in parts_of(doctype)}
+    want |= {p.split("·")[0] for p in want}          # 槽位级也算命中（「落款」对「落款·日期」）
+    out, seen = [], set()
+    try:
+        # freq 是**真题实证强度**（这条提法在多少份真题参考答案里出现过），
+        # 降序取 = 优先喂有实证的。实测 89 条种子提法里只有 30 条在真题里出现过，
+        # 剩下 59 条是公文教材式套话（「为深入贯彻…」「压实…责任」），真题答案不这么写。
+        # 同一个部件下按 freq 排、每个部件只取最强的一条，别把套话喂进去。
+        for r in db.execute(
+                "SELECT part scene, text phrases, freq FROM yy_items "
+                "WHERE kind='表述' AND (doctype=? OR doctype='') "
+                "ORDER BY freq DESC, id", (doctype,)):
+            if r["scene"] in want and r["scene"] not in seen:
+                seen.add(r["scene"])
+                out.append(dict(r))
+    except Exception:
+        log.debug("yy_items 还没数据或列不齐，跳过", exc_info=True)
+    for r in db.execute("SELECT scene, phrases, doctype FROM gongwen_items ORDER BY id"):
+        p = norm_part(r["scene"])
+        if p in want or (r["doctype"] and doctype in r["doctype"]):
+            key = r["scene"]
+            if key not in seen:
+                seen.add(key)
+                out.append(dict(r))
+    if len(out) >= 4:
+        return out[:limit]
+    # 命中太少就退回全表：库里只有 16 条种子，宁可多喂也别让提示词里没零件可用
+    return [dict(r) for r in db.execute(
+        "SELECT scene, phrases, doctype FROM gongwen_items ORDER BY id LIMIT ?", (limit,))]
+
+
+# 真题里 part 形态最常被单独考的几块，按文种给个默认。
+# 没预设的文种就取它 parts 里的主体部分——真题考的都是"肉"，不会单独考标题落款。
+PART_PRESETS = {
+    "调研报告": ["主体·问题", "主体·建议"],          # 2022 川县乡 Q2 原题
+    "提案": ["开头·缘由", "主体·建议"],              # 2025 国考地市 Q4（案由 + 具体建议）
+    "工作指南": ["主体·举措"],                       # 2025 国考行执 Q3（工作事项及内容）
+    "谈话提纲": ["主体·成效", "主体·问题", "主体·建议"],
+    "汇报": ["主体·举措", "主体·成效"],
+}
+
+
+def _only_parts(doctype, want=None):
+    """part 形态要写哪几块。传了就按传的（过滤掉这个文种没有的），否则用预设。"""
+    have = {p for p, _r in parts_of(doctype)}
+    if want:
+        got = [norm_part(x) for x in want if x]
+        return [p for p in got if p in have]
+    preset = [p for p in PART_PRESETS.get(doctype, []) if p in have]
+    if preset:
+        return preset
+    # 没预设：取主体那几块（真题的 part 题考的都是正文的"肉"，不考标题落款）
+    return [p for p, _r in parts_of(doctype) if p.startswith("主体")] or \
+           [p for p, r in parts_of(doctype) if r]
+
+
+def _harvest_errors(db, content, doctype):
+    """出稿后跑格式检查器，命中的存成错例（成对：错句 + 改正 + 扣分理由）。
+
+    去重靠 yy_items 的 UNIQUE(kind,doctype,part,title)：同一条错句反复出现只留一条，
+    但 freq 累加 —— 「这个错犯了多少次」本身就是有用的信息，复习时该优先出高频错。
+    检查器**只报有真题实证的东西**（见 mods/yycheck 里的两道前置闸），
+    否则等于把猜测当标准答案教给用户。
+    """
+    import hashlib
+
+    from mods.yycheck import check_all
+    pairs = check_all(content, doctype)
+    if not pairs:
+        return 0
+    n = 0
+    for p in pairs:
+        brief = re.sub(r"\s", "", p["bad"])[:14]
+        h = hashlib.sha1(((doctype or "") + p["bad"]).encode("utf-8")).hexdigest()[:6]
+        title = "%s·%s·%s" % (p["check"], brief, h)
+        cur = db.execute(
+            "INSERT OR IGNORE INTO yy_items(kind,doctype,part,title,text,note,src) "
+            "VALUES('错例',?,?,?,?,?,'ai')",
+            (doctype or "", p["part"], title,
+             json.dumps({"bad": p["bad"], "good": p["good"]}, ensure_ascii=False),
+             p["why"]))
+        if cur.rowcount:
+            n += 1
+        else:
+            db.execute("UPDATE yy_items SET freq=freq+1 WHERE kind='错例' AND "
+                       "doctype=? AND part=? AND title=?", (doctype or "", p["part"], title))
+    if pairs:
+        log.info("应用文 %s 格式检查命中 %d 条（新入库 %d）", doctype, len(pairs), n)
+    return n
+
+
+def _word_target(lo, hi):
+    """给模型的**具体目标字数**。真题参考答案写到上限的 94%，不顶着上限写。
+    P2 的经验：给区间模型会往下限以下写，给具体数字才落在区间里。"""
+    return max(lo + 20, int(hi * ANS_FILL))
+
+
+def real_scenes(db, doctype="", limit=8):
+    """真题原题的发文情景（身份 + 事由 + 对象），从 yy_items 的「情景」类取。
+
+    原来这里是从新闻标题截 22 个字当发文场景、身份和对象直接退回 demo 默认值——
+    那是**编的题面**。真题题干里这三样是现成的：
+    「假如你是花湖区政府办工作人员，A 市要召开打通基层法律服务『最后一公里』座谈会」。
+
+    受文对象大多抽不到（真题题干本来就不写，由文种隐含：简报→领导、倡议书→公众），
+    所以缺的那一项**退回该文种 demo 里的 audience**，不硬编。
+    """
+    out = []
+    try:
+        rows = db.execute(
+            "SELECT doctype, text, src_ref FROM yy_items WHERE kind='情景' "
+            + ("AND doctype=? " if doctype else "")
+            + "ORDER BY freq DESC, id DESC LIMIT ?",
+            ([doctype, limit] if doctype else [limit])).fetchall()
+    except sqlite3.Error:
+        return []
+    for r in rows:
+        try:
+            d = json.loads(r["text"] or "{}")
+        except Exception:
+            continue
+        dt = r["doctype"] or doctype
+        if not d.get("audience"):
+            d["audience"] = (GW_MAP.get(dt, {}).get("demo") or {}).get("audience", "")
+        d["src"] = r["src_ref"]
+        d["doctype"] = dt
+        if d.get("scene") or d.get("role"):
+            out.append(d)
+    return out
+
+
+@bp.get("/api/write/realscene")
+def write_realscene():
+    """某个文种的真题情景，供「自选成文」一键套用。"""
+    dt = (request.args.get("doctype") or "").strip()
+    return jsonify({"items": real_scenes(get_db(), dt, 12)})
+
+
 @bp.get("/api/write/gwspec")
 def write_gwspec():
-    """文种清单 + 推荐的发文场景（从最近的概括句话题和时政标题里来，不用自己想）。"""
+    """文种清单 + 推荐的发文场景。
+
+    场景**先给真题原题的**（身份/事由都是真的），不够再用时政标题补——
+    后者只是个话题词，配不出完整题面。
+    """
     db = get_db()
-    scenes = [r[0] for r in db.execute(
-        "SELECT DISTINCT topic FROM gaikuo_items WHERE topic!='' ORDER BY date DESC LIMIT 10")]
+    real = real_scenes(db, "", 8)
+    scenes = [x["scene"] for x in real if x.get("scene")]
+    for r in db.execute(
+            "SELECT DISTINCT topic FROM gaikuo_items WHERE topic!='' ORDER BY date DESC LIMIT 10"):
+        if r[0] and r[0] not in scenes:
+            scenes.append(r[0])
     for r in db.execute("SELECT title FROM news_items ORDER BY id DESC LIMIT 6"):
         t = (r[0] or "").split("｜")[-1].strip()
         if t and len(t) <= 22 and t not in scenes:
             scenes.append(t)
-    return jsonify({"doctypes": GW_DOCTYPES, "cats": GW_CATS, "scenes": scenes[:12]})
+    return jsonify({"doctypes": GW_DOCTYPES, "cats": GW_CATS,
+                    "scenes": scenes[:12], "real_scenes": real})
 
 
 def _gen_yingyong(db, spec, mode="yingyong", date=None):
@@ -165,7 +606,18 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
     doctype = spec.get("doctype") or "通知"
     if doctype not in GW_MAP:
         return None, (jsonify({"error": "不认识这个文种"}), 400)
-    form = "outline" if spec.get("form") == "outline" else "full"
+    # form 有三种，第三种是真题实测出来的：
+    #   full    成篇（28/38 道）
+    #   outline 提纲（7/38，真题明确要「提纲」）
+    #   part    **只写指定的几块**（3/38）—— 真题原题：
+    #           「拟写调研报告的『问题』和『建议』部分」（2022 川县乡 Q2）
+    #           「拟写『提案案由』和『具体建议』」（2025 国考地市 Q4）
+    #           「草拟该指南中的工作事项及其相应工作内容」（2025 国考行执 Q3）
+    #   这类题不写标题、不写称谓落款，写了就是没读题。
+    form = spec.get("form") if spec.get("form") in ("outline", "part") else "full"
+    only = _only_parts(doctype, spec.get("only")) if form == "part" else []
+    if form == "part" and not only:
+        return None, (jsonify({"error": "part 形态要指定写哪几块"}), 400)
     g = GW_MAP[doctype]
     demo = g["demo"]
     scene = (spec.get("scene") or "").strip() or demo["scene"]
@@ -173,24 +625,47 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
     audience = (spec.get("audience") or "").strip() or demo["audience"]
     desc, fmt = g["d"], g["fmt"]
     pos = spec.get("pos") if spec.get("pos") in POS_BANDS else "medium"   # 自选/文种大全默认中题位；每日成文会按天传档
-    wmin, wmax = _word_band(doctype, pos)
+    score = spec.get("score")
+    wmin, wmax = _word_band(doctype, pos, score)
+    wtarget = _word_target(wmin, wmax)
 
-    # 公文规范表述按「结构部件」归好类了（开头·缘由 / 主体·举措 / 结尾·号召…），正好是骨架
-    gw = [dict(r) for r in db.execute(
-        "SELECT scene, phrases, doctype FROM gongwen_items ORDER BY id")]
+    # 规范表述按「结构部件」取——**不再全表一把梭**。
+    # 原来这里是 `SELECT ... FROM gongwen_items ORDER BY id` 整表塞进提示词：
+    # 写通知和写倡议书喂的是同一份 16 条池子，文种再多也没差别；库一扩就爆上下文。
+    # 现在按这个文种的 parts 精准取，取不到再退回全表（库还小，退回是有意义的兜底）。
+    gw = _phrase_pool(db, doctype)
     pool = "\n".join("· 【%s】%s" % (x["scene"], x["phrases"]) for x in gw)
-    # 场景相关的素材（有就用，没有不强求）
+    # 场景相关的要点素材（正文的「肉」）。**按治理领域匹配**是这一类的命门：
+    # 写垃圾分类的简报时，一条科技创新的举措句毫无用处。
+    # 先查 yy_items 的「要点」类（已按 (部件, domain) 归好），取不到再退回原来的概括句表。
     kw = "%" + scene[:6] + "%"
+    want_parts = [p for p, _r in parts_of(doctype)] or ["主体·举措"]
     facts = [dict(r) for r in db.execute(
-        "SELECT sentence FROM gaikuo_items WHERE topic LIKE ? OR sentence LIKE ? LIMIT 5", (kw, kw))]
+        "SELECT text sentence FROM yy_items WHERE kind='要点' "
+        "AND part IN (%s) AND (domain LIKE ? OR text LIKE ?) "
+        "ORDER BY (domain LIKE ?) DESC, id LIMIT 6" % ",".join("?" * len(want_parts)),
+        want_parts + [kw, kw, kw])]
+    if not facts:
+        facts = [dict(r) for r in db.execute(
+            "SELECT sentence FROM gaikuo_items WHERE topic LIKE ? OR sentence LIKE ? LIMIT 5",
+            (kw, kw))]
     quotes = [dict(r) for r in db.execute(
         "SELECT quote FROM xiyu_items WHERE quote LIKE ? LIMIT 3", (kw,))]
 
-    head = ("写一篇申论**应用文**范文。\n\n" if form == "full" else
-            "给这个文种写一份**提纲纲要**。\n"
-            "⚠️ 提纲**不是**缩写版的文章：它是**框架式、要点式**的呈现——把骨架摆出来，"
-            "每个部件下面用短句列要点（这一块放什么、写到什么程度、用哪种表述），"
-            "**不要写成成篇的段落**。目的是让人一眼看清「这个文种由哪几块组成、每块该放什么」。\n\n")
+    if form == "full":
+        head = "写一篇申论**应用文**范文。\n\n"
+    elif form == "outline":
+        head = ("给这个文种写一份**提纲纲要**。\n"
+                "⚠️ 提纲**不是**缩写版的文章：它是**框架式、要点式**的呈现——把骨架摆出来，"
+                "每个部件下面用短句列要点（这一块放什么、写到什么程度、用哪种表述），"
+                "**不要写成成篇的段落**。目的是让人一眼看清「这个文种由哪几块组成、每块该放什么」。\n\n")
+    else:                                   # part：只写指定的几块
+        head = ("**只写这几块**，别写整篇：%s。\n"
+                "⚠️ 真题里这类题的原话是「拟写调研报告的『问题』和『建议』部分」"
+                "「拟写『提案案由』和『具体建议』」——**没让你写标题、称谓、落款**，"
+                "写了就是没读题、白花字数。\n"
+                "每一块用它的名字起头（如「问题：」「建议：」），块内该分条的照样用"
+                "「一、二、三、」规范序号。\n\n" % "、".join(only))
 
     setting = (
         "【题目设定】\n"
@@ -203,7 +678,9 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
         "【可用的规范表述】（公文的「零件」，按结构部件归好类了，请对号入座地用）\n%s\n\n"
         "%s%s"
         % (doctype, desc, scene, role, audience, fmt,
-           ("字数：%d~%d 字（正文，不含标题落款）" % (wmin, wmax)) if form == "full"
+           ("字数：**写到 %d 字左右**（正文，不含标题落款；区间 %d~%d，"
+            "真题参考答案通常写到上限的 94%%，不要顶着上限、也不要偷懒写到下限）"
+            % (wtarget, wmin, wmax)) if form == "full"
            else "提纲总字数控制在 300 字以内，要点短、密度高",
            pool,
            ("【这个话题的规范表述】\n" + "\n".join("· " + f["sentence"] for f in facts) + "\n\n") if facts else "",
@@ -229,10 +706,11 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
             "如「一、健全联防联控机制。」；哪怕在一段之内分层，也写成「一、…。二、…。」。\n"
             "4. **分段合理**：正文按层次分段，一段讲清一层意思（一般 2~5 句），"
             "**严禁一句话一个自然段**；分条项内部若有展开，也放在同一段里。\n"
-            "5. **字数**：正文控制在 %d~%d 字（不含标题和落款日期），**绝不超过 %d 字**——"
-            "宁可精炼也别注水。\n"
+            "5. **字数**：正文**写到 %d 字左右**（不含标题和落款日期），区间 %d~%d，"
+            "**绝不超过 %d 字**——真题参考答案通常写到上限的九成多，"
+            "既不要顶着上限注水，也不要写到下限就收。\n"
             "6. 上面的规范表述要**用进去**，别自己造大白话。\n\n"
-            % (wmin, wmax, MAX_YY_WORDS)) + (
+            % (wtarget, wmin, wmax, wmax)) + (
             "【最重要的一条】除了正文，还要给**逐段批注**：把全文拆成若干段，每段说清楚\n"
             "· part：这一段是哪个部件（标题 / 称谓 / 开头·缘由 / 主体·举措 / 主体·成效 / "
             "结尾·号召 / 结尾·要求 / 落款 …）\n"
@@ -261,18 +739,67 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
             '"segs":[{"part":"","text":"","why":""}],'
             '"note":"一句话说明这个文种的提纲最关键的是哪一块"}')
 
+    if form == "part":                      # part 形态换掉上面那份 req
+        req = (
+            "【硬要求】\n"
+            "1. **只写这几块：%s**。标题、称谓、落款一个都不要写——题目没让写。\n"
+            "2. 每块用它的名字起头（「问题：」「建议：」这样），块内分条用"
+            "「一、二、三、」规范序号，**不许用「一是…二是…」**。\n"
+            "3. 内容要具体、能落地，别写空泛口号；该用规范表述的地方用上面那些零件。\n"
+            "4. **字数**：全部内容合起来**写到 %d 字左右**，区间 %d~%d，绝不超过 %d 字。\n\n"
+            "还要给**逐块批注** segs：part（块名）、text（该块原文，逐字复制）、"
+            "why（这一块阅卷看什么，一句话）。\n\n"
+            "只输出 JSON：\n"
+            '{"title":"","content":"全部内容（用 \\n 分行，块名顶格）",'
+            '"segs":[{"part":"","text":"","why":""}],'
+            '"note":"一句话说明这类只写部分内容的题最容易丢分在哪"}'
+            % ("、".join(only), wtarget, wmin, wmax, wmax))
+
     prompt = head + setting + req
 
-    # 范文超 500 字就自动重写一次（提示词管不死，加道硬兜底）。用整份 d 重来，批注不会错位。
-    d, content = None, ""
-    for attempt in range(2):
-        p = prompt if attempt == 0 else prompt + (
-            "\n\n⚠️ 上一版超了字数，这一版**务必把正文压到 %d 字以内**，删次要修饰、保住要点和格式。" % MAX_YY_WORDS)
+    # 范文超字数就自动压一轮（提示词管不死，加道硬兜底）。每轮都收整份 d（含 segs），
+    # 批注跟着正文一起换，不会错位。
+    #
+    # P1 实测：**只给目标字数不够**。三个文种各跑一遍，全部超限 25~43%
+    # （经验交流材料 640/550、公开信 1024/1000、简报 716/500），而原来只重试 1 次、
+    # 反馈还只是「务必压到 N 字以内」这种笼统话。改成：
+    #   · 最多试 3 轮
+    #   · 每轮把**当前字数和要删掉多少字**明确告诉它（「现在 716 字，删掉 246 字」）
+    # 和 P2 那条经验同理——给具体数字，而不是给要求。
+    # 收**最接近目标的那一版**，不是最后一版。
+    #
+    # 后来（ai_calls 的账查出来的）又发现一件事：**重写压根不是在压缩**。原来第 2、3 轮
+    # 发的是「原 prompt + 上一版超了多少字」——上一版正文根本没进消息体，模型是拿着
+    # 原题从零再写一篇短的。所以上面那串 665 → 598 → 734 不收敛是必然的：三版之间
+    # 除了题目没有任何关系，谈不上「删」。
+    # 改成把**上一版正文整篇喂回去、只准删**之后：
+    #   · 结果单调（删只会变短），best 那道兜底也就成了纯保险而不是主力；
+    #   · 这一步不再产出新内容，于是可以走 fast——立意、选材、格式的钱在第 1 轮
+    #     已经花过 pro 了，第 2、3 轮只是拿着 pro 写好的稿子做减法。
+    # 首轮仍然是 pro：那才是真正在「写」的一轮。
+    d, content, over = None, "", 0
+    best = None                       # (超出字数, d, content)
+    for attempt in range(3):
+        if attempt == 0:
+            p, tier = prompt, "pro"
+        else:
+            p, tier = (
+                "下面这版应用文正文 **%d 字，超了 %d 字**。请把它**删到 %d 字左右**"
+                "（绝不超过 %d 字）：删次要修饰、合并同类表述、砍掉可省的铺垫。\n"
+                "**只做减法**：要点条数、格式部件、称谓落款、分条序号一个都不能少，"
+                "不许新增内容、不许改写立意、不许调整段落顺序。\n\n"
+                "【上一版正文】\n%s\n\n"
+                "批注 segs 要跟着重出，text 必须从**删减后的正文**里逐字复制。\n"
+                "只输出 JSON：\n"
+                '{"title":"","content":"删减后的全文（用 \\n 分行）",'
+                '"segs":[{"part":"","text":"","why":""}],'
+                '"note":"一句话说明这个文种最容易丢分的地方"}'
+                % (len(re.sub(r"\s", "", content)), over, wtarget, wmax, content)), "fast"
         rep, err = _ai_call_or_error(
             [{"role": "system", "content": "你是申论阅卷组的应用文范文作者。格式是第一位的，"
                                            "语气要合身份。严格输出 JSON。"},
              {"role": "user", "content": p}],
-            temperature=0.5, max_tokens=3500, timeout=300, json_mode=True, tier="pro")
+            temperature=0.5, max_tokens=3500, timeout=300, json_mode=True, tier=tier)
         if err:
             return None, err
         try:
@@ -282,21 +809,42 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
         content = (d.get("content") or "").strip()
         if not content:
             return None, (jsonify({"error": "AI 没写出正文，请重试"}), 502)
-        if form != "full" or len(re.sub(r"\s", "", content)) <= MAX_YY_WORDS:
-            break     # 提纲不卡字数；范文达标就收工，否则再压一次
+        n_now = len(re.sub(r"\s", "", content))
+        over = n_now - wmax
+        if best is None or over < best[0]:
+            best = (over, d, content)
+        if form == "outline" or over <= 0:
+            break     # 提纲不卡字数；范文和 part 形态达标就收工，否则带着「超了多少」再压一轮
+        log.info("应用文 %s 第 %d 版 %d 字，超上限 %d 字，重写", doctype, attempt + 1, n_now, over)
+    if best and best[0] < over:        # 三轮都超限时，取超得最少的那一版
+        log.info("应用文 %s 三轮都超限，收最接近的一版（超 %d 字，末版超 %d 字）",
+                 doctype, best[0], over)
+        _, d, content = best
 
     # 分条改成规范序号。**必须赶在批注核对之前**：批注的 text 是从正文逐字复制的，
     # 正文改了而批注没改，下面那道「必须出现在正文里」的闸会把整篇的批注全丢掉。
-    content = fix_fentiao(content)
+    content = fix_fentiao(content, doctype)
+
+    # 格式检查器过一遍。按设计文档那条纪律：**闸门和错例产线是同一件事**——
+    # 检查失败不光是提醒，它本身就是一条可入库的错例（错句 + 改正 + 扣分理由）。
+    # fix_fentiao 已经把分条改掉了，所以这里剩下的是它管不到的那几类
+    # （标签前缀、落款没成行、语气不合身份、缺必需部件）。
+    # 整段包在 try 里：错例是副产品，出错不能影响出稿。
+    try:
+        _harvest_errors(db, content, doctype)
+    except Exception:
+        log.debug("错例入库失败（不影响出稿）", exc_info=True)
 
     # 批注的 text 必须真的来自正文，否则点了跳不过去、也说明它在瞎编
     flat = re.sub(r"\s", "", content)
     segs = []
     for s in (d.get("segs") or []):
-        t = fix_fentiao((s.get("text") or "").strip())
+        t = fix_fentiao((s.get("text") or "").strip(), doctype)
         if not t or re.sub(r"\s", "", t) not in flat:
             continue
-        segs.append({"part": (s.get("part") or "").strip()[:12],
+        # part 过一遍归一化：模型爱造新名字（实测 408 条批注里 119 种叫法），
+        # 不收敛的话「按部件检索」就无从下手
+        segs.append({"part": norm_part(s.get("part"))[:12] or (s.get("part") or "").strip()[:12],
                      "text": t, "why": (s.get("why") or "").strip()[:140]})
     # 用了哪些规范表述：直接回正文里扫（别问 AI，它虚报也漏报）
     used = []
@@ -317,7 +865,7 @@ def _gen_yingyong(db, spec, mode="yingyong", date=None):
                 json.dumps(segs, ensure_ascii=False), content, words,
                 json.dumps(used, ensure_ascii=False), (d.get("note") or "").strip(),
                 json.dumps({"doctype": doctype, "scene": scene, "role": role,
-                            "audience": audience, "form": form, "cat": g["cat"],
+                            "audience": audience, "form": form, "only": only, "cat": g["cat"],
                             "pos": pos, "wmin": wmin, "wmax": wmax}, ensure_ascii=False)))
     db.commit()
     eid = db.execute("SELECT id FROM daily_essays WHERE mode=? AND date=? ORDER BY id DESC LIMIT 1",
@@ -382,22 +930,47 @@ def _gen_yy_compose(db, date):
         '"segs":[{"part":"","text":"","why":""}],'
         '"note":"一句话说明这类综合应用最容易丢分的地方"}'
         % (doctypes, seed_txt))
-    # 范文超 500 字就自动重出一次（硬兜底）
+    # 范文超 500 字就自动压一轮（硬兜底）。
+    #
+    # 第 2 轮只压**范文**，给定材料和作答要求原样留着——原来那轮发的是「原 prompt +
+    # 压到 N 字」，等于重出一整道题：材料、要求、范文全换新的，只因为范文长了几十字。
+    # 那既浪费（材料是这次输出里最长的一块），又让第 1 轮命好的题白出一次。
+    # 只压范文之后这一轮不再产出新内容，所以走 fast；命题那轮仍是 pro。
     d, content, material, task = None, "", "", ""
     for attempt in range(2):
-        p = prompt if attempt == 0 else prompt + (
-            "\n\n⚠️ 上一版范文超了字数，这一版**务必把范文压到 %d 字以内**，删次要修饰、保住要点和格式。" % MAX_YY_WORDS)
+        if attempt == 0:
+            p, tier = prompt, "pro"
+        else:
+            p, tier = (
+                "下面这篇应用文范文超了字数，请把它**压到 %d 字以内**。\n"
+                "**只做减法**：删次要修饰、合并同类表述，要点、格式部件、称谓落款、"
+                "分条序号一个都不能少，不许新增内容、不许改写立意。\n\n"
+                "【范文】\n%s\n\n"
+                "批注 segs 要跟着重出，text 必须从**删减后的范文**里逐字复制。\n"
+                "只输出 JSON：\n"
+                '{"title":"范文标题","content":"删减后的范文全文（用 \\n 分行）",'
+                '"segs":[{"part":"","text":"","why":""}],'
+                '"note":"一句话说明这类综合应用最容易丢分的地方"}'
+                % (MAX_YY_WORDS, content)), "fast"
         rep, err = _ai_call_or_error(
             [{"role": "system", "content": "你是申论阅卷组的应用文范文作者，也擅长命制综合应用能力大题。"
                                            "格式是第一位的，语气要合身份。严格输出 JSON。"},
              {"role": "user", "content": p}],
-            temperature=0.6, max_tokens=4000, timeout=300, json_mode=True, tier="pro")
+            temperature=0.6, max_tokens=4000, timeout=300, json_mode=True, tier=tier)
         if err:
             return None, err
         try:
-            d = json.loads(rep)
+            nd = json.loads(rep)
         except Exception:
             return None, (jsonify({"error": "AI 返回格式异常，请重试"}), 502)
+        if attempt == 0:
+            d = nd
+        else:
+            # 压缩轮不出 doctype/material/task，把它压出来的正文和批注贴回第 1 轮那份题上。
+            # 万一它把正文压没了，就守着第 1 轮的稿子收工——宁可长几十字，也不能出残篇。
+            if not (nd.get("content") or "").strip():
+                break
+            d = dict(d, **{k: nd[k] for k in ("title", "content", "segs", "note") if k in nd})
         content = (d.get("content") or "").strip()
         material = (d.get("material") or "").strip()
         task = (d.get("task") or "").strip()
