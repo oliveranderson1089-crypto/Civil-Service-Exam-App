@@ -782,6 +782,21 @@
     <div class="fd-gen">
       <div id="fd-types" class="fd-types"></div>
       <div id="fd-doctypes" class="gw-chips fd-doctypes hidden"></div>
+      <!-- 题源开关：对标行测专项练那套 real/ai。真题模式没有难度档（真题不带难度标签），
+           换成年份窗口和卷种筛 —— 和行测那边同一套说法。 -->
+      <div id="fd-src" class="gw-chips fd-src">
+        <span class="gw-sug-t">题源：</span>
+        <button class="chip tiny on" data-fdsrc="ai">🤖 AI 出题</button>
+        <button class="chip tiny" data-fdsrc="real">📄 真题练习</button>
+        <span id="fd-srcnote" class="fd-srcnote"></span>
+      </div>
+      <div id="fd-realopt" class="gw-chips fd-realopt hidden">
+        <span class="gw-sug-t">年份：</span>
+        <button class="chip tiny on" data-fdera="new">2018 年起</button>
+        <button class="chip tiny" data-fdera="all">全部年份</button>
+        <span class="gw-sug-t" style="margin-left:8px">卷种：</span>
+        <button class="chip tiny on" data-fdexam="">不限</button>
+      </div>
       <div class="fd-bar">
         <input id="fd-topic" type="text" placeholder="话题（留空则自动从近期时政里挑）">
         <button class="btn primary" id="fd-gen">✍️ 出一道</button>

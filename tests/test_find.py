@@ -190,3 +190,71 @@ class Test沾边判定:
             near, wrong = _find_split_wrong(row, [2, 4], set())
             assert near == [], "没有 near 数据却报了沾边：%s" % near
             assert wrong == [2, 4], "老题目该维持原来的「全判找错」行为"
+
+
+# ============ 真题材料：接回 PDF 硬折行 + 一题只喂它那一则 ============
+import re as _re
+
+from mods.find import _q_scoped_material, _split_materials, _unwrap
+
+# 真题 PDF 的版式：段首缩进 4 空格，续行顶格 —— 缩进行够多才走「缩进=段首」这一路
+_PDF_LIKE = (
+    "1. 2025年10月的一天，鲁师傅办公桌上的电脑屏幕弹出市监局发来的“体检报告”，那是他所\n"
+    "经营的三家门店的“检测指标”。\n"
+    "    2000年春节前，鲁师傅务工结束返乡。回到县城时，一阵烧饼香气飘来。广合烧饼在当地\n"
+    "世代相传，是当地人最爱的日常小吃，风味声名远\n"
+    "播。\n"
+    "    春节后，鲁师傅做了个简易烤炉，在县汽车站旁支起烧饼摊。\n"
+    "    转折出现在2003年夏天，县工商局开展“百日整治”行动。\n"
+    "2. 近日，D县民政局开展了养老机构检查整治工作。\n"
+)
+
+
+def test_硬折行接回整段_缩进才是段首():
+    out = _unwrap(_PDF_LIKE).split("\n")
+    assert out[0].endswith("“检测指标”。")          # 续行接回来了
+    # 一句被拆到三行，整段接回来，中间不留断点
+    assert out[1].endswith("风味声名远播。") and "远播" in out[1]
+    assert out[2].startswith("春节后")               # 缩进行另起一段
+    assert out[-1].startswith("2.")                  # 材料编号行永远另起
+
+
+def test_接回折行不动一个字():
+    """只重排换行，内容必须逐字不变 —— 全库 128 份卷子跑过这条。"""
+    assert _re.sub(r"\s", "", _unwrap(_PDF_LIKE)) == _re.sub(r"\s", "", _PDF_LIKE)
+
+
+def test_空行分段的版式_收了句也不算段落结束():
+    """没缩进、靠空行分段的卷子（2025 国考行政执法就是）。
+    只看句末标点会在「上一行正好收句、下一行仍是同段」处断错 —— 一句话成一段。"""
+    txt = ("材料1. 近年来，A市把科技创新摆在核心位置，创新优势从无到有。\n"
+           "\n"
+           "两年前，方教授团队取得了一项科研成果，新技术既节能环保。\n"
+           "如何将这项成果推向市场呢？“转化专班的支持帮我们跨越了鸿沟。”方教授说。\n"
+           "专班工作人员常态化登门入室，深\n"
+           "度对接市内外高校院所。\n"
+           "\n"
+           "远达信息技术有限公司选择落户A市，源于一次合作对接。\n")
+    out = [x for x in _unwrap(txt).split("\n") if x.strip()]
+    assert len(out) == 3                                  # 三段，不是七段
+    assert out[1].endswith("深度对接市内外高校院所。")      # 段内收过句也照样接着走
+    assert out[2].startswith("远达信息")
+
+
+def test_没有缩进的版式退回看句末标点():
+    txt = "甲乙丙丁戊己庚辛，这一句还没写完\n所以下一行是它的续行。\n另起一句写在这里。"
+    out = _unwrap(txt).split("\n")
+    assert out[0] == "甲乙丙丁戊己庚辛，这一句还没写完所以下一行是它的续行。"
+    assert out[1] == "另起一句写在这里。"
+
+
+def test_一题只喂它引用的那一则材料():
+    mats = _split_materials(_unwrap(_PDF_LIKE))
+    assert sorted(mats) == [1, 2]
+    got = _q_scoped_material("请根据“给定资料2”，梳理存在的问题。", mats, "整卷")
+    assert got.startswith("近日，D县民政局") and "鲁师傅" not in got
+
+
+def test_题干没写引用哪则就退回整份():
+    mats = _split_materials(_unwrap(_PDF_LIKE))
+    assert _q_scoped_material("请自拟题目写一篇文章。", mats, "整卷") == "整卷"

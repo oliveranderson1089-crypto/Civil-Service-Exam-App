@@ -3766,3 +3766,17 @@ body.dark .bk-practice{background:#1e2733;border-color:#2c3d52;}
 .yl-text { font-size: 14px; line-height: 1.7; }
 .yl-src { font-size: 11px; color: var(--muted, #9ca3af); margin-top: 6px; }
 
+/* 小题训练 · 题源开关 */
+.fd-src { margin-top: 8px; align-items: center; }
+.fd-srcnote { font-size: 12px; color: var(--muted, #6b7280); margin-left: 8px; }
+.fd-src .chip:disabled { opacity: .4; cursor: not-allowed; }
+.fd-realopt { align-items: center; margin-top: 8px; }
+.fd-realopt .gw-sug-t { font-size: 12.5px; color: var(--muted); }
+/* 选中态：JS 加的是 .on（和文种那排同一套），这里补上题源/年份/卷种三排的样式，
+   否则点了没有任何视觉反馈，看着像按钮失灵。
+   用实心蓝（和站内 .chip.active 一个观感）：先前那版浅蓝底在暗色下是 #142636，
+   跟深色背景几乎分不出来，等于没有反馈。 */
+.fd-src .chip.on, .fd-realopt .chip.on, .fd-doctypes .chip.on {
+  background: var(--blue-fill); border-color: var(--blue); color: #fff;
+  box-shadow: 0 3px 10px rgba(43,111,214,.3); }
+

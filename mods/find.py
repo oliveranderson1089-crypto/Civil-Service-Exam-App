@@ -12,6 +12,7 @@ import json
 import os
 import random
 import re
+import sqlite3
 import tempfile
 import uuid
 
@@ -20,7 +21,7 @@ from flask import Blueprint, jsonify, request
 from core import get_db, log, uid
 from mods.ai import _ai_call_or_error
 from mods.files import IMAGE_EXT, _ocr_image, _pdf_text_or_ocr, _reflow, _strip_artifacts
-from mods.gongwen import GW_DOCTYPES, GW_MAP
+from mods.gongwen import GW_DOCTYPES, GW_MAP, fix_fentiao
 from mods.shenlun import (_SL_SCORE, _SL_TYPES, _classify_questions,
                           _sl_word_range, _sl_words, _split_paper)
 
@@ -550,8 +551,13 @@ def _find_reference(qtype, name, stem, points, wmin, wmax, doctype=""):
     return best
 
 
-def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requirement=""):
-    """出一套采分点并落库，返回 (paper_id, err)。参考答案在这一步一并生成存下来。"""
+def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requirement="",
+                reference=None):
+    """出一套采分点并落库，返回 (paper_id, err)。参考答案在这一步一并生成存下来。
+
+    reference 传了值就**不再让 AI 编参考答案**——真题模式下这里传的是真题的
+    官方参考答案，AI 生成的顶不上它，还白花一次调用。
+    """
     name, dfull, dmin, dmax = FIND_TYPES[qtype][0], FIND_TYPES[qtype][1], FIND_TYPES[qtype][2], FIND_TYPES[qtype][3]
     points, info, err = _find_points(qtype, stem, material, full)
     if err:
@@ -564,11 +570,20 @@ def _find_build(db, uid_, qtype, stem, material, full, wmin, wmax, source, requi
                 doctype = k
                 break
     # 范文生成失败不该让整道题白出（它是独立的一次调用，超时就空着，页面上另有重生成按钮）
-    try:
-        ref = _find_reference(qtype, name, stem, points, lo, hi, doctype)
-    except Exception:
-        log.warning("find 参考答案生成失败，题目照常出", exc_info=True)
-        ref = ""
+    if reference:
+        ref = reference                  # 真题模式：直接用官方参考答案，不劳 AI
+    else:
+        try:
+            ref = _find_reference(qtype, name, stem, points, lo, hi, doctype)
+        except Exception:
+            log.warning("find 参考答案生成失败，题目照常出", exc_info=True)
+            ref = ""
+    # 贯彻执行的参考答案要过一遍分条规范化。**这里原来漏了**：这个模块从来没调
+    # fix_fentiao，于是它给出的参考答案可以写着「一是运维保障有力」——
+    # 而同一个 app 的错例库正在教用户「一是…二是…」是扣分项。
+    # 两个模块对同一条规范说法不一致，比哪一边错更糟。口语文种（讲话稿）照旧豁免。
+    if qtype == "guanche" and ref:
+        ref = fix_fentiao(ref, doctype)
     cur = db.execute(
         "INSERT INTO find_papers(user_id,qtype,type_name,stem,requirement,full,word_min,word_max,"
         "material,points,source,reference,near) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -874,13 +889,109 @@ def _find_gen_material(qtype, name, full, wmin, wmax, tip, topic, doctype=""):
     return material, stem, None
 
 
+def _find_gen_real(d, qtype):
+    """真题题源：挑一道真题灌进 find_papers，之后的找点/写点/批改流程一行都不用改。"""
+    db = get_db()
+    r, err = _pick_real(db, qtype, d)
+    if err:
+        return err
+    name = FIND_TYPES[qtype][0]
+    # 字数用真题写着的那个上限；下限按上限的七成估（真题只给上限）
+    wmax = int(r["words"] or 0) or FIND_TYPES[qtype][3]
+    wmin = max(80, int(wmax * 0.7))
+    full = int(r["score"] or 0) or FIND_TYPES[qtype][1]
+    src = "真题·%s Q%d" % (r["pname"], r["seq"])
+    # 真题库存的是**整卷**给定资料，而一道题只作答其中一则（「请根据给定资料4…」）。
+    # 整卷灌进来，考生要在 7000 字里找 1500 字那一则的点，和真实作答完全不是一回事，
+    # 采分点也会被别则串味。先接回硬折行，再按题干引用的编号只取该则 ——
+    # 和上传真题那条路（find_upload）用的是同一套 _split_materials/_q_scoped_material。
+    material = _unwrap(r["material"] or "")
+    qbody = (r["stem"] or "") + " " + (r["require"] or "")
+    material = _q_scoped_material(qbody, _split_materials(material), material)
+    pid, err = _find_build(db, uid(), qtype, r["stem"], material, full, wmin, wmax,
+                           src, requirement=r["require"] or "",
+                           reference=(r["answer"] or "").strip() or None)
+    if err:
+        return err
+    return jsonify({"id": pid, "src": "real", "from": src,
+                    "has_official_ref": bool((r["answer"] or "").strip())}), 201
+
+
+@bp.get("/api/find/realstat")
+def find_realstat():
+    """真题题源有多少可练的，按题型/年份/卷种给个数——界面上要能看出「这个筛法还剩几道」。"""
+    db = get_db()
+    out = {}
+    for qt, kind in (("guanche", "贯彻执行"), ("guina", "归纳概括"),
+                     ("zonghe", "综合分析"), ("duice", "提出对策")):
+        row = db.execute(
+            "SELECT COUNT(*) n, SUM(q.answer!='') ref, "
+            "SUM(CASE WHEN p.era='new' THEN 1 ELSE 0 END) new "
+            "FROM slreal_questions q JOIN slreal_papers p ON p.id=q.paper_id "
+            "WHERE q.qkind=? AND length(p.material)>800 AND q.words>0", (kind,)).fetchone()
+        out[qt] = {"total": row["n"] or 0, "with_ref": row["ref"] or 0,
+                   "since2018": row["new"] or 0}
+    exams = [r[0] for r in db.execute(
+        "SELECT DISTINCT p.exam FROM slreal_questions q JOIN slreal_papers p ON p.id=q.paper_id "
+        "WHERE q.qkind!='' AND length(p.material)>800 ORDER BY p.exam")]
+    return jsonify({"types": out, "exams": exams})
+
+
+def _pick_real(db, qtype, d):
+    """真题题源：从 slreal_questions 里挑一道还没练过的。返回 (行, err)。
+
+    对标行测那边 P3 的题源开关：**真题模式没有难度档**（真题不带难度标签），
+    换成年份窗口和卷种筛。默认只取 2018 年起的——2000-2017 的贯彻执行题型还没定型
+    （通知/倡议书那会儿还考，2018 后就不考了），拿老卷练现在的题型是错的。
+
+    只取「有材料 + 有字数要求」的：材料太短没法做找点，没字数要求批改时无从判篇幅。
+    """
+    kind = {"guanche": "贯彻执行", "guina": "归纳概括",
+            "zonghe": "综合分析", "duice": "提出对策"}.get(qtype)
+    if not kind:
+        return None, (jsonify({"error": "这个题型还没有真题题源"}), 400)
+    where = ["q.qkind=?", "length(p.material)>800", "q.words>0"]
+    args = [kind]
+    if (d.get("era") or "new") != "all":
+        where.append("p.era=?")
+        args.append("new")
+    if d.get("exam"):
+        where.append("p.exam=?")
+        args.append(d["exam"])
+    if qtype == "guanche" and d.get("doctype"):
+        where.append("q.doctype=?")
+        args.append(d["doctype"])
+    # 练过的不再出（source 里记着「真题·<卷名> Q<n>」，靠它去重）
+    done = {r[0] for r in db.execute(
+        "SELECT source FROM find_papers WHERE user_id=? AND source LIKE '真题·%'", (uid(),))}
+    rows = db.execute(
+        "SELECT q.id, q.seq, q.stem, q.require, q.words, q.score, q.doctype, q.answer, "
+        "p.material, p.name pname, p.year, p.exam, p.kind pkind "
+        "FROM slreal_questions q JOIN slreal_papers p ON p.id=q.paper_id "
+        "WHERE %s ORDER BY RANDOM() LIMIT 60" % " AND ".join(where), args).fetchall()
+    for r in rows:
+        tag = "真题·%s Q%d" % (r["pname"], r["seq"])
+        if tag not in done:
+            return r, None
+    if rows:
+        return rows[0], None            # 全练过了就重出一道，比报错好
+    return None, (jsonify({"error": "这些条件下没有可练的真题，放宽年份或卷种试试"}), 404)
+
+
 @bp.post("/api/find/gen")
 def find_gen():
-    """AI 按考试标准出一道：先造材料（含干扰信息、够真题字数），再标采分点。"""
+    """出一道小题。题源两种：
+       src='ai'（默认）—— AI 按考试标准现出：先造材料，再标采分点
+       src='real'      —— 从历年真题里挑一道，材料和题干都是真的
+    真题模式下采分点仍由 AI 从**真题材料**标（真题不带采分点），
+    但参考答案优先用官方的那份（40 道有），不让 AI 编。
+    """
     d = request.get_json(silent=True) or {}
     qtype = (d.get("qtype") or "guina").strip()
     if qtype not in FIND_TYPES:
         return jsonify({"error": "题型不对"}), 400
+    if (d.get("src") or "ai").strip() == "real":
+        return _find_gen_real(d, qtype)
     topic = (d.get("topic") or "").strip()
     name, full, wmin, wmax, tip = FIND_TYPES[qtype]
 
@@ -1289,6 +1400,67 @@ def _cn2i(s):
     return int(s) if s.isdigit() else _CN_NUM_F.get(s, 0)
 
 
+# 段首标记：材料编号行（「1.」「材料三」）永远另起一段，不许被并到上一行去
+_MAT_LINE_HEAD = re.compile(r"^\s{0,3}(?:\d{1,2}\s*[.．、]|(?:给定)?材\s*料\s*[一二三四五六七八九十\d]{1,3})")
+_SENT_TAIL = "。！？…”』」）)》】"
+_INDENT_CH = (" ", "\t", "　")
+
+
+def _unwrap(text):
+    """把 PDF/OCR 抽出来的**按版面宽度硬折行**的材料接回成整段。
+
+    真题材料存进来时，一个句子常被拆在两三行里（「…风味声名远 / 播。」）。
+    危害不只是排版难看：_find_sents 按 \\n 切段，勾画粒度会从「一句」碎成「半句」，
+    找点的判定跟着一起失准 —— 用户看到的乱换行只是表症。
+
+    怎么判「这行是上一行的续行」？各家卷子的版式不一样，三套信号按可靠性排队：
+      · **缩进分段**（段首缩进 4 空格，续行顶格）—— 不缩进就是续行，最准；
+      · **空行分段**（没有缩进，段与段之间空一行）—— 那非空行之间一律是续行。
+        少了这一路，「上一行正好收了句、下一行其实还是同一段」就会断错，
+        表现就是「一句话成一段」；
+      · 两样都没有，才退回看上一行末尾**有没有收句**，没有句号就是没写完。
+    材料编号行和空行永远断开。全库 128 份卷子验证过：去掉空白后逐字不变，只重排换行。
+    """
+    lines = (text or "").split("\n")
+    body = [x for x in lines if x.strip()]
+    if not body:
+        return (text or "").strip()
+    indented = sum(1 for x in body if x[:1] in _INDENT_CH)
+    blanks = len(lines) - len(body)
+    use_indent = indented >= 3 and indented >= len(body) * 0.05
+    # 缩进优先：有缩进的卷子里空行往往是页眉页脚残留，按空行分段会把好几段粘成一段
+    use_blank = not use_indent and blanks >= 3 and blanks >= len(body) * 0.08
+    out = []
+    for raw in lines:
+        s = raw.strip()
+        if not s:
+            out.append("")
+            continue
+        if not out or not out[-1] or _MAT_LINE_HEAD.match(s):
+            out.append(s)
+            continue
+        if use_indent:
+            newpara = raw[:1] in _INDENT_CH
+        elif use_blank:
+            newpara = False                 # 只有空行才分段，上面那一支已经管了
+        else:
+            newpara = out[-1][-1] in _SENT_TAIL
+        if newpara:
+            out.append(s)
+        else:
+            out[-1] += s                    # 续行：直接接上，中文不补空格
+    res, blank = [], False                  # 合并后可能留下连续空行，压成一个
+    for x in out:
+        if not x:
+            if blank:
+                continue
+            blank = True
+        else:
+            blank = False
+        res.append(x)
+    return "\n".join(res).strip()
+
+
 def _split_materials(material):
     """把一份合并的给定资料按开头编号切成 {序号: 该则正文}。
     只保留从 1 起、连续递增的编号（过滤材料内部误命中的列表项/年份）。切不出多则就返回 {}。"""
@@ -1355,6 +1527,7 @@ def find_upload():
     if not qs:
         return jsonify({"error": "没识别出题目。请确认文件里有「作答要求」部分"}), 400
     cls = _classify_questions(qs)
+    material = _unwrap(material)                  # 先接回 PDF 的硬折行，再按编号切则
     mats = _split_materials(material)             # 按编号切成 {1:…, 2:…, …}；切不出就 {}
 
     db = get_db()

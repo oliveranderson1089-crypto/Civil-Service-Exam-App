@@ -28,6 +28,7 @@ function openFind() {
   fdManage = false; fdSel.clear();
   push({ view: 'find', title: '小题训练' });
   loadFindTypes();
+  loadFindRealStat();
   loadFindList();
 }
 let fdDoctypes = [];
@@ -50,6 +51,52 @@ async function loadFindTypes() {
 }
 function fdSyncDoctypes() {   // 只有选中「贯彻执行」时才显示文种选择条
   $('#fd-doctypes').classList.toggle('hidden', fdType() !== 'guanche');
+  fdSyncSrc();
+}
+
+// 真题题源的存量，进页面时取一次
+let fdRealStat = null;
+async function loadFindRealStat() {
+  try {
+    fdRealStat = await api('/api/find/realstat');
+    const box = $('#fd-realopt');
+    // 卷种按钮按库里实际有的卷种生成，不写死
+    box.querySelectorAll('[data-fdexam]:not([data-fdexam=""])').forEach(x => x.remove());
+    (fdRealStat.exams || []).forEach(x => {
+      const b = document.createElement('button');
+      b.className = 'chip tiny'; b.dataset.fdexam = x; b.textContent = x;
+      box.appendChild(b);
+    });
+    // 上次选的卷种刚被上面删掉的话，选中态会整排落空 —— 回落到「不限」，
+    // 别让界面停在「三排都没高亮」的样子（那正是看着像按钮失灵的场面）。
+    if (!box.querySelector('[data-fdexam].on'))
+      box.querySelector('[data-fdexam=""]')?.classList.add('on');
+  } catch (_) { fdRealStat = null; }   // 取不到就当没有真题源，界面自动置灰
+  fdSyncSrc();
+}
+
+// 题源提示：真题模式下要**明说这个筛法还剩几道**，不然点了才知道没题。
+// 没有真题题源的题型（如写作类）直接把「真题练习」置灰，别让人以为在练真题、
+// 实际退回了 AI 出题。
+function fdSyncSrc() {
+  const real = fdSrc() === 'real';
+  $('#fd-realopt').classList.toggle('hidden', !real);
+  const st = fdRealStat && fdRealStat.types && fdRealStat.types[fdType()];
+  const btn = document.querySelector('#fd-src [data-fdsrc="real"]');
+  const has = !!(st && st.total);
+  if (btn) { btn.disabled = !has; btn.title = has ? '' : '这个题型还没有真题题源'; }
+  if (!has && real) {                     // 切到没真题的题型时自动退回 AI，并说明
+    document.querySelectorAll('#fd-src .chip').forEach(x =>
+      x.classList.toggle('on', x.dataset.fdsrc === 'ai'));
+    $('#fd-realopt').classList.add('hidden');
+  }
+  $('#fd-srcnote').textContent = !st ? ''
+    : fdSrc() === 'real'
+      // 这排是「筛条件」不是「出题按钮」，得明说下一步动作在哪，
+      // 否则点了题源/卷种看不出发生什么，会以为按钮坏了。
+      ? `可练 ${fdEra() === 'new' ? st.since2018 : st.total} 道 · 其中 ${st.with_ref} 道带官方参考答案`
+        + ` · 选好年份/卷种后点「✍️ 出一道」抽一道原题`
+      : `（这个题型另有 ${st.total} 道真题可练）`;
 }
 $('#fd-types').addEventListener('click', e => {
   const t = e.target.closest('[data-fdt]'); if (!t) return;
@@ -60,6 +107,21 @@ $('#fd-doctypes').addEventListener('click', e => {
   const b = e.target.closest('[data-fdd]'); if (!b) return;
   document.querySelectorAll('#fd-doctypes .chip').forEach(x => x.classList.toggle('on', x === b));
 });
+$('#fd-src').addEventListener('click', e => {
+  const b = e.target.closest('[data-fdsrc]'); if (!b || b.disabled) return;
+  document.querySelectorAll('#fd-src .chip').forEach(x => x.classList.toggle('on', x === b));
+  fdSyncSrc();
+});
+$('#fd-realopt').addEventListener('click', e => {
+  const b = e.target.closest('[data-fdera],[data-fdexam]');
+  if (!b) return;
+  const attr = b.dataset.fdera !== undefined ? 'fdera' : 'fdexam';
+  $('#fd-realopt').querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle('on', x === b));
+  fdSyncSrc();
+});
+const fdSrc = () => (document.querySelector('#fd-src .chip.on') || {}).dataset?.fdsrc || 'ai';
+const fdEra = () => (document.querySelector('#fd-realopt [data-fdera].on') || {}).dataset?.fdera || 'new';
+const fdExam = () => (document.querySelector('#fd-realopt [data-fdexam].on') || {}).dataset?.fdexam || '';
 const fdType = () => (document.querySelector('#fd-types .fd-type.on') || {}).dataset?.fdt || 'guina';
 const fdDoctype = () => (document.querySelector('#fd-doctypes .chip.on') || {}).dataset?.fdd || '';
 
@@ -158,7 +220,8 @@ $('#fd-gen').onclick = async () => {
   try {
     const d = await api('/api/find/gen', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qtype: fdType(), topic: $('#fd-topic').value.trim(), doctype: fdDoctype() }),
+      body: JSON.stringify({ qtype: fdType(), topic: $('#fd-topic').value.trim(),
+        doctype: fdDoctype(), src: fdSrc(), era: fdEra(), exam: fdExam() }),
     });
     $('#fd-msg').textContent = '';
     openFindRun(d.id); loadFindList(); loadFindTypes();
