@@ -193,6 +193,9 @@ div.input-grip @pointercancel
 #wqa-img @change
 #wqa-go .onclick
 #wqd-wrap @click
+#bktree-wrap @click
+#bknode-wrap @click
+#bkcmp-wrap @click
 #bkb-wrap @click
 #admin-btn .onclick
 #vd-tabs @click
@@ -212,9 +215,13 @@ document @fullscreenchange
 #gw-q @input
 #gw-ask .onclick
 #gw-list @click
+#view-yylib @click
+#view-yyerr @click
 document @click
 #fd-types @click
 #fd-doctypes @click
+#fd-src @click
+#fd-realopt @click
 #fd-done @click
 #fd-list @click
 #fd-manage .onclick
@@ -225,6 +232,8 @@ document @click
 #fr-head @click
 #fr-mat @pointerdown
 #fr-mat @pointerover
+#fr-mat @pointerup
+document @pointercancel
 document @pointerup
 #fr-foot @click
 #fr-head @click
@@ -312,6 +321,11 @@ document @pointerup
 #sl-hist @click
 #slt-go .onclick
 #slg-a @input
+#slg-mode @click
+#slg-find @pointerdown
+#slg-find @pointerover
+document @pointerup
+#slg-find @click
 #slg-go .onclick
 div.tk-tabs @click
 #slr-ref @click

@@ -1,1 +1,2 @@
+GET /api/basics/entries
 GET /api/me
