@@ -1515,7 +1515,10 @@ def gongwen_daily():
 
 @bp.post("/api/gongwen/ai")
 def gongwen_ai():
-    """输入口语句/场景 → AI 给出公文规范上位表述，并收录。"""
+    """输入口语句/场景 → AI 给出公文规范上位表述，并收录。
+
+    档位 fast：一句口语 → 一组现成的规范说法，属于「查词典」而不是「写文章」——
+    这些表述是公文里的固定用语，不需要旗舰去现想。正文额度也只有 500。"""
     text = ((request.get_json(silent=True) or {}).get("input") or "").strip()
     if not text:
         return jsonify({"error": "请输入一句口语表述，或一个应用文场景"}), 400
@@ -1530,7 +1533,7 @@ def gongwen_ai():
               '"example":"一个用上这些规范表述的完整示范句（30~60字）"}\n只输出 JSON。' % text[:200])
     rep, err = _ai_call_or_error(
         [{"role": "system", "content": "你是申论应用文（公文写作）阅卷老师，熟悉各文种的规范用语。"},
-         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=500, json_mode=True, tier="pro")
+         {"role": "user", "content": prompt}], temperature=0.4, max_tokens=500, json_mode=True, tier="fast")
     if err:
         return err
     try:
