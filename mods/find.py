@@ -1165,6 +1165,32 @@ def find_check():
     })
 
 
+def _real_require(db, doctype, n=6):
+    """这个文种在历年真题里最常见的评分维度（真题「要求：」原话拆出来的）。
+
+    先取该文种自己的，不够再用跨文种通用的补齐——真题里每个文种的样本本来就少
+    （多数只有 1~4 道），只用自己的会只剩一两条，判分口径反而更窄。
+    返回「内容全面、条理清晰、紧扣资料」这样一串，取不到返回 ''。
+    """
+    try:
+        got, seen = [], set()
+        for dt in ([doctype, ""] if doctype else [""]):
+            # 用**位置取值**不用列名：调用方传进来的连接不一定设了 row_factory，
+            # 名字取值会抛 TypeError（不是 sqlite3.Error），下面那个 except 接不住，
+            # 会把整个批改带崩。判分口径取不到最多是退回手写的，不该影响批改本身。
+            for r in db.execute(
+                    "SELECT title, freq FROM yy_items WHERE kind='要求' AND doctype=? "
+                    "AND title!='' ORDER BY freq DESC, id LIMIT ?", (dt, n)):
+                if r[0] not in seen:
+                    seen.add(r[0])
+                    got.append(r[0])
+            if len(got) >= n:
+                break
+        return "、".join(got[:n])
+    except Exception:
+        return ""                      # 表还没建/没数据/连接形状不对，都退回手写口径，不能因此批不了
+
+
 def _find_doctype(r):
     """贯彻执行题：从题干里认出是哪种文种（AI 命题和上传真题都靠题干判）。返回文种名或 ''。"""
     if r["qtype"] != "guanche":
@@ -1215,6 +1241,13 @@ def find_grade():
     if doctype:
         style_note = "语言是否得体（贯彻执行讲究语气和对象感）、有没有抄原文、字数够不够（当前 %d 字）" \
             % len(re.sub(r"\s", "", answer))
+    # 判分口径优先用**真题原话**：yy_items 里「要求」类存的是历年真题
+    # 「要求：(1)内容全面，条理清晰；(2)简明扼要…」拆出来的评分维度，按出现频次排。
+    # 那是出题人自己写的标准，比这里手写的一段话可靠。取不到才退回手写的。
+    rq = _real_require(db, doctype)
+    if rq:
+        style_note = ("按**历年真题的评分口径**判：%s。另看有没有抄原文、"
+                      "字数够不够（当前 %d 字）" % (rq, len(re.sub(r"\s", "", answer))))
 
     prompt = (
         "批改一道申论**%s**（%d 分，要求 %d~%d 字）。\n\n"
