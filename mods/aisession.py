@@ -203,6 +203,19 @@ def aichat_stream(cid):
                 yield sse(kind, p)
         except Exception as e:
             log.warning("AI 流式对话失败：%r", e)
+            # 一个字都没吐出来就失败时，连**用户自己问的那句**也没落库过（落库在
+            # done 分支）。用户看到一句报错，回头再进这个会话，自己问过什么都没了，
+            # 只能重打一遍。所以这里把这一轮补齐：问题照留，答案写清楚是怎么失败的。
+            if not saved:
+                # 已经吐出去的半截答案要一起留下——用户屏幕上看见了，刷新后就该还在。
+                half = "".join(buf).strip()
+                try:
+                    _persist(db, cid, c, content,
+                             (half + "\n\n" if half else "")
+                             + "（本次回答失败：%s）" % aiclient.error_message(e))
+                    saved = True
+                except Exception:
+                    log.warning("AI 对话失败后补存问题失败", exc_info=True)
             yield sse("error", {"error": aiclient.error_message(e)})
         finally:
             # 手机切后台、隧道抖一下，客户端就不读了 —— 这里会被 GeneratorExit 打断，
