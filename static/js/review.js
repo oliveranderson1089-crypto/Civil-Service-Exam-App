@@ -11,8 +11,8 @@
    refreshReviewBadge, toast */
 
 /* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
-const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文', gushi: '古诗' };
-const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e', gushi: '#8a5a2b' };
+const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文', gushi: '古诗', yy: '应用文错例' };
+const RV_COLOR = { entry: '#2b6fd6', wrongq: '#b23b2e', classic: '#0f766e', gushi: '#8a5a2b', yy: '#7c3aed' };
 // 跟 mods/review.py 的 REVIEW_INTERVALS 是同一张表。这儿必须留一份副本：
 // 「认识 → N 天后」是点之前就要显示的预告，那时还没调接口、拿不到后端算的 interval。
 // 两份手抄迟早走散（后端注释里记着同样的教训：白名单抄了第二份，结果加新来源时漏改一处），
@@ -23,7 +23,8 @@ let rvQueue = [], rvTotal = 0, rvDoneN = 0;
 let rvAll = [], rvGroup = 'word', rvDoneToday = {};
 /* 每日复习量：一天能背多少因人而异。堆太多就不想背了 —— 超出上限的**不会丢**，
    只是今天不出现（到期时间不变，明天照样在）。0 = 不限。 */
-const RV_LNAME = { word: '词语句子', daily: '每日积累', gushi: '古诗', annot: '批注', wrongq: '错题' };
+// 这份名称表和后端 mods/review.py 的 RV_NAMES 是两份，加分组时**两边都要加**
+const RV_LNAME = { word: '词语句子', daily: '每日积累', gushi: '古诗', annot: '批注', wrongq: '错题', yy: '应用文错例' };
 let rvLim = null, rvPool = null;
 function rvLimRender() {
   if (!rvLim) return;
@@ -79,7 +80,7 @@ async function loadReview() {
     });
     if (!rvAll.length) { $('#rv-empty').classList.remove('hidden'); refreshReviewBadge(); return; }
     // 默认停在第一个有内容的板块
-    if (!(g[rvGroup] > 0)) rvGroup = ['word', 'daily', 'gushi', 'wrongq'].find(k => g[k] > 0) || 'word';
+    if (!(g[rvGroup] > 0)) rvGroup = ['word', 'daily', 'gushi', 'wrongq', 'yy'].find(k => g[k] > 0) || 'word';
     rvSelect(rvGroup);
   } catch (e) { toast(e.message, true); }
 }

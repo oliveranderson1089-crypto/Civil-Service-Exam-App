@@ -187,20 +187,56 @@ def _review_due(db, u, today):
             "title": sent[:36], "sub": where, "body": sent[:90],
             "front": sent, "front_sub": where,
             "back": ctx or sent})
+
+    # 应用文错例（全局，人人都要认）：正面给错句让你**找错**，翻开是改正 + 为什么扣分。
+    # 这是应用文第一次进复习——原来「格式怎么写」这类知识只能看范文，背不了。
+    #
+    # 按检查项限量取，不是一把全捞：库里 100 条有 85 条是「分条方式」
+    # （同一条规则的不同例句）。全放进来，每天 10 条的额度全被它占满，
+    # 「标签前缀」「落款成行」这些只有 2~10 条的类型永远轮不到——
+    # 和当年「99 条实词霸榜、894 条成语挤进 21 条」是同一个坑。
+    # 所以每类最多取 YY_PER_CHECK 条（按 freq 降序，犯得多的先背）。
+    YY_PER_CHECK = 12
+    seen_chk = {}
+    for r in db.execute("SELECT id, doctype, part, title, text, note, created_at, freq "
+                        "FROM yy_items WHERE kind='错例' "
+                        "ORDER BY freq DESC, id"):
+        chk = (r["title"] or "").split("·")[0]
+        seen_chk[chk] = seen_chk.get(chk, 0) + 1
+        if seen_chk[chk] > YY_PER_CHECK:
+            continue
+        try:
+            pair = json.loads(r["text"] or "{}")
+        except Exception:
+            continue
+        bad, good = (pair.get("bad") or "").strip(), (pair.get("good") or "").strip()
+        if not bad or not good:
+            continue                     # 错例必须成对，缺一半的没有教学价值
+        where = " · ".join(x for x in [r["doctype"] or "", r["part"] or ""] if x)
+        check("yy", r["id"], r["created_at"], {
+            "title": ("%s：%s" % (chk, bad))[:36], "sub": where or "应用文",
+            "body": bad[:90],
+            "front": "下面这样写，错在哪？\n\n" + bad,
+            "front_sub": (where + " · " + chk) if where else chk,
+            "back": "✗ %s\n\n✓ %s\n\n为什么扣分：%s" % (bad, good, r["note"] or "")})
     return due
 
 
 # 复习分组：词语句子 / 每日积累 / 错题，分开背，不混在一副牌里。
 # 加新来源时**只改这里**：/api/review/done 的白名单直接取自它（见那儿的注释）。
 RV_GROUP = {"entry": "word", "classic": "word", "changkao": "word", "sucai": "daily",
-            "gushi": "gushi", "annot": "annot", "wrongq": "wrongq"}
+            "gushi": "gushi", "annot": "annot", "wrongq": "wrongq", "yy": "yy"}
 RV_NAMES = {"word": "词语句子", "daily": "每日积累", "gushi": "古诗",
-            "annot": "批注", "wrongq": "错题"}
+            "annot": "批注", "wrongq": "错题", "yy": "应用文错例"}
 # 每日复习量默认值（0 = 不限）。批注单独一组：跟「每日积累」挤一个额度的话，素材排在前面，
 # 20 条一占满，圈过的重点一条也出不来（实测过 —— 7 条批注全被截掉）。
 # 古诗同理单开一组：并进「词语句子」的话，前面 40 条成语一占满就永远轮不到诗。
 # 5 首是**一天背得完**的量：整首诗＋考点＋申论用法，比背一个成语重得多。
-RV_LIMIT_DEF = {"word": 40, "daily": 20, "gushi": 5, "annot": 10, "wrongq": 10}
+# 应用文错例也单开一组，同样的理由：并进「每日积累」的话，那 20 条额度前面
+# 排着 350 条素材，错例一条都出不来。8 条是一天认得完的量——每条要读错句、
+# 想为什么错、再看改正，比背一个成语重。
+RV_LIMIT_DEF = {"word": 40, "daily": 20, "gushi": 5, "annot": 10, "wrongq": 10,
+                "yy": 8}
 RV_GROUPS = list(RV_LIMIT_DEF)                             # 分组名单只此一份，别再手抄
 
 
