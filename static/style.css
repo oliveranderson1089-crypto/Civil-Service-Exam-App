@@ -2765,11 +2765,16 @@ body.dark .pgbtn{background:#1b2231;border-color:#2f3a4d;}
 .mat-t{font-size:13.5px;font-weight:700;margin-right:4px;}
 .mat-colors{display:flex;gap:4px;}
 .mat-right{margin-left:auto;display:flex;gap:4px;}
-.mat-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;}
+.mat-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;
+  -webkit-overflow-scrolling:touch;}
 .mat-inner{position:relative;padding:14px 16px 40px;}
 .mat-text{font-size:15px;line-height:2;color:var(--text);white-space:pre-wrap;
   word-break:break-word;text-align:justify;}
 #mat-cv{position:absolute;left:0;top:0;touch-action:none;cursor:crosshair;}  /* 铺满整块内容区，坐标才和文字对得上 */
+/* ✋ 浏览工具：画布盖满整块内容区，touch-action:none 会把手指的滑动一起吃掉——
+   手机没有鼠标滚轮，那就等于材料滚不动。浏览态干脆让画布不收事件：勾画照样显示，
+   触摸直接落到下面的文字上，由 .mat-scroll 正常滚动（比只改 touch-action 稳）。 */
+#matpad.mat-pan #mat-cv{touch-action:pan-y;pointer-events:none;cursor:default;}
 body.dark .matpad{background:#151b27;}
 @media(max-width:520px){.mat-text{font-size:14.5px;line-height:1.95;}}
 

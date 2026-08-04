@@ -16,7 +16,12 @@
 const MAT_COLORS = ['#f0a500', '#2fa36c', '#e05a7d', '#1a6fb5'];
 let matDk = null, matInited = false;
 let matKey = '', matStrokes = [], matCur = null, matDrawing = false, matSawPen = false;
-let matTool = 'hl', matColor = MAT_COLORS[0], matRaf = 0;
+// 手指既是"笔"也是"滚动条"，二者只能二选一：默认给滚动（先读得了材料，才谈得上
+// 划重点），要勾画就点工具栏切笔，之后整个会话都记着。
+// 默认值刻意**不**看 IS_MOBILE：那个判断是 max-width:760px，平板、横屏、APK 里
+// 报宽的 WebView 都会漏判成"电脑"，于是照样滚不动 —— 正是这个坑。
+let matTool = 'pan', matColor = MAT_COLORS[0], matRaf = 0;
+let matTipped = false;   // 切到画笔时提示一次怎么切回来
 let matCv, matCtx;
 
 const matW = () => matCv.clientWidth || 1;
@@ -76,8 +81,18 @@ function matLoad(key) {
 }
 function matSyncUI() {
   document.querySelectorAll('#matpad [data-mt]').forEach(b => b.classList.toggle('on', b.dataset.mt === matTool));
+  const pan = matTool === 'pan';
+  $('#matpad').classList.toggle('mat-pan', pan);
+  // 同样的事再用行内样式写死一遍，不是冗余：style.css 是固定 URL + no-cache，链路上
+  // 只要有一层没照做回源校验就会卡在旧样式（表现正是「✋ 亮了但还是滚不动」）；
+  // 而这段随带哈希的 app.bundle.js 一起更新，写在这儿才保证跟得上。
+  if (matCv) {
+    matCv.style.pointerEvents = pan ? 'none' : 'auto';
+    matCv.style.touchAction = pan ? 'pan-y' : 'none';
+  }
+  const drawing = matTool !== 'eraser' && !pan;
   $('#mat-colors').innerHTML = MAT_COLORS.map(c =>
-    `<i class="pad-c${c === matColor && matTool !== 'eraser' ? ' on' : ''}" data-mc="${c}" style="background:${c}"></i>`).join('');
+    `<i class="pad-c${c === matColor && drawing ? ' on' : ''}" data-mc="${c}" style="background:${c}"></i>`).join('');
 }
 function matInit() {
   matInited = true;
@@ -85,6 +100,7 @@ function matInit() {
   matDk = createDock($('#matpad'), 'matDock', IS_MOBILE ? 'bottom' : 'right', matFit);
 
   matCv.addEventListener('pointerdown', e => {
+    if (matTool === 'pan') return;                        // 浏览态：这一下是滚动，不是画
     if (e.pointerType === 'pen') matSawPen = true;
     if (e.pointerType === 'touch' && matSawPen) return;   // 用过笔就防手掌误触
     if (e.button > 0) return;
@@ -114,9 +130,15 @@ function matInit() {
 
   $('#matpad').addEventListener('click', e => {
     const t = e.target.closest('[data-mt]');
-    if (t) { matTool = t.dataset.mt; matSyncUI(); return; }
+    if (t) {
+      matTool = t.dataset.mt; matSyncUI();
+      if (matTool !== 'pan' && !matTipped) {
+        matTipped = true; toast('手指现在会在材料上画线 · 点 ✋ 回到滑动阅读');
+      }
+      return;
+    }
     const c = e.target.closest('[data-mc]');
-    if (c) { matColor = c.dataset.mc; if (matTool === 'eraser') matTool = 'hl'; matSyncUI(); }
+    if (c) { matColor = c.dataset.mc; if (matTool === 'eraser' || matTool === 'pan') matTool = 'hl'; matSyncUI(); }
   });
   $('#mat-clear').onclick = async () => {
     if (!matStrokes.length) return;
