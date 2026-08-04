@@ -271,22 +271,59 @@ def _audit_q(q, options, board, qtype):
         return None
 
 
+# 哪个板块的题从哪张素材表出：(表, 日期列)。题型名和素材表的 board 是同一套词
+# （法律常识、科技常识、毛泽东思想…），所以格子直接对得上素材，不需要另建映射。
+_MATERIAL_SRC = {"常识判断": ("changshi_items", "date"),
+                 "政治理论": ("theory_items", "created_at")}
+FRESH_DAYS = 2          # 「最近新学的」算几天：常识每天 06:50 出 30 条，两天足够铺满一格
+
+
+def _material_mix(db, table, datecol, where, args, n, cut=110):
+    """出题原料：**一半取最近新学的，一半从全库随机**。
+
+    全随机的话，今天学的 30 条常识淹在四百多条里，「今天学了 → 题库里出现」就成了碰运气
+    —— dailytest 那边同样的病已经治过一次（原先全库 RANDOM，「巩固」两个字白叫）。
+    但也不能只要新的：连着几天拿同一批素材出题，AI 会翻来覆去出那几道，
+    全被判重复刷掉，一轮下来一道都进不了库。
+    """
+    fresh = db.execute(
+        "SELECT id, title, content FROM %s WHERE %s AND substr(%s,1,10)>=date('now','localtime',?) "
+        "ORDER BY %s DESC LIMIT ?" % (table, where, datecol, datecol),
+        args + ("-%d day" % FRESH_DAYS, max(1, n // 2))).fetchall()
+    rest = db.execute(
+        "SELECT id, title, content FROM %s WHERE %s AND id NOT IN (%s) ORDER BY RANDOM() LIMIT ?"
+        % (table, where, ",".join(str(int(r["id"])) for r in fresh) or "0"),
+        args + (n - len(fresh),)).fetchall()
+    return ["%s：%s" % (r["title"], (r["content"] or "")[:cut]) for r in list(fresh) + list(rest)]
+
+
 def _bank_material(db, board, qtype, n=14):
     """从已有素材里取出题的原料 —— 题必须**考我们库里有的东西**，不然练了也对不上。
        片段阅读/逻辑判断这类不依赖词库，AI 自己命制。"""
-    if board == "常识判断":
-        rows = db.execute("SELECT title, content FROM changshi_items WHERE board=? "
-                          "ORDER BY RANDOM() LIMIT ?", (qtype, n)).fetchall()
-        return ["%s：%s" % (r["title"], (r["content"] or "")[:110]) for r in rows]
-    if board == "政治理论":
-        rows = db.execute("SELECT title, content FROM theory_items WHERE board=? "
-                          "ORDER BY RANDOM() LIMIT ?", (qtype, n)).fetchall()
-        return ["%s：%s" % (r["title"], (r["content"] or "")[:110]) for r in rows]
+    src = _MATERIAL_SRC.get(board)
+    if src:
+        return _material_mix(db, src[0], src[1], "board=?", (qtype,), n)
     if qtype in ("语境分析", "词语辨析"):     # 选词填空：正确答案要从我们积累的词里出
-        rows = db.execute("SELECT title, content FROM changkao_items WHERE board IN ('成语','实词') "
-                          "ORDER BY RANDOM() LIMIT ?", (n * 2,)).fetchall()
-        return ["%s：%s" % (r["title"], (r["content"] or "")[:60]) for r in rows]
+        return _material_mix(db, "changkao_items", "created_at",
+                             "board IN ('成语','实词')", (), n * 2, cut=60)
     return []
+
+
+def fresh_material_n(db, board, qtype, days=FRESH_DAYS):
+    """这一格最近新添了多少可出题的素材 —— 夜间补库拿它排序，先把今天学的变成题。
+
+    素材表和格子对不上的板块（言语的片段阅读等，AI 自己命制）一律 0：
+    它们没有「今天学的」这回事，排在有新素材的后面天经地义。
+    """
+    src = _MATERIAL_SRC.get(board)
+    if not src:
+        return 0
+    try:
+        return db.execute(
+            "SELECT COUNT(*) FROM %s WHERE board=? AND substr(%s,1,10)>=date('now','localtime',?)"
+            % (src[0], src[1]), (qtype, "-%d day" % days)).fetchone()[0]
+    except sqlite3.Error:
+        return 0
 
 
 # 各 AI 题型的出题要点 —— 不写清楚，AI 出的题型会跑偏（比如把「判断意图」出成「概括主旨」）
@@ -849,24 +886,55 @@ def _bank_warm(board, qtype, level, want=12):
     return True
 
 
-def _bank_take(db, board, qtype, level, n):
-    """从题库取 n 道 —— **只取过了双模型核验的**（agree=1）。
+def _bank_take(db, board, qtype, level, n, user=None):
+    """从题库取 n 道 —— **只取过了双模型核验的**（agree=1），**优先这个人没做过的**。
        **取不够也立刻返回**，缺口交给后台补库：让人等十分钟不如先给他 4 道能做的。
-       存疑的题留在库里可以回查，但绝不发给人做（拿去背错的答案，比不做还糟）。"""
+       存疑的题留在库里可以回查，但绝不发给人做（拿去背错的答案，比不做还糟）。
+
+       user=None 表示不认人（脚本、测试直接调），行为跟以前一样：纯随机取。
+
+       为什么要认人：做题**不消耗库存**，一格就 30 道题、又是 ORDER BY RANDOM()，
+       不排掉做过的，做到第 31 道起就是永远的复习 —— 而水位一直是满的，
+       夜里的 warm_drill_bank 永远判「不用补」，靠它等不来新题。
+    """
+    where = "board=? AND qtype=? AND level=? AND agree='1' "
+    args = [board, qtype, level]
+    if user:
+        where += "AND sig NOT IN (SELECT sig FROM drill_seen WHERE user_id=?) "
+        args.append(user)
     got = [dict(r) for r in db.execute(
-        "SELECT * FROM drill_bank WHERE board=? AND qtype=? AND level=? AND agree='1' "
-        "ORDER BY RANDOM() LIMIT ?", (board, qtype, level, n))]
+        "SELECT * FROM drill_bank WHERE " + where + "ORDER BY RANDOM() LIMIT ?",
+        args + [n])]
+    again = []
     if len(got) < n:                      # 核验会刷掉一部分，所以多补一些
         # ×4 而不是 ×2：接了真题画像、护栏按真题 10% 分位收紧之后，一批里有一半
         # 会因为「写太短」或没过双模核验被刷掉（实测词语辨析 10 道只留下 2 道）。
         # 按老的 ×2 排队，补一轮还是填不满，用户就会一直看到「题库还没预热好」。
         _bank_warm(board, qtype, level, want=max(12, (n - len(got)) * 4))
-    out = []
-    for r in got:
-        out.append({"q": r["q"], "options": json.loads(r["options"]), "answer": r["answer"],
-                    "explain": r["explain"], "tip": r["tip"], "module": board,
-                    "source": r["source"], "qtype": qtype, "level": level, "src": "ai"})
-    return out
+        if user:
+            # 补库要几分钟，这一场等不起：拿做过的题顶上，**最久没做的先来**。
+            # 宁可发复习题也不能少发 —— 空着的名额在界面上就是「题库还差 N 道」，
+            # 而这一格其实是满的，那句提示会变成假话。发出去的带 again 标记，
+            # 谁是复习题说得清清楚楚。
+            again = [dict(r) for r in db.execute(
+                "SELECT b.* FROM drill_bank b JOIN drill_seen s ON s.sig=b.sig "
+                "WHERE s.user_id=? AND b.board=? AND b.qtype=? AND b.level=? AND b.agree='1' "
+                "ORDER BY s.last_at LIMIT ?",
+                (user, board, qtype, level, n - len(got)))]
+
+    def pack(r, again=0):
+        it = {"q": r["q"], "options": json.loads(r["options"]), "answer": r["answer"],
+              "explain": r["explain"], "tip": r["tip"], "module": board,
+              "source": r["source"], "qtype": qtype, "level": level, "src": "ai",
+              # sig 要发到前端再原样收回来：交卷时靠它记「这道做过了」。
+              # 换 drill_bank.id 也行，但背题模式整份题目都在前端手里，
+              # sig 是题干指纹、伪造不了别人的题，比自增 id 稳当。
+              "sig": r["sig"]}
+        if again:
+            it["again"] = 1
+        return it
+
+    return [pack(r) for r in got] + [pack(r, 1) for r in again]
 
 
 # ---- 题源之一：真题本身 --------------------------------------------------------
@@ -1005,8 +1073,11 @@ def _real_explain(r):
     return (r["official"] or "").strip()      # 原卷那一整段兜底
 
 
-def _drill_gen(db, board, qtype, n, level="mid", src="ai", year_min=0):
+def _drill_gen(db, board, qtype, n, level="mid", src="ai", year_min=0, user=None):
     """出 n 道题。
+
+    user 只用来避开**这个人已经做过的 AI 题**（见 _bank_take），不传就是不认人 ——
+    定时脚本和测试都这么调，行为跟以前一致。
 
     src 是**题源开关**（这是 P3 的核心）：
       real —— 全部发真题。答案权威、风格 100% 真实，但题量有限、做完不会再有
@@ -1026,7 +1097,7 @@ def _drill_gen(db, board, qtype, n, level="mid", src="ai", year_min=0):
             need[t] = need.get(t, 0) + 1
         out = []
         for t, k in need.items():
-            out += _drill_gen(db, board, t, k, level, src, year_min)
+            out += _drill_gen(db, board, t, k, level, src, year_min, user)
         random.shuffle(out)                        # 混合练就该乱序，别一坨一坨按题型来
         return out[:n]
     if qtype not in types:
@@ -1043,7 +1114,7 @@ def _drill_gen(db, board, qtype, n, level="mid", src="ai", year_min=0):
     need_n = n - len(got)                          # 还差几道；别把参数 n 改名顶掉
     eng = DRILL_ENGINE.get((board, qtype), "ai")
     if eng == "ai":
-        return got + _bank_take(db, board, qtype, level, need_n)
+        return got + _bank_take(db, board, qtype, level, need_n, user)
 
     out = []
     for _ in range(need_n):
@@ -1161,7 +1232,7 @@ def drill_quiz():
         err = _real_src_block(board, qtype, cnt, n)
         if err:
             return jsonify({"error": err}), 404
-    items = _drill_gen(get_db(), board, qtype, n, level, src, year_min)
+    items = _drill_gen(get_db(), board, qtype, n, level, src, year_min, user=uid())
     if not items:
         if src == "real":
             # 真题模式取不到 ≠ 题库没预热。**别混用下面那句**——那句承诺「后台正在出题，
@@ -1212,6 +1283,9 @@ def drill_quiz():
                     # 要 n 道只凑出 len(items) 道 = 题库这一格还没满，后台正在补。
                     # 照常让人先做，但要说一声，别让他以为题量设置没生效。
                     "short": max(0, n - len(items)),
+                    # 其中几道是**做过的题**（没做过的不够，拿最久没做的顶上了）。
+                    # 这个数字得说出来：它一涨就说明这一格快被刷穿了，补库正在追。
+                    "again": sum(1 for it in items if it.get("again")),
                     "full": items if not exam else None,
                     "token": _drill_stash(items) if exam else ""})
 
@@ -1241,6 +1315,25 @@ def _session_level(items, fallback):
     if len(lv) == 1:
         return lv.pop()
     return "mix"
+
+
+def _seen_mark(db, user, items):
+    """把这一场做过的 AI 题记进 drill_seen，下次先发没做过的。返回记了几道。
+
+    ⚠️ sig 是**从客户端收回来的**（背题模式整份 items 都在前端手里），所以一律
+    先落到 drill_bank 里验明正身再记 —— 不校验的话，前端塞几个假 sig 进来，
+    记下的就是不存在的题，而真做过的那些照样会被再发一遍。
+    """
+    sigs = sorted({it.get("sig") for it in items
+                   if it.get("src") == "ai" and isinstance(it.get("sig"), str) and it.get("sig")})
+    if not user or not sigs:
+        return 0
+    ph = ",".join("?" * len(sigs))
+    cur = db.execute(
+        "INSERT INTO drill_seen(user_id,sig) SELECT ?, sig FROM drill_bank WHERE sig IN (%s) "
+        "ON CONFLICT(user_id,sig) DO UPDATE SET n=n+1, last_at=datetime('now','localtime')" % ph,
+        [user] + sigs)
+    return cur.rowcount
 
 
 @bp.post("/api/drill/done")
@@ -1294,6 +1387,7 @@ def drill_done():
     for it, r in zip(items, results):
         it["your"], it["seconds"] = r["your"], 0
     added = _dtest_to_wrongq(db, items, results, kind="drill")
+    _seen_mark(db, uid(), items)      # 这一场的 AI 题记做过，下次先发没做过的
     ok_n = sum(1 for r in results if r["correct"])
     cur = db.execute(
         "INSERT INTO drill_records(user_id,board,qtype,level,mode,total,correct,seconds,items,answers) "

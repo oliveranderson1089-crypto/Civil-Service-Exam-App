@@ -453,6 +453,19 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_drrec ON drill_records(user_id, id DESC);
+        -- 「这道 AI 题我做过了」。取题是 ORDER BY RANDOM()、做题又**不消耗库存**
+        -- （题发出去既不删也不标记），所以不记这一笔的话，同一格就那 30 道题反复发给同一个人：
+        -- 做到第 31 道必然重复，而且此后永远重复 —— 夜间补库看水位还一直判「满了，不用补」。
+        -- 记了之后：优先发没做过的，没做过的不够就地排一次补库 —— 用户做题这才真正驱动补库。
+        -- 按 sig 挂而不是 drill_bank.id：sig 是题干指纹、本来就 UNIQUE，
+        -- 题库重建/重导之后同一道题还是同一个 sig，做题进度不会跟着一起丢。
+        CREATE TABLE IF NOT EXISTS drill_seen(
+            user_id INTEGER NOT NULL,
+            sig TEXT NOT NULL,
+            n INTEGER DEFAULT 1,                  -- 做过几遍
+            last_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, sig)
+        );
         -- 真题作答流水：**每做一次留一条，绝不覆盖**。
         -- 真题就那么几千道、刷完不会再有新的，所以「第二遍第三遍做得怎么样」才是重点；
         -- 只存「最近一次对不对」的话，一道题从错到对的过程就丢了，也排不出该先刷哪些。

@@ -198,6 +198,9 @@ async function drStart(type) {
     drItems = d.items; drLimit = d.limit; drCoef = d.coef; drToken = d.token || '';
     drIdx = 0; drAns = []; drSec = [];
     if (d.short) toast(`题库这一格还差 ${d.short} 道，后台正在补，先做这 ${d.items.length} 道`);
+    // 没做过的题不够了，拿最久没做的顶上。得说一声：不然「怎么又是这道」只能靠自己发现，
+    // 而这恰恰是该去补库的信号（后台已经排上了）。
+    else if (d.again) toast(`没做过的题不够了，这组里有 ${d.again} 道是复习题，后台正在补新题`);
     push({ view: 'drillrun', title: (type || '混合') + ' · 专项练' });
     drRender();
     drScanWq();          // 按钮状态不挡首屏（见 drScanWq）

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""专项练题库预热：把每个「板块 × 题型 × 难度」的可用题补到目标数量。
+"""专项练题库预热：把每个「板块 × 题型 × 难度」**还没被做过**的题补到目标数量。
+
+水位按人算，不按库存：做题**不消耗库存**（题发出去既不删也不标记），
+所以纯库存数一旦补满就永远是满的 —— 实际发生过：一格 30 道躺着，人早做掉 18 道，
+这个脚本连着一周判「已经都满了，不用补」，而库里其实只剩 12 道新题。
+补出来的是谁都没做过的新题，所以按「做过题的人里最少的那个」算就够了。
 
 为什么必须有这个脚本：出题接口已经改成**只从库里取、绝不现场调 AI**（现场出题要几分钟，
 用户看到的就是「点了没反应」）。代价是库空了就没题可发 —— 所以库得提前填满。
@@ -12,7 +17,8 @@
 不需要也不应该进题库。
 
 用法：
-    python3 warm_drill_bank.py                    # 全部补到 30 道可用
+    python3 warm_drill_bank.py                    # 每格补到 30 道没做过的
+    python3 warm_drill_bank.py --plan --ignore-seen   # 只看纯库存有多大（老口径）
     python3 warm_drill_bank.py --target 50
     python3 warm_drill_bank.py --board 判断推理 --level mid
     python3 warm_drill_bank.py --plan             # 只看差多少，不调 AI（先估成本）
@@ -26,7 +32,8 @@ import time
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
-from mods.drill import DRILL_LEVELS, DRILL_TYPES, _bank_fill   # noqa: E402
+from mods.drill import (DRILL_LEVELS, DRILL_TYPES, FRESH_DAYS,   # noqa: E402
+                        _bank_fill, fresh_material_n)
 
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 
@@ -45,10 +52,46 @@ def ai_cells(board=None, level=None):
                 yield b, t, lv
 
 
-def usable(con, board, qtype, lv):
-    """这一格有多少道**过了双模型核验**的题（存疑的不算，它们不会发给人做）。"""
-    return con.execute("SELECT COUNT(*) FROM drill_bank WHERE board=? AND qtype=? AND level=? "
-                       "AND agree='1'", (board, qtype, lv)).fetchone()[0]
+def active_users(con):
+    """做过 AI 题的人。
+
+    补出来的是**谁都没做过**的新题，所以按「最惨的那个人」算就够了：
+    把他补够，所有人自然都够。没人做过题（新库）就返回空 —— 那时按纯库存补，
+    跟以前一样。
+    """
+    try:
+        return [r[0] for r in con.execute("SELECT DISTINCT user_id FROM drill_seen")]
+    except sqlite3.Error:
+        return []           # drill_seen 还没建（旧库）：退回纯库存口径
+
+
+def order_cells(con, short):
+    """补库顺序：**今天有新知识点的格子先补**。
+
+    一晚上的轮次和额度都有限，可能补不完所有缺口，那就先把今天学的变成题
+    （出题原料本来也是取最近新学的，见 mods/drill.py 的 _material_mix —— 两头要同向，
+    不然排在前面的格子拿到的还是三个月前的素材）。
+    同等新鲜度下**缺得最多的先补**：那些才是最可能「点了出不了题」的。
+    """
+    return sorted(short, key=lambda x: (-fresh_material_n(con, x[0], x[1]), x[3]))
+
+
+def usable(con, board, qtype, lv, users=()):
+    """这一格还能发出多少道**新题** —— 这才是「够不够用」的真口径。
+
+    两个筛子叠着：
+      agree='1'   过了双模型核验的（存疑的不算，它们不会发给人做）
+      没被做过     做题**不消耗库存**，所以纯库存数会一直是满的：
+                  你那格 30 道做掉 18 道，库存还是 30，脚本永远判「不用补」，
+                  而你实际只剩 12 道新题可做。库存满 ≠ 有题做，别拿它当水位。
+    """
+    sql = "SELECT COUNT(*) FROM drill_bank WHERE board=? AND qtype=? AND level=? AND agree='1'"
+    n = con.execute(sql, (board, qtype, lv)).fetchone()[0]
+    for u in users:
+        n = min(n, con.execute(
+            sql + " AND sig NOT IN (SELECT sig FROM drill_seen WHERE user_id=?)",
+            (board, qtype, lv, u)).fetchone()[0])
+    return n
 
 
 def main():
@@ -60,20 +103,32 @@ def main():
                     help="单格最多补几轮 —— 有些题型 AI 就是出不好，核验一直过不了，"
                          "不设上限会在一个格子里空转烧钱（默认 4）")
     ap.add_argument("--plan", action="store_true", help="只报告缺口，不调 AI")
+    ap.add_argument("--ignore-seen", action="store_true",
+                    help="只看纯库存，不管谁做过（老口径，想单纯看库有多大时用）")
     a = ap.parse_args()
 
     con = sqlite3.connect(DB, timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
 
+    # 按人算：补的是新题，所以看「最活跃的那个人还剩多少没做过的」，不是库有多大。
+    # 库存口径下这个脚本从 7 月 28 日起再没补过一道题 —— 每格 30 道躺着，
+    # 而人早就做掉了 18 道。夜里补好，白天点开就是新题，不用等即时补库那几分钟。
+    users = [] if a.ignore_seen else active_users(con)
     cells = list(ai_cells(a.board, a.level))
-    gaps = [(b, t, lv, usable(con, b, t, lv)) for b, t, lv in cells]
-    short = [(b, t, lv, n) for b, t, lv, n in gaps if n < a.target]
+    gaps = [(b, t, lv, usable(con, b, t, lv, users)) for b, t, lv in cells]
+    short = order_cells(con, [(b, t, lv, n) for b, t, lv, n in gaps if n < a.target])
 
-    print("目标每格 %d 道可用；共 %d 格，其中 %d 格不足。" % (a.target, len(gaps), len(short)))
+    print("目标每格 %d 道%s；共 %d 格，其中 %d 格不足。"
+          % (a.target,
+             "可用" if not users else "没做过的（按 %d 个做过题的人里最少的那个算）" % len(users),
+             len(gaps), len(short)))
     if a.plan or not short:
         for b, t, lv, n in short:
-            print("  缺 %-8s %-12s %-5s 现有 %2d / %d" % (b, t, lv, n, a.target))
+            fr = fresh_material_n(con, b, t)
+            print("  缺 %-8s %-12s %-5s 现有 %2d / %d%s"
+                  % (b, t, lv, n, a.target,
+                     "   ← 最近 %d 天新学 %d 条，先补它" % (FRESH_DAYS, fr) if fr else ""))
         if not short:
             print("已经都满了，不用补。")
         return
@@ -97,7 +152,9 @@ def main():
                 print("  [%d/%d] %s·%s/%s 第 %d 轮出错：%s" % (i, len(short), b, t, lv, rounds, e))
                 failed += 1
                 break
-            have = usable(con, b, t, lv)
+            # ⚠️ 口径必须跟上面 short 那次一致。这里漏传 users 的话，补完一轮
+            # 拿库存数一比就「够了」，循环当场退出 —— 缺口一道没补上，日志还写着补完了。
+            have = usable(con, b, t, lv, users)
             filled += s["ok"]
             print("  [%d/%d] %s·%s/%s 第 %d 轮 +%d → %d/%d（重复 %d、存疑 %d、不合格 %d、"
                   "体量不像真题 %d）"
@@ -114,7 +171,7 @@ def main():
     print("\n完成：新增 %d 道可用，%d 格出错，耗时 %.1f 分钟。" % (filled, failed, (time.time() - t0) / 60))
 
     # 收尾报告：还剩哪些格子没填满 —— 这些就是「点了出不了题」的候选，得盯着
-    rest = [(b, t, lv, usable(con, b, t, lv)) for b, t, lv in cells]
+    rest = [(b, t, lv, usable(con, b, t, lv, users)) for b, t, lv in cells]
     still = [x for x in rest if x[3] < a.target]
     if still:
         print("仍不足 %d 道的格子（%d 个）：" % (a.target, len(still)))
