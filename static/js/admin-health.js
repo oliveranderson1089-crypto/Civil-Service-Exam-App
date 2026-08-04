@@ -28,7 +28,11 @@ function hlCard(d) {
       </div>
       <div class="hl-num">
         <span><b>${d.today_n}</b> 今日</span>
-        <span><b>${d.total}</b> 存量</span>
+        ${d.usable === undefined || d.usable === d.total
+          // 「存量」里混着发不出去的题（题库里存疑的占了 19%）就得分开写 ——
+          // 一个数字同时当「有多少题」和「有多少题能做」用，迟早骗到自己
+          ? `<span><b>${d.total}</b> 存量</span>`
+          : `<span><b>${d.usable}</b> 可用</span><span class="hl-dim">${d.total} 库存</span>`}
         <span>最新 ${esc(d.last || '—')}${lag ? ' · ' + lag : ''}</span>
       </div>
       <div class="hl-note">${esc(d.note || '')}</div>

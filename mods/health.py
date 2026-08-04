@@ -20,7 +20,7 @@ from datetime import date, datetime
 
 from flask import Blueprint, jsonify
 
-from core import get_db, log
+from core import get_db, log, uid
 from mods import ops
 
 bp = Blueprint("health", __name__)
@@ -51,6 +51,89 @@ DOMAINS = [
     ("quiz",   "阶段测验",   "quiz_sets",      "created_at", 4, "gongkao-quiz.timer",
      "每周二、周五 07:40"),
 ]
+
+def _drill_cells():
+    from mods.drill import DRILL_LEVELS, DRILL_TYPES
+    return [(b, t, lv)
+            for b, types in DRILL_TYPES.items()
+            for t, _desc, eng in types if eng == "ai"
+            for lv in DRILL_LEVELS]
+
+
+def _mine_left(db, cells, user):
+    """这个人每格还剩多少道**没做过**的题。拿不到就返回 None（当作不知道，别瞎报）。
+
+    跟库存是两个问题：库存问「题库健不健康」（空格子＝谁点都出不了题，是故障），
+    这里问「我还有多少新题可刷」（见底不是故障，是该补新题的预警）。
+    """
+    if not user:
+        return None
+    try:
+        got = {(r["board"], r["qtype"], r["level"]): r["n"] for r in db.execute(
+            "SELECT board, qtype, level, COUNT(*) n FROM drill_bank "
+            "WHERE agree='1' AND sig NOT IN (SELECT sig FROM drill_seen WHERE user_id=?) "
+            "GROUP BY board, qtype, level", (user,))}
+    except Exception:
+        log.debug("按人算题库余量失败（drill_seen 还没建？）", exc_info=True)
+        return None
+    return {c: got.get(c, 0) for c in cells}
+
+
+def _stock_drill(db, user=None):
+    """练习题库的水位：每个「板块×题型×难度」格子还剩多少道过了核验的题。
+
+    返回 (state, hint, usable)。usable 是**能发给人做的**道数 —— 卡片上的「存量」
+    原先是 COUNT(*)，把 689 道存疑题也算了进去（虚高 24%），而那些题永远不会发出去。
+    存疑题该留在库里（能回查、出新题时还拿它们避重），但不能冒充库存。
+
+    口径必须跟 warm_drill_bank.py 对齐（agree='1' 才算可用、每格目标 30 道），
+    两边对不上，就会出现「这里说库满、那边还在补」的自相矛盾。
+
+    传了 user 就**再按人算一遍余量**。刷得快不是故障，所以它不把卡片刷红，
+    只多说一个实数；只有真被刷穿（某格一道没做过的都不剩、只能发复习题）才降级 ——
+    那种情况否则完全看不见：即时补库每次都排队，但 AI 可能一直出不出新题
+    （被判重复/存疑刷掉），你只会一直拿到复习题，而这儿还一片绿。
+    """
+    target = 30
+    cells = _drill_cells()
+    have = {(r["board"], r["qtype"], r["level"]): r["n"] for r in db.execute(
+        "SELECT board, qtype, level, COUNT(*) n FROM drill_bank "
+        "WHERE agree='1' GROUP BY board, qtype, level")}
+    # 只数格子里的：板块/题型改过名之后，库里会留下对不上任何格子的旧题，
+    # 它们同样发不出去，不该算进「可用」。
+    usable = sum(have.get(c, 0) for c in cells)
+    short = [(c, have.get(c, 0)) for c in cells if have.get(c, 0) < target]
+    empty = [c for c, n in short if n == 0]
+    if empty:
+        # 空格子 = 用户点这个题型直接出不了题，这是真故障，不是「待观察」
+        return "down", "%d 格一道可用题都没有，点了会出不了题：%s" % (
+            len(empty), "、".join("%s·%s/%s" % c for c in empty[:3])), usable
+    if short:
+        return "warn", "%d/%d 格不足 %d 道（最少的一格 %d 道），等下次补库" % (
+            len(short), len(cells), target, min(n for _, n in short)), usable
+
+    # ⚠️ 别把「今日新增 0」写死进这句话：补过库的当天新增就不是 0（实测 87 道），
+    #    卡片会一边显示「今日 87」一边说「今日新增 0 是正常的」，自己打自己的脸。
+    ok = "%d 格每格都有 ≥%d 道可用；补满就不再出题，今日没有新增也正常" % (len(cells), target)
+    left = _mine_left(db, cells, user)
+    if left is None:
+        return "ok", ok, usable
+    dry = [c for c, n in left.items() if n == 0]
+    if dry:
+        # 「立即补跑」在这儿**真的有用**（warmbank 已改成按人算余量：把最惨的那个人
+        # 补够为止），但 AI 出题要几分钟，所以照实说等多久、以及夜里本来也会补。
+        return "warn", ("%d 格你已经全做过了，只能发复习题：%s。今晚 03:20 会自动补；"
+                        "等不及就点「立即补跑」，出题要几分钟"
+                        % (len(dry), "、".join("%s·%s/%s" % c for c in dry[:3]))), usable
+    return "ok", ok + "。你还没做过的：最少的一格剩 %d 道" % min(left.values()), usable
+
+
+# 水位型内容域：脚本的职责是把库存补到阈值，不是每天出新货。
+# 这类域拿「最新产出日期」量必然误报——库一填满，补库脚本就该什么都不干，
+# created_at 于是永远停在最后一次补库那天，过几天必报断供（练习题库真踩过：
+# 每天正常跑完、每格都满 30 道，界面上却一直红着说断供）。
+# 它们要问的是另一个问题：水位还够不够发题。
+STOCK = {"drill": _stock_drill}
 
 _HINTS = {
     "unit_failed": "定时任务报错了——点单元名看日志",
@@ -144,8 +227,12 @@ def _diagnose(row, timer_row, svc_row):
         row["reason"] = "not_run"
 
 
-def snapshot():
-    """全量体检。systemd 拿不到也照常返回内容结论——两条腿，断一条不瘫。"""
+def snapshot(user=None):
+    """全量体检。systemd 拿不到也照常返回内容结论——两条腿，断一条不瘫。
+
+    user 只给水位型域用来「按人算余量」（我还有多少新题可刷），不传就只报库存。
+    参数化而不是在里头 uid()：这函数得能在请求之外跑（测试、以后可能的巡检脚本）。
+    """
     db = get_db()
     today = date.today().isoformat()
     try:
@@ -158,6 +245,18 @@ def snapshot():
     for key, name, table, col, sla, unit, note in DOMAINS:
         row = _probe(db, key, name, table, col, sla, unit, note, today)
         t, s = units.get(unit), units.get(row["svc"])
+        if key in STOCK and not row["hint"]:
+            # hint 非空说明表/列失效，_probe 已经把话说清楚了，别拿水位盖掉
+            try:
+                row["state"], row["hint"], row["usable"] = STOCK[key](db, user)
+                row["reason"] = ""
+            except Exception as e:
+                log.warning("水位探针 %s 失败", key, exc_info=True)
+                row["state"], row["hint"] = "unknown", "水位探针失败：%s" % e
+            if s and not s.get("healthy"):
+                # 水位够不够是一回事，补库任务本身报错是另一回事，两件都得说
+                row["reason"] = "unit_failed"
+                row["hint"] = _HINTS["unit_failed"] + "；" + row["hint"]
         _diagnose(row, t, s)
         if t or s:
             row["unit_healthy"] = bool((s or t).get("healthy"))
@@ -174,7 +273,9 @@ def snapshot():
 
 @bp.get("/api/admin/health")
 def health():
-    today, rows = snapshot()
+    # 按人算的那部分算的是**看这个页面的人**自己的余量：后台是管理员自己在看，
+    # 「我还有多少新题可刷」问的就是他自己，不是全站最惨的那个用户。
+    today, rows = snapshot(uid())
     counts = {"ok": 0, "warn": 0, "down": 0, "unknown": 0}
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1

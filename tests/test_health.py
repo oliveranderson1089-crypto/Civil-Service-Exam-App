@@ -7,20 +7,14 @@
 3. **静默失败判得出来** —— 内容陈旧 + 单元成功，必须报 silent 而不是 ok。
    这是整块存在的理由，别的都可以退让，这条不行。
 """
-import sqlite3
-
 import pytest
 
-from conftest import DB, appmod
+from conftest import appmod
 from mods import health
 
-
-@pytest.fixture
-def db():
-    con = sqlite3.connect(DB)
-    con.row_factory = sqlite3.Row
-    yield con
-    con.close()
+# 这里所有建表/塞数据都走 flask 自己那个连接（app_context 里的 get_db）。
+# 曾经另开一个 sqlite 连接干这事 —— DROP/CREATE 要独占锁，机器一忙就撞出
+# 一片 database is locked，「单独跑好好的、全量跑挂一片」。别再把连接开成两个。
 
 
 def test_非管理员访问不到(flask_app):
@@ -47,7 +41,124 @@ def test_空库不崩且判为断供(auth_client):
     empty = [r for r in d["domains"] if r["total"] == 0]
     assert empty, "测试库里应该有空的内容域"
     for r in empty:
-        assert r["state"] == "down" and r["reason"] == "empty"
+        # 水位型域走自己的判据，空库同样是 down，只是理由更具体（哪些格子没题）
+        assert r["state"] == "down"
+        assert r["reason"] == "empty" or r["key"] in health.STOCK
+
+
+class Test水位型域:
+    """练习题库是补到阈值就停的，不是每天出新货。
+
+    它每天正常跑完、每格都满 30 道，界面却一直红着报断供 —— 因为拿「最新产出日期」
+    量了一个水位型的域。这两条测的就是别再犯：库满要判 ok，库空要判 down。
+    """
+
+    def _drill(self, rows, user=None, seen=0, bad=0):
+        """rows: [(board, qtype, level, 可用题数)]，重建 drill_bank 后跑一次探针。
+
+        seen：每格头 seen 道标成 user 做过的（按人算余量用）。
+        bad： 每格再塞 bad 道存疑题（agree=0）——它们占着库存但发不出去。
+        """
+        # ⚠️ 建表和探测**必须走同一个连接**。另开一个 sqlite 连接写这张表的话，
+        #    DROP TABLE 要的是独占锁，而 flask 那个连接还开着 —— 机器一忙（比如同时
+        #    还有一个 pytest 在跑）锁窗口就拖长，撞出一片 database is locked，
+        #    表现为「单独跑好好的，全量跑挂一片」。实际踩过，一次挂 23 个。
+        with appmod.app.app_context():
+            from core import get_db
+            con = get_db()
+            con.execute("DROP TABLE IF EXISTS drill_bank")
+            con.execute("DROP TABLE IF EXISTS drill_seen")
+            con.execute("CREATE TABLE drill_bank(id INTEGER PRIMARY KEY, board TEXT, "
+                        "qtype TEXT, level TEXT, agree TEXT, sig TEXT, created_at TEXT)")
+            con.execute("CREATE TABLE drill_seen(user_id INTEGER, sig TEXT, n INTEGER DEFAULT 1, "
+                        "last_at TEXT, PRIMARY KEY(user_id, sig))")
+            for b, t, lv, n in rows:
+                for i in range(n):
+                    sig = "%s|%s|%s|%d" % (b, t, lv, i)
+                    con.execute("INSERT INTO drill_bank(board,qtype,level,agree,sig,created_at) "
+                                "VALUES(?,?,?,'1',?,'2026-01-01')", (b, t, lv, sig))
+                    if user and i < seen:
+                        con.execute("INSERT INTO drill_seen(user_id,sig,last_at) "
+                                    "VALUES(?,?,'2026-01-01')", (user, sig))
+                for j in range(bad):
+                    con.execute("INSERT INTO drill_bank(board,qtype,level,agree,sig,created_at) "
+                                "VALUES(?,?,?,'0',?,'2026-01-01')",
+                                (b, t, lv, "%s|%s|%s|bad%d" % (b, t, lv, j)))
+            con.commit()
+            return health._stock_drill(con, user)
+
+    def _cells(self):
+        from mods.drill import DRILL_LEVELS, DRILL_TYPES
+        return [(b, t, lv) for b, types in DRILL_TYPES.items()
+                for t, _d, eng in types if eng == "ai" for lv in DRILL_LEVELS]
+
+    def test_每格都满就是正常(self):
+        state, hint, _ = self._drill([(b, t, lv, 30) for b, t, lv in self._cells()])
+        assert state == "ok" and "正常" in hint
+
+    def test_可用数不含存疑题(self):
+        """卡片上的数字原先是 COUNT(*)，把 19% 永远发不出去的存疑题也算了进去。
+
+        一个数字同时当「库里有多少题」和「有多少题能发」用，迟早骗到自己 ——
+        这里钉死：报出去的 usable 只数能发给人做的。
+        """
+        cells = self._cells()
+        _, _, usable = self._drill([(b, t, lv, 30) for b, t, lv in cells], bad=5)
+        assert usable == 30 * len(cells)
+
+    def test_有格子空了才是断供(self):
+        cells = self._cells()
+        state, _, _ = self._drill([(b, t, lv, 30) for b, t, lv in cells[1:]])
+        assert state == "down"
+
+    def test_不足但没空是待观察(self):
+        cells = self._cells()
+        rows = [(b, t, lv, 30) for b, t, lv in cells[1:]]
+        rows.append((*cells[0], 5))
+        assert self._drill(rows)[0] == "warn"
+
+
+class Test按人算余量:
+    """库存满不代表**你**还有题可做：做题不消耗库存，只从你自己的池子里划掉。
+
+    刷得快不是故障，所以余量少只多说一个数、不刷红；只有真刷穿（一道没做过的都不剩、
+    只能发复习题）才降级 —— 那种情况否则完全看不见：补库照排，但 AI 可能一直出不出
+    新题，你只会一直拿到复习题，而这儿一片绿。
+    """
+
+    _drill = Test水位型域._drill
+    _cells = Test水位型域._cells
+
+    def test_库满但做过一半仍是正常只多报余量(self):
+        rows = [(b, t, lv, 30) for b, t, lv in self._cells()]
+        state, hint, _ = self._drill(rows, user=1, seen=18)
+        assert state == "ok"
+        assert "最少的一格剩 12 道" in hint
+
+    def test_刷穿了才降级并说清怎么办(self):
+        rows = [(b, t, lv, 30) for b, t, lv in self._cells()]
+        state, hint, _ = self._drill(rows, user=1, seen=30)
+        assert state == "warn" and "只能发复习题" in hint
+        # 提示必须指向**真能解**的动作。warmbank 已经跟着改成按人算余量了，所以
+        # 「立即补跑」这次是管用的；但 AI 出题要几分钟，也得照实说，别让人以为点完就有。
+        assert "立即补跑" in hint and "几分钟" in hint
+
+    def test_不认人就只报库存(self):
+        rows = [(b, t, lv, 30) for b, t, lv in self._cells()]
+        state, hint, _ = self._drill(rows, user=None, seen=30)
+        assert state == "ok" and "还没做过" not in hint
+
+    def test_没有drill_seen表也不炸(self):
+        """旧库还没跑迁移：按人算这一半悄悄让位，库存结论照常给。"""
+        rows = [(b, t, lv, 30) for b, t, lv in self._cells()]
+        self._drill(rows, user=1, seen=0)          # 先建好表，再拆掉
+        with appmod.app.app_context():             # 同一个连接，别再开第二个（见 _drill）
+            from core import get_db
+            con = get_db()
+            con.execute("DROP TABLE drill_seen")
+            con.commit()
+            state, hint, _ = health._stock_drill(con, 1)
+        assert state == "ok" and "还没做过" not in hint
 
 
 def test_表或列不存在时只是失效不崩():
@@ -63,13 +174,15 @@ def test_表或列不存在时只是失效不崩():
 class TestSLA判定:
     """宽限期就一天：sla 内为 ok，超一天 warn，再超就是 down。"""
 
-    def _probe(self, db, table, last_day, sla, today="2026-07-29"):
-        db.execute("DROP TABLE IF EXISTS %s" % table)
-        db.execute("CREATE TABLE %s(id INTEGER PRIMARY KEY, created_at TEXT)" % table)
-        db.execute("INSERT INTO %s(created_at) VALUES(?)" % table, (last_day,))
-        db.commit()
+    def _probe(self, table, last_day, sla, today="2026-07-29"):
+        # 建表和探测走同一个连接：另开一个连接做 DDL 会跟 flask 那个抢独占锁（见 _drill）
         with appmod.app.app_context():
             from core import get_db
+            db = get_db()
+            db.execute("DROP TABLE IF EXISTS %s" % table)
+            db.execute("CREATE TABLE %s(id INTEGER PRIMARY KEY, created_at TEXT)" % table)
+            db.execute("INSERT INTO %s(created_at) VALUES(?)" % table, (last_day,))
+            db.commit()
             return health._probe(get_db(), "t", "测试域", table, "created_at",
                                  sla, "gongkao-x.timer", "", today)
 
@@ -80,16 +193,16 @@ class TestSLA判定:
         ("2026-07-26", "down"),   # 落后 3 天，断供
         ("2026-07-01", "down"),
     ])
-    def test_日更任务(self, db, last, expect):
-        assert self._probe(db, "hl_t1", last, 1)["state"] == expect
+    def test_日更任务(self, last, expect):
+        assert self._probe("hl_t1", last, 1)["state"] == expect
 
     @pytest.mark.parametrize("last,expect", [
         ("2026-07-25", "ok"),     # 周二/周五跑，最长间隔 4 天
         ("2026-07-24", "warn"),
         ("2026-07-23", "down"),
     ])
-    def test_周更任务(self, db, last, expect):
-        assert self._probe(db, "hl_t2", last, 4)["state"] == expect
+    def test_周更任务(self, last, expect):
+        assert self._probe("hl_t2", last, 4)["state"] == expect
 
 
 class Test故障归因:
