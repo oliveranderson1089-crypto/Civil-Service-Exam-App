@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, ME, api, appConfirm, c, createDock,
-   draft, hl, lsGet, lsSet, padClose, padDk,
+/* global $, IS_MOBILE, ME, api, appConfirm, c, createDock, draft, hl, lsGet, lsSet, padClose, padDk,
    push, toast */
 
 /* ================= 草稿纸（做题时演算用；只写不识别） =================
@@ -234,7 +233,10 @@ function padInit() {
   padInited = true;
   padCv = $('#pad-cv'); padCtx = padCv.getContext('2d');
   padBase = document.createElement('canvas'); padBaseCtx = padBase.getContext('2d');
-  padDk = createDock($('#pad'), 'padDock', 'bottom', padFit);
+  // 电脑上默认停右半屏（P3）：宽度够，草稿纸和题目并排看，不用再开合。
+  // 手机仍是下半屏——竖屏上左右分栏两边都太窄。
+  // 只是**默认值**：拖过一次就按 localStorage 里记的来，老用户的习惯不会被改掉。
+  padDk = createDock($('#pad'), 'padDock', IS_MOBILE ? 'bottom' : 'right', padFit);
   padLoad();
 
   padCv.addEventListener('pointerdown', padDown);

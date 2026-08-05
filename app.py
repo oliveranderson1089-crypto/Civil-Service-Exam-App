@@ -52,6 +52,7 @@ from mods.gaikuo import bp as gaikuo_bp
 from mods.gongwen import bp as gongwen_bp
 from mods.handwrite import bp as handwrite_bp
 from mods.health import bp as health_bp
+from mods.hub import bp as hub_bp
 from mods.hyper import bp as hyper_bp
 from mods.kb import bp as kb_bp
 from mods.lianjie import bp as lianjie_bp
@@ -80,6 +81,7 @@ from mods.sync import bp as sync_bp
 from mods.tasks import bp as tasks_bp
 from mods.team import bp as team_bp
 from mods.theory import bp as theory_bp
+from mods.today import bp as today_bp
 from mods.todos import bp as todos_bp
 from mods.wrongq import bp as wrongq_bp
 from mods.xiyu import bp as xiyu_bp
@@ -127,6 +129,7 @@ app.register_blueprint(gaikuo_bp)
 app.register_blueprint(gongwen_bp)
 app.register_blueprint(handwrite_bp)
 app.register_blueprint(health_bp)
+app.register_blueprint(hub_bp)
 app.register_blueprint(hyper_bp)
 app.register_blueprint(kb_bp)
 app.register_blueprint(lianjie_bp)
@@ -155,6 +158,7 @@ app.register_blueprint(sync_bp)
 app.register_blueprint(tasks_bp)
 app.register_blueprint(team_bp)
 app.register_blueprint(theory_bp)
+app.register_blueprint(today_bp)
 app.register_blueprint(todos_bp)
 app.register_blueprint(wrongq_bp)
 app.register_blueprint(xiyu_bp)

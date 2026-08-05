@@ -41,6 +41,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span>搜索小记 / 资料 / 知识库文档…</span>
     </button>
+    <div id="today-body"></div>
+  </section>
+
+  <!-- ===== 全部功能（原来的首页九宫格，从「我的」进；新入口一律走标签栏） ===== -->
+  <section id="view-allfeats" class="view hidden">
     <div class="home-cards" id="home-cards"></div>
   </section>
 
@@ -60,6 +65,13 @@
       <h2 id="board-ph-title"></h2>
       <p>该板块功能正在建设中。<br>你可以先到「小记」按板块记笔记，或在「资料库」存放该板块的资料。</p>
     </div>
+  </section>
+
+  <!-- ===== 标签页（底部标签栏的 练/积累/库/我的，内容由 js/tabs.js 的路由表生成） ===== -->
+  <section id="view-tab" class="view hidden">
+    <h2 class="view-title" id="tab-title"></h2>
+    <div class="tab-chips hidden" id="tab-chips"></div>
+    <div id="tab-groups"></div>
   </section>
 
   <!-- ===== 小记（仿语雀：板块栏 + 编辑器 + 动态流） ===== -->
@@ -871,6 +883,8 @@
       <button class="btn ghost" id="rq-quit">交卷</button>
       <button class="btn hidden" id="rq-next">下一题 →</button>
     </div>
+    <!-- 答题卡：电脑上常驻右栏，手机上收在底部。内容由 js/qsheet.js 渲染 -->
+    <aside class="q-side hidden" id="rq-side"></aside>
   </section>
   <section id="view-drill" class="view hidden">
     <div class="pd-intro" id="dr-intro"></div>
@@ -925,6 +939,7 @@
   <section id="view-drillrun" class="view hidden">
     <div id="dr-head" class="dr-head"></div>
     <div id="dr-body"></div>
+    <aside class="q-side hidden" id="dr-side"></aside>
   </section>
 
   <!-- ===== 成文：把素材真正写成一篇大作文 ===== -->
@@ -1422,6 +1437,11 @@
     </div>
   </div>
 </main>
+
+<!-- 常驻导航：手机是底部标签栏，电脑是左侧导航栏。两个都由 js/tabs.js 按同一份
+     TAB_DEFS 生成，出哪个由 CSS 断点决定；沉浸式页面（做题/阅读/小记…）两个都自动隐藏 -->
+<nav id="tabbar" class="tabbar hidden"></nav>
+<nav id="siderail" class="siderail hidden"></nav>
 
 <!-- 上传资料 -->
 <div id="upload-modal" class="modal hidden">
@@ -1973,5 +1993,8 @@
 <script src="js/desktop.js"></script>
 <script src="js/marks.js"></script>
 <script src="js/shortcuts.js"></script>
+<script src="js/qsheet.js"></script>
+<script src="js/tabs.js"></script>
+<script src="js/today.js"></script>
 </body>
 </html>

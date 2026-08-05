@@ -4040,3 +4040,237 @@ body.dark .tk-box.mine{color:var(--muted);}
 /* .cs-kq-row 的首个 <b> 是个蓝底小标签，1928 行那条 !important 把它连同后面的
    普通 <b> 一起染成浅灰，压在蓝底上只剩 4.2:1。标签的白字得单独抢回来。 */
 body.dark .cs-kq-row>b{color:#fff !important;}
+
+/* ================= 底部标签栏（界面重构 P0） =================
+   常驻导航：今日 / 练 / 积累 / 库 / 我的。按钮由 js/tabs.js 按 TAB_DEFS 生成。
+
+   --tabh 是「屏幕底下被标签栏占掉多少」，只在 body.has-tabs 时才不为 0；
+   谁贴着底边谁就减它一次（main 的下留白、悬浮球的 bottom），
+   这样标签栏在沉浸式页面隐藏时，那些元素会自动回到原位，不用各自再写一条隐藏规则。 */
+body{--tabh:0px;}
+body.has-tabs{--tabh:calc(54px + env(safe-area-inset-bottom));}
+body.has-tabs main{padding-bottom:var(--tabh);}
+
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:46;display:flex;
+  background:var(--card);border-top:1px solid var(--line);
+  padding:4px 2px calc(4px + env(safe-area-inset-bottom));
+  box-shadow:0 -2px 14px rgba(20,40,80,.06);}
+.tabbar .tb{flex:1;min-width:0;background:none;border:none;cursor:pointer;padding:3px 2px;
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  color:var(--muted);font-family:inherit;-webkit-tap-highlight-color:transparent;}
+.tabbar .tb svg{width:22px;height:22px;}
+.tabbar .tb i{font-style:normal;font-size:10.5px;line-height:1.2;}
+.tabbar .tb.on{color:var(--blue);}
+.tabbar .tb.on i{font-weight:600;}
+.tabbar .tb:active{opacity:.6;}
+
+/* 悬浮工具球让开标签栏（原来贴在 bottom:86px，会正压在「积累」上面） */
+body.has-tabs .fab{bottom:calc(var(--tabh) + 14px);}
+
+/* 标签页里的分组标题与条目（条目复用 .board-card 的底色/圆角/夜间配色，只加内部排版） */
+.tab-gh{font-size:12.5px;color:var(--muted);letter-spacing:.04em;margin:20px 2px 8px;}
+.tab-gh:first-child{margin-top:2px;}
+.tab-row{gap:10px;}
+.tab-row .tr-text{display:flex;flex-direction:column;min-width:0;}
+.tab-row .tr-n{font-size:15.5px;font-weight:600;}
+.tab-row .tr-d{font-size:12.5px;color:var(--muted);margin-top:2px;line-height:1.5;}
+
+body.dark .tabbar{background:#1a2233;border-top-color:#2a3345;box-shadow:0 -2px 14px rgba(0,0,0,.35);}
+
+/* 电脑端先不出标签栏：P3 会把同一份 TAB_DEFS 渲染成左侧导航栏，
+   在那之前宽屏保持原样，免得一条通栏的横条横在 1120px 的窗口底下。 */
+@media(min-width:761px){
+  .tabbar{display:none !important;}
+  body.has-tabs{--tabh:0px;}
+}
+
+/* ================= 今日仪表盘（界面重构 P1） =================
+   首页从功能目录换成「今天该做什么」。原来的九宫格挪去了「我的 › 全部功能」。 */
+.td-date{font-size:12.5px;color:var(--muted);margin:2px 2px 2px;}
+.td-exam{font-size:13px;color:var(--blue);margin:0 2px 12px;}
+.td-exam b{font-size:16px;}
+
+.td-hero{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);
+  padding:16px;display:flex;align-items:center;gap:16px;}
+/* 完成度环：--p 是百分比。没有可算的完成度时走 .td-ring-off，画一圈灰的，
+   不拿 0% 或 100% 冒充——首页糊一个漂亮的满环，等于在骗自己。 */
+.td-ring{width:64px;height:64px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;
+  background:conic-gradient(var(--blue-fill) 0 calc(var(--p,0)*1%),var(--line) calc(var(--p,0)*1%) 100%);}
+.td-ring>i{width:50px;height:50px;border-radius:50%;background:var(--card);display:grid;place-items:center;
+  font-style:normal;font-size:15px;font-weight:700;color:var(--blue);font-variant-numeric:tabular-nums;}
+.td-ring-off{background:var(--line);}
+.td-ring-off>i{color:var(--muted);}
+.td-hero-t{min-width:0;display:flex;flex-direction:column;gap:3px;}
+.td-hero-k{font-size:12.5px;color:var(--muted);}
+.td-hero-v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;}
+
+.td-cta{width:100%;margin-top:12px;border:none;border-radius:var(--radius);cursor:pointer;
+  background:var(--blue-fill);color:#fff;padding:14px;font-family:inherit;font-size:16px;font-weight:700;
+  box-shadow:0 6px 18px rgba(26,111,181,.32);}
+.td-cta small{display:block;font-size:12px;font-weight:400;opacity:.88;margin-top:3px;}
+.td-cta:active{transform:scale(.99);}
+
+.td-h{font-size:12.5px;color:var(--muted);letter-spacing:.04em;margin:20px 2px 8px;}
+.td-rows{display:grid;gap:8px;}
+.td-row{background:var(--card);border-radius:12px;box-shadow:var(--shadow);cursor:pointer;
+  padding:13px 14px;display:flex;align-items:center;gap:10px;}
+.td-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--blue-fill);}
+.td-r{background:#c0392b;} .td-a{background:var(--gold);} .td-g{background:#2b7a58;}
+.td-name{font-size:15px;font-weight:600;min-width:0;}
+.td-badge{margin-left:auto;font-size:12px;font-variant-numeric:tabular-nums;
+  background:#c0392b;color:#fff;border-radius:20px;padding:2px 10px;}
+.td-badge.quiet{background:var(--bg2);color:var(--muted);}
+
+.td-ups{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+.td-up{background:var(--card);border-radius:12px;box-shadow:var(--shadow);cursor:pointer;
+  padding:12px 13px;display:flex;flex-direction:column;gap:2px;}
+.td-up-n{font-size:14.5px;font-weight:600;}
+.td-up-c{font-size:12px;color:var(--blue);font-variant-numeric:tabular-nums;}
+
+.td-empty{background:var(--card);border-radius:12px;box-shadow:var(--shadow);
+  padding:14px;font-size:13.5px;color:var(--muted);}
+.td-link{border:none;background:none;color:var(--blue);font-family:inherit;font-size:13.5px;
+  cursor:pointer;padding:0 2px;text-decoration:underline;}
+.td-all{width:100%;margin-top:22px;border:1px solid var(--line);border-radius:12px;background:transparent;
+  color:var(--muted);font-family:inherit;font-size:14px;padding:12px;cursor:pointer;}
+.td-all:hover{color:var(--blue);border-color:var(--blue);}
+
+body.dark .td-hero,body.dark .td-row,body.dark .td-up,body.dark .td-empty{
+  background:#1a2233;box-shadow:0 2px 10px rgba(0,0,0,.35);}
+body.dark .td-ring>i{background:#1a2233;}
+body.dark .td-ring{background:conic-gradient(var(--blue-fill) 0 calc(var(--p,0)*1%),#2a3345 calc(var(--p,0)*1%) 100%);}
+body.dark .td-ring-off{background:#2a3345;}
+body.dark .td-badge.quiet{background:#242e40;}
+body.dark .td-all{border-color:#2a3345;}
+/* 这两处的 <b> 是句子里的着重数字（连续 23 天 / 还有 116 天），不是标题。
+   夜间全局那条 body.dark b{color:#f0c674} 会把它染成金色——这里明确改回蓝色的强调色，
+   让它和页面里其他「可点的数字」是同一个语义。 */
+body.dark .td-hero b,body.dark .td-exam b{color:var(--blue) !important;}
+
+/* 顶栏收掉冗余按钮。「首页」在**任何**有常驻导航的地方都是重复的（手机的「今日」标签、
+   电脑左栏的「今日」都是同一个去处），所以只要导航在场就收掉；
+   「账户」「后台」只在手机上收（进了「我的」），电脑上留着当快捷入口。
+   手机那两个用断点而不是 body.has-tabs：后者在沉浸式页面会撤掉，
+   按钮就会一会儿冒出来一会儿消失。 */
+body.has-tabs #home-btn{display:none !important;}
+@media(max-width:760px){
+  #home-btn,#account-btn,#admin-btn{display:none !important;}
+}
+
+/* ---- 标签页的板块筛选条与状态角标（P2） ---- */
+/* 横向滚动而不是换行：板块有六个，换行会把内容顶下去半屏 */
+.tab-chips{display:flex;gap:7px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+  padding:2px 2px 12px;margin:0 -2px;scrollbar-width:none;}
+.tab-chips::-webkit-scrollbar{display:none;}
+.tab-chips .chip{flex:0 0 auto;padding:6px 14px;font-size:13.5px;}
+
+.tr-stat{margin-left:auto;flex:0 0 auto;font-size:12px;font-variant-numeric:tabular-nums;
+  padding:2px 9px;border-radius:20px;background:var(--bg2);color:var(--muted);}
+/* 正确率分三档。低的要显眼——这一格存在的意义就是「今天该练哪个板块」 */
+.tr-stat.bad{background:#fbeae7;color:#a5382c;}
+.tr-stat.warn{background:#fdf1dc;color:#8a5a00;}
+.tr-stat.good{background:#e6f4ec;color:#1f6647;}
+.tr-stat.new{background:#e8f1fa;color:var(--blue);}
+.tab-row .bc-arrow{margin-left:8px;}
+.tab-row .tr-stat+.bc-arrow{margin-left:8px;}
+.tab-row .tr-text{margin-right:auto;}
+
+body.dark .tr-stat{background:#242e40;color:var(--muted);}
+body.dark .tr-stat.bad{background:#3a1d19;color:#e6968a;}
+body.dark .tr-stat.warn{background:#382c12;color:#e0b872;}
+body.dark .tr-stat.good{background:#16321f;color:#6fbc92;}
+body.dark .tr-stat.new{background:#152a3d;color:#7db8ea;}
+
+/* ================= 电脑端左侧导航栏（界面重构 P3） =================
+   和手机的底部标签栏是同一份 TAB_DEFS 的两个形态，谁出现只由断点决定：
+   ≤760 出底栏，≥761 出左栏。中间不留空档，任何宽度下都有常驻导航。
+
+   用 fixed 而不是把 <main> 包进 flex：包一层要动 DOM 结构，而顶栏是 sticky、
+   78 个视图里还有一批自己算高度的（小记/聊天/文档），动结构的风险远大于这点收益。 */
+.siderail{display:none;}
+@media(min-width:761px){
+  /* left 跟着 --push-l：面板停到左半屏时，body 的 padding 会把普通流的内容推开，
+     但 fixed 的左栏不吃 padding —— 不跟着挪就会被面板整个盖住。 */
+  .siderail{position:fixed;left:var(--push-l,0px);top:var(--topbar-h,56px);bottom:0;width:206px;z-index:40;
+    display:flex;flex-direction:column;gap:2px;overflow-y:auto;padding:12px 10px 20px;
+    background:var(--card);border-right:1px solid var(--line);}
+  .siderail.hidden{display:none;}
+  body.has-tabs main{padding-left:206px;padding-bottom:0;}
+  /* 导航页在宽屏上限个宽：一行 900 多字符没法读。做题/小记/聊天那些自己有布局的不动 */
+  body.has-tabs #view-home,body.has-tabs #view-tab,body.has-tabs #view-allfeats{
+    max-width:940px;margin:0 auto;padding:22px 26px 60px;}
+}
+.siderail .sr-t{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;
+  border-radius:9px;background:none;cursor:pointer;color:var(--text);font-family:inherit;font-size:14.5px;}
+.siderail .sr-t svg{width:19px;height:19px;flex:0 0 auto;}
+.siderail .sr-t i{font-style:normal;}
+.siderail .sr-t:hover{background:var(--bg2);}
+.siderail .sr-t.on{background:var(--blue-fill);color:#fff;font-weight:600;}
+/* 分组子项：只有当前打开的那个标签展开，点了滚过去 */
+.sr-subs{display:none;flex-direction:column;gap:1px;padding:2px 0 6px 14px;}
+.sr-subs.on{display:flex;}
+.sr-g{text-align:left;border:none;background:none;cursor:pointer;font-family:inherit;
+  font-size:13px;color:var(--muted);padding:5px 10px;border-radius:7px;}
+.sr-g:hover{background:var(--bg2);color:var(--blue);}
+
+body.dark .siderail{background:#141b29;border-right-color:#2a3345;}
+body.dark .siderail .sr-t{color:#cfd5e0;}
+body.dark .siderail .sr-t:hover,body.dark .sr-g:hover{background:#1f2838;}
+
+/* ================= 做题页：答题卡与三栏（界面重构 P4） =================
+   电脑上做题页分两列：正文 + 常驻答题卡。**不包 wrapper**，用显式列定位——
+   #view-realrun 底下是七八个平铺的 div，包一层要动 DOM，而这些 id 被 realq.js
+   引了几十处；让侧栏占第二列、其余一律落第一列，效果一样且一行 DOM 都不用改。 */
+@media(min-width:761px){
+  /* ⚠️ **不能挂 body.has-tabs**：做题页在 TAB_OFF 里（整屏专注，左栏/底栏都让位），
+     那个类恰恰在这两个视图上被摘掉 —— 挂上去等于这套两栏布局永远不生效，
+     答题卡掉下来变成通栏一大块。这里只按视图和断点走。 */
+  #view-realrun,#view-drillrun{
+    display:grid;grid-template-columns:minmax(0,1fr) 244px;gap:22px;align-items:start;
+    max-width:1180px;margin:0 auto;}
+  #view-realrun>*:not(.q-side),#view-drillrun>*:not(.q-side){
+    grid-column:1;min-width:0;}
+  /* span 99 而不是 1/-1：没声明 grid-template-rows 时行全是**隐式**的，
+     而 -1 只认显式网格的最后一条线 —— 写 1/-1 实际只占第 1 行，
+     答题卡的高度会把第一行整个撑开，题干被顶下去两百多像素。 */
+  .q-side{grid-column:2;grid-row:1 / span 99;position:sticky;top:calc(var(--topbar-h,56px) + 16px);
+    align-self:start;}
+  /* 右栏里宽度管够，常驻展开、不给折叠箭头。限定在做题页内，
+     免得哪天别处复用 .q-side 时被这条强制展开。 */
+  #view-realrun .q-side .qs-grid,#view-drillrun .q-side .qs-grid{display:grid;}
+  #view-realrun .q-side .qs-caret,#view-drillrun .q-side .qs-caret{display:none;}
+  #view-realrun .q-side .qs-h,#view-drillrun .q-side .qs-h{cursor:default;}
+}
+.q-side{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px;}
+.qs-h{display:flex;align-items:center;gap:8px;width:100%;border:none;background:none;cursor:pointer;
+  font-family:inherit;font-size:13.5px;font-weight:600;color:var(--text);padding:2px;}
+.qs-n{margin-left:auto;font-size:12px;font-weight:400;color:var(--muted);font-variant-numeric:tabular-nums;}
+.qs-caret{color:var(--muted);transition:transform .18s;}
+.q-side.qs-open .qs-caret{transform:rotate(180deg);}
+/* 手机上默认收起：竖屏里方阵很占地方，而手机做题多半一路往下做 */
+.qs-grid{display:none;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:6px;margin-top:10px;}
+.q-side.qs-open .qs-grid{display:grid;}
+.qs-c{aspect-ratio:1;border:1px solid var(--line);border-radius:7px;background:var(--card);cursor:pointer;
+  font-family:inherit;font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;padding:0;}
+.qs-c:hover{border-color:var(--blue);color:var(--blue);}
+.qs-done{background:var(--bg2);border-color:var(--line);color:var(--text);font-weight:600;}
+.qs-right{background:#e6f4ec;border-color:#8fcfae;color:#1f6647;font-weight:600;}
+.qs-wrong{background:#fbeae7;border-color:#e2a99f;color:#a5382c;font-weight:600;}
+.qs-cur{outline:2px solid var(--blue-fill);outline-offset:1px;}
+
+body.dark .q-side{background:#1a2233;box-shadow:0 2px 10px rgba(0,0,0,.35);}
+body.dark .qs-c{background:#1a2233;border-color:#2a3345;}
+body.dark .qs-done{background:#242e40;color:#e2e7ef;}
+body.dark .qs-right{background:#16321f;border-color:#2f6a48;color:#8fd0aa;}
+body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
+
+/* ---- 翻页浮条不再压住内容（遗留问题，改版前就有） ----
+   .pgbar 是 fixed 在右下角的四个箭头（给手写笔用的：笔没有滚轮）。它挂在 body.has-pen 上，
+   而 has-pen = 「不是手机」—— 也就是**电脑上每一页都有它**，一直盖着内容右缘：
+   卡片的 ›、「今日 +N」角标、小记动态流的右边都被压住过。
+
+   所以这不是某几页的事，是全局给它留一条道：正文右边空出 58px，浮条正好停在那条道里。
+   viewer-full（阅读器全屏）除外——那一屏本来就是要铺满的，它自己把 padding 清零了。 */
+@media(min-width:761px){
+  body.has-pen:not(.viewer-full) main{padding-right:58px;}
+}

@@ -8,7 +8,7 @@
  * 一眼能对着算），错项逐条列。原卷解析仍然保留，折叠起来给想看原文的人。
  *
  */
-/* global $, api, appConfirm, back, esc, push, toast,
+/* global qsClear, qsRender, $, api, appConfirm, back, esc, push, toast,
    qtFmt, qtStart, qtStop, qtTotalStart, qtTotalStop,
    wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
 
@@ -235,6 +235,17 @@ function rqRender() {
      所以进度按 paper 判，不按 rqExam：背题模式下 rqExam 是 false，只看它就只剩一个光秃秃的「交卷」。 */
   $('#rq-quit').textContent = (rqExam || rqMode === 'paper')
     ? `交卷（已答 ${Object.keys(rqAns).length}/${rqItems.length}）` : '交卷';
+  /* 答题卡（P4）。原来这一页**只有「下一题」**，整卷 130 道想回头改第 47 题只能交卷重来。
+     模考模式下答案没揭晓，只报「答过没答过」，不能透出对错——那就等于提前判卷。 */
+  qsRender('#rq-side', {
+    n: rqItems.length, cur: rqIdx,
+    state: (i) => {
+      const q = rqItems[i], a = rqAns[q.id];
+      if (a === undefined) return '';
+      return rqExam ? 'done' : (a === q.answer ? 'right' : 'wrong');
+    },
+    onJump: (i) => { if (i !== rqIdx) { rqIdx = i; rqRender(); } },
+  });
 }
 
 /* 解析版式：**关键点排最前**，步骤一行一步，错项逐条。
@@ -316,6 +327,7 @@ async function rqFinish() {
     $('#rq-opts').innerHTML = '';
     $('#rq-figs').innerHTML = '';
     $('#rq-mat').innerHTML = '';   // 新增容器别漏了清理，否则上一题的图会挂在成绩上方
+    qsClear('#rq-side');           // 答题卡同理：留在成绩页上还能点，点一下就把题目盖回成绩上
     $('#rq-next').classList.add('hidden');
     $('#rq-quit').classList.add('hidden');
     // 逐题结果留一份：模考的答案和解析只有这里有，逐题回顾和「收错题」都要用

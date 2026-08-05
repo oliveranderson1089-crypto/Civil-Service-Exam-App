@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DT_L, api, back, c,
+/* global qsClear, qsRender, $, DT_L, api, back, c,
    dtMaterial, esc, push, toast,
    qtStart, qtStop, wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
 
@@ -243,6 +243,15 @@ function drRender() {
     $('#dr-prev').onclick = () => { drStopTimer(); drIdx--; drRender(); };
     $('#dr-nextq').onclick = () => { drStopTimer(); drIdx++; drRender(); };
   }
+  /* 答题卡（P4）。**只有测试模式才给**：背题模式选完即判、一路往下走，
+     跳题会把「按顺序过一遍」的节奏打乱，也没有「回去改」这回事。 */
+  if (drMode === 'exam') {
+    qsRender('#dr-side', {
+      n: drItems.length, cur: drIdx,
+      state: (i) => (drAns[i] === undefined ? '' : 'done'),   // 测试模式不揭晓对错
+      onJump: (i) => { if (i !== drIdx) { drStopTimer(); drIdx = i; drRender(); } },
+    });
+  } else qsClear('#dr-side');
   /* 倒计时按**这道题的题型**给（服务端算好在 it.sec 里），不是板块一刀切：
      混合练一组里类比推理 25 秒、分析推理 70 秒，用同一个数就没意义了。
      超时不打断，只转红记「超时 +12 秒」——考场上超时也得把题做完，
@@ -327,6 +336,7 @@ $('#dr-body').addEventListener('click', e => {
 
 async function drResult() {
   drStopTimer();
+  qsClear('#dr-side');            // 成绩页上答题卡该消失：留着还能点，点了就跳回题目
   $('#dr-head').innerHTML = '';
   $('#dr-body').innerHTML = '<p class="empty">判分中…</p>';
   const answers = {}, seconds = {};
