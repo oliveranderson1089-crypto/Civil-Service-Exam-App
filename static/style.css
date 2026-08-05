@@ -4463,3 +4463,46 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
   .tb-search{position:absolute;left:50%;transform:translateX(-50%);
     width:min(560px,42vw);max-width:none;margin:0;flex:0 0 auto;}
 }
+/* ---- 右栏切到 AI / 草稿纸 / 笔记 时加宽（答题卡 292px 够用，那三个不够） ----
+   加宽的是**栏**：面板自己 width:auto 跟着长，不用给三个面板各写一套尺寸。
+   高度也给死：草稿纸的画布是按容器像素画的，height:auto 会让它塌成一条。 */
+@media(min-width:761px){
+  #view-realrun.qp-wide{grid-template-columns:minmax(0,1fr) 460px;}
+  #view-realrun.rq-3col.qp-wide{grid-template-columns:minmax(0,340px) minmax(0,1fr) 460px;}
+  .dk-inline{height:calc(100vh - var(--topbar-h,56px) - 130px) !important;
+    min-height:420px;max-height:none;}
+}
+
+/* ================= 账户与外观：分组 =================
+   八张卡一路铺下去，改个头像要滚过密码和密保 —— 而这几件事互相之间没关系。
+   一套分组、两种呈现：电脑左侧竖栏，手机顶部横向 chips（和标签栏 / 左栏同一个路子）。 */
+.acct-off{display:none !important;}
+.acct-nav{display:flex;gap:7px;overflow-x:auto;padding:0 2px 14px;margin:0 -2px;scrollbar-width:none;}
+.acct-nav::-webkit-scrollbar{display:none;}
+.acct-nav button{flex:0 0 auto;border:1px solid var(--line);background:var(--card);border-radius:20px;
+  cursor:pointer;padding:7px 16px;font-family:inherit;font-size:13.5px;color:var(--muted);}
+.acct-nav button:hover{color:var(--blue);border-color:var(--blue);}
+.acct-nav button.on{background:var(--blue-fill);border-color:var(--blue-fill);color:#fff;font-weight:600;}
+
+@media(min-width:761px){
+  /* 电脑：左侧竖栏 + 右侧内容。不包 wrapper —— 账户页底下是一排平铺的卡片，
+     包一层要动 DOM，用显式列定位效果一样。 */
+  #view-account{display:grid;grid-template-columns:170px minmax(0,1fr);gap:26px;
+    align-items:start;max-width:940px;}
+  #view-account>*:not(.acct-nav){grid-column:2;}
+  .acct-nav{grid-column:1;grid-row:1 / span 99;position:sticky;top:calc(var(--topbar-h,56px) + 22px);
+    flex-direction:column;gap:3px;padding:0;margin:0;overflow:visible;}
+  .acct-nav button{width:100%;text-align:left;border:none;background:none;border-radius:9px;
+    padding:9px 12px;color:var(--text);}
+  .acct-nav button:hover{background:var(--bg2);border:none;}
+  .acct-nav button.on{background:var(--blue-fill);color:#fff;}
+  /* 个人信息横幅和退出登录跨在内容列顶/底，跟着分组一起看着别扭 —— 让它们始终在 */
+  .acct-hero{grid-column:2;}
+}
+body.dark .acct-nav button{background:#1a2233;border-color:#2a3345;color:#9aa4b2;}
+body.dark .acct-nav button.on{background:var(--blue-fill);color:#fff;}
+@media(min-width:761px){
+  body.dark .acct-nav button{background:none;border:none;color:#cfd5e0;}
+  body.dark .acct-nav button:hover{background:#1f2838;}
+  body.dark .acct-nav button.on{background:var(--blue-fill);color:#fff;}
+}

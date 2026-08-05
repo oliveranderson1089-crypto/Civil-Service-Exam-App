@@ -67,3 +67,41 @@ $('#acct-refresh').onclick = () => {
 };
 $('#acct-server').onclick = () => { try { window.GongkaoNative && window.GongkaoNative.changeServer(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ } };
 $('#acct-logout').onclick = doLogout;
+
+/* ---------------- 分组：一次只显示一组，不再一屏堆八张卡 ----------------
+   原来八张卡（邮箱 / 密码 / 密保 / 外观 / 朗读 / 外观定制 / 下载 / App）一路铺下去，
+   改个头像要滚过密码和密保 —— 而这几件事互相之间根本没关系。
+
+   分组标记写在 HTML 的 data-ag 上，这里只负责「显示哪一组」。
+   **一套分组、两种呈现**：电脑上导航是左侧竖栏，手机上是顶部横向 chips，
+   谁出现由 CSS 断点决定 —— 和底部标签栏 / 左侧导航栏是同一个路子。 */
+let agCur = '';
+function agGroups() {
+  const out = [];
+  document.querySelectorAll('#view-account [data-ag]').forEach(el => {
+    if (!out.includes(el.dataset.ag)) out.push(el.dataset.ag);
+  });
+  return out;
+}
+function agShow(g) {
+  agCur = g;
+  document.querySelectorAll('#view-account [data-ag]').forEach(el => {
+    /* 用 acct-off 而不是 hidden：#acct-tts / #acct-app 那两张卡的 hidden 是
+       别处按「是不是桌面版」控制的，两边抢同一个类会互相踩。 */
+    el.classList.toggle('acct-off', el.dataset.ag !== g);
+  });
+  document.querySelectorAll('#acct-nav [data-agb]').forEach(b =>
+    b.classList.toggle('on', b.dataset.agb === g));
+  const v = $('#view-account');
+  if (v) v.scrollTop = 0;
+}
+function agRender() {
+  const gs = agGroups();
+  $('#acct-nav').innerHTML = gs.map(g =>
+    `<button data-agb="${esc(g)}">${esc(g)}</button>`).join('');
+  agShow(gs.includes(agCur) ? agCur : gs[0]);
+}
+$('#acct-nav').addEventListener('click', e => {
+  const b = e.target.closest('[data-agb]'); if (b) agShow(b.dataset.agb);
+});
+agRender();

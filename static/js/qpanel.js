@@ -14,14 +14,16 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, esc, openAI, padOpen, qnOpen */
+/* global $, esc, openAI, padFit, padOpen, qnOpen */
 
 /* el   —— 要搬进来的浮层（没有就是答题卡那一档，用右栏里现成的卡片）
-   init —— 让它自己做初始化（拉数据、建画布…），搬家不替它干这些 */
+   init —— 让它自己做初始化（拉数据、建画布…），搬家不替它干这些
+   fit  —— 进栏之后要重新量尺寸的。画布是按容器像素画的，容器一变必须重算，
+           否则笔迹落点和手指位置对不上 */
 const QP_TABS = [
   { k: 'sheet', name: '答题卡' },
   { k: 'ai', name: 'AI 助手', el: '#ai-panel', init: () => openAI() },
-  { k: 'pad', name: '草稿纸', el: '#pad', init: () => padOpen() },
+  { k: 'pad', name: '草稿纸', el: '#pad', init: () => padOpen(), fit: () => padFit() },
   { k: 'note', name: '笔记', el: '#qnote', init: () => qnOpen() },
 ];
 let qpCur = 'sheet';
@@ -61,8 +63,16 @@ function qpShow(k) {
       el.classList.add('dk-inline');
       $('#rq-host').appendChild(el);
       $('#rq-host').classList.remove('hidden');
+      /* 画布这类按像素画的东西，容器一变必须重算，否则笔迹落点和手指位置对不上。
+         等一帧再量：这会儿元素刚插进 DOM，宽高还没算出来。 */
+      if (t.fit) requestAnimationFrame(() => { try { t.fit(); } catch (_) { /* 量不到就下次再说 */ } });
     }
   }
+  /* 答题卡 292px 够用，聊天 / 画布 / 输入框在这个宽度里全是挤的（画布只剩巴掌大）。
+     所以切到那三档时把整条右栏加宽——加宽的是**栏**不是面板，
+     面板自己 width:auto 跟着长，不用各写一套尺寸。 */
+  const view = $('#view-realrun');
+  if (view) view.classList.toggle('qp-wide', !sheet);
   qpRenderTabs();
 }
 

@@ -73,3 +73,30 @@ test('离开做题页就把浮层还回去，不然下次点悬浮球「没反�
     '元素还留在右栏里，而右栏跟着隐藏的做题页一起没了 —— 悬浮球点了会像没反应');
   assert.strictEqual($(h, '#rq-tabs .on').textContent, '答题卡', '档位没归位');
 });
+
+test('切到 AI / 草稿纸 / 笔记时右栏要加宽：292px 装不下聊天和画布', (t) => {
+  const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  const view = () => h.window.document.getElementById('view-realrun');
+  h.run("qpShow('pad')");
+  assert.ok(view().classList.contains('qp-wide'),
+    '切到草稿纸没加宽 —— 画布只剩巴掌大，没法算数');
+  h.run("qpShow('sheet')");
+  assert.ok(!view().classList.contains('qp-wide'), '回到答题卡还占着加宽的位置');
+});
+
+test('画布类面板进栏后要重新量尺寸，否则笔迹落点对不上', () => {
+  const js = require('fs').readFileSync(
+    require('path').join(__dirname, '../../static/js/qpanel.js'), 'utf8');
+  assert.match(js, /k: 'pad',[^}]*fit: \(\) => padFit\(\)/,
+    '草稿纸没挂 fit —— 画布是按容器像素画的，容器变了不重算，手落在哪儿和线画在哪儿就错开');
+  assert.match(js, /requestAnimationFrame\(\(\) => \{[^}]*t\.fit\(\)/,
+    '没等一帧就量：元素刚插进 DOM，宽高还是 0');
+});
+
+test('内联面板要给死高度：height:auto 会让画布塌成一条', () => {
+  const css = require('fs').readFileSync(
+    require('path').join(__dirname, '../../static/style.css'), 'utf8');
+  const m = css.match(/@media\(min-width:761px\)\{[^@]*?#view-realrun\.qp-wide[\s\S]*?\n\}/);
+  assert.ok(m, '没有加宽规则');
+  assert.match(m[0], /\.dk-inline\{height:calc\(/, '内联面板没给确定高度');
+});

@@ -482,21 +482,24 @@
       </div>
     </div>
 
-    <div class="acct-sec">
+    <!-- 分组导航：电脑上是左侧竖栏，手机上是顶部横向 chips。内容由 js/account.js 生成 -->
+    <nav class="acct-nav" id="acct-nav"></nav>
+
+    <div class="acct-sec" data-ag="账号">
       <div class="acct-sec-t">📧 邮箱</div>
       <p class="acct-hint">用于登录展示与找回密码提示。</p>
       <input id="acct-email-in" type="email" placeholder="绑定邮箱（如 you@example.com）">
       <button class="btn primary acct-btn" id="acct-email-save">保存邮箱</button>
     </div>
 
-    <div class="acct-sec">
+    <div class="acct-sec" data-ag="账号">
       <div class="acct-sec-t">🔒 修改密码</div>
       <input id="acct-oldpw" type="password" placeholder="原密码">
       <input id="acct-newpw" type="password" placeholder="新密码（至少 6 位）">
       <button class="btn primary acct-btn" id="acct-pw-save">修改密码</button>
     </div>
 
-    <div class="acct-sec">
+    <div class="acct-sec" data-ag="账号">
       <div class="acct-sec-t">🛡️ 密保问题</div>
       <p class="acct-hint">忘记密码时用于身份验证。</p>
       <select id="acct-secq"></select>
@@ -504,7 +507,7 @@
       <button class="btn primary acct-btn" id="acct-sec-save">保存密保</button>
     </div>
 
-    <div class="acct-sec">
+    <div class="acct-sec" data-ag="外观">
       <div class="acct-sec-t">🌗 外观</div>
       <div class="theme-row" id="theme-row">
         <button class="theme-opt" data-theme="light">☀️ 日间</button>
@@ -513,7 +516,7 @@
       </div>
     </div>
 
-    <div class="acct-sec hidden" id="acct-tts">
+    <div class="acct-sec hidden" id="acct-tts" data-ag="外观">
       <div class="acct-sec-t">🔊 朗读音色</div>
       <p class="acct-hint">电脑桌面版用的是系统语音引擎，可以换。</p>
       <div class="theme-row" id="tts-eng-row"></div>
@@ -521,7 +524,7 @@
       <button class="btn tiny" id="tts-try">▶ 试听</button>
     </div>
 
-    <div class="acct-sec">
+    <div class="acct-sec" data-ag="外观">
       <div class="acct-sec-t">🖼️ 外观定制</div>
       <p class="acct-hint">换头像和壁纸。图片只存在你自己的账号下，手机和电脑同步。</p>
       <div class="skin-row">
@@ -557,7 +560,7 @@
       </div>
     </div>
 
-    <div class="acct-sec">
+    <div class="acct-sec" data-ag="客户端">
       <div class="acct-sec-t">📥 下载客户端</div>
       <p class="acct-hint">装成独立应用更顺手：自己的图标、独立窗口、单独登录。</p>
       <a class="btn acct-btn" href="/apk" download="gongkao.apk">📱 安卓手机版（.apk）</a>
@@ -565,7 +568,7 @@
       <p class="acct-hint" style="margin-top:6px">桌面版装法：下载后 <code>sudo dpkg -i gongkao.deb</code>，或双击用「软件安装器」打开；装好在应用菜单搜「公考助手」。</p>
     </div>
 
-    <div class="acct-sec hidden" id="acct-app">
+    <div class="acct-sec hidden" id="acct-app" data-ag="客户端">
       <div class="acct-sec-t" id="acct-app-t">📱 App</div>
       <button class="btn acct-btn" id="acct-refresh">刷新页面</button>
       <button class="btn acct-btn" id="acct-update">检查更新</button>

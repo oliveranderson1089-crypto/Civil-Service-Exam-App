@@ -418,6 +418,7 @@ document @scroll
 #acct-refresh .onclick
 #acct-server .onclick
 #acct-logout .onclick
+#acct-nav @click
 document @visibilitychange
 window @focus
 document @click
