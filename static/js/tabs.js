@@ -184,12 +184,12 @@ const TAB_DEFS = [
   {
     key: 'lib', name: '库', icon: TB_SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
     groups: () => [
-      { name: '我记的', icon: 'note', items: [
+      { name: '笔记与草稿', icon: 'note', items: [
         { name: '小记', desc: '随手记 · 标签归类', go: () => openNotes() },
         { name: '知识库', desc: '笔记本 · 文档 · 分组整理', go: () => openKb() },
         { name: '草稿本', desc: '草稿纸留下的手写与演算', go: () => openDrafts() },
       ] },
-      { name: '我存的', icon: 'folder', items: [
+      { name: '文件与云盘', icon: 'folder', items: [
         { name: '资料库', desc: '图片 / 文档 / 网页 应用内查看', go: () => openMaterials() },
         { name: '云盘', desc: '存取任意文件 · 发给好友', go: () => openDrive() },
       ] },
@@ -206,7 +206,7 @@ const TAB_DEFS = [
       { name: '资讯', icon: 'overview', items: [
         { name: '全国考情', desc: '国考 / 省考 / 事考公告 每天汇总', go: () => openExam() },
       ] },
-      { name: '往来', icon: 'word', items: [
+      { name: '消息与好友', icon: 'word', items: [
         { name: '聊天', desc: '加好友 · 聊天 · 传文件', go: () => openChat() },
         { name: '消息', desc: '通知与提醒', go: () => openNotify() },
       ] },
@@ -318,6 +318,9 @@ $('#tabbar').innerHTML = TAB_DEFS.map(t =>
 /* 左栏每个分组底下摆什么 —— **只有一套形式**。
    「今日」没有对应的标签页，用它自己那份固定捷径；
    其余标签一律用**那个标签页里的分组标题**（真题实战 / 专项突破 / …），点了就跳到那一段。
+
+   所以分组名要经得起「离开上下文单看」：「我记的 / 我存的 / 往来」当段落标题还读得懂，
+   一摆进左栏就认不出是什么，得叫「笔记与草稿 / 文件与云盘 / 消息与好友」。
 
    原来是两套并排：上面一排我挑的捷径（历年真题、专项练…），下面又铺一排分组锚点
    （真题实战、专项突破…）—— 概念还重复，一个分组能占九行。 */
