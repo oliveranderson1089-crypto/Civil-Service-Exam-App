@@ -78,6 +78,7 @@ from mods.skin import bp as skin_bp
 from mods.social import bp as social_bp
 from mods.sucai import bp as sucai_bp
 from mods.sync import bp as sync_bp
+from mods.tabhome import bp as tabhome_bp
 from mods.tasks import bp as tasks_bp
 from mods.team import bp as team_bp
 from mods.theory import bp as theory_bp
@@ -155,6 +156,7 @@ app.register_blueprint(skin_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(sucai_bp)
 app.register_blueprint(sync_bp)
+app.register_blueprint(tabhome_bp)
 app.register_blueprint(tasks_bp)
 app.register_blueprint(team_bp)
 app.register_blueprint(theory_bp)

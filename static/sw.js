@@ -1,6 +1,6 @@
 // 网络优先：在线总是拿最新页面/样式/脚本，断网才用缓存兜底。
 // （避免旧的「缓存优先」导致更新后还显示旧样式）
-const CACHE = 'gongkao-v216';   // 右栏面板加宽；账户与外观分组
+const CACHE = 'gongkao-v217';   // 启动页浅色改版、顶栏头像回归、新应用图标
 
 self.addEventListener('install', e => { self.skipWaiting(); });
 

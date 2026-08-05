@@ -153,6 +153,30 @@ test('电脑上顶栏收掉品牌区，搜索相对**视口**居中', () => {
     '搜索框还在 flex 流里靠 auto 边距居中 —— 两侧不等宽时会偏');
 });
 
+test('头像还在顶栏，且仍是账户入口', (t) => {
+  /* 回归：上一轮收「公考助手」品牌区时，把同在 .brand-min 里的头像一起收掉了。
+     账户按钮已经没了（进了「我的」），头像要是也没了，电脑上就只剩左栏一条路。 */
+  const h = boot({ fetch: () => ({ json: { questions: [] } }) }); t.after(() => h.close());
+  const el = $(h, '#brand-logo');
+  assert.ok(el, '头像没了');
+  assert.ok(el.closest('.topbar-actions'), '头像不在顶栏右侧那组里');
+  /* 不能桩 openAccount：account.js 在加载时就把**当时那个函数引用**绑到了 onclick 上，
+     之后重新赋值同名变量根本换不掉已绑的那个。直接看它有没有真的跳过去。 */
+  el.click();
+  assert.strictEqual(h.window.document.body.dataset.view, 'account', '头像点了不去账户页');
+});
+
+test('桌面壳把系统标题栏换成和网页顶栏同色的细条', () => {
+  const py = fs.readFileSync(path.join(__dirname, '../../desktop/gongkao_native.py'), 'utf8');
+  assert.match(py, /def _merge_titlebar/, '没做标题栏合并');
+  assert.match(py, /set_custom_title\(Gtk\.Label\(label=""\)\)/,
+    '标题栏还显示着「公考助手」—— 网页里已经有面包屑了，再挂一遍是重复');
+  // 装饰失败顶多是「标题栏还是老样子」，不该让应用起不来：
+  // 有些桌面环境（或远程 X）对 CSD 支持并不完整
+  assert.match(py, /_merge_titlebar[\s\S]*?except Exception:[\s\S]{0,40}?pass/,
+    '标题栏装饰没兜底');
+});
+
 test('草稿纸在电脑上默认停右半屏，手机仍是下半屏', () => {
   const js = fs.readFileSync(path.join(__dirname, '../../static/js/pad.js'), 'utf8');
   assert.match(js, /createDock\(\$\('#pad'\), 'padDock', IS_MOBILE \? 'bottom' : 'right'/,

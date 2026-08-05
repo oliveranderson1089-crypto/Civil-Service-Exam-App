@@ -1246,20 +1246,31 @@ body.resizing-ns{cursor:ns-resize;user-select:none;}
   padding:4px 13px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;}
 
 /* 启动加载页 */
-#splash{position:fixed;inset:0;z-index:999;background:linear-gradient(160deg,#1a6fb5,#2b8fd6 60%,#4bb0f0);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;
+/* 启动页：整个应用已经是浅色调，这一屏原来还是一整片饱和蓝 —— 一进门就和后面打架。
+   改成浅底，靠三层很淡的东西撑住质感，而不是靠一块大色：
+     1) 稿纸格 —— 这是这个应用自己的东西（答题卡 / 方格纸），比抽象渐变更像"它"；
+     2) 顶部一层极淡的品牌色晕，把视线收到中间；
+     3) 只有品牌方章是实色，全屏就这一个重音。 */
+#splash{position:fixed;inset:0;z-index:999;color:var(--text);
+  background:
+    radial-gradient(120% 70% at 50% -10%, rgba(26,111,181,.10), rgba(26,111,181,0) 60%),
+    repeating-linear-gradient(0deg, rgba(26,111,181,.055) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(90deg, rgba(26,111,181,.055) 0 1px, transparent 1px 34px),
+    linear-gradient(180deg,#fbfcfe,#f2f6fa);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
   padding:0 36px;text-align:center;transition:opacity .5s;}
 #splash.fade{opacity:0;pointer-events:none;}
-.sp-logo{width:84px;height:84px;border-radius:22px;background:rgba(255,255,255,.18);
-  display:grid;place-items:center;font-size:46px;font-weight:800;margin-bottom:14px;
-  box-shadow:0 8px 30px rgba(0,0,0,.18);}
-.sp-name{font-size:22px;font-weight:800;letter-spacing:.2em;margin-bottom:40px;}
-.sp-quote{font-size:15.5px;line-height:2;opacity:.95;text-align:justify;max-width:340px;
+.sp-logo{width:84px;height:84px;border-radius:24px;
+  background:linear-gradient(150deg,#2b8fd6,#1a6fb5 70%);color:#fff;
+  display:grid;place-items:center;font-size:46px;font-weight:800;margin-bottom:16px;
+  box-shadow:0 10px 30px rgba(26,111,181,.28),inset 0 1px 0 rgba(255,255,255,.35);}
+.sp-name{font-size:20px;font-weight:700;letter-spacing:.34em;text-indent:.34em;
+  margin-bottom:38px;color:var(--text);}
+.sp-quote{font-size:15.5px;line-height:2.05;text-align:justify;max-width:360px;color:#4a5566;font-family:"Kaiti SC","STKaiti","KaiTi","楷体",serif;}
+.sp-author{margin-top:14px;font-size:14px;color:var(--muted);align-self:flex-end;margin-right:8%;
   font-family:"Kaiti SC","STKaiti","KaiTi","楷体",serif;}
-.sp-author{margin-top:14px;font-size:14px;opacity:.85;align-self:flex-end;margin-right:10%;
-  font-family:"Kaiti SC","STKaiti","KaiTi","楷体",serif;}
-.sp-loading{display:flex;gap:8px;margin-top:48px;}
-.sp-loading span{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.85);
+.sp-loading{display:flex;gap:8px;margin-top:46px;}
+.sp-loading span{width:8px;height:8px;border-radius:50%;background:rgba(26,111,181,.55);
   animation:sp-b 1.2s ease-in-out infinite;}
 .sp-loading span:nth-child(2){animation-delay:.15s;}
 .sp-loading span:nth-child(3){animation-delay:.3s;}
@@ -4454,8 +4465,8 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
 
 /* ---- 顶栏：电脑上收掉品牌区，搜索相对视口居中 ---- */
 @media(min-width:761px){
-  /* 「公考助手」在电脑上是重复的：桌面版有 GTK 标题栏、浏览器有标签页，
-     当前在哪一页则由面包屑交代。收掉它，顶栏左边就只剩返回键。 */
+  /* 「公考助手」这几个字在电脑上是重复的：桌面版有窗口标题栏、浏览器有标签页，
+     当前在哪一页则由面包屑交代。收掉**文字**，头像不收 —— 它是账户入口，已经挪到右边了。 */
   .topbar .brand-min{display:none;}
   /* flex 里的 margin:0 auto 只能「在**剩余空间**里居中」—— 左右两侧兄弟不等宽，
      搜索框就会跟着偏（右边挂着倒计时和铃铛，于是整体偏右）。
@@ -4506,3 +4517,17 @@ body.dark .acct-nav button.on{background:var(--blue-fill);color:#fff;}
   body.dark .acct-nav button:hover{background:#1f2838;}
   body.dark .acct-nav button.on{background:var(--blue-fill);color:#fff;}
 }
+
+/* 头像在顶栏右侧当账户入口。比按钮小一圈，不抢铃铛的注意力 */
+.topbar-actions .logo-min{width:30px;height:30px;border-radius:9px;font-size:16px;cursor:pointer;flex:0 0 auto;}
+.topbar-actions .logo-min:hover{box-shadow:0 0 0 3px rgba(26,111,181,.18);}
+
+/* 启动页夜间：底纹和晕都换成深底那一套，不然一进门先闪一屏白 */
+body.dark #splash{color:#e8ecf4;
+  background:
+    radial-gradient(120% 70% at 50% -10%, rgba(84,163,224,.12), rgba(84,163,224,0) 60%),
+    repeating-linear-gradient(0deg, rgba(140,180,220,.05) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(90deg, rgba(140,180,220,.05) 0 1px, transparent 1px 34px),
+    linear-gradient(180deg,#121a26,#0d1218);}
+body.dark .sp-name{color:#e8ecf4;}
+body.dark .sp-quote{color:#aab4c2;}

@@ -77,6 +77,47 @@ class Gongkao(Gtk.Application):
         self._share_jobs = {}   # id(download) → (download, 文件名)：这次下载是「为分享而下」
         self._dl_paths = {}     # id(download) → 落盘路径：分享和普通下载可能并行，各记各的
 
+
+    def _merge_titlebar(self):
+        """把系统标题栏换成一条**和网页顶栏同色的细条**，看着是一体的。
+
+        原来是 GTK 默认标题栏：灰底、居中一个大大的「公考助手」，
+        下面紧接着网页自己的白色工具栏 —— 两条颜色不同的横杠摞在一起，
+        一进门就露出「这是个网页套壳」。
+
+        做法是标准的 CSD：换成 HeaderBar、不显示标题文字、只留窗口按钮，
+        再用 CSS 把它刷成和网页顶栏一样的白底细线。窗口拖动、最大化、关闭
+        都还是 GTK 自己管，不用手写。
+
+        整段包在 try 里：装饰失败顶多是「标题栏还是老样子」，
+        不该让应用起不来 —— 有些桌面环境（或远程 X）对 CSD 支持并不完整。
+        """
+        try:
+            hb = Gtk.HeaderBar()
+            hb.set_show_close_button(True)
+            hb.set_has_subtitle(False)
+            hb.set_custom_title(Gtk.Label(label=""))   # 不显示标题：网页里已经有面包屑了
+            self.win.set_titlebar(hb)
+
+            css = Gtk.CssProvider()
+            css.load_from_data(b"""
+            headerbar {
+              background: #ffffff;
+              background-image: none;
+              border-bottom: 1px solid #e6e9ef;
+              box-shadow: none;
+              min-height: 34px;
+              padding: 0 6px;
+            }
+            headerbar button { color: #6b7785; }
+            headerbar button:hover { background: #eef2f7; }
+            """)
+            Gtk.StyleContext.add_provider_for_screen(
+                Gdk.Screen.get_default(), css,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        except Exception:
+            pass
+
     def do_activate(self):
         if self.win:
             self.win.present()
@@ -84,6 +125,7 @@ class Gongkao(Gtk.Application):
         self.win = Gtk.ApplicationWindow(application=self)
         self.win.set_title("公考助手")
         self.win.set_default_size(1120, 800)
+        self._merge_titlebar()
         # 点系统通知 → 把窗口调到前台
         try:
             act = Gio.SimpleAction.new("present", None)
