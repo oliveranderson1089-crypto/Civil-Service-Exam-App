@@ -15,6 +15,7 @@
 import json
 import os
 import re
+from datetime import datetime, timedelta
 
 from flask import Blueprint, abort, jsonify, request, send_file
 
@@ -187,6 +188,39 @@ def _pick(db, u, mode, n, module="", qtype="", pkey="", qtypes=None):
     return rows[:n]
 
 
+def _qtype_rates(db, u, qtypes):
+    """各考点近 30 天的正确率。
+
+    qtype 已经细到「基期比重 / 排列组合 / 削弱论证」，和考点大纲几乎同名，所以
+    直接拿它当考点用，不另建一张映射表。
+
+    只看近 30 天：全时段算的话，两个月前突击过的考点会一直显示高分，
+    而这一格要回答的是「我现在这个考点稳不稳」。
+
+    做题页每翻一题都要读它，所以出错一律降级成「没有数据」——
+    右栏少一张卡，比整页崩掉强。
+    """
+    want = sorted({(q or "").strip() for q in (qtypes or []) if (q or "").strip()})
+    if not want:
+        return {}
+    since = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    out = {}
+    try:
+        ph = ",".join("?" * len(want))
+        rows = db.execute(
+            "SELECT q.qtype, COUNT(*) n, COALESCE(SUM(a.correct),0) c "
+            "FROM real_attempts a JOIN real_questions q ON q.id=a.qid "
+            f"WHERE a.user_id=? AND a.created_at>=? AND q.qtype IN ({ph}) "
+            "GROUP BY q.qtype", (u, since, *want))
+        for r in rows:
+            n, c = int(r["n"] or 0), int(r["c"] or 0)
+            if n:
+                out[r["qtype"]] = {"n": n, "correct": c, "rate": round(c * 100 / n)}
+    except Exception:
+        return {}
+    return out
+
+
 @bp.post("/api/real/quiz")
 def real_quiz():
     d = request.get_json(silent=True) or {}
@@ -210,6 +244,9 @@ def real_quiz():
     figs = _figs_of(get_db(), [r["id"] for r in items])
     pub = [_pub(r, exam_mode, figs) for r in items]
     return jsonify({"mode": mode, "exam": exam_mode, "n": len(pub), "items": pub,
+                    # 这一组涉及的考点，各自近 30 天的正确率（做题页右栏「本题相关」用）。
+                    # 跟着出题一起回，省得每翻一题打一次接口。
+                    "rates": _qtype_rates(get_db(), uid(), [r["qtype"] for r in items]),
                     # 整卷模考的总时长 = 各题建议用时之和（130 道的行测卷算出来
                     # 一小时五十几分，和真实的 120 分钟对得上）。不写死 120 分钟：
                     # 只挑了一个模块的 40 题卷会白给一小时，倒计时就成了摆设。

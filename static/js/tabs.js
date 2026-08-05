@@ -34,6 +34,10 @@ const TAB_OFF = new Set([
   'slgrade', 'slresult', 'writed', 'wqadd',
 ]);
 
+/* 左栏该撤的场合比底栏少得多：底栏撤是因为手机上屏幕就那么大、底下还住着别的悬浮条；
+   电脑上左栏只占 206px，做题时留着反而能中途跳去查个成语。只有真·全屏的两页才撤。 */
+const RAIL_OFF = new Set(['doc', 'viewer']);
+
 /* 板块清单从 BOARD_FEATURES 反查：配了 drill 的板块才有「专项练」。
    写死一份的话，core.js 那边加板块这里就会漏。 */
 const tbBoardNames = () => Object.keys(BOARD_FEATURES)
@@ -87,10 +91,32 @@ function tbSections() {
   }));
 }
 
+/* 左栏里每个分组下常驻的快捷条目。
+   **它不是 groups 的副本**：完整清单永远在 groups（标签页）里，这里只挑每天都点的那几个
+   让它一步到位——目标图上「今日复习 12」「错题本 28」就是一眼可见、一键直达的。
+   badge 是个函数，因为角标要等 /api/hub、/api/review 回来才有数。 */
+const RAIL_ICON = {
+  overview: TB_SVG('<rect x="3" y="4" width="18" height="17" rx="2.5"/><path d="M3 9.5h18"/>'),
+  clock: TB_SVG('<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>'),
+  check: TB_SVG('<path d="M9 12.5l2.5 2.5L16 10"/><rect x="3.5" y="4" width="17" height="17" rx="3"/>'),
+  target: TB_SVG('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/>'),
+  layers: TB_SVG('<polygon points="12 3 3 7.5 12 12 21 7.5 12 3"/><polyline points="3 16.5 12 21 21 16.5"/>'),
+  pen: TB_SVG('<path d="M11 4H4v16h16v-7"/><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>'),
+  cross: TB_SVG('<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>'),
+  word: TB_SVG('<path d="M4 19.2A2.3 2.3 0 0 1 6.3 17H20"/><path d="M6.3 2.5H20v19H6.3A2.3 2.3 0 0 1 4 19.2V4.8a2.3 2.3 0 0 1 2.3-2.3z"/>'),
+  note: TB_SVG('<path d="M20.2 12.2a6 6 0 0 0-8.5-8.5L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/>'),
+  folder: TB_SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+};
+
 const TAB_DEFS = [
   {
     key: 'today', name: '今日', icon: TB_SVG('<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>'),
     home: true,      // 首页 = 今日仪表盘（js/today.js）
+    rail: () => [
+      { name: '今日概览', icon: 'overview', go: () => goHome() },
+      { name: '今日复习', icon: 'clock', go: () => openReview(), badge: () => tbBadge.review },
+      { name: '每日测试', icon: 'check', go: () => openDtest() },
+    ],
   },
   {
     key: 'drill', name: '练', icon: TB_SVG('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/>'),
@@ -117,6 +143,12 @@ const TAB_DEFS = [
         { name: '题目解析', desc: '上传题目 · AI 出解析', go: () => openDocqa() },
       ] },
       { name: '按学科浏览', items: tbSections() },
+    ],
+    rail: () => [
+      { name: '历年真题', icon: 'target', go: () => openRealq() },
+      { name: '专项练', icon: 'layers', go: () => tbRender('drill') },
+      { name: '申论小题 / 成文', icon: 'pen', go: () => openFind() },
+      { name: '错题本', icon: 'cross', go: () => openWrongq(), badge: () => tbBadge.wrong },
     ],
   },
   {
@@ -154,6 +186,11 @@ const TAB_DEFS = [
         { name: '常考', desc: '高频成语 / 实词 / 上位词 / 常识 / 提法', go: () => openChangkao() },
       ] },
     ].filter(g => !chip || g.name === chip),
+    rail: () => [
+      { name: '成语 · 上位词', icon: 'word', go: () => openIdiom() },
+      { name: '素材 · 衔接 · 概括', icon: 'note', go: () => openSucai('全部') },
+      { name: '时政 · 理论', icon: 'layers', go: () => openNews() },
+    ],
   },
   {
     key: 'lib', name: '库', icon: TB_SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
@@ -167,6 +204,10 @@ const TAB_DEFS = [
         { name: '资料库', desc: '图片 / 文档 / 网页 应用内查看', go: () => openMaterials() },
         { name: '云盘', desc: '存取任意文件 · 发给好友', go: () => openDrive() },
       ] },
+    ],
+    rail: () => [
+      { name: '小记 · 知识库', icon: 'note', go: () => openNotes() },
+      { name: '资料库 · 云盘', icon: 'folder', go: () => openMaterials() },
     ],
   },
   {
@@ -202,12 +243,17 @@ let tbChip = {};       // 每个标签各自记着选中的 chip（切走再切�
    1) **渲染不等它** —— 拿不到就只是少几个角标，目录该点还能点。导航为几个数字转圈是本末倒置。
    2) **第一次打开标签页才拉** —— 挂在启动时拉，等于给每个只用首页的人白加一个请求。 */
 let tbHub = null, tbHubOnce = false;
+// 左栏角标。复习那条走已有的 /api/review/today?count=1（首页也在用），
+// 错题数直接从 /api/hub 的各板块存量加起来 —— 不为一个角标再开一个接口。
+const tbBadge = { review: 0, wrong: 0 };
 async function tbLoadHub() {
   if (tbHubOnce) return;
   tbHubOnce = true;
   let d;
   try { d = await api('/api/hub'); } catch (_) { d = { boards: {}, acc: {} }; }
   tbHub = d;
+  tbBadge.wrong = Object.values(d.boards || {}).reduce((n, b) => n + (b.wrong || 0), 0);
+  try { tbRailFill(); } catch (_) { /* 页面已经不在 */ }
   // 回来时这一屏可能已经不在了（切走了、或者页面整个没了）。补画只是锦上添花，失败就算了。
   try {
     const v = $('#view-tab');
@@ -283,9 +329,39 @@ $('#tab-groups').addEventListener('click', e => {
    否则浏览器窗口一拖动，两边就对不上了。 */
 $('#tabbar').innerHTML = TAB_DEFS.map(t =>
   `<button class="tb" data-tb="${esc(t.key)}">${t.icon}<i>${esc(t.name)}</i></button>`).join('');
-$('#siderail').innerHTML = TAB_DEFS.map(t =>
-  `<button class="sr-t" data-tb="${esc(t.key)}">${t.icon}<i>${esc(t.name)}</i></button>`
-  + `<div class="sr-subs" data-srsub="${esc(t.key)}"></div>`).join('');
+/* 左栏是**两级**：分组标题 = 标签页（点了看全部），组内 = 那个标签下每天都点的几个（直达）。
+   只有一级的话，任何一个二级功能都要「先点标签、再在页里找」，等于把省下来的那层又加回去。 */
+function tbRailFill() {
+  $('#siderail').innerHTML = TAB_DEFS.map(t => {
+    const subs = (t.rail ? t.rail() : []).map((it, i) => {
+      const n = it.badge ? it.badge() : 0;
+      return `<button class="sr-i" data-srq="${esc(t.key)}:${i}">
+        ${RAIL_ICON[it.icon] || ''}<i>${esc(it.name)}</i>
+        ${n ? `<span class="sr-bd">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
+    }).join('');
+    return `<div class="sr-g-h" data-tb="${esc(t.key)}">${esc(t.name)}</div>`
+      + (subs || `<button class="sr-i" data-tb="${esc(t.key)}">${t.icon}<i>${esc(t.name)}</i></button>`)
+      + `<div class="sr-subs" data-srsub="${esc(t.key)}"></div>`;
+  }).join('');
+  tbRailMark();
+}
+// 高亮：分组标题跟着当前标签，条目跟着当前视图
+function tbRailMark() {
+  const rail = $('#siderail'); if (!rail) return;
+  const t = [...stack].reverse().find(s2 => s2.view === 'tab');
+  const cur = (stack.length <= 1 && (stack[0] || {}).view === 'home') ? 'today' : (t ? t.tab : '');
+  rail.querySelectorAll('[data-tb]').forEach(b => b.classList.toggle('on', b.dataset.tb === cur));
+}
+tbRailFill();
+
+/* 复习条数由「今日」仪表盘那次请求顺带喂过来（同一份数据，不重复拉）。
+   角标是异步到的，所以得能就地重画。 */
+function tbSetReview(n) {
+  if (tbBadge.review === n) return;
+  tbBadge.review = n;
+  try { tbRailFill(); } catch (_) { /* 页面已经不在 */ }
+}
+window.tbSetReview = tbSetReview;
 
 /* 左栏是 fixed 的，得知道顶栏有多高才能贴在它下面。**量出来而不是写死 56px**：
    顶栏高度跟字号、安全区都有关，写死的话换个系统字体就会露出一条缝或压掉一截。 */
@@ -305,8 +381,16 @@ function tbNav(e) {
 }
 $('#tabbar').addEventListener('click', tbNav);
 $('#siderail').addEventListener('click', e => {
-  // 左栏比底栏多一层：当前标签的分组直接列出来，点了滚过去（电脑上「积累」有五组，
-  // 一屏放不下，没有这层就得一路滚着找）
+  // 快捷条目：直达那个功能
+  const q = e.target.closest('[data-srq]');
+  if (q) {
+    const [key, i] = q.dataset.srq.split(':');
+    const def = TAB_DEFS.find(t => t.key === key);
+    const it = def && def.rail && def.rail()[+i];
+    if (it && it.go) it.go();
+    return;
+  }
+  // 打开的标签页里，分组标题当锚点用（「积累」有五组，一屏放不下）
   const g = e.target.closest('[data-srg]');
   if (g) {
     const t = document.getElementById('tg-' + g.dataset.srg);
@@ -343,9 +427,14 @@ window.__tabView = function (view) {
   bar.querySelectorAll('[data-tb]').forEach(b => b.classList.toggle('on', b.dataset.tb === cur));
   const rail = $('#siderail');
   if (rail) {
-    rail.classList.toggle('hidden', !on);
-    rail.querySelectorAll('.sr-t').forEach(b => b.classList.toggle('on', b.dataset.tb === cur));
-    // 离开标签页（比如点进了成语积累）就把分组子项收起来：那些锚点已经不指向当前内容了
+    /* 左栏和底栏的「该不该出现」不一样：手机上做题要整屏专注，
+       电脑上宽度管够，左栏留着反而方便中途跳去查东西 —— 所以左栏只在真沉浸的几页才撤
+       （阅读器全屏、文档编辑器），做题页照常保留。 */
+    const railOn = !RAIL_OFF.has(view);
+    rail.classList.toggle('hidden', !railOn);
+    document.body.classList.toggle('has-rail', railOn);
+    tbRailMark();
+    // 离开标签页（比如点进了成语积累）就把分组锚点收起来：它们已经不指向当前内容了
     if (view !== 'tab') rail.querySelectorAll('[data-srsub]').forEach(x => {
       x.innerHTML = ''; x.classList.remove('on');
     });

@@ -28,7 +28,7 @@ function openSearch() {
   push({ view: 'search' });
   setTimeout(() => $('#search-input').focus(), 80);
 }
-$('#home-search').onclick = openSearch;
+$('#tb-search').onclick = openSearch;   // 搜索入口挪进了顶栏（原 #home-search 在「今日」页里）
 let searchTimer2;
 $('#search-input').addEventListener('input', e => {
   clearTimeout(searchTimer2);

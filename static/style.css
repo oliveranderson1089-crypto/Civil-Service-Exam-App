@@ -4152,7 +4152,7 @@ body.dark .td-hero b,body.dark .td-exam b{color:var(--blue) !important;}
    「账户」「后台」只在手机上收（进了「我的」），电脑上留着当快捷入口。
    手机那两个用断点而不是 body.has-tabs：后者在沉浸式页面会撤掉，
    按钮就会一会儿冒出来一会儿消失。 */
-body.has-tabs #home-btn{display:none !important;}
+body.has-tabs #home-btn,body.has-rail #home-btn{display:none !important;}
 @media(max-width:760px){
   #home-btn,#account-btn,#admin-btn{display:none !important;}
 }
@@ -4195,9 +4195,12 @@ body.dark .tr-stat.new{background:#152a3d;color:#7db8ea;}
     display:flex;flex-direction:column;gap:2px;overflow-y:auto;padding:12px 10px 20px;
     background:var(--card);border-right:1px solid var(--line);}
   .siderail.hidden{display:none;}
-  body.has-tabs main{padding-left:206px;padding-bottom:0;}
+  /* 正文让位跟着**左栏**走，不是跟着 has-tabs：做题页没有底栏（has-tabs=false）
+     但左栏是留着的，跟错了正文会整个压在左栏下面。 */
+  body.has-rail main{padding-left:206px;}
+  body.has-tabs main{padding-bottom:0;}
   /* 导航页在宽屏上限个宽：一行 900 多字符没法读。做题/小记/聊天那些自己有布局的不动 */
-  body.has-tabs #view-home,body.has-tabs #view-tab,body.has-tabs #view-allfeats{
+  body.has-rail #view-home,body.has-rail #view-tab,body.has-rail #view-allfeats{
     max-width:940px;margin:0 auto;padding:22px 26px 60px;}
 }
 .siderail .sr-t{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;
@@ -4228,12 +4231,14 @@ body.dark .siderail .sr-t:hover,body.dark .sr-g:hover{background:#1f2838;}
   #view-realrun,#view-drillrun{
     display:grid;grid-template-columns:minmax(0,1fr) 244px;gap:22px;align-items:start;
     max-width:1180px;margin:0 auto;}
-  #view-realrun>*:not(.q-side),#view-drillrun>*:not(.q-side){
+  #view-realrun>*:not(.q-col),#view-drillrun>*:not(.q-col){
     grid-column:1;min-width:0;}
   /* span 99 而不是 1/-1：没声明 grid-template-rows 时行全是**隐式**的，
      而 -1 只认显式网格的最后一条线 —— 写 1/-1 实际只占第 1 行，
      答题卡的高度会把第一行整个撑开，题干被顶下去两百多像素。 */
-  .q-side{grid-column:2;grid-row:1 / span 99;position:sticky;top:calc(var(--topbar-h,56px) + 16px);
+  /* 右栏是**一列多张卡**（标签栏 / 答题卡 / 本题相关 / 面板），所以跨行的是外层 .q-col，
+     不是里面某一张卡 —— 让两张卡各自跨行的话它们会抢同一个格子、直接叠在一起。 */
+  .q-col{grid-column:2;grid-row:1 / span 99;position:sticky;top:calc(var(--topbar-h,56px) + 16px);
     align-self:start;}
   /* 右栏里宽度管够，常驻展开、不给折叠箭头。限定在做题页内，
      免得哪天别处复用 .q-side 时被这条强制展开。 */
@@ -4287,7 +4292,7 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
   /* 操作类：跟着屏幕长 */
   #view-chat{max-width:1560px;}
   #view-wrongq,#view-materials,#view-idiom,#view-search,#view-classics{max-width:1200px;}
-  body.has-tabs #view-home,body.has-tabs #view-tab,body.has-tabs #view-allfeats{max-width:1180px;}
+  body.has-rail #view-home,body.has-rail #view-tab,body.has-rail #view-allfeats{max-width:1180px;}
   /* 做题页：右栏也跟着宽一点，答题卡一行能多放两格 */
   #view-realrun,#view-drillrun{max-width:1560px;grid-template-columns:minmax(0,1fr) 292px;}
 
@@ -4297,11 +4302,14 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
      .rq-3col 由 realq.js 按「这道题有没有材料」挂，没材料就退回两栏，
      不然左边会空出一根 420px 的白柱子。 */
   #view-realrun.rq-3col{grid-template-columns:minmax(0,420px) minmax(0,1fr) 292px;max-width:1720px;}
-  #view-realrun.rq-3col>*:not(.q-side):not(#rq-mat){grid-column:2;}
+  /* ⚠️ 这里**不能写 :not(#rq-mat)** —— :not() 里的 ID 会把整条选择器的特异性抬到
+     (2,2,0)，压过下面给 .q-col 的 (1,2,0)，右栏就被塞进第 2 列、把题干选项整列挤没。
+     改用类名 .rq-mat，特异性留在类一级。 */
+  #view-realrun.rq-3col>*:not(.q-col):not(.rq-mat){grid-column:2;}
   #view-realrun.rq-3col #rq-mat{grid-column:1;grid-row:1 / span 99;
     position:sticky;top:calc(var(--topbar-h,56px) + 16px);
     max-height:calc(100vh - var(--topbar-h,56px) - 48px);overflow-y:auto;}
-  #view-realrun.rq-3col .q-side{grid-column:3;}
+  #view-realrun.rq-3col .q-col{grid-column:3;}
 }
 
 /* 卡片网格在宽屏上按「格子最小宽度」排，不是死死两列：
@@ -4310,3 +4318,116 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
   .home-cards{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));}
   .td-ups{grid-template-columns:repeat(auto-fill,minmax(210px,1fr));}
 }
+
+/* ================= 顶栏改浅色工具栏（对齐目标效果图） =================
+   原来是整条品牌蓝渐变。品牌识别保留在**左上角那枚方章**上（logo 仍是品牌蓝底白字），
+   工具栏本身退成白底细线 —— 一整条饱和蓝压在内容上方，在电脑大屏上分量太重，
+   而且和下面清一色的白卡片打架。 */
+.topbar{background:var(--card);box-shadow:none;border-bottom:1px solid var(--line);color:var(--text);}
+.topbar #top-title{color:var(--text);}
+.logo-min{background:var(--blue-fill);color:#fff;box-shadow:none;}
+.logout,.navbtn{background:transparent;border:1px solid var(--line);color:var(--muted);backdrop-filter:none;}
+.logout:hover,.navbtn:hover{background:var(--bg2);color:var(--blue);border-color:var(--line);}
+
+/* 顶栏里的全局搜索。电脑上居中铺开，窄屏收成一枚放大镜 */
+.tb-search{flex:1 1 auto;max-width:560px;margin:0 auto;display:flex;align-items:center;gap:8px;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:7px 12px;
+  color:var(--muted);font-family:inherit;font-size:13.5px;cursor:pointer;min-width:0;}
+.tb-search:hover{border-color:var(--blue);color:var(--blue);}
+.tb-search svg{width:16px;height:16px;flex:0 0 auto;}
+.tb-search span{flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tb-search kbd{flex:0 0 auto;font-family:ui-monospace,Menlo,monospace;font-size:11px;
+  border:1px solid var(--line);border-radius:5px;padding:1px 6px;background:var(--card);}
+.tb-days{font-size:12.5px;color:var(--muted);white-space:nowrap;align-self:center;}
+.tb-days b{color:var(--blue);font-size:14px;}
+@media(max-width:760px){
+  .tb-search{flex:0 0 auto;max-width:none;margin:0 0 0 auto;padding:7px;background:transparent;border-color:transparent;}
+  .tb-search span,.tb-search kbd{display:none;}
+  .tb-days{display:none;}          /* 窄屏放不下，倒计时在「今日」页里本来就有 */
+}
+
+body.dark .topbar{background:#141b29;border-bottom-color:#2a3345;}
+body.dark .topbar #top-title{color:#e8ecf4;}
+body.dark .logout,body.dark .navbtn{border-color:#2a3345;color:#9aa4b2;}
+body.dark .logout:hover,body.dark .navbtn:hover{background:#1f2838;color:var(--blue);}
+body.dark .tb-search{background:#1b2231;border-color:#2a3345;}
+body.dark .tb-search kbd{background:#141b29;border-color:#2a3345;}
+
+/* ---- 左栏两级：分组标题（= 标签页）+ 组内快捷条目（直达） ---- */
+.sr-g-h{font-size:11.5px;color:var(--muted);letter-spacing:.08em;padding:12px 12px 5px;cursor:pointer;}
+.sr-g-h:first-child{padding-top:2px;}
+.sr-g-h:hover{color:var(--blue);}
+.sr-g-h.on{color:var(--blue);font-weight:600;}
+.siderail .sr-i{display:flex;align-items:center;gap:9px;width:100%;padding:7px 12px;border:none;
+  border-radius:9px;background:none;cursor:pointer;color:var(--text);font-family:inherit;font-size:13.5px;
+  text-align:left;}
+.siderail .sr-i svg{width:17px;height:17px;flex:0 0 auto;color:var(--muted);}
+.siderail .sr-i i{font-style:normal;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.siderail .sr-i:hover{background:var(--bg2);}
+.siderail .sr-i.on{background:var(--blue-fill);color:#fff;font-weight:600;}
+.siderail .sr-i.on svg{color:#fff;}
+.sr-bd{flex:0 0 auto;font-family:ui-monospace,Menlo,monospace;font-size:11px;
+  background:#c0392b;color:#fff;border-radius:20px;padding:1px 7px;}
+
+body.dark .siderail .sr-i{color:#cfd5e0;}
+body.dark .siderail .sr-i:hover{background:#1f2838;}
+
+/* ---- 面包屑 ---- */
+.crumb{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 auto;
+  padding-top:14px;font-size:12.5px;color:var(--muted);}
+.cb-i{cursor:pointer;white-space:nowrap;}
+.cb-i:hover{color:var(--blue);}
+.cb-i.cur{color:var(--text);font-weight:600;cursor:default;}
+.cb-s{color:var(--line);}
+body.dark .cb-i.cur{color:#e8ecf4;}
+body.dark .cb-s{color:#2a3345;}
+/* 面包屑一出现，紧跟其后的视图就别再顶着上边距。
+   状态本来就是 JS 算出来的（renderCrumb 已经在 toggle hidden 了），
+   顺手多 toggle 一个 body 类比让浏览器全局跑一遍 :has() 便宜也直白。 */
+body.has-crumb .view{padding-top:8px;}
+
+/* ---- 答题卡统计行 + 做题页键盘提示 ---- */
+.qs-stat{font-size:11.5px;color:var(--muted);margin:6px 2px 0;font-variant-numeric:tabular-nums;}
+/* 快捷键做了却没人知道它存在，等于没做。只在有键盘的地方提示 */
+.q-keys{display:none;font-size:11.5px;color:var(--muted);margin-top:14px;letter-spacing:.02em;}
+.q-keys i{font-style:normal;color:var(--line);}
+@media(min-width:761px){ .q-keys{display:block;} }
+body.dark .q-keys i{color:#2a3345;}
+
+/* ---- 右栏「本题相关」 ---- */
+.q-rel{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 14px;}
+.qr-h{font-size:13.5px;font-weight:600;margin-bottom:6px;}
+.qr-b{font-size:12.5px;color:var(--muted);line-height:1.75;}
+.qr-rate{font-variant-numeric:tabular-nums;}
+.qr-rate.bad{color:#c0392b;} .qr-rate.warn{color:#a86a00;} .qr-rate.good{color:#1f6647;}
+
+body.dark .q-rel{background:#1a2233;box-shadow:0 2px 10px rgba(0,0,0,.35);}
+body.dark .qr-rate.bad{color:#e6968a;} body.dark .qr-rate.warn{color:#e0b872;} body.dark .qr-rate.good{color:#6fbc92;}
+
+/* ---- 做题页右栏容器：一列多张卡 ---- */
+.q-col{display:flex;flex-direction:column;gap:12px;margin-top:14px;}
+@media(min-width:761px){ .q-col{margin-top:0;} }
+/* 标签栏：答题卡 / AI 助手 / 草稿纸 / 笔记。窄屏不出——手机上这些各有各的入口 */
+.q-tabs{display:none;gap:6px;flex-wrap:wrap;}
+.q-tabs button{border:1px solid var(--line);background:var(--card);border-radius:9px;cursor:pointer;
+  padding:6px 12px;font-family:inherit;font-size:12.5px;color:var(--muted);}
+.q-tabs button:hover{color:var(--blue);border-color:var(--blue);}
+.q-tabs button.on{background:var(--ink,#182430);border-color:var(--ink,#182430);color:#fff;font-weight:600;}
+.q-host{min-height:220px;}
+body.dark .q-tabs button{background:#1a2233;border-color:#2a3345;color:#9aa4b2;}
+body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b29;}
+
+/* ---- 浮层被搬进做题页右栏时的形态（见 js/qpanel.js） ---- */
+.dk-inline{position:static !important;inset:auto !important;
+  width:auto !important;height:auto !important;max-width:none !important;
+  min-height:300px;max-height:calc(100vh - var(--topbar-h,56px) - 150px);
+  border-radius:var(--radius) !important;box-shadow:var(--shadow) !important;
+  transform:none !important;z-index:auto !important;}
+/* 内联之后这些是多余的：拖手柄没地方拖，停靠分隔线也无处可停 */
+.dk-inline .dk-grip,.dk-inline .dock-handle,.dk-inline .qn-x{display:none !important;}
+.qp-off{display:none !important;}
+
+/* 右栏标签栏只在有键盘鼠标的宽屏出现（手机上 AI/草稿纸/随手记各有各的入口）。
+   **必须放在 .q-tabs{display:none} 之后**：两条特异性一样，靠先后定胜负，
+   写在前面会被那条基础规则盖掉。 */
+@media(min-width:761px){ .q-tabs{display:flex;} }

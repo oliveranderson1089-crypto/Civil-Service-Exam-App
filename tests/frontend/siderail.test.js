@@ -20,36 +20,70 @@ const $ = (h, s) => h.window.document.querySelector(s);
 const $$ = (h, s) => [...h.window.document.querySelectorAll(s)];
 const CSS = fs.readFileSync(path.join(__dirname, '../../static/style.css'), 'utf8');
 
-test('左栏和底栏是同一份 TAB_DEFS 的两个形态，条目一一对应', (t) => {
+test('左栏和底栏是同一份 TAB_DEFS 的两个形态，分组一一对应', (t) => {
   const h = boot(); t.after(() => h.close());
   const bottom = $$(h, '#tabbar [data-tb]').map(b => b.dataset.tb);
-  const rail = $$(h, '#siderail .sr-t').map(b => b.dataset.tb);
+  const rail = $$(h, '#siderail .sr-g-h').map(b => b.dataset.tb);
   assert.deepStrictEqual(rail, bottom, '两边的标签对不上——说明有一边是手写的');
-  assert.deepStrictEqual($$(h, '#siderail .sr-t i').map(b => b.textContent),
+  assert.deepStrictEqual($$(h, '#siderail .sr-g-h').map(b => b.textContent),
     $$(h, '#tabbar [data-tb] i').map(b => b.textContent));
+});
+
+test('左栏是两级：分组标题下常驻快捷条目，不是只有五个一级项', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const names = $$(h, '#siderail .sr-i i').map(b => b.textContent);
+  ['今日概览', '今日复习', '历年真题', '错题本'].forEach(n =>
+    assert.ok(names.includes(n), `左栏少了常驻条目「${n}」——只有一级的话，任何二级功能都要先点标签再在页里找`));
+});
+
+test('快捷条目点了直达那个功能，不是先打开标签页', (t) => {
+  const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  h.run("openWrongq = () => { window.__hit = 'wrongq'; }");
+  $$(h, '#siderail .sr-i').find(b => b.querySelector('i').textContent === '错题本').click();
+  assert.strictEqual(h.window.__hit, 'wrongq');
+});
+
+test('角标：复习条数和错题存量都挂得上，0 的时候不显示', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const bd = () => $$(h, '#siderail .sr-bd').map(b => b.textContent);
+  assert.deepStrictEqual(bd(), [], '一条都没有的时候不该挂角标');
+  h.run('tbSetReview(12)');
+  assert.ok(bd().includes('12'), '复习角标没上去');
+  h.run("tbHub = { boards: { A: { wrong: 5 }, B: { wrong: 23 } }, acc: {} }; tbBadge.wrong = 28; tbRailFill();");
+  assert.ok(bd().includes('28'), '错题角标该是各板块存量之和');
+});
+
+test('电脑上做题时左栏保留：宽度管够，中途还能跳去查东西', (t) => {
+  const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  h.run("push({ view: 'realrun' })");
+  assert.ok(!$(h, '#siderail').classList.contains('hidden'),
+    '做题页把左栏也撤了——那是手机的道理（屏幕小、底下住着别的条），电脑上没必要');
+  assert.ok($(h, '#tabbar').classList.contains('hidden'), '手机底栏在做题页仍该让位');
+  assert.ok(h.window.document.body.classList.contains('has-rail'),
+    '正文没跟着让位，会整个压在左栏下面');
 });
 
 test('左栏点击走的是同一条路：内容和高亮都跟着变', (t) => {
   const h = boot(); t.after(() => h.close());
-  $(h, '#siderail [data-tb="acc"]').click();
+  $(h, '#siderail .sr-g-h[data-tb="acc"]').click();
   assert.strictEqual(h.window.document.body.dataset.view, 'tab');
   assert.strictEqual(h.run('stack[stack.length-1].tab'), 'acc');
-  assert.ok($(h, '#siderail [data-tb="acc"]').classList.contains('on'));
+  assert.ok($(h, '#siderail .sr-g-h[data-tb="acc"]').classList.contains('on'));
   assert.ok($(h, '#tabbar [data-tb="acc"]').classList.contains('on'),
     '底栏没跟着亮——两个形态的状态该是同一份');
 });
 
 test('左栏的「今日」和底栏一样回到首页栈底', (t) => {
   const h = boot(); t.after(() => h.close());
-  $(h, '#siderail [data-tb="drill"]').click();
-  $(h, '#siderail [data-tb="today"]').click();
+  $(h, '#siderail .sr-g-h[data-tb="drill"]').click();
+  $(h, '#siderail .sr-g-h[data-tb="today"]').click();
   assert.strictEqual(h.run('stack.length'), 1);
   assert.strictEqual(h.window.document.body.dataset.view, 'home');
 });
 
 test('左栏多出一层：当前标签的分组列出来，且只有当前那个展开', (t) => {
   const h = boot(); t.after(() => h.close());
-  $(h, '#siderail [data-tb="acc"]').click();
+  $(h, '#siderail .sr-g-h[data-tb="acc"]').click();
   const subs = $$(h, '#siderail [data-srsub="acc"] .sr-g').map(b => b.textContent);
   assert.ok(subs.includes('言语') && subs.includes('时政'), '分组没列出来：' + subs.join('/'));
   assert.deepStrictEqual($$(h, '#siderail [data-srsub="drill"] .sr-g'), [],
@@ -61,27 +95,28 @@ test('左栏多出一层：当前标签的分组列出来，且只有当前那�
 
 test('切到别的标签，上一个标签的分组要收起来', (t) => {
   const h = boot(); t.after(() => h.close());
-  $(h, '#siderail [data-tb="acc"]').click();
-  $(h, '#siderail [data-tb="lib"]').click();
+  $(h, '#siderail .sr-g-h[data-tb="acc"]').click();
+  $(h, '#siderail .sr-g-h[data-tb="lib"]').click();
   assert.deepStrictEqual($$(h, '#siderail [data-srsub="acc"] .sr-g'), []);
   assert.ok($$(h, '#siderail [data-srsub="lib"] .sr-g').length > 0);
 });
 
 test('离开标签页后分组锚点要撤掉：它们已经不指向当前内容了', (t) => {
   const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
-  $(h, '#siderail [data-tb="acc"]').click();
+  $(h, '#siderail .sr-g-h[data-tb="acc"]').click();
   assert.ok($$(h, '#siderail .sr-g').length > 0);
   h.run("push({ view: 'idiom' })");
   assert.deepStrictEqual($$(h, '#siderail .sr-g'), [],
     '进了成语积累，左栏还挂着「积累」页的分组锚点，点了会跳到不存在的地方');
 });
 
-test('沉浸式页面左栏一起让位', (t) => {
+test('真·全屏的两页（阅读器 / 文档编辑器）左栏才撤', (t) => {
   const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
-  $(h, '#siderail [data-tb="drill"]').click();
-  assert.ok(!$(h, '#siderail').classList.contains('hidden'));
-  h.run("push({ view: 'realrun' })");
-  assert.ok($(h, '#siderail').classList.contains('hidden'), '做题页左栏还占着 206px');
+  // 测试里 init() 拉不到 /api/sections 就提前返回，goHome() 从没跑过、栈是空的，
+  // 那样 back() 是空操作。先把栈立起来再测。
+  h.run('goHome()');
+  h.run("push({ view: 'viewer' })");
+  assert.ok($(h, '#siderail').classList.contains('hidden'), '阅读器全屏时左栏还占着 206px');
   h.run('back()');
   assert.ok(!$(h, '#siderail').classList.contains('hidden'));
 });
@@ -97,14 +132,16 @@ test('谁出现由断点决定，两个断点必须严丝合缝不留空档', ()
 });
 
 test('内容区给左栏让出位置，且宽屏上限个宽', () => {
-  assert.ok(/body\.has-tabs main\{padding-left:206px/.test(CSS),
+  assert.ok(/body\.has-rail main\{padding-left:206px/.test(CSS),
     '正文没给左栏让位，会被压在下面');
-  assert.ok(/body\.has-tabs #view-home,body\.has-tabs #view-tab,body\.has-tabs #view-allfeats\{[^}]*max-width/.test(CSS),
+  assert.ok(!/body\.has-tabs main\{padding-left/.test(CSS),
+    '让位还挂在 has-tabs 上 —— 做题页没有底栏但有左栏，会对不上');
+  assert.ok(/body\.has-rail #view-home,body\.has-rail #view-tab,body\.has-rail #view-allfeats\{[^}]*max-width/.test(CSS),
     '导航页在宽屏上没限宽，一行几百字符没法读');
 });
 
 test('顶栏的「首页」在有常驻导航时收掉：它和「今日」是同一个去处', () => {
-  assert.ok(/body\.has-tabs #home-btn\{display:none/.test(CSS),
+  assert.ok(/body\.has-tabs #home-btn,body\.has-rail #home-btn\{display:none/.test(CSS),
     '左栏有「今日」、顶栏还有「首页」，两套导航并存');
   // 「账户」「后台」只在手机收（进了「我的」），电脑上留着当快捷入口
   assert.ok(!/body\.has-tabs #account-btn/.test(CSS), '电脑上把「账户」也收了，那儿并没有替代入口');

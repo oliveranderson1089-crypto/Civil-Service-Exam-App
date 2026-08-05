@@ -11,9 +11,11 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $ */
+/* global $, esc */
 
 /* host   —— 容器选择器（#rq-side / #dr-side）
+   o.title —— 标题（如「资料分析 · 20 题」），不给就写「答题卡」
+   o.stat  —— 标题下那行统计（如「已答 12 · 用时 14:22 · 均 71 秒/题」）
    o.n    —— 共几题
    o.cur  —— 当前第几题（0 起）
    o.state(i) —— 这题什么状态：'right' | 'wrong' | 'done'（已答未判） | ''（没答）
@@ -31,10 +33,11 @@ function qsRender(host, o) {
   }
   box.innerHTML = `
     <button class="qs-h" data-qs-toggle>
-      <span>答题卡</span>
+      <span>${esc(o.title || '答题卡')}</span>
       <span class="qs-n">${done}/${o.n}</span>
       <span class="qs-caret">▾</span>
     </button>
+    ${o.stat ? `<div class="qs-stat">${esc(o.stat)}</div>` : ''}
     <div class="qs-grid">${cells.join('')}</div>`;
   box.classList.remove('hidden');
   // 每次重画都把处理器重新挂上：内容是整段换的，旧的随节点一起没了

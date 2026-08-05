@@ -152,7 +152,10 @@ addEventListener('load', () => requestAnimationFrame(fabClamp));
 function applyPush() {
   const p = { left: 0, right: 0, top: 0, bottom: 0 };
   [$('#pad'), $('#ai-panel'), $('#matpad')].forEach(el => {
-    if (!el || el.classList.contains('hidden') || el.classList.contains('dk-full')) return;
+    /* dk-inline = 这个面板被搬进做题页右栏了（见 js/qpanel.js）。
+       它已经在正文流里，再按它的宽度推一次正文，就是白让出去半屏。 */
+    if (!el || el.classList.contains('hidden') || el.classList.contains('dk-full')
+      || el.classList.contains('dk-inline')) return;
     const d = Object.keys(DOCK_NAME).find(k => el.classList.contains('dk-' + k));
     if (!d || d === 'full') return;
     const r = el.getBoundingClientRect();
@@ -169,7 +172,8 @@ function applyPush() {
 function avoidFab() {
   const fab = $('#fab');
   if (!fab || !innerWidth) return;
-  const open = [$('#pad'), $('#ai-panel'), $('#matpad')].filter(p => p && !p.classList.contains('hidden'));
+  const open = [$('#pad'), $('#ai-panel'), $('#matpad')]
+    .filter(p => p && !p.classList.contains('hidden') && !p.classList.contains('dk-inline'));
   document.body.classList.toggle('pad-full', open.some(p => p.classList.contains('dk-full')));
   if (!open.length || document.body.classList.contains('pad-full')) return;
   for (const p of open) {

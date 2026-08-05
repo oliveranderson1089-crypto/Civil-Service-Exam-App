@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#1a6fb5">
+<meta name="theme-color" content="#ffffff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>公考助手</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -26,7 +26,13 @@
     <span class="logo-min" id="brand-logo" title="账户 / 个人信息">公</span>
     <span id="top-title">公考助手</span>
   </div>
+  <!-- 全局搜索挪进顶栏（原来占着「今日」页内容区的第一行）。窄屏只留放大镜 -->
+  <button id="tb-search" class="tb-search" title="搜索（Ctrl K）">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <span>搜功能、题目、笔记、成语…</span><kbd>Ctrl K</kbd>
+  </button>
   <div class="topbar-actions">
+    <span id="tb-days" class="tb-days hidden"></span>
     <button id="notify-btn" class="logout notify-btn" title="消息">🔔<span id="notify-dot" class="notify-dot hidden"></span></button>
     <button id="home-btn" class="logout" title="回到首页">首页</button>
     <button id="account-btn" class="logout" title="账户 / 个人信息">账户</button>
@@ -35,12 +41,11 @@
 </header>
 
 <main>
+  <!-- 面包屑：内容由 shell.js 的 render() 按导航栈生成，只在两层以上时出现 -->
+  <nav id="crumb" class="crumb hidden"></nav>
+
   <!-- ===== 首页 ===== -->
   <section id="view-home" class="view">
-    <button class="home-search" id="home-search">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <span>搜索小记 / 资料 / 知识库文档…</span>
-    </button>
     <div id="today-body"></div>
   </section>
 
@@ -883,8 +888,14 @@
       <button class="btn ghost" id="rq-quit">交卷</button>
       <button class="btn hidden" id="rq-next">下一题 →</button>
     </div>
-    <!-- 答题卡：电脑上常驻右栏，手机上收在底部。内容由 js/qsheet.js 渲染 -->
-    <aside class="q-side hidden" id="rq-side"></aside>
+    <div class="q-keys">A–D <i>选项</i> · J / K <i>上下题</i> · Enter <i>下一题</i></div>
+    <!-- 右栏：标签切换 + 各面板。电脑上常驻一列，手机上落到内容底下 -->
+    <aside class="q-col" id="rq-col">
+      <div class="q-tabs" id="rq-tabs"></div>
+      <div class="q-side hidden" id="rq-side"></div>
+      <div class="q-rel hidden" id="rq-rel"></div>
+      <div class="q-host hidden" id="rq-host"></div>
+    </aside>
   </section>
   <section id="view-drill" class="view hidden">
     <div class="pd-intro" id="dr-intro"></div>
@@ -939,7 +950,10 @@
   <section id="view-drillrun" class="view hidden">
     <div id="dr-head" class="dr-head"></div>
     <div id="dr-body"></div>
-    <aside class="q-side hidden" id="dr-side"></aside>
+    <div class="q-keys">A–D <i>选项</i> · J / K <i>上下题</i> · Enter <i>下一题</i></div>
+    <aside class="q-col" id="dr-col">
+      <div class="q-side hidden" id="dr-side"></div>
+    </aside>
   </section>
 
   <!-- ===== 成文：把素材真正写成一篇大作文 ===== -->
@@ -1994,6 +2008,7 @@
 <script src="js/marks.js"></script>
 <script src="js/shortcuts.js"></script>
 <script src="js/qsheet.js"></script>
+<script src="js/qpanel.js"></script>
 <script src="js/tabs.js"></script>
 <script src="js/today.js"></script>
 </body>

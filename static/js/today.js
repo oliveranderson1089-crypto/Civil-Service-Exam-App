@@ -13,7 +13,7 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, api, esc, openChangshi, openDtest, openFanwen, openGaikuo, openNews,
+/* global $, api, esc, tbSetReview, openChangshi, openDtest, openFanwen, openGaikuo, openNews,
    openPlanLog, openRealq, openReview, openSucai, openTasks, openVideos, push */
 
 let tdData = null;
@@ -117,6 +117,14 @@ function tdLast(d) {
 function tdRender(d, review) {
   const days = d.exam && d.exam.days_left != null
     ? `<div class="td-exam">距 ${esc(d.exam.name)} 还有 <b>${d.exam.days_left}</b> 天</div>` : '';
+  /* 顶栏右上角那句倒计时。放在这儿而不是单独拉一次接口：数据同一份，
+     而且它在任何页面都该显示（不只「今日」页），所以挂顶栏、只在这儿刷。 */
+  const td = $('#tb-days');
+  if (td) {
+    const on = !!(d.exam && d.exam.days_left != null);
+    td.classList.toggle('hidden', !on);
+    if (on) td.innerHTML = `距${esc(d.exam.name)} <b>${d.exam.days_left}</b> 天`;
+  }
   $('#today-body').innerHTML =
     `<div class="td-date">${esc(d.date)} ${esc(d.weekday)}</div>${days}`
     + tdHero(d) + tdCta(d) + tdTodo(d, review) + tdUpdates(d) + tdLast(d)
@@ -134,6 +142,8 @@ async function tdLoad(force) {
       api('/api/review/today?count=1').catch(() => ({ count: 0 })),
     ]);
     tdData = d; tdAt = Date.now();
+    // 左栏「今日复习」的角标用的就是这一份，不再单独拉一次
+    if (window.tbSetReview) tbSetReview(rv.count || 0);
     tdRender(d, rv.count || 0);
   } catch (e) {
     box.innerHTML = `<div class="td-empty">${esc(e.message || '加载失败')}

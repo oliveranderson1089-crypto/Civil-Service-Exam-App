@@ -79,6 +79,9 @@ PAD_INK
 PAGE_SIZE
 PL_MOD_COLOR
 POLY_COLOR
+QP_TABS
+RAIL_ICON
+RAIL_OFF
 READER_EXT
 READ_ICON
 READ_ITEM_SEL
@@ -874,6 +877,10 @@ qnImgs
 qnOpen
 qnRenderFiles
 qnRenderImgs
+qpCur
+qpRelease
+qpRenderTabs
+qpShow
 qsClear
 qsRender
 qtElapsed
@@ -909,6 +916,7 @@ renderCDetail
 renderCkList
 renderClassics
 renderComposer
+renderCrumb
 renderDateStrip
 renderDoc
 renderDrillTypes
@@ -949,7 +957,9 @@ rqOv
 rqPaperMode
 rqPmHint
 rqPractice
+rqRates
 rqRecItems
+rqRelated
 rqRender
 rqRes
 rqReviewHtml
@@ -1029,6 +1039,7 @@ stripHtml
 syncSendState
 sysIsDark
 tbAcc
+tbBadge
 tbBoardGroups
 tbBoardNames
 tbBoardStat
@@ -1042,9 +1053,12 @@ tbItems
 tbLoadHub
 tbNav
 tbRail
+tbRailFill
+tbRailMark
 tbRender
 tbRow
 tbSections
+tbSetReview
 tbTopbar
 tdAt
 tdCta

@@ -13,6 +13,7 @@
    wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
 
 let rqOv = null, rqItems = [], rqIdx = 0, rqAns = {}, rqSec = {};
+let rqRates = {};   // 考点 → 近 30 天正确率（跟出题一起回来，见 mods/realq.py 的 _qtype_rates）
 let rqExam = false, rqDone = false;   // rqExam=模考模式（做完才判）；rqDone=已交卷，防重复提交
 let rqMode = 'smart', rqScope = '';   // 这一组是怎么来的 —— 交卷时写进做题记录
 /* 交卷后服务端回的逐题结果，按题号索引。模考模式下答案和解析只在这里有
@@ -163,6 +164,7 @@ async function rqStart(body, title) {
       body: JSON.stringify(body),
     });
     rqItems = d.items; rqIdx = 0; rqAns = {}; rqSec = {}; rqRes = {};
+    rqRates = d.rates || {};
     rqExam = !!d.exam; rqDone = false;
     rqMode = body.mode; rqScope = title;
     push({ view: 'realrun', title: title + ' · 真题' });
@@ -185,6 +187,24 @@ async function rqStart(body, title) {
     }
     rqRender();
   } catch (e) { toast(e.message, true); }
+}
+
+/* 右栏的「本题相关」：这个考点你最近练得怎么样。
+   只说有据可查的话 —— 没数据就直说「还没练过」，不糊一个 0%（那等于说你练砸了）；
+   「已加入复习队列」只在**这一题真的做错并揭晓**之后才写，模考模式答案还没揭晓，
+   写了就是替服务端许诺一件还没发生的事。 */
+function rqRelated(it, justWrong) {
+  const box = $('#rq-rel'); if (!box) return;
+  const qt = (it.qtype || '').trim();
+  if (!qt) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const r = rqRates[qt];
+  const tone = !r ? '' : r.rate < 60 ? ' bad' : r.rate < 80 ? ' warn' : ' good';
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="qr-h">本题相关</div>
+    <div class="qr-b">考点「${esc(qt)}」·
+      ${r ? `你近 30 天此考点正确率 <b class="qr-rate${tone}">${r.rate}%</b>（做过 ${r.n} 题）`
+    : '近 30 天还没练过这个考点'}
+      ${justWrong ? '，<b>已加入复习队列</b>' : ''}</div>`;
 }
 
 function rqRender() {
@@ -240,7 +260,17 @@ function rqRender() {
     ? `交卷（已答 ${Object.keys(rqAns).length}/${rqItems.length}）` : '交卷';
   /* 答题卡（P4）。原来这一页**只有「下一题」**，整卷 130 道想回头改第 47 题只能交卷重来。
      模考模式下答案没揭晓，只报「答过没答过」，不能透出对错——那就等于提前判卷。 */
+  /* 标题和统计跟着这一组走。用时只算**答过的题**：没答的题没有秒数，
+     算进去会把「均 71 秒/题」拉成一个假的低值。 */
+  const secs = Object.values(rqSec);
+  const used = secs.reduce((a, b) => a + b, 0);
+  const mm = (n) => Math.floor(n / 60) + ':' + String(Math.round(n % 60)).padStart(2, '0');
+  rqRelated(it, reveal && chosen !== it.answer);
   qsRender('#rq-side', {
+    title: `${esc(rqScope || it.qtype || '真题')} · ${rqItems.length} 题`,
+    stat: secs.length
+      ? `已答 ${Object.keys(rqAns).length} · 用时 ${mm(used)} · 均 ${Math.round(used / secs.length)} 秒/题`
+      : `已答 ${Object.keys(rqAns).length} / ${rqItems.length}`,
     n: rqItems.length, cur: rqIdx,
     state: (i) => {
       const q = rqItems[i], a = rqAns[q.id];

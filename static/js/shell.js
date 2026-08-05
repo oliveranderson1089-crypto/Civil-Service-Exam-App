@@ -38,6 +38,7 @@ function render() {
   // 当前是哪个视图，给 CSS 用：屏幕下方住着谁（小记的悬浮条…）只有它知道
   document.body.dataset.view = st.view;
   $('#top-title').textContent = st.title || TITLES[st.view] || '公考助手';
+  renderCrumb(st);
   $('#nav-back').classList.toggle('hidden', stack.length <= 1);
   // 文档编辑器自带顶栏，隐藏全局顶栏
   document.querySelector('.topbar').classList.toggle('hidden', st.view === 'doc');
@@ -58,6 +59,7 @@ function render() {
     else { qtPause(); qtTotalPause(); }
   }
   if (window.__tabView) window.__tabView(st.view);        // 底部标签栏：该不该出现 + 亮哪一个
+  if (window.__qpView) window.__qpView(st.view);          // 离开做题页把右栏借走的浮层还回去
   if (st.view === 'home' && window.tdLoad) tdLoad();      // 回首页刷新今日仪表盘（内部自带节流）
   if (window.__padView) window.__padView(st.view);        // 做题页才出现草稿纸按钮
   if (window.__bmView) window.__bmView();                 // 阅读页：上次看到哪了
@@ -67,6 +69,37 @@ function render() {
   if (window.mkInject) setTimeout(() => mkInject(), 260);
   if (st.view !== 'slgrade' && matInited && !$('#matpad').classList.contains('hidden')) matClose();
 }
+/* 面包屑：栈本身就是路径，直接铺出来（练 › 历年真题 › 2024 国考行测）。
+   只在两层以上出现——首页上挂一个「公考助手 ›」是废话。
+
+   宽度**照抄当前视图的**：每个视图的 max-width 各不相同（阅读类 760、做题页 1560…），
+   在 CSS 里再抄一份对照表迟早对不上；直接读它算出来的值，永远和内容列对齐。 */
+function renderCrumb(st) {
+  const box = $('#crumb'); if (!box) return;
+  const parts = stack.map(s2 => s2.title || TITLES[s2.view] || '').filter(Boolean);
+  const on = parts.length > 1;
+  box.classList.toggle('hidden', !on);
+  document.body.classList.toggle('has-crumb', on);
+  if (!on) return;
+  box.innerHTML = parts.map((t, i) =>
+    `<span class="cb-i${i === parts.length - 1 ? ' cur' : ''}" data-cb="${i}">${esc(t)}</span>`)
+    .join('<span class="cb-s">›</span>');
+  const v = $('#view-' + st.view);
+  if (v) {
+    const cs = getComputedStyle(v);
+    box.style.maxWidth = cs.maxWidth;
+    box.style.paddingLeft = cs.paddingLeft;
+    box.style.paddingRight = cs.paddingRight;
+  }
+}
+// 点面包屑退回那一层（连点几次返回的替代品）
+$('#crumb').addEventListener('click', e => {
+  const c = e.target.closest('[data-cb]'); if (!c) return;
+  const i = +c.dataset.cb;
+  if (i >= stack.length - 1) return;
+  stack = stack.slice(0, i + 1);
+  render();
+});
 function push(state) { stack.push(state); render(); }
 function back() { if (stack.length > 1) { stack.pop(); render(); } }
 function goHome() { stack = [{ view: 'home' }]; render(); if (window.refreshNtfDot) refreshNtfDot(); }

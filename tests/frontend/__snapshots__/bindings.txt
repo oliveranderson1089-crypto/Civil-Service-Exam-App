@@ -1,3 +1,4 @@
+#crumb @click
 #ad-ok .onclick
 #ad-alt .onclick
 #ad-cancel .onclick
@@ -179,7 +180,7 @@ div.input-grip @pointercancel
 #ai-close .onclick
 #ai-text @input
 #ai-text @keydown
-#home-search .onclick
+#tb-search .onclick
 #search-input @input
 #search-filter @click
 #search-results @click
@@ -493,6 +494,7 @@ document @click
 ? @resize
 document @click
 document @keydown
+#rq-tabs @click
 #tab-chips @click
 #tab-groups @click
 ? @resize
