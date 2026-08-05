@@ -4274,3 +4274,39 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
 @media(min-width:761px){
   body.has-pen:not(.viewer-full) main{padding-right:58px;}
 }
+
+
+/* ================= 大屏适配（≥1500px：全屏 / 宽显示器） =================
+   小窗口下各页都挺合身，一全屏就变成「内容钉在中间、两边大片留白」。
+   但**不能一律拉宽**：阅读类（时政/范文/素材/常识/知识点，760px）那个宽度是对的，
+   一行 40 来个汉字正好，拉到 1500px 一行一百多字，眼睛得来回甩，是变难读不是变好。
+
+   所以只放宽「不是长文阅读」的那些：聊天、做题、导航页、错题本、资料库、成语——
+   它们是列表、双栏、卡片网格，宽度受限本来就没道理。 */
+@media(min-width:1500px){
+  /* 操作类：跟着屏幕长 */
+  #view-chat{max-width:1560px;}
+  #view-wrongq,#view-materials,#view-idiom,#view-search,#view-classics{max-width:1200px;}
+  body.has-tabs #view-home,body.has-tabs #view-tab,body.has-tabs #view-allfeats{max-width:1180px;}
+  /* 做题页：右栏也跟着宽一点，答题卡一行能多放两格 */
+  #view-realrun,#view-drillrun{max-width:1560px;grid-template-columns:minmax(0,1fr) 292px;}
+
+  /* 有给定资料的题（主要是资料分析）：材料单独占左栏，和题干选项**并排**。
+     这才是全屏那片空白该干的事 —— 原来材料横铺一整行，题干和选项被顶到下面，
+     看一眼材料要滚一次。材料自己滚，题目不动。
+     .rq-3col 由 realq.js 按「这道题有没有材料」挂，没材料就退回两栏，
+     不然左边会空出一根 420px 的白柱子。 */
+  #view-realrun.rq-3col{grid-template-columns:minmax(0,420px) minmax(0,1fr) 292px;max-width:1720px;}
+  #view-realrun.rq-3col>*:not(.q-side):not(#rq-mat){grid-column:2;}
+  #view-realrun.rq-3col #rq-mat{grid-column:1;grid-row:1 / span 99;
+    position:sticky;top:calc(var(--topbar-h,56px) + 16px);
+    max-height:calc(100vh - var(--topbar-h,56px) - 48px);overflow-y:auto;}
+  #view-realrun.rq-3col .q-side{grid-column:3;}
+}
+
+/* 卡片网格在宽屏上按「格子最小宽度」排，不是死死两列：
+   电脑上两列意味着一张卡片 470px 宽，中间全是空的。 */
+@media(min-width:761px){
+  .home-cards{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));}
+  .td-ups{grid-template-columns:repeat(auto-fill,minmax(210px,1fr));}
+}

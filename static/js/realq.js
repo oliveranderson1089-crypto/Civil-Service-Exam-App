@@ -212,6 +212,9 @@ function rqRender() {
   // 资料分析：材料排在题干**上面**（考场上也是先给材料再问）
   $('#rq-mat').innerHTML = it.material
     ? `<div class="rq-mat-t">给定资料</div><div class="rq-mat-b">${esc(it.material)}</div>` : '';
+  /* 宽屏（≥1500）上材料单独占一栏、和题干并排；没材料的题要退回两栏，
+     否则左边空出一根白柱子。逐题判：同一组里有的题带材料有的不带。 */
+  $('#view-realrun').classList.toggle('rq-3col', !!it.material);
   $('#rq-stem').textContent = it.stem;
   // 图形推理的题，图就是题本身 —— 题干只是一句「选择最合适的一个填入问号处」
   $('#rq-figs').innerHTML = (it.figs || []).map(f =>

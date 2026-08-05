@@ -1,6 +1,6 @@
 // 网络优先：在线总是拿最新页面/样式/脚本，断网才用缓存兜底。
 // （避免旧的「缓存优先」导致更新后还显示旧样式）
-const CACHE = 'gongkao-v209';   // 修答题卡串页/残留、做题页两栏失效、巩固测试重复计分
+const CACHE = 'gongkao-v210';   // 大屏适配：操作类页面跟着屏幕长，资料分析材料与题目并排
 
 self.addEventListener('install', e => { self.skipWaiting(); });
 

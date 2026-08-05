@@ -115,3 +115,31 @@ test('草稿纸在电脑上默认停右半屏，手机仍是下半屏', () => {
   assert.match(js, /createDock\(\$\('#pad'\), 'padDock', IS_MOBILE \? 'bottom' : 'right'/,
     '草稿纸在电脑上还是默认盖住下半屏——宽度够的时候该和题目并排');
 });
+
+/* ---------------- 大屏适配（≥1500） ---------------- */
+
+test('宽屏只放宽「不是长文阅读」的页面，阅读类必须留在 760', () => {
+  // 这条护的是一个判断，不是一个数字：时政/范文/素材那类是整篇读的，
+  // 760px 一行 40 来个汉字正好；跟着屏幕拉到 1500 一行一百多字，
+  // 眼睛来回甩，是**变难读**不是变好。全屏留白不该拿它们去填。
+  const m = CSS.match(/@media\(min-width:1500px\)\{[\s\S]*?\n\}/);
+  assert.ok(m, '没有 ≥1500 的大屏断点');
+  const wide = m[0];
+  ['#view-chat', '#view-wrongq', '#view-realrun', '#view-tab'].forEach(v =>
+    assert.ok(wide.includes(v), `操作类的 ${v} 没跟着放宽`));
+  ['#view-news', '#view-fanwen', '#view-sucai', '#view-changshi', '#view-policydoc'].forEach(v =>
+    assert.ok(!wide.includes(v), `阅读类的 ${v} 被拉宽了 —— 一行一百多字没法读`));
+});
+
+test('材料分栏只给「有给定资料」的题，没材料不能空出一根白柱子', (t) => {
+  const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  const view = () => h.window.document.getElementById('view-realrun');
+  h.run(`rqExam = false; rqIdx = 0; rqAns = {}; rqSec = {};
+    rqItems = [{ id: 1, answer: 'A', options: ['x','y','z','w'], stem: 's', material: '一大段材料' },
+               { id: 2, answer: 'B', options: ['x','y','z','w'], stem: 's' }];
+    rqRender();`);
+  assert.ok(view().classList.contains('rq-3col'), '有材料的题没开三栏');
+  h.run('rqIdx = 1; rqRender();');
+  assert.ok(!view().classList.contains('rq-3col'),
+    '这道题没材料还开着三栏，左边会空出一根 420px 的白柱子');
+});
