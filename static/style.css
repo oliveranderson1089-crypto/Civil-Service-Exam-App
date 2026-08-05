@@ -4147,15 +4147,12 @@ body.dark .td-all{border-color:#2a3345;}
    让它和页面里其他「可点的数字」是同一个语义。 */
 body.dark .td-hero b,body.dark .td-exam b{color:var(--blue) !important;}
 
-/* 顶栏收掉冗余按钮。「首页」在**任何**有常驻导航的地方都是重复的（手机的「今日」标签、
-   电脑左栏的「今日」都是同一个去处），所以只要导航在场就收掉；
-   「账户」「后台」只在手机上收（进了「我的」），电脑上留着当快捷入口。
-   手机那两个用断点而不是 body.has-tabs：后者在沉浸式页面会撤掉，
-   按钮就会一会儿冒出来一会儿消失。 */
-body.has-tabs #home-btn,body.has-rail #home-btn{display:none !important;}
-@media(max-width:760px){
-  #home-btn,#account-btn,#admin-btn{display:none !important;}
-}
+/* 顶栏只留「去处在别处没有」的东西。
+   「首页」→ 手机的「今日」标签 / 电脑左栏的「今日」；
+   「账户」「后台」→ 「我的 › 账户与外观 / 管理后台」。
+   三个都有替代入口，一律收掉 —— 留着就是两套导航并存。
+   消息铃留着：它带未读角标，是个**状态**，藏进二级就看不见了。 */
+#home-btn,#account-btn,#admin-btn{display:none !important;}
 
 /* ---- 标签页的板块筛选条与状态角标（P2） ---- */
 /* 横向滚动而不是换行：板块有六个，换行会把内容顶下去半屏 */
@@ -4452,4 +4449,17 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
   #view-gongwen,#view-yylib,#view-yyerr,#view-notify,#view-planlog,
   #view-quizsets,#view-docqa,#view-dtest,#view-quizrun,
   #view-slpaper,#view-sltype,#view-slgrade{max-width:1200px;}
+}
+
+
+/* ---- 顶栏：电脑上收掉品牌区，搜索相对视口居中 ---- */
+@media(min-width:761px){
+  /* 「公考助手」在电脑上是重复的：桌面版有 GTK 标题栏、浏览器有标签页，
+     当前在哪一页则由面包屑交代。收掉它，顶栏左边就只剩返回键。 */
+  .topbar .brand-min{display:none;}
+  /* flex 里的 margin:0 auto 只能「在**剩余空间**里居中」—— 左右两侧兄弟不等宽，
+     搜索框就会跟着偏（右边挂着倒计时和铃铛，于是整体偏右）。
+     要相对视口居中就得脱离 flex 流，按 50% 定位。 */
+  .tb-search{position:absolute;left:50%;transform:translateX(-50%);
+    width:min(560px,42vw);max-width:none;margin:0;flex:0 0 auto;}
 }

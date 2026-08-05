@@ -100,16 +100,6 @@ test('沉浸式页面让位：做题页和小记不出标签栏，页面底部�
   assert.ok(body.classList.contains('has-tabs'), '退回标签页后标签栏没回来');
 });
 
-test('顶栏那三个按钮在手机端交给标签栏，样式里得真收掉', () => {
-  // 「首页」→ 今日标签，「账户」「后台」→ 我的。留着就是两套导航并存，顶栏还占一行。
-  // 这条盯的是 CSS：JS 里它们照旧存在（电脑端还要用），只在手机断点下隐藏。
-  const css = require('fs').readFileSync(
-    require('path').join(__dirname, '../../static/style.css'), 'utf8');
-  const m = css.match(/@media\(max-width:760px\)\{[^}]*#home-btn[^}]*\}/);
-  assert.ok(m, '手机断点里没把 #home-btn / #account-btn / #admin-btn 收掉');
-  ['#account-btn', '#admin-btn'].forEach(id => assert.ok(m[0].includes(id), '漏了 ' + id));
-});
-
 test('管理后台只给管理员看', (t) => {
   const h = boot(); t.after(() => h.close());
   tap(h, 'me');

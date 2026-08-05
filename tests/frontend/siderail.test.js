@@ -135,11 +135,22 @@ test('内容区给左栏让出位置，且宽屏上限个宽', () => {
     '导航页在宽屏上没限宽，一行几百字符没法读');
 });
 
-test('顶栏的「首页」在有常驻导航时收掉：它和「今日」是同一个去处', () => {
-  assert.ok(/body\.has-tabs #home-btn,body\.has-rail #home-btn\{display:none/.test(CSS),
-    '左栏有「今日」、顶栏还有「首页」，两套导航并存');
-  // 「账户」「后台」只在手机收（进了「我的」），电脑上留着当快捷入口
-  assert.ok(!/body\.has-tabs #account-btn/.test(CSS), '电脑上把「账户」也收了，那儿并没有替代入口');
+test('顶栏只留「去处在别处没有」的东西', () => {
+  // 首页→今日标签/左栏今日；账户→我的›账户与外观；后台→我的›管理后台。
+  // 三个都有替代入口，留着就是两套导航并存。
+  assert.match(CSS, /#home-btn,#account-btn,#admin-btn\{display:none !important/,
+    '首页 / 账户 / 后台 没全收掉');
+  // 铃铛得留着：它带未读角标，是个**状态**，藏进二级就看不见了
+  assert.ok(!/#notify-btn\{display:none/.test(CSS), '把消息铃也收了 —— 未读角标是状态，藏起来就看不见');
+});
+
+test('电脑上顶栏收掉品牌区，搜索相对**视口**居中', () => {
+  const m = CSS.match(/@media\(min-width:761px\)\{[^@]*?\.topbar \.brand-min\{display:none;\}[\s\S]*?\n\}/);
+  assert.ok(m, '电脑上没收掉「公考助手」品牌区 —— 桌面版有窗口标题栏，当前页由面包屑交代');
+  /* flex 里的 margin:0 auto 只能「在剩余空间里居中」：右边挂着倒计时和铃铛，
+     两侧不等宽，搜索框就会偏。要相对视口居中必须脱离 flex 流。 */
+  assert.match(m[0], /\.tb-search\{position:absolute;left:50%;transform:translateX\(-50%\)/,
+    '搜索框还在 flex 流里靠 auto 边距居中 —— 两侧不等宽时会偏');
 });
 
 test('草稿纸在电脑上默认停右半屏，手机仍是下半屏', () => {
