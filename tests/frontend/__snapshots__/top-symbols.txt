@@ -1047,13 +1047,14 @@ tbChip
 tbCur
 tbDrillBoards
 tbFill
+tbGoGroup
 tbHub
 tbHubOnce
 tbItems
 tbLoadHub
 tbNav
-tbRail
 tbRailFill
+tbRailItems
 tbRailMark
 tbRender
 tbRow

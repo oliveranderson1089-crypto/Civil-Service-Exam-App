@@ -4209,16 +4209,10 @@ body.dark .tr-stat.new{background:#152a3d;color:#7db8ea;}
 .siderail .sr-t i{font-style:normal;}
 .siderail .sr-t:hover{background:var(--bg2);}
 .siderail .sr-t.on{background:var(--blue-fill);color:#fff;font-weight:600;}
-/* 分组子项：只有当前打开的那个标签展开，点了滚过去 */
-.sr-subs{display:none;flex-direction:column;gap:1px;padding:2px 0 6px 14px;}
-.sr-subs.on{display:flex;}
-.sr-g{text-align:left;border:none;background:none;cursor:pointer;font-family:inherit;
-  font-size:13px;color:var(--muted);padding:5px 10px;border-radius:7px;}
-.sr-g:hover{background:var(--bg2);color:var(--blue);}
 
 body.dark .siderail{background:#141b29;border-right-color:#2a3345;}
 body.dark .siderail .sr-t{color:#cfd5e0;}
-body.dark .siderail .sr-t:hover,body.dark .sr-g:hover{background:#1f2838;}
+body.dark .siderail .sr-t:hover{background:#1f2838;}
 
 /* ================= 做题页：答题卡与三栏（界面重构 P4） =================
    电脑上做题页分两列：正文 + 常驻答题卡。**不包 wrapper**，用显式列定位——

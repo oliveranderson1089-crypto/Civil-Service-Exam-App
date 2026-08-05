@@ -124,31 +124,25 @@ const TAB_DEFS = [
     chips: () => [{ key: '', name: '全部' }].concat(
       tbBoardNames().map(b => ({ key: b, name: b.slice(0, 2) }))),
     groups: (chip) => chip ? tbBoardGroups(chip) : [
-      { name: '真题实战', items: [
+      { name: '真题实战', icon: 'target', items: [
         { name: '历年真题', desc: '国考 / 川考原卷 · 错题自动重现', go: () => openRealq() },
         { name: '题库', desc: '四川省考卷面 · 每周自动更新', go: () => openQuiz() },
         { name: '模拟卷', desc: '整卷计时 · 卷面还原', go: () => openQuizSets() },
         { name: '申论真题批改', desc: 'AI 逐点批改', go: () => openShenlun() },
       ] },
-      { name: '专项突破', items: tbDrillBoards() },
-      { name: '申论小题与成文', items: [
+      { name: '专项突破', icon: 'layers', items: tbDrillBoards() },
+      { name: '申论小题与成文', icon: 'pen', items: [
         { name: '小题训练', desc: '找点 + 写点', go: () => openFind() },
         { name: '应用文成文', desc: '14 文种四大类 · 每日成文', go: () => openWrite('yingyong') },
         { name: '议论文成文', desc: '素材 → 大作文', go: () => openWrite('daily') },
       ] },
-      { name: '巩固与错题', items: [
+      { name: '巩固与错题', icon: 'cross', badge: () => tbBadge.wrong, items: [
         { name: '巩固测试', desc: '考点来自今天学的', go: () => openDtest() },
         { name: '今日复习', desc: '遗忘曲线 · 该复习的都在这', go: () => openReview() },
         { name: '错题本', desc: '拍照 / 输入 · AI 判题型给解析', go: () => openWrongq() },
         { name: '题目解析', desc: '上传题目 · AI 出解析', go: () => openDocqa() },
       ] },
-      { name: '按学科浏览', items: tbSections() },
-    ],
-    rail: () => [
-      { name: '历年真题', icon: 'target', go: () => openRealq() },
-      { name: '专项练', icon: 'layers', go: () => tbRender('drill') },
-      { name: '申论小题 / 成文', icon: 'pen', go: () => openFind() },
-      { name: '错题本', icon: 'cross', go: () => openWrongq(), badge: () => tbBadge.wrong },
+      { name: '按学科浏览', icon: 'overview', items: tbSections() },
     ],
   },
   {
@@ -156,11 +150,11 @@ const TAB_DEFS = [
     chips: () => [{ key: '', name: '全部' }].concat(
       ['言语', '申论', '常识与理论', '时政', '高频'].map(n => ({ key: n, name: n === '常识与理论' ? '常识' : n }))),
     groups: (chip) => [
-      { name: '言语', items: [
+      { name: '言语', icon: 'word', items: [
         Object.assign({ name: '成语词语积累', desc: '选词填空 · 拼音释义 · 导 PDF', go: () => openIdiom() }, tbAcc('idiom')),
         Object.assign({ name: '上位词积累', desc: '逻辑填空概括词提示 · 每日推荐', go: () => openCkBoard('上位词') }, tbAcc('hyper')),
       ] },
-      { name: '申论', items: [
+      { name: '申论', icon: 'note', items: [
         Object.assign({ name: '素材积累', desc: '每日更新 · 人物 / 事例 / 理论论据', go: () => openSucai('全部') }, tbAcc('sucai')),
         Object.assign({ name: '衔接表达', desc: '过渡 / 转折 / 万能句式', go: () => openSucai('衔接表达') }, tbAcc('lianjie')),
         Object.assign({ name: '概括句积累', desc: '材料表述 → 规范概括句', go: () => openGaikuo() }, tbAcc('gaikuo')),
@@ -170,62 +164,53 @@ const TAB_DEFS = [
         Object.assign({ name: '人民时评 · 申论范文', desc: '每日抓评论版 · AI 拆结构与亮点', go: () => openFanwen() }, tbAcc('fanwen')),
         { name: '范文推荐', desc: '按题型挑的高分范文', go: () => openEssays() },
       ] },
-      { name: '常识与理论', items: [
+      { name: '常识与理论', icon: 'check', items: [
         Object.assign({ name: '常识积累', desc: '人文 / 科技 / 法律… 七大板块', go: () => openChangshi() }, tbAcc('changshi')),
         { name: '理论基础', desc: '马原 · 毛概 · 中特 · 习思想', go: () => openTheory() },
         { name: '经典著作', desc: '原著要点速记', go: () => openWorks() },
         { name: '古诗文 · 名句速查', desc: '唐诗宋词 · 四书五经', go: () => openClassics() },
       ] },
-      { name: '时政', items: [
+      { name: '时政', icon: 'layers', items: [
         Object.assign({ name: '每日时政', desc: '每天自动更新 · AI 摘要 + 考点', go: () => openNews() }, tbAcc('news')),
         Object.assign({ name: '每日新闻视频', desc: '官方媒体 · 国内 / 国际 / 四川', go: () => openVideos() }, tbAcc('videos')),
         { name: '时政要文库', desc: '二十大 · 十五五 · 两会报告全文', go: () => openPolicyDocs() },
         { name: '党的创新理论学习词典', desc: '12371 术语速查', go: () => openPartyDict() },
       ] },
-      { name: '高频', items: [
+      { name: '高频', icon: 'target', items: [
         { name: '常考', desc: '高频成语 / 实词 / 上位词 / 常识 / 提法', go: () => openChangkao() },
       ] },
     ].filter(g => !chip || g.name === chip),
-    rail: () => [
-      { name: '成语 · 上位词', icon: 'word', go: () => openIdiom() },
-      { name: '素材 · 衔接 · 概括', icon: 'note', go: () => openSucai('全部') },
-      { name: '时政 · 理论', icon: 'layers', go: () => openNews() },
-    ],
   },
   {
     key: 'lib', name: '库', icon: TB_SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
     groups: () => [
-      { name: '我记的', items: [
+      { name: '我记的', icon: 'note', items: [
         { name: '小记', desc: '随手记 · 标签归类', go: () => openNotes() },
         { name: '知识库', desc: '笔记本 · 文档 · 分组整理', go: () => openKb() },
         { name: '草稿本', desc: '草稿纸留下的手写与演算', go: () => openDrafts() },
       ] },
-      { name: '我存的', items: [
+      { name: '我存的', icon: 'folder', items: [
         { name: '资料库', desc: '图片 / 文档 / 网页 应用内查看', go: () => openMaterials() },
         { name: '云盘', desc: '存取任意文件 · 发给好友', go: () => openDrive() },
       ] },
-    ],
-    rail: () => [
-      { name: '小记 · 知识库', icon: 'note', go: () => openNotes() },
-      { name: '资料库 · 云盘', icon: 'folder', go: () => openMaterials() },
     ],
   },
   {
     key: 'me', name: '我的', icon: TB_SVG('<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>'),
     groups: () => [
-      { name: '学习安排', items: [
+      { name: '学习安排', icon: 'check', items: [
         { name: '任务清单', desc: '每日任务 · 互监待办', go: () => openTasks() },
         { name: '计划记录', desc: '进度回顾 · AI 分析', go: () => openPlanLog() },
         { name: '今日复习', desc: '遗忘曲线', go: () => openReview() },
       ] },
-      { name: '资讯', items: [
+      { name: '资讯', icon: 'overview', items: [
         { name: '全国考情', desc: '国考 / 省考 / 事考公告 每天汇总', go: () => openExam() },
       ] },
-      { name: '往来', items: [
+      { name: '往来', icon: 'word', items: [
         { name: '聊天', desc: '加好友 · 聊天 · 传文件', go: () => openChat() },
         { name: '消息', desc: '通知与提醒', go: () => openNotify() },
       ] },
-      { name: '设置', items: [
+      { name: '设置', icon: 'layers', items: [
         { name: '全部功能', desc: '原来的首页九宫格 · 可长按拖动排序', go: () => openAllFeats() },
         { name: '账户与外观', desc: '头像 / 壁纸 / 密码 / 同步', go: () => openAccount() },
       ].concat(ME && ME.is_admin
@@ -283,7 +268,6 @@ function tbFill(key) {
   const body = groups.map((g, i) =>
     `<div class="tab-gh" id="tg-${i}">${esc(g.name)}</div><div class="board-grid">${g.items.map(tbRow).join('')}</div>`
   ).join('');
-  tbRail(key, groups);
   $('#tab-chips').innerHTML = chips.length
     ? chips.map(c => `<button class="chip${c.key === cur ? ' active' : ''}" data-tbc="${esc(c.key)}">${esc(c.name)}</button>`).join('')
     : '';
@@ -331,17 +315,40 @@ $('#tabbar').innerHTML = TAB_DEFS.map(t =>
   `<button class="tb" data-tb="${esc(t.key)}">${t.icon}<i>${esc(t.name)}</i></button>`).join('');
 /* 左栏是**两级**：分组标题 = 标签页（点了看全部），组内 = 那个标签下每天都点的几个（直达）。
    只有一级的话，任何一个二级功能都要「先点标签、再在页里找」，等于把省下来的那层又加回去。 */
+/* 左栏每个分组底下摆什么 —— **只有一套形式**。
+   「今日」没有对应的标签页，用它自己那份固定捷径；
+   其余标签一律用**那个标签页里的分组标题**（真题实战 / 专项突破 / …），点了就跳到那一段。
+
+   原来是两套并排：上面一排我挑的捷径（历年真题、专项练…），下面又铺一排分组锚点
+   （真题实战、专项突破…）—— 概念还重复，一个分组能占九行。 */
+function tbRailItems(t) {
+  if (t.rail) return t.rail();
+  return (t.groups ? t.groups('') : []).map(g => ({
+    name: g.name, icon: g.icon, badge: g.badge,
+    go: () => tbGoGroup(t.key, g.name),
+  }));
+}
+
+/* 跳到某个标签页的某一组。
+   先把 chip 清掉：选着「言语」的时候点「时政」，那一组根本没渲染出来，滚过去会扑空。 */
+function tbGoGroup(key, name) {
+  tbChip[key] = '';
+  if (tbCur === key && !$('#view-tab').classList.contains('hidden')) tbFill(key);
+  else tbRender(key);
+  const h = [...document.querySelectorAll('#tab-groups .tab-gh')].find(x => x.textContent === name);
+  if (h && h.scrollIntoView) { try { h.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { /* 没实现就算了 */ } }
+}
+
 function tbRailFill() {
   $('#siderail').innerHTML = TAB_DEFS.map(t => {
-    const subs = (t.rail ? t.rail() : []).map((it, i) => {
+    const subs = tbRailItems(t).map((it, i) => {
       const n = it.badge ? it.badge() : 0;
       return `<button class="sr-i" data-srq="${esc(t.key)}:${i}">
         ${RAIL_ICON[it.icon] || ''}<i>${esc(it.name)}</i>
         ${n ? `<span class="sr-bd">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
     }).join('');
     return `<div class="sr-g-h" data-tb="${esc(t.key)}">${esc(t.name)}</div>`
-      + (subs || `<button class="sr-i" data-tb="${esc(t.key)}">${t.icon}<i>${esc(t.name)}</i></button>`)
-      + `<div class="sr-subs" data-srsub="${esc(t.key)}"></div>`;
+      + (subs || `<button class="sr-i" data-tb="${esc(t.key)}">${t.icon}<i>${esc(t.name)}</i></button>`);
   }).join('');
   tbRailMark();
 }
@@ -386,31 +393,13 @@ $('#siderail').addEventListener('click', e => {
   if (q) {
     const [key, i] = q.dataset.srq.split(':');
     const def = TAB_DEFS.find(t => t.key === key);
-    const it = def && def.rail && def.rail()[+i];
+    const it = def && tbRailItems(def)[+i];
     if (it && it.go) it.go();
-    return;
-  }
-  // 打开的标签页里，分组标题当锚点用（「积累」有五组，一屏放不下）
-  const g = e.target.closest('[data-srg]');
-  if (g) {
-    const t = document.getElementById('tg-' + g.dataset.srg);
-    if (t) t.scrollIntoView({ block: 'start', behavior: 'smooth' });
     return;
   }
   tbNav(e);
 });
 
-// 左栏里「当前标签展开的分组」。只有开着的那个标签有子项，其余收起
-function tbRail(key, groups) {
-  document.querySelectorAll('#siderail [data-srsub]').forEach(box => {
-    const on = box.dataset.srsub === key;
-    box.innerHTML = on ? (groups || []).map((g, i) =>
-      `<button class="sr-g" data-srg="${i}">${esc(g.name)}</button>`).join('') : '';
-    box.classList.toggle('on', on && !!(groups || []).length);
-  });
-  document.querySelectorAll('#siderail .sr-t').forEach(b =>
-    b.classList.toggle('on', b.dataset.tb === key));
-}
 
 /* 由 shell.js 的 render() 每次切视图时回调（跟 __padView / __bmView 一个路子）。
    高亮认的是**栈里最近的那个标签页**，不是当前视图——这样从「积累」进到成语积累里面，
@@ -434,9 +423,5 @@ window.__tabView = function (view) {
     rail.classList.toggle('hidden', !railOn);
     document.body.classList.toggle('has-rail', railOn);
     tbRailMark();
-    // 离开标签页（比如点进了成语积累）就把分组锚点收起来：它们已经不指向当前内容了
-    if (view !== 'tab') rail.querySelectorAll('[data-srsub]').forEach(x => {
-      x.innerHTML = ''; x.classList.remove('on');
-    });
   }
 };

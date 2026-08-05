@@ -29,18 +29,32 @@ test('左栏和底栏是同一份 TAB_DEFS 的两个形态，分组一一对应'
     $$(h, '#tabbar [data-tb] i').map(b => b.textContent));
 });
 
-test('左栏是两级：分组标题下常驻快捷条目，不是只有五个一级项', (t) => {
+test('左栏二级**只有一套形式**：今日用固定捷径，其余一律是那个标签页的分组标题', (t) => {
   const h = boot(); t.after(() => h.close());
   const names = $$(h, '#siderail .sr-i i').map(b => b.textContent);
-  ['今日概览', '今日复习', '历年真题', '错题本'].forEach(n =>
-    assert.ok(names.includes(n), `左栏少了常驻条目「${n}」——只有一级的话，任何二级功能都要先点标签再在页里找`));
+  // 今日没有对应的标签页，用它自己那份捷径
+  ['今日概览', '今日复习', '每日测试'].forEach(n =>
+    assert.ok(names.includes(n), `「今日」少了捷径「${n}」`));
+  // 其余标签：二级就是标签页里的分组，一个不多一个不少
+  const groups = h.plain(`TAB_DEFS.filter(t => !t.rail)
+    .flatMap(t => t.groups('').map(g => g.name))`);
+  groups.forEach(n => assert.ok(names.includes(n), `左栏少了分组「${n}」`));
+  // 被替换掉的那套捷径不许再出现，否则又是两套并排、概念还重复
+  ['历年真题', '专项练', '错题本', '成语 · 上位词', '小记 · 知识库'].forEach(n =>
+    assert.ok(!names.includes(n), `「${n}」是被分组标题替换掉的旧捷径，不该还在左栏`));
 });
 
-test('快捷条目点了直达那个功能，不是先打开标签页', (t) => {
+test('分组标题点了跳到标签页的那一段，并且先把 chip 清掉', (t) => {
   const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
-  h.run("openWrongq = () => { window.__hit = 'wrongq'; }");
-  $$(h, '#siderail .sr-i').find(b => b.querySelector('i').textContent === '错题本').click();
-  assert.strictEqual(h.window.__hit, 'wrongq');
+  h.run('goHome()');
+  // 先在「积累」里选一个 chip，让别的分组根本没渲染出来
+  $(h, '#siderail .sr-g-h[data-tb="acc"]').click();
+  h.run("tbChip.acc = '言语'; tbFill('acc');");
+  assert.ok(!$$(h, '#tab-groups .tab-gh').some(x => x.textContent === '时政'));
+  $$(h, '#siderail .sr-i').find(b => b.querySelector('i').textContent === '时政').click();
+  assert.strictEqual(h.window.document.body.dataset.view, 'tab');
+  assert.ok($$(h, '#tab-groups .tab-gh').some(x => x.textContent === '时政'),
+    'chip 没清掉 —— 那一组压根没渲染，跳过去会扑空');
 });
 
 test('角标：复习条数和错题存量都挂得上，0 的时候不显示', (t) => {
@@ -50,7 +64,7 @@ test('角标：复习条数和错题存量都挂得上，0 的时候不显示', 
   h.run('tbSetReview(12)');
   assert.ok(bd().includes('12'), '复习角标没上去');
   h.run("tbHub = { boards: { A: { wrong: 5 }, B: { wrong: 23 } }, acc: {} }; tbBadge.wrong = 28; tbRailFill();");
-  assert.ok(bd().includes('28'), '错题角标该是各板块存量之和');
+  assert.ok(bd().includes('28'), '错题角标该是各板块存量之和（现在挂在「巩固与错题」那一组上）');
 });
 
 test('电脑上做题时左栏保留：宽度管够，中途还能跳去查东西', (t) => {
@@ -81,33 +95,14 @@ test('左栏的「今日」和底栏一样回到首页栈底', (t) => {
   assert.strictEqual(h.window.document.body.dataset.view, 'home');
 });
 
-test('左栏多出一层：当前标签的分组列出来，且只有当前那个展开', (t) => {
-  const h = boot(); t.after(() => h.close());
-  $(h, '#siderail .sr-g-h[data-tb="acc"]').click();
-  const subs = $$(h, '#siderail [data-srsub="acc"] .sr-g').map(b => b.textContent);
-  assert.ok(subs.includes('言语') && subs.includes('时政'), '分组没列出来：' + subs.join('/'));
-  assert.deepStrictEqual($$(h, '#siderail [data-srsub="drill"] .sr-g'), [],
-    '没打开的标签也把分组展开了，左栏会长得没边');
-
-  // 分组锚点要真能对上正文里的标题
-  subs.forEach((_, i) => assert.ok($(h, '#tg-' + i), '正文里没有 #tg-' + i + '，点了跳不过去'));
-});
-
-test('切到别的标签，上一个标签的分组要收起来', (t) => {
-  const h = boot(); t.after(() => h.close());
-  $(h, '#siderail .sr-g-h[data-tb="acc"]').click();
-  $(h, '#siderail .sr-g-h[data-tb="lib"]').click();
-  assert.deepStrictEqual($$(h, '#siderail [data-srsub="acc"] .sr-g'), []);
-  assert.ok($$(h, '#siderail [data-srsub="lib"] .sr-g').length > 0);
-});
-
-test('离开标签页后分组锚点要撤掉：它们已经不指向当前内容了', (t) => {
+test('分组标题常驻，不跟着「哪个标签开着」忽隐忽现', (t) => {
   const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  const names = () => $$(h, '#siderail .sr-i i').map(b => b.textContent);
+  const before = names();
   $(h, '#siderail .sr-g-h[data-tb="acc"]').click();
-  assert.ok($$(h, '#siderail .sr-g').length > 0);
+  assert.deepStrictEqual(names(), before, '打开标签页后左栏条目变了 —— 常驻目录不该忽隐忽现');
   h.run("push({ view: 'idiom' })");
-  assert.deepStrictEqual($$(h, '#siderail .sr-g'), [],
-    '进了成语积累，左栏还挂着「积累」页的分组锚点，点了会跳到不存在的地方');
+  assert.deepStrictEqual(names(), before, '进了二级页左栏又变了');
 });
 
 test('真·全屏的两页（阅读器 / 文档编辑器）左栏才撤', (t) => {
