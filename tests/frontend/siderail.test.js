@@ -168,6 +168,20 @@ test('宽屏只放宽「不是长文阅读」的页面，阅读类必须留在 7
     assert.ok(!wide.includes(v), `阅读类的 ${v} 被拉宽了 —— 一行一百多字没法读`));
 });
 
+test('正文型页面任何宽度都不放宽：整篇读的东西不能一行一百多字', () => {
+  /* 这条是上一轮漏掉的：当时只照顾了「已经有 760px 上限」的阅读类，
+     可成文、范文详情、批改结果这些**本来就没设上限** —— 通栏是它们的默认行为，
+     屏幕一宽就一行一百多字。分类的判据是「从头读到尾」还是「扫一眼挑一个」。 */
+  const READ = ['#view-writed', '#view-essayd', '#view-docqad', '#view-slresult', '#view-findrecd'];
+  const rule = CSS.match(/#view-writed[^{]*\{[^}]*max-width:760px/);
+  assert.ok(rule, '成文/范文详情那批正文页没设 760px 行长上限');
+  READ.forEach(v => assert.ok(rule[0].includes(v) || new RegExp(v + '[^{]*\\{[^}]*max-width:760px').test(CSS),
+    `${v} 是整篇读的，却没限行长`));
+  const wide = CSS.match(/@media\(min-width:1500px\)\{[\s\S]*?\n\}/g) || [];
+  READ.forEach(v => wide.forEach(blk => assert.ok(!blk.includes(v),
+    `${v} 被放进了宽屏放宽名单 —— 正文型永远不该跟着屏幕长`)));
+});
+
 test('材料分栏只给「有给定资料」的题，没材料不能空出一根白柱子', (t) => {
   const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
   const view = () => h.window.document.getElementById('view-realrun');

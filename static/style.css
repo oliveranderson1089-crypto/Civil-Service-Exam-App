@@ -4431,3 +4431,31 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
    **必须放在 .q-tabs{display:none} 之后**：两条特异性一样，靠先后定胜负，
    写在前面会被那条基础规则盖掉。 */
 @media(min-width:761px){ .q-tabs{display:flex;} }
+
+/* ================= 补齐没设上限的那批视图的行长 =================
+   上一轮只照顾了「已经有 760px 上限」的阅读类，漏了一批**本来就没设上限**的页面 ——
+   通栏是它们的默认行为，屏幕一宽就一行一百多字。同一条原则补上：
+
+     · 正文型（整篇读的）      → 760px，任何宽度都不放宽
+     · 列表 / 条目型           → 920px，≥1500 时才放到 1200
+     · 作答 / 双栏 / 卡片网格   → 不限（它们要么要写字要么要铺格子，宽是有用的）
+
+   分不清的时候问一句：这一屏是「从头读到尾」还是「扫一眼挑一个」。前者限行长，后者不限。 */
+#view-writed,#view-essayd,#view-docqad,#view-slresult,#view-findrecd,#view-bknode{
+  max-width:760px;margin:0 auto;}
+
+#view-realq,#view-realrec,#view-realrecd,#view-drill,#view-drillrec,#view-drillrecd,
+#view-find,#view-findrec,#view-findwrong,#view-write,#view-essays,#view-shenlun,
+#view-changkao,#view-ckboard,#view-theory,#view-thboard,#view-csboard,
+#view-gongwen,#view-yylib,#view-yyerr,#view-notify,#view-planlog,
+#view-quizsets,#view-docqa,#view-dtest,#view-quizrun,
+#view-slpaper,#view-sltype,#view-slgrade{max-width:920px;margin:0 auto;}
+
+@media(min-width:1500px){
+  #view-realq,#view-realrec,#view-realrecd,#view-drill,#view-drillrec,#view-drillrecd,
+  #view-find,#view-findrec,#view-findwrong,#view-write,#view-essays,#view-shenlun,
+  #view-changkao,#view-ckboard,#view-theory,#view-thboard,#view-csboard,
+  #view-gongwen,#view-yylib,#view-yyerr,#view-notify,#view-planlog,
+  #view-quizsets,#view-docqa,#view-dtest,#view-quizrun,
+  #view-slpaper,#view-sltype,#view-slgrade{max-width:1200px;}
+}

@@ -1,6 +1,6 @@
 // 网络优先：在线总是拿最新页面/样式/脚本，断网才用缓存兜底。
 // （避免旧的「缓存优先」导致更新后还显示旧样式）
-const CACHE = 'gongkao-v211';   // 浅色顶栏+全局搜索、左栏两级带角标、面包屑、做题页右栏标签
+const CACHE = 'gongkao-v212';   // 补齐成文/范文/批改等正文页的行长上限
 
 self.addEventListener('install', e => { self.skipWaiting(); });
 
