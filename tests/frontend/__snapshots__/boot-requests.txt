@@ -1,2 +1,4 @@
 GET /api/basics/entries
 GET /api/me
+GET /api/review/today?count=N
+GET /api/today

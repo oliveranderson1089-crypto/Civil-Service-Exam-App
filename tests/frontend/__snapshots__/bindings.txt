@@ -493,3 +493,9 @@ document @click
 ? @resize
 document @click
 document @keydown
+#tab-chips @click
+#tab-groups @click
+? @resize
+#tabbar @click
+#siderail @click
+#today-body @click
