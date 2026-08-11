@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DT_L, IC, api, appConfirm, appPrompt,
-   c, esc, injectReadBtns, openClassicDetail, push, toast */
+/* global $, DT_L, IC, api, appConfirm, appPrompt, artEm, c, esc, injectReadBtns, openClassicDetail, push, toast */
 
 /* ================= 常考（高频考点合集） + 上位词 ================= */
 async function openChangkao() {
@@ -43,7 +42,7 @@ async function loadHyperDaily() {
   try {
     const d = await api('/api/hyper/daily');
     if (!d.items || !d.items.length) { $('#ck-daily').classList.add('hidden'); return; }
-    $('#ck-daily').innerHTML = `<div class="ckd-tag">🎯 今日推荐 · 上位词</div>` +
+    $('#ck-daily').innerHTML = `<div class="ckd-tag">${artEm('🎯')} 今日推荐 · 上位词</div>` +
       d.items.map(it => `<div class="ckd-item" data-ckd="${it.id}">
         <div class="ckd-h">${esc(it.hyper)}</div>
         <div class="ckd-s">${esc(it.subs || '')}</div>
@@ -125,7 +124,7 @@ function renderCkList() {
         ${ckBoard === '收藏' ? `<span class="cki-from">${esc(b)}</span>` : ''}
         <button class="cki-star${on ? ' on' : ''}" data-ckstar="${esc(b)}:${it.id}"
           title="${tip}">${on ? '★' : '☆'}</button>
-        ${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">🗑</button>` : ''}</div>
+        ${ckKind === 'hyper' ? `<button class="cki-del" data-ckdel="${it.id}">${artEm('🗑')}</button>` : ''}</div>
       ${it.meaning ? `<div class="cki-mean"><b>释义</b>${esc(it.meaning)}</div>` : ''}
       ${it.content ? `<div class="cki-c">${b === '实词' && it.meaning ? '<span class="cki-c-lab">搭配</span>' : ''}${esc(it.content)}</div>` : ''}
       ${note ? `<div class="cki-n">${(ckKind === 'classic' || b === '古诗文' || b === '古诗积累') ? esc(note) : '💡 ' + esc(note)}</div>` : ''}
@@ -207,10 +206,10 @@ async function openCkStory(cid) {
         <div class="cd-meta">常考 · ${esc(d.board || '')}${d.freq ? ` · 考频 ${d.freq} 次` : ''}</div></div>
       ${d.content ? `<div class="cd-sec"><div class="cd-sec-t">释义</div><div class="cd-sec-b">${esc(d.content)}</div></div>` : ''}
       ${s.origin ? `<div class="cd-sec"><div class="cd-sec-t">📜 出处</div><div class="cd-sec-b ck-origin">${esc(s.origin)}</div></div>` : ''}
-      ${s.story ? `<div class="cd-sec"><div class="cd-sec-t">📖 典故</div><div class="cd-sec-b ck-story">${esc(s.story)}</div></div>` : ''}
-      ${s.evolve ? `<div class="cd-sec"><div class="cd-sec-t">🔗 本义 → 今义</div><div class="cd-sec-b">${esc(s.evolve)}</div></div>` : ''}
-      ${s.usage ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🎯 公考怎么考</div><div class="cd-sec-b">${esc(s.usage)}</div></div>` : ''}
-      <div class="cd-sec" id="ck-ex"><div class="cd-sec-t">✍️ 例句</div>
+      ${s.story ? `<div class="cd-sec"><div class="cd-sec-t">${artEm('📖')} 典故</div><div class="cd-sec-b ck-story">${esc(s.story)}</div></div>` : ''}
+      ${s.evolve ? `<div class="cd-sec"><div class="cd-sec-t">${artEm('🔗')} 本义 → 今义</div><div class="cd-sec-b">${esc(s.evolve)}</div></div>` : ''}
+      ${s.usage ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">${artEm('🎯')} 公考怎么考</div><div class="cd-sec-b">${esc(s.usage)}</div></div>` : ''}
+      <div class="cd-sec" id="ck-ex"><div class="cd-sec-t">${artEm('✍️')} 例句</div>
         <div class="cd-sec-b"><button class="btn tiny" id="ck-ex-go" data-cid="${cid}">找一句真实例句</button>
         <span class="ck-ex-hint">先在人民日报等真语料里找；找不到才 AI 仿写（会标明）</span></div></div>
       <div class="cd-sec" id="ck-cf"><div class="cd-sec-t">⚖️ 易混辨析</div>
@@ -269,7 +268,7 @@ function ckRenderConfuse(box, d) {
         ${x.wrong ? `<div class="ck-cf-bad">✗ ${esc(x.wrong)}</div>` : ''}
       </div>`).join('')}
     ${q ? `<div class="ck-cf-quiz" data-ans="${esc(q.answer)}">
-        <div class="ck-cf-q">📝 ${esc(q.stem)}</div>
+        <div class="ck-cf-q">${artEm('📝')} ${esc(q.stem)}</div>
         <div class="ck-cf-opts">${q.options.map((o, i) =>
           `<button class="dt-opt" data-ckq="${DT_L[i]}">${esc(o)}</button>`).join('')}</div>
         <div class="ck-cf-why hidden">${esc(q.why || '')}</div>
@@ -304,7 +303,7 @@ async function openHyper(hid) {
         <div class="cd-meta">上位词 · 逻辑填空里的概括词</div></div>
       <div class="cd-sec"><div class="cd-sec-t">下位词</div>
         <div class="cd-sec-b">${esc(d.subs || '')}</div></div>
-      ${d.note ? `<div class="cd-sec"><div class="cd-sec-t">💡 提示</div><div class="cd-sec-b">${esc(d.note)}</div></div>` : ''}
+      ${d.note ? `<div class="cd-sec"><div class="cd-sec-t">${artEm('💡')} 提示</div><div class="cd-sec-b">${esc(d.note)}</div></div>` : ''}
       ${(d.story || []).map(x => `
         <div class="cd-sec hy-sec">
           <div class="cd-sec-t">${esc(x.name)}</div>

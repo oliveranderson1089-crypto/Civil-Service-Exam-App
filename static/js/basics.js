@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, esc, mdToHtml, push,
-   rqStart, stack, toast */
+/* global $, api, artEm, c, esc, mdToHtml, push, rqStart, stack, toast */
 
 /* ================= 机构讲义：优路精讲 / 三色速记 / 考点对照 =================
  *
@@ -63,7 +62,7 @@ function bkBlocks(blocks, sid) {
     const k = BK_KIND[b.kind] || BK_KIND.concept;
     const to = b.page_to || b.page;
     const pg = (sid && b.page)
-      ? `<button class="bk-pagebtn" data-bkpage="${sid}:${b.page}:${to}">🖼 原书 ${to > b.page ? `P${b.page}-P${to}` : 'P' + b.page}</button>` : '';
+      ? `<button class="bk-pagebtn" data-bkpage="${sid}:${b.page}:${to}">${artEm('🖼')} 原书 ${to > b.page ? `P${b.page}-P${to}` : 'P' + b.page}</button>` : '';
     return `<div class="bk-block ${k.cls}">${k.t ? `<span class="bk-tag">${k.t}</span>` : ''}
       <div class="bk-body">${bkMd(b.md)}</div>${pg}</div>`;
   }).join('') || '<p class="empty">这一节没有正文</p>';
@@ -208,8 +207,8 @@ async function openBasicsTopic(tid) {
     $('#bkcmp-wrap').innerHTML = `
       <div class="bk-head"><div class="bk-head-d"><button class="btn" id="bkcmp-back">‹ 考点列表</button></div>
         <div class="bk-head-t">${esc(d.topic.name)}</div></div>
-      <div class="bk-cmp">${side(d.youlu || [], 'bk-y', '📘 优路 · 系统精讲')}
-        ${side(d.sanse || [], 'bk-s', '⚡ 三色笔记 · 速记')}</div>${bkPractice(d.practice)}`;
+      <div class="bk-cmp">${side(d.youlu || [], 'bk-y', artEm('📘') + ' 优路 · 系统精讲')}
+        ${side(d.sanse || [], 'bk-s', artEm('⚡') + ' 三色笔记 · 速记')}</div>${bkPractice(d.practice)}`;
     bkCmpPr = d.practice;
   } catch (e) { $('#bkcmp-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
@@ -236,16 +235,16 @@ async function openBoardKb(board) {
 function renderBkb() {
   const d = bkbData;
   const ai = d.ai
-    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">📚 基础知识 · 方法技巧（AI 整理）</div>
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">${artEm('📚')} 基础知识 · 方法技巧（AI 整理）</div>
         <div class="cd-sec-b">${mdToHtml(d.ai)}</div>
         <button class="btn cd-ai-regen" id="bkb-regen">重新生成</button></div>`
     : `<div class="bkb-gen"><p class="cd-tip" style="margin:0 0 12px">还没有整理这个板块的基础知识点，让 AI 帮你系统梳理一份。</p>
-        <button class="btn primary" id="bkb-gen" style="width:100%;padding:13px;">🤖 AI 生成基础知识点</button></div>`;
+        <button class="btn primary" id="bkb-gen" style="width:100%;padding:13px;">${artEm('🤖')} AI 生成基础知识点</button></div>`;
   const pts = (d.points || []).map(p =>
     `<div class="bkb-point"><div class="bkb-point-c">${esc(p.content).replace(/\n/g, '<br>')}</div>
       <button class="bkb-point-del" data-bpdel="${p.id}">×</button></div>`).join('');
   $('#bkb-wrap').innerHTML = ai + `
-    <div class="cd-sec"><div class="cd-sec-t">✍️ 我的补充</div>
+    <div class="cd-sec"><div class="cd-sec-t">${artEm('✍️')} 我的补充</div>
       <div class="bkb-points">${pts || '<p class="cd-tip" style="margin:0 0 10px">还没有补充，写点自己的要点/技巧吧。</p>'}</div>
       <div class="bkb-add">
         <textarea id="bkb-input" rows="2" placeholder="添加一条自己的知识点/技巧…"></textarea>

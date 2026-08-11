@@ -23,8 +23,8 @@
    openYyErr, openYyLib */
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'tab', 'allfeats', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'bktree', 'bknode', 'bkcmp', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'exam', 'gaikuo', 'gongwen', 'yyerr', 'yylib', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'realq', 'realrun', 'realrec', 'realrecd', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'fanwen', 'fanwend', 'drive', 'chat'];
-const TITLES = { home: '公考助手', section: '', board: '', tab: '', allfeats: '全部功能', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', bktree: '', bknode: '', bkcmp: '考点对照', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', exam: '全国考情', gaikuo: '概括句积累', gongwen: '应用文上位词', yyerr: '应用文改错', yylib: '应用文素材库', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', realq: '历年真题', realrun: '', realrec: '做题记录', realrecd: '回看这一组', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', findwrong: '错题记录', videos: '每日新闻视频' };
+const VIEWS = ['home', 'section', 'board', 'tab', 'allfeats', 'stars', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'bktree', 'bknode', 'bkcmp', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'exam', 'gaikuo', 'gongwen', 'yyerr', 'yylib', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'realq', 'realrun', 'realrec', 'realrecd', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'fanwen', 'fanwend', 'drive', 'chat'];
+const TITLES = { home: '公考助手', section: '', board: '', tab: '', allfeats: '全部功能', stars: '收藏', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', bktree: '', bknode: '', bkcmp: '考点对照', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', exam: '全国考情', gaikuo: '概括句积累', gongwen: '应用文上位词', yyerr: '应用文改错', yylib: '应用文素材库', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', realq: '历年真题', realrun: '', realrec: '做题记录', realrecd: '回看这一组', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', findwrong: '错题记录', videos: '每日新闻视频' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -76,13 +76,16 @@ function render() {
    在 CSS 里再抄一份对照表迟早对不上；直接读它算出来的值，永远和内容列对齐。 */
 function renderCrumb(st) {
   const box = $('#crumb'); if (!box) return;
-  const parts = stack.map(s2 => s2.title || TITLES[s2.view] || '').filter(Boolean);
+  // data-cb 必须是**stack 里的真实下标**：点击那边是 stack.slice(0, i+1)。
+  // 过滤掉没标题的层之后再用过滤后的序号，遇到 push({view:'notebook'}) 这种空标题
+  // 就会错位一格 —— 点当前这层反而退回上一层。
+  const parts = stack.map((s2, i) => ({ i, t: s2.title || TITLES[s2.view] || '' })).filter(p => p.t);
   const on = parts.length > 1;
   box.classList.toggle('hidden', !on);
   document.body.classList.toggle('has-crumb', on);
   if (!on) return;
-  box.innerHTML = parts.map((t, i) =>
-    `<span class="cb-i${i === parts.length - 1 ? ' cur' : ''}" data-cb="${i}">${esc(t)}</span>`)
+  box.innerHTML = parts.map((p, n) =>
+    `<span class="cb-i${n === parts.length - 1 ? ' cur' : ''}" data-cb="${p.i}">${esc(p.t)}</span>`)
     .join('<span class="cb-s">›</span>');
   const v = $('#view-' + st.view);
   if (v) {
@@ -171,11 +174,11 @@ async function init() {
     <div class="home-card" data-go="wrongq"><div class="hc-logo">${IC.wrong}</div><div class="hc-name">错题本</div><div class="hc-desc">拍照/输入 · AI 判题型给解析</div></div>
     <div class="home-card" data-go="materials"><div class="hc-logo">${IC.folder}</div><div class="hc-name">资料库</div><div class="hc-desc">图片/文档/网页 应用内查看</div></div>
     <div class="home-card" data-go="quiz"><div class="hc-logo">${IC.edit}</div><div class="hc-name">题库</div><div class="hc-desc">四川省考卷面 · 每周自动更新</div></div>
-    <div class="home-card" data-go="exam"><div class="hc-logo hc-exam">📣</div><div class="hc-name">全国考情</div><div class="hc-desc">国考/省考/事考公告 · 每天自动汇总</div></div>
+    <div class="home-card" data-go="exam"><div class="hc-logo hc-exam"><span class="hc-em">📣</span><span class="hc-sv">${IC.flag}</span></div><div class="hc-name">全国考情</div><div class="hc-desc">国考/省考/事考公告 · 每天自动汇总</div></div>
     <div class="home-card" data-go="realq"><div class="hc-logo hc-real">${IC.target || IC.edit}<span class="rev-badge hidden" id="realq-badge"></span></div><div class="hc-name">历年真题</div><div class="hc-desc">国考/川考原卷 · 反复刷 · 错题自动重现</div></div>
     <div class="home-card" data-go="tasks"><div class="hc-logo">${IC.check || IC.clock}</div><div class="hc-name">任务清单</div><div class="hc-desc">每日任务 · 互监待办</div></div>
-    <div class="home-card" data-go="drive"><div class="hc-logo hc-drive">☁️</div><div class="hc-name">云盘</div><div class="hc-desc">存取任意文件 · 发给好友</div></div>
-    <div class="home-card" data-go="chat"><div class="hc-logo hc-chat">💬<span class="chat-badge hidden" id="chat-badge"></span></div><div class="hc-name">聊天</div><div class="hc-desc">加好友 · 聊天 · 传文件</div></div>
+    <div class="home-card" data-go="drive"><div class="hc-logo hc-drive"><span class="hc-em">☁️</span><span class="hc-sv">${IC.cloud}</span></div><div class="hc-name">云盘</div><div class="hc-desc">存取任意文件 · 发给好友</div></div>
+    <div class="home-card" data-go="chat"><div class="hc-logo hc-chat"><span class="hc-em">💬</span><span class="hc-sv">${IC.chat}</span><span class="chat-badge hidden" id="chat-badge"></span></div><div class="hc-name">聊天</div><div class="hc-desc">加好友 · 聊天 · 传文件</div></div>
     <div class="home-card" data-go="review"><div class="hc-logo hc-rev">${IC.clock || IC.bulb}<span class="rev-badge hidden" id="rev-badge"></span></div><div class="hc-name">今日复习</div><div class="hc-desc" id="rev-desc">遗忘曲线 · 该复习的都在这</div></div>`;
   UI_ORDERS = ME.ui_orders || {};
   $('#home-cards').dataset.dragsort = 'home';

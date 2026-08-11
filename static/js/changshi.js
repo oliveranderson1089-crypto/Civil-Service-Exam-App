@@ -11,6 +11,18 @@
 
 /* ============= 常识积累（7板块 · 考情 + 高频考点） ============= */
 const CS_COLOR = { '人文常识': '#b23b2e', '科技常识': '#2b6fd6', '法律常识': '#8c2f24', '地理常识': '#0f766e', '经济常识': '#c2671f', '公文常识': '#7a5cc0', '管理常识': '#5a6b85' };
+/* 板块在传统色盘里的位置（节气色主题用，见 style.css 的 .cs-c0…5）。
+   按 CS_COLOR 的**固定顺序**取，不按接口返回的顺序 —— 否则接口哪天换个排序，
+   人文昨天是缃、今天就成了赭，按色识别当场失效。
+   名字不在表里（以后新增板块）就用名字的字符和取模，同一个名字永远落同一个色。 */
+const CS_KEYS = Object.keys(CS_COLOR);
+function CS_IDX(name) {
+  const i = CS_KEYS.indexOf(name);
+  if (i >= 0) return i % 6;
+  let h = 0;
+  for (let k = 0; k < name.length; k++) h = (h + name.charCodeAt(k)) % 6;
+  return h;
+}
 let csBoard = '', csTopic = '';
 async function openChangshi() {
   push({ view: 'changshi', title: '常识积累' });
@@ -21,7 +33,7 @@ async function openChangshi() {
       <div class="cs-tier-name">${esc(t.name)}</div>
       <div class="home-cards cs-cards" data-dragsort="csb:${esc(t.name)}">${t.boards.map(b => `
         <div class="home-card" data-csb="${esc(b.name)}">
-          <div class="hc-logo" style="background:${CS_COLOR[b.name] || '#666'}">${esc(b.name[0])}</div>
+          <div class="hc-logo cs-c${CS_IDX(b.name)}" style="background:${CS_COLOR[b.name] || '#666'}">${esc(b.name[0])}</div>
           <div class="hc-name">${esc(b.name)}</div>
           <div class="hc-desc">${b.topics} 个专题 · ${b.count} 条考点</div>
         </div>`).join('')}</div>`).join('');

@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, appPrompt, back, c, esc,
-   push, rqPractice, toast */
+/* global $, api, appConfirm, appPrompt, artEm, back, c, esc, push, rqPractice, toast */
 
 /* ================= 错题本 ================= */
 const WQ_BOARDS = ['常识判断', '资料分析', '判断推理', '数量关系', '政治理论', '言语理解与表达', '申论'];
@@ -129,7 +128,7 @@ async function openWqDetail(id) {
    就只能删了重记（而删掉会连带把这题的收录状态、来源一起丢掉）。 */
 function wqSec(t, v, fld) {
   if (!v && !fld) return '';
-  const edit = fld ? `<button class="wq-edit" data-wqedit="${fld}">✏️ 改</button>` : '';
+  const edit = fld ? `<button class="wq-edit" data-wqedit="${fld}">${artEm('✏️')} 改</button>` : '';
   return `<div class="cd-sec"><div class="cd-sec-t">${t}${edit}</div>
     <div class="cd-sec-b">${v ? esc(v).replace(/\n/g, '<br>') : '<i class="wq-none">（空）</i>'}</div></div>`;
 }
@@ -145,7 +144,7 @@ function renderWqDetail() {
       <button class="cls-star ${w.starred ? 'on' : ''}" id="wqd-star">${w.starred ? '★' : '☆'}</button>
     </div>
     <div class="cd-sec"><div class="cd-sec-t">题目
-      <button class="wq-edit" data-wqedit="question">✏️ 改</button></div>
+      <button class="wq-edit" data-wqedit="question">${artEm('✏️')} 改</button></div>
       <div class="cd-sec-b wqd-q">${esc(w.question).replace(/\n/g, '<br>') || '（见图）'}</div>
       ${w.image ? `<img class="wqd-img" src="${w.image}">` : ''}</div>
     ${wqSec('我的答案 / 解析', w.answer, 'answer')}
@@ -168,7 +167,7 @@ function renderWqDetail() {
     <div class="wqd-acts">
       ${w.src_kind === 'realq' && w.src_key
     ? '<button class="btn" id="wqd-redo">🔁 重做原题</button>' : ''}
-      <button class="btn" id="wqd-reanalyze">🤖 重新分析</button>
+      <button class="btn" id="wqd-reanalyze">${artEm('🤖')} 重新分析</button>
       <button class="btn" id="wqd-del" style="color:#e0524d;border-color:#f0c9c6;">删除</button>
     </div>`;
 }

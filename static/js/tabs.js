@@ -13,14 +13,14 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, BOARD_FEATURES, ME, SECTIONS, api, basicsFeats, esc, goHome,
+/* global $, BOARD_FEATURES, SECTIONS, api, artIcon, basicsFeats, esc, goHome, lbView, meView,
    openBoardFeat, push, stack,
-   openAccount, openAllFeats, openChangkao, openChangshi, openChat, openCkBoard, openClassics,
+   openAccount, openChangkao, openChangshi, openChat, openCkBoard, openClassics,
    openDocqa, openDrafts, openDrill, openDrive, openDtest, openEssays, openExam,
    openFanwen, openFind, openGaikuo, openGongwen, openIdiom, openKb, openMaterials,
-   openNews, openNotes, openNotify, openPartyDict, openPlanLog, openPolicyDocs,
+   openNews, openNotes, openPartyDict, openPlanLog, openPolicyDocs,
    openQuiz, openQuizSets, openRealq, openReview, openSection, openShenlun,
-   openSucai, openTasks, openTheory, openVideos, openWorks, openWrite,
+   openStars, openSucai, openTasks, openTheory, openVideos, openWorks, openWrite,
    openWrongq, openYyErr, openYyLib */
 
 const TB_SVG = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
@@ -181,41 +181,34 @@ const TAB_DEFS = [
       ] },
     ].filter(g => !chip || g.name === chip),
   },
+  /* 库和我的这两页不走通用目录，各有一套首屏（js/tabviews.js，P4）：
+     库 = 图标格 + 最近打开，我的 = 完成度环 + 紧凑清单。
+     custom 给的是**渲染函数**不是 HTML：这两页都要拉接口，得自己控制「先出骨架、数据回来再补」。
+     左栏（电脑端）用下面的 rail 直达具体功能，不再用分组标题当锚点——新版没有那几个分组了。 */
   {
-    key: 'lib', name: '库', icon: TB_SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
-    groups: () => [
-      { name: '笔记与草稿', icon: 'note', items: [
-        { name: '小记', desc: '随手记 · 标签归类', go: () => openNotes() },
-        { name: '知识库', desc: '笔记本 · 文档 · 分组整理', go: () => openKb() },
-        { name: '草稿本', desc: '草稿纸留下的手写与演算', go: () => openDrafts() },
-      ] },
-      { name: '文件与云盘', icon: 'folder', items: [
-        { name: '资料库', desc: '图片 / 文档 / 网页 应用内查看', go: () => openMaterials() },
-        { name: '云盘', desc: '存取任意文件 · 发给好友', go: () => openDrive() },
-      ] },
+    key: 'lib', name: '库', sub: '小记 · 知识库 · 资料',
+    icon: TB_SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+    custom: () => lbView(),
+    rail: () => [
+      { name: '小记', icon: 'note', go: () => openNotes() },
+      { name: '知识库', icon: 'word', go: () => openKb() },
+      { name: '草稿本', icon: 'pen', go: () => openDrafts() },
+      { name: '资料库', icon: 'folder', go: () => openMaterials() },
+      { name: '云盘', icon: 'layers', go: () => openDrive() },
+      { name: '收藏', icon: 'target', go: () => openStars() },
     ],
   },
   {
-    key: 'me', name: '我的', icon: TB_SVG('<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>'),
-    groups: () => [
-      { name: '学习安排', icon: 'check', items: [
-        { name: '任务清单', desc: '每日任务 · 互监待办', go: () => openTasks() },
-        { name: '计划记录', desc: '进度回顾 · AI 分析', go: () => openPlanLog() },
-        { name: '今日复习', desc: '遗忘曲线', go: () => openReview() },
-      ] },
-      { name: '资讯', icon: 'overview', items: [
-        { name: '全国考情', desc: '国考 / 省考 / 事考公告 每天汇总', go: () => openExam() },
-      ] },
-      { name: '消息与好友', icon: 'word', items: [
-        { name: '聊天', desc: '加好友 · 聊天 · 传文件', go: () => openChat() },
-        { name: '消息', desc: '通知与提醒', go: () => openNotify() },
-      ] },
-      { name: '设置', icon: 'layers', items: [
-        { name: '全部功能', desc: '原来的首页九宫格 · 可长按拖动排序', go: () => openAllFeats() },
-        { name: '账户与外观', desc: '头像 / 壁纸 / 密码 / 同步', go: () => openAccount() },
-      ].concat(ME && ME.is_admin
-        ? [{ name: '管理后台', desc: '数据 / 质量 / 容量 / 健康', go: () => { location.href = '/admin'; } }]
-        : []) },
+    key: 'me', name: '我的', sub: '统计 · 计划 · 设置',
+    icon: TB_SVG('<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>'),
+    custom: () => meView(),
+    rail: () => [
+      { name: '任务清单', icon: 'check', go: () => openTasks() },
+      { name: '计划记录', icon: 'overview', go: () => openPlanLog() },
+      { name: '今日复习', icon: 'clock', go: () => openReview(), badge: () => tbBadge.review },
+      { name: '全国考情', icon: 'layers', go: () => openExam() },
+      { name: '聊天', icon: 'word', go: () => openChat() },
+      { name: '账户与外观', icon: 'target', go: () => openAccount() },
     ],
   },
 ];
@@ -246,6 +239,20 @@ async function tbLoadHub() {
   } catch (_) { /* 页面已经不在，不用补画 */ }
 }
 
+/* 自定义首屏（库 / 我的）也走这套「下标 + data-tbi」的点击分派：
+   函数名塞不进 DOM，两边各写一套点击处理就会走散。tabviews.js 只管拼 HTML，
+   每行登记一下拿个下标；重画前先 tbReset()，否则来回切几次 tbItems 就无限长了。 */
+function tbItem(it) { return tbItems.push(it) - 1; }
+function tbReset() { tbItems = []; }
+// 回来晚了的异步渲染要先问一句「这一屏还在不在」，别画到已经切走的标签上
+function tbIsCur(key) { return tbCur === key && !$('#view-tab').classList.contains('hidden'); }
+window.tbItem = tbItem;
+window.tbReset = tbReset;
+window.tbIsCur = tbIsCur;
+// tbBadge 也得挂上去：tabviews.js 读的是 window.tbBadge，少了这一行
+// 「我的」里的今日复习角标永远是 0，而左栏同一时刻显示着 12。
+window.tbBadge = tbBadge;
+
 function tbRow(it) {
   const i = tbItems.push(it) - 1;
   /* 标题**不能用 <b>**：夜间有条全局的 body.dark b{color:#f0c674!important}（正文着重用的金色），
@@ -260,7 +267,14 @@ function tbRow(it) {
 // 只重画内容，不动导航栈。切 chip、状态数字回来晚了，都走这儿
 function tbFill(key) {
   const def = TAB_DEFS.find(t => t.key === key);
-  if (!def || !def.groups) return;
+  if (!def) return;
+  if (def.custom) {                       // 库 / 我的：自己拉数据、自己渲染（js/tabviews.js）
+    $('#tab-chips').innerHTML = '';
+    $('#tab-chips').classList.add('hidden');
+    def.custom();
+    return;
+  }
+  if (!def.groups) return;
   const chips = def.chips ? def.chips() : [];
   const cur = tbChip[key] || '';
   tbItems = [];
@@ -283,10 +297,12 @@ function tbFill(key) {
 
 function tbRender(key) {
   const def = TAB_DEFS.find(t => t.key === key);
-  if (!def || !def.groups) return;
+  if (!def || !(def.groups || def.custom)) return;
   tbCur = key;
   tbLoadHub();                 // 第一次进标签页才去拉状态数字，之后走缓存
-  $('#tab-title').textContent = def.name;
+  // 副标题只是给这一页一句定位（「小记 · 知识库 · 资料」），没有就只出标题
+  $('#tab-title').innerHTML = esc(def.name)
+    + (def.sub ? `<span class="tab-sub">${esc(def.sub)}</span>` : '');
   tbFill(key);
   // 标签之间是平级切换，不该越堆越深：每次都把栈压回「首页 + 本标签页」两层，
   // 这样返回键从任何标签都是一步回首页，安卓的侧滑返回也不会退出到上一个标签。
@@ -311,8 +327,23 @@ $('#tab-groups').addEventListener('click', e => {
    两边共用一套 data-tb 和同一个点击处理：加一个标签只改 TAB_DEFS，不用两头对。
    谁出现由 CSS 断点决定（≤760 出底栏，≥761 出左栏），JS 不判断屏幕宽度——
    否则浏览器窗口一拖动，两边就对不上了。 */
-$('#tabbar').innerHTML = TAB_DEFS.map(t =>
-  `<button class="tb" data-tb="${esc(t.key)}">${t.icon}<i>${esc(t.name)}</i></button>`).join('');
+/* 图标现取不写死：主题带自己的一册字形（js/articons.js），换主题时 artIconsRepaint()
+   会再调一次这里。取不到册子就用 TAB_DEFS 里那枚默认的。 */
+function tbFillBar() {
+  $('#tabbar').innerHTML = TAB_DEFS.map(t =>
+    `<button class="tb" data-tb="${esc(t.key)}">${window.artIcon ? artIcon(t.key, t.icon) : t.icon}<i>${esc(t.name)}</i></button>`).join('');
+  tbBarMark();
+}
+/* 底栏高亮：和左栏 tbRailMark 一个口径——认**栈里最近的那个标签页**，不是当前视图。
+   单独拎出来是因为换主题会整段重画底栏，重画完得把亮着的那格找回来
+   （原来这段内联在 __tabView 里，重画后就只能等下一次切视图才恢复）。 */
+function tbBarMark() {
+  const bar = $('#tabbar'); if (!bar) return;
+  const t = [...stack].reverse().find(s => s.view === 'tab');
+  const cur = (stack.length <= 1 && (stack[0] || {}).view === 'home') ? 'today' : (t ? t.tab : '');
+  bar.querySelectorAll('[data-tb]').forEach(b => b.classList.toggle('on', b.dataset.tb === cur));
+}
+tbFillBar();
 /* 左栏是**两级**：分组标题 = 标签页（点了看全部），组内 = 那个标签下每天都点的几个（直达）。
    只有一级的话，任何一个二级功能都要「先点标签、再在页里找」，等于把省下来的那层又加回去。 */
 /* 左栏每个分组底下摆什么 —— **只有一套形式**。
@@ -347,11 +378,11 @@ function tbRailFill() {
     const subs = tbRailItems(t).map((it, i) => {
       const n = it.badge ? it.badge() : 0;
       return `<button class="sr-i" data-srq="${esc(t.key)}:${i}">
-        ${RAIL_ICON[it.icon] || ''}<i>${esc(it.name)}</i>
+        ${window.artIcon ? artIcon(it.icon, RAIL_ICON[it.icon] || '') : (RAIL_ICON[it.icon] || '')}<i>${esc(it.name)}</i>
         ${n ? `<span class="sr-bd">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
     }).join('');
     return `<div class="sr-g-h" data-tb="${esc(t.key)}">${esc(t.name)}</div>`
-      + (subs || `<button class="sr-i" data-tb="${esc(t.key)}">${t.icon}<i>${esc(t.name)}</i></button>`);
+      + (subs || `<button class="sr-i" data-tb="${esc(t.key)}">${window.artIcon ? artIcon(t.key, t.icon) : t.icon}<i>${esc(t.name)}</i></button>`);
   }).join('');
   tbRailMark();
 }
@@ -414,9 +445,7 @@ window.__tabView = function (view) {
   const on = !TAB_OFF.has(view);
   bar.classList.toggle('hidden', !on);
   document.body.classList.toggle('has-tabs', on);
-  const t = [...stack].reverse().find(s => s.view === 'tab');
-  const cur = (stack.length <= 1 && view === 'home') ? 'today' : (t ? t.tab : '');
-  bar.querySelectorAll('[data-tb]').forEach(b => b.classList.toggle('on', b.dataset.tb === cur));
+  tbBarMark();
   const rail = $('#siderail');
   if (rail) {
     /* 左栏和底栏的「该不该出现」不一样：手机上做题要整屏专注，

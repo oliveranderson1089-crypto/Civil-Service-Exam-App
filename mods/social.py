@@ -1070,89 +1070,668 @@ def drive_send(fid):
 
 
 # ---- 聊天 ----
-def _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size):
-    """收到的文件也放进收件人云盘的「聊天文件」文件夹里，方便他保存/转存。"""
-    dst = uuid.uuid4().hex + (ext or "")
-    try:
-        shutil.copyfile(os.path.join(src_dir, stored_name), os.path.join(_drive_dir(to), dst))
-    except Exception:
+def _dedup_stored(db, owner, digest):
+    """这个人云盘里已经有这份内容了吗（sha256 命中、且磁盘上确实还在）。命中就别再占一份盘。"""
+    if not digest:
         return None
+    r = db.execute("SELECT stored_name FROM drive_files WHERE owner_id=? AND sha256=? "
+                   "AND stored_name IS NOT NULL AND stored_name<>'' LIMIT 1",
+                   (owner, digest)).fetchone()
+    if r and os.path.exists(os.path.join(_drive_dir(owner), r["stored_name"])):
+        return r["stored_name"]
+    return None
+
+
+def _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size, digest=None):
+    """收到的文件也放进收件人云盘的「聊天文件」文件夹里，方便他保存/转存。
+
+    先按 sha256 看收件人自己云盘里有没有同一份内容：命中就直接引用那个 stored_name。
+    原先是无条件 copyfile —— 发一个 50MB 的资料，两人各占 50MB 配额，而云盘上传那条路
+    早就有 sha256 秒传，聊天这条路一直没走。共用 stored_name 是安全的：_drop_blob
+    删物理文件前会先数还有几行在引用它。
+    """
+    dst = _dedup_stored(db, to, digest)
+    if not dst:
+        dst = uuid.uuid4().hex + (ext or "")
+        try:
+            shutil.copyfile(os.path.join(src_dir, stored_name), os.path.join(_drive_dir(to), dst))
+        except Exception:
+            return None
     cur = db.execute(
-        "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
-        "VALUES(?,?,?,?,?,?,?,0,'chat')", (to, "聊天文件", name, dst, ext, mime or "", size))
+        "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source,sha256) "
+        "VALUES(?,?,?,?,?,?,?,0,'chat',?)",
+        (to, "聊天文件", name, dst, ext, mime or "", size, digest))
     return cur.lastrowid
 
 
-def _chat_send_file(db, frm, to, name, stored_name, size, mime, src_dir):
+def _chat_send_file(db, frm, to, name, stored_name, size, mime, src_dir, digest=None, reply_to=None):
     ext = os.path.splitext(name)[1].lower()
-    fid_to = _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size)
+    fid_to = _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size, digest)
     kind = "image" if (mime or "").startswith("image/") or ext in (".jpg", ".jpeg", ".png", ".gif", ".webp") else "file"
     cur = db.execute(
-        "INSERT INTO chat_msgs(from_uid,to_uid,kind,file_id,file_name,file_size,file_mime) "
-        "VALUES(?,?,?,?,?,?,?)", (frm, to, kind, fid_to, name, size, mime or ""))
+        "INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,file_id,file_name,file_size,file_mime,reply_to) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (frm, to, _direct_conv(db, frm, to), kind, fid_to, name, size, mime or "", reply_to or None))
     # 通知放到调用方 commit 之后（见 chat_send/drive_send），否则对方可能在提交前就来拉、扑空
     return cur.lastrowid
 
 
+# ================================================================ 会话（一对一 + 小组共用）
+def _direct_conv(db, a, b, create=True):
+    """(a,b) 这一对的一对一会话 id。a==b 就是文件传输助手。没有就建一条。"""
+    lo, hi = min(a, b), max(a, b)
+    r = db.execute(
+        "SELECT c.id FROM conversations c WHERE c.kind='direct' AND EXISTS("
+        "  SELECT 1 FROM chat_msgs m WHERE m.conv_id=c.id AND MIN(m.from_uid,m.to_uid)=? "
+        "  AND MAX(m.from_uid,m.to_uid)=?) LIMIT 1", (lo, hi)).fetchone()
+    if r:
+        return r["id"]
+    # 还没发过消息的一对：靠成员表找（两人且都在里面）
+    r = db.execute(
+        "SELECT m1.conv_id FROM conv_members m1 JOIN conv_members m2 ON m2.conv_id=m1.conv_id "
+        "JOIN conversations c ON c.id=m1.conv_id "
+        "WHERE c.kind='direct' AND m1.user_id=? AND m2.user_id=? "
+        "AND (SELECT COUNT(*) FROM conv_members x WHERE x.conv_id=m1.conv_id)=? LIMIT 1",
+        (lo, hi, 1 if lo == hi else 2)).fetchone()
+    if r:
+        return r["conv_id"]
+    if not create:
+        return 0
+    cid = db.execute("INSERT INTO conversations(kind,title) VALUES('direct','')").lastrowid
+    for u in {lo, hi}:
+        db.execute("INSERT OR IGNORE INTO conv_members(conv_id,user_id) VALUES(?,?)", (cid, u))
+    return cid
+
+
+def _is_member(db, cid, u):
+    return bool(db.execute("SELECT 1 FROM conv_members WHERE conv_id=? AND user_id=?",
+                           (cid, u)).fetchone())
+
+
+def _conv_peers(db, cid, exclude=None):
+    """会话里除了 exclude 之外的人（推送/通知要挨个发）。"""
+    return [r["user_id"] for r in db.execute(
+        "SELECT user_id FROM conv_members WHERE conv_id=?", (cid,)).fetchall()
+        if r["user_id"] != exclude]
+
+
+def _mark_read(db, cid, u, upto=None):
+    """把某人在这个会话里的已读水位推到 upto（默认推到最新）。
+
+    未读一律按水位算，不再逐条数 read_at —— 群聊里一条消息有多个读者，
+    单条上的 read_at 表达不了「谁读到哪」。read_at 仍然写，一对一的已读回执还靠它。
+    """
+    if upto is None:
+        upto = db.execute("SELECT COALESCE(MAX(id),0) FROM chat_msgs WHERE conv_id=?",
+                          (cid,)).fetchone()[0] or 0
+    db.execute("UPDATE conv_members SET last_read_id=MAX(last_read_id,?) "
+               "WHERE conv_id=? AND user_id=?", (upto, cid, u))
+    return upto
+
+
+def _reply_to(db, me, fid):
+    """请求里带的「引用哪条」。必须校验它确实属于这个会话——否则拿别人的消息 id
+    也能引用成功，等于给了一个探内容的口子（引用条里会回显原文摘要）。"""
+    raw = (request.form.get("reply_to") if request.files
+           else (request.get_json(silent=True) or {}).get("reply_to"))
+    try:
+        rid = int(raw or 0)
+    except (TypeError, ValueError):
+        return None
+    if not rid:
+        return None
+    ok = db.execute("SELECT 1 FROM chat_msgs WHERE id=? AND ((from_uid=? AND to_uid=?) "
+                    "OR (from_uid=? AND to_uid=?))", (rid, me, fid, fid, me)).fetchone()
+    return rid if ok else None
+
+
+# 能发进聊天的应用内容（丙）。key → (显示名, 前端打开它的函数)
+# 这是这个聊天区别于微信的地方：发过去的不是一段文字，是应用里那一条，点开直达。
+CARD_KINDS = {
+    "wrongq": ("错题", "openWrongq"),
+    "classic": ("古诗文", "openClassics"),
+    "sucai": ("素材", "openSucai"),
+    "note": ("小记", "openNotes"),
+    "entry": ("收录的词", "openIdiom"),
+}
+
+
+def _card_of(r):
+    """把 kind='card' 那行的 body 解回卡片对象；解不出来就当普通文本。"""
+    if r["kind"] != "card":
+        return None
+    try:
+        c = json.loads(r["body"] or "{}")
+    except Exception:
+        return None
+    return c if isinstance(c, dict) and c.get("kind") in CARD_KINDS else None
+
+
+def _preview(r):
+    """会话列表里那一行摘要。"""
+    if not r:
+        return ""
+    if r["recalled_at"]:
+        return "[已撤回]"
+    if r["kind"] == "card":
+        c = _card_of(r) or {}
+        return ("[%s] %s" % (CARD_KINDS.get(c.get("kind"), ("内容",))[0], c.get("title") or ""))[:30]
+    if r["kind"] == "text":
+        return (r["body"] or "")[:30]
+    return ("[图片]" if r["kind"] == "image" else "[文件] " + (r["file_name"] or ""))[:30]
+
+
+def _msg_out(r, me, quoted=None):
+    """一条消息发给前端的样子。撤回的只留个壳（正文和文件都不给）。"""
+    if r["recalled_at"]:
+        return {"id": r["id"], "mine": r["from_uid"] == me, "kind": "recalled",
+                "body": "", "time": r["created_at"], "recalled": True}
+    m = {"id": r["id"], "mine": r["from_uid"] == me, "kind": r["kind"],
+         "body": r["body"] or "", "file_id": r["file_id"], "file_name": r["file_name"],
+         "file_size": r["file_size"], "time": r["created_at"], "read": bool(r["read_at"])}
+    if r["kind"] == "card":
+        m["card"] = _card_of(r)
+        if not m["card"]:                 # 解不出来的老数据/脏数据，退化成文本，别让气泡空着
+            m["kind"] = "text"
+    if quoted:
+        m["quote"] = quoted
+    return m
+
+
+def _quote_of(db, r, me):
+    """这条消息引用了谁的哪句话（给前端画引用条）。原消息被撤回/删了就说明一下。"""
+    if not r["reply_to"]:
+        return None
+    q = db.execute("SELECT * FROM chat_msgs WHERE id=?", (r["reply_to"],)).fetchone()
+    if not q:
+        return {"id": r["reply_to"], "who": "", "text": "原消息已删除"}
+    who = "我" if q["from_uid"] == me else uname(db, q["from_uid"])
+    if q["recalled_at"]:
+        return {"id": q["id"], "who": who, "text": "原消息已撤回"}
+    # 走 _preview：文本 / 图片 / 文件 / 内容卡片的摘要口径只该有一份。
+    # 原先这里自己写了一遍 if-else，加了卡片类型之后它就落进「[文件] 」那个分支了。
+    return {"id": q["id"], "who": who, "text": _preview(q)}
+
+
 @bp.get("/api/chat/conversations")
 def chat_convos():
+    """会话列表。
+
+    原先是「按好友数放大」的循环：每个好友 4 次查询（最后一条 / 未读数 / 用户名 / 头像），
+    20 个好友就是 80 次往返，而这个列表在进聊天页、每次收到推送、每次切页签时都会重拉。
+    改成两条：一条把每人的 last_id + 未读数 + 用户名头像一次带回（相关子查询在 SQLite
+    内部跑，不再有 Python 侧的来回），再一条按 id 批量取那几条消息的正文做摘要。
+    """
     db = get_db()
     me = uid()
-    convos = []
-    total_unread = 0
-    for r in db.execute("SELECT friend_id FROM friends WHERE user_id=?", (me,)).fetchall():
-        fid = r["friend_id"]
-        last = db.execute(
-            "SELECT * FROM chat_msgs WHERE (from_uid=? AND to_uid=?) OR (from_uid=? AND to_uid=?) "
-            "ORDER BY id DESC LIMIT 1", (me, fid, fid, me)).fetchone()
-        unread = db.execute("SELECT COUNT(*) FROM chat_msgs WHERE from_uid=? AND to_uid=? AND read_at IS NULL",
-                            (fid, me)).fetchone()[0]
-        total_unread += unread
-        prev = ""
-        if last:
-            prev = last["body"] if last["kind"] == "text" else ("[图片]" if last["kind"] == "image" else "[文件] " + (last["file_name"] or ""))
-        convos.append({"id": fid, "username": uname(db, fid), "avatar": _uavatar(db, fid),
-                       "preview": prev[:30],
-                       "time": (last["created_at"] if last else ""), "unread": unread,
-                       "last_id": last["id"] if last else 0})
+    rows = db.execute(
+        "SELECT f.friend_id fid, u.username, u.avatar,"
+        " (SELECT MAX(m.id) FROM chat_msgs m WHERE (m.from_uid=? AND m.to_uid=f.friend_id)"
+        "   OR (m.from_uid=f.friend_id AND m.to_uid=?)) last_id,"
+        " (SELECT COUNT(*) FROM chat_msgs m WHERE m.from_uid=f.friend_id AND m.to_uid=?"
+        "   AND m.read_at IS NULL) unread"
+        " FROM friends f JOIN users u ON u.id=f.friend_id WHERE f.user_id=?",
+        (me, me, me, me)).fetchall()
+    # 文件传输助手（和自己的会话，跨设备传文件/暂存）
+    self_last = db.execute("SELECT MAX(id) FROM chat_msgs WHERE from_uid=? AND to_uid=?",
+                           (me, me)).fetchone()[0] or 0
+    ids = [r["last_id"] for r in rows if r["last_id"]] + ([self_last] if self_last else [])
+    last = {}
+    if ids:
+        q = "SELECT * FROM chat_msgs WHERE id IN (%s)" % ",".join("?" * len(ids))
+        last = {m["id"]: m for m in db.execute(q, ids).fetchall()}
+    convos, total_unread = [], 0
+    for r in rows:
+        m = last.get(r["last_id"])
+        total_unread += r["unread"]
+        convos.append({"id": r["fid"], "username": r["username"],
+                       "avatar": ("/skin/%d/%s" % (r["fid"], r["avatar"])) if r["avatar"] else "",
+                       "preview": _preview(m), "time": (m["created_at"] if m else ""),
+                       "unread": r["unread"], "last_id": r["last_id"] or 0,
+                       # 最后一条是自己发的时候，列表里也显示送达/已读（✓ / ✓✓）
+                       "last_mine": bool(m and m["from_uid"] == me),
+                       "last_read": bool(m and m["from_uid"] == me and m["read_at"])})
+    # 小组：未读按水位算（群里一条消息有多个读者，单条上的 read_at 表达不了「谁读到哪」）
+    groups = db.execute(
+        "SELECT c.id, c.title, mm.last_read_id,"
+        " (SELECT MAX(id) FROM chat_msgs x WHERE x.conv_id=c.id) last_id,"
+        " (SELECT COUNT(*) FROM chat_msgs x WHERE x.conv_id=c.id AND x.id>mm.last_read_id"
+        "   AND x.from_uid<>?) unread,"
+        " (SELECT COUNT(*) FROM conv_members y WHERE y.conv_id=c.id) n_mem"
+        " FROM conversations c JOIN conv_members mm ON mm.conv_id=c.id AND mm.user_id=?"
+        " WHERE c.kind='group'", (me, me)).fetchall()
+    gids = [g["last_id"] for g in groups if g["last_id"]]
+    glast = {}
+    if gids:
+        q = "SELECT * FROM chat_msgs WHERE id IN (%s)" % ",".join("?" * len(gids))
+        glast = {m["id"]: m for m in db.execute(q, gids).fetchall()}
+    for g in groups:
+        m = glast.get(g["last_id"])
+        who = (uname(db, m["from_uid"]) + "：") if m and m["from_uid"] != me else ("我：" if m else "")
+        total_unread += g["unread"]
+        # 被 @ 的会话在列表里前置一个标记 —— 小组消息一多，光靠数字角标会淹掉
+        at = bool(db.execute("SELECT 1 FROM notifications WHERE user_id=? AND dkey LIKE ? AND kind='chat'",
+                             (me, "chatg:%d:%%:at" % g["id"])).fetchone())
+        convos.append({"id": g["id"], "group": True, "username": g["title"],
+                       "avatar": "", "preview": (who + _preview(m)) if m else "还没有人说话",
+                       "time": (m["created_at"] if m else ""), "unread": g["unread"],
+                       "last_id": g["last_id"] or 0, "last_mine": False, "last_read": False,
+                       "n_mem": g["n_mem"], "at": at})
     convos.sort(key=lambda c: -(c["last_id"]))
-    # 文件传输助手（和自己的会话，跨设备传文件/暂存），永远置顶
-    slast = db.execute("SELECT * FROM chat_msgs WHERE from_uid=? AND to_uid=? ORDER BY id DESC LIMIT 1",
-                       (me, me)).fetchone()
-    sprev = ""
-    if slast:
-        sprev = slast["body"] if slast["kind"] == "text" else ("[图片]" if slast["kind"] == "image" else "[文件] " + (slast["file_name"] or ""))
+    sm = last.get(self_last)
     convos.insert(0, {"id": me, "username": "文件传输助手", "avatar": "", "self": True,
-                      "preview": sprev[:30], "time": (slast["created_at"] if slast else ""),
-                      "unread": 0, "last_id": (slast["id"] if slast else 0)})
+                      "preview": _preview(sm), "time": (sm["created_at"] if sm else ""),
+                      "unread": 0, "last_id": self_last, "last_mine": False, "last_read": False})
     return jsonify({"conversations": convos, "unread": total_unread})
+
+
+CHAT_PAGE = 50          # 首屏 / 每次向上翻页的条数
+CHAT_MAX = 4000         # 单条文本上限（前端同步显示字数，见 chat.js CHAT_MAX）
 
 
 @bp.get("/api/chat/<int:fid>")
 def chat_history(fid):
+    """取消息。三种用法，靠参数区分：
+
+        （不带参数）  首屏：最近 CHAT_PAGE 条
+        ?before=<id>  向上翻页：比这条更早的 CHAT_PAGE 条
+        ?after=<id>   增量拉新：SSE 推送和兜底轮询走这条
+
+    首屏原先是 `id>0 ORDER BY id LIMIT 200` —— 那是从**最老**的一条开始截 200 条，
+    聊过几百条的会话进去看到的是几个月前的对话，最近说了什么反而要等兜底轮询一批批补。
+    """
     db = get_db()
     me = uid()
     if fid != me and not _are_friends(db, me, fid):   # fid==me = 文件传输助手
         return jsonify({"error": "不是好友"}), 403
+    where = "((from_uid=? AND to_uid=?) OR (from_uid=? AND to_uid=?))"
+    pair = (me, fid, fid, me)
     after = int(request.args.get("after") or 0)
-    rows = db.execute(
-        "SELECT * FROM chat_msgs WHERE ((from_uid=? AND to_uid=?) OR (from_uid=? AND to_uid=?)) AND id>? "
-        "ORDER BY id LIMIT 200", (me, fid, fid, me, after)).fetchall()
+    before = int(request.args.get("before") or 0)
+    has_more = False
+    if after:
+        rows = db.execute("SELECT * FROM chat_msgs WHERE %s AND id>? ORDER BY id LIMIT 200" % where,
+                          pair + (after,)).fetchall()
+    else:
+        # 倒着取 PAGE+1 条：多要的那一条只用来判断「上面还有没有」，不返给前端
+        rows = db.execute(
+            "SELECT * FROM chat_msgs WHERE %s%s ORDER BY id DESC LIMIT ?"
+            % (where, " AND id<?" if before else ""),
+            pair + ((before,) if before else ()) + (CHAT_PAGE + 1,)).fetchall()
+        has_more = len(rows) > CHAT_PAGE
+        rows = list(reversed(rows[:CHAT_PAGE]))
+    out = [_msg_out(r, me, _quote_of(db, r, me)) for r in rows]
+    # 撤回是**就地改状态**，增量拉取（after=最大 id）看不到它 —— 单给一份「这一屏之内
+    # 刚刚被撤回的」，前端据此把已经画出来的气泡换成「已撤回」。
+    recalled = [x[0] for x in db.execute(
+        "SELECT id FROM chat_msgs WHERE %s AND recalled_at IS NOT NULL "
+        "AND recalled_at > datetime('now','localtime','-1 day')" % where, pair).fetchall()]
+    # 对方读到哪了：前端据此把已经画出来的自己那些气泡从「✓ 已送达」翻成「✓✓ 已读」。
+    # 增量拉取只会带回**新**消息，老气泡的已读状态不会再随消息回来，所以单给一个水位。
+    read_upto = db.execute("SELECT MAX(id) FROM chat_msgs WHERE from_uid=? AND to_uid=? "
+                           "AND read_at IS NOT NULL", (me, fid)).fetchone()[0] or 0
+    if not before:      # 翻看更早的历史不该顺手把新消息标成已读
+        db.execute("UPDATE chat_msgs SET read_at=datetime('now','localtime') "
+                   "WHERE from_uid=? AND to_uid=? AND read_at IS NULL", (fid, me))
+        # 水位跟着一起推：一对一的未读现在也由它兜底（群聊只有它）
+        conv = _direct_conv(db, me, fid, create=False)
+        if conv:
+            _mark_read(db, conv, me)
+        # 读了这个会话 → 清掉它在消息中心/通知栏里堆积的那几条 chat 通知
+        db.execute("DELETE FROM notifications WHERE user_id=? AND kind='chat' AND link=?",
+                   (me, "chatroom:%d" % fid))
+        db.commit()
+    fname = "文件传输助手" if fid == me else uname(db, fid)
+    return jsonify({"messages": out, "me": me, "friend": fname, "has_more": has_more,
+                    "read_upto": read_upto, "recalled": recalled,
+                    "friend_avatar": _uavatar(db, fid), "me_avatar": _uavatar(db, me)})
+
+
+# ---- 小组（群聊）----
+@bp.post("/api/chat/groups")
+def group_new():
+    """建一个学习小组。只能拉自己的好友进来。"""
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()[:40]
+    if not name:
+        return jsonify({"error": "请给小组起个名字"}), 400
+    db, me = get_db(), uid()
+    ids = [int(x) for x in (data.get("members") or []) if str(x).isdigit()][:50]
+    ids = [x for x in ids if x != me and _are_friends(db, me, x)]
+    cid = db.execute("INSERT INTO conversations(kind,title,owner_id) VALUES('group',?,?)",
+                     (name, me)).lastrowid
+    for u in [me] + ids:
+        db.execute("INSERT OR IGNORE INTO conv_members(conv_id,user_id) VALUES(?,?)", (cid, u))
+    db.commit()
+    for u in ids:
+        _notify_chat(u, {"type": "friend"})        # 让对方的列表刷出这个新小组
+    return jsonify({"id": cid, "name": name, "members": len(ids) + 1}), 201
+
+
+@bp.get("/api/chat/groups/<int:cid>")
+def group_info(cid):
+    db, me = get_db(), uid()
+    c = db.execute("SELECT * FROM conversations WHERE id=? AND kind='group'", (cid,)).fetchone()
+    if not c or not _is_member(db, cid, me):
+        return jsonify({"error": "不在这个小组里"}), 403
+    rows = db.execute("SELECT m.user_id, u.username, u.avatar FROM conv_members m "
+                      "JOIN users u ON u.id=m.user_id WHERE m.conv_id=? ORDER BY m.joined_at",
+                      (cid,)).fetchall()
+    return jsonify({
+        "id": c["id"], "name": c["title"], "announce": c["announce"] or "",
+        "owner_id": c["owner_id"], "is_owner": c["owner_id"] == me,
+        "members": [{"id": r["user_id"], "username": r["username"],
+                     "avatar": ("/skin/%d/%s" % (r["user_id"], r["avatar"])) if r["avatar"] else "",
+                     "owner": r["user_id"] == c["owner_id"]} for r in rows]})
+
+
+@bp.patch("/api/chat/groups/<int:cid>")
+def group_patch(cid):
+    """改群名 / 群公告（群主）。"""
+    data = request.get_json(silent=True) or {}
+    db, me = get_db(), uid()
+    c = db.execute("SELECT * FROM conversations WHERE id=? AND kind='group'", (cid,)).fetchone()
+    if not c:
+        return jsonify({"error": "小组不存在"}), 404
+    if c["owner_id"] != me:
+        return jsonify({"error": "只有群主能改"}), 403
+    if "name" in data:
+        n = (data.get("name") or "").strip()[:40]
+        if n:
+            db.execute("UPDATE conversations SET title=? WHERE id=?", (n, cid))
+    if "announce" in data:
+        db.execute("UPDATE conversations SET announce=? WHERE id=?",
+                   ((data.get("announce") or "").strip()[:500], cid))
+    db.commit()
+    for u in _conv_peers(db, cid, me):
+        _notify_chat(u, {"type": "friend"})
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/chat/groups/<int:cid>/members")
+def group_invite(cid):
+    db, me = get_db(), uid()
+    if not _is_member(db, cid, me):
+        return jsonify({"error": "不在这个小组里"}), 403
+    ids = [int(x) for x in ((request.get_json(silent=True) or {}).get("members") or [])
+           if str(x).isdigit()][:50]
+    added = []
+    for u in ids:
+        if u != me and _are_friends(db, me, u) and not _is_member(db, cid, u):
+            db.execute("INSERT OR IGNORE INTO conv_members(conv_id,user_id) VALUES(?,?)", (cid, u))
+            added.append(u)
+    db.commit()
+    for u in added:
+        _notify_chat(u, {"type": "friend"})
+    return jsonify({"ok": True, "added": len(added)})
+
+
+@bp.delete("/api/chat/groups/<int:cid>/members/<int:target>")
+def group_kick(cid, target):
+    """退出小组（target=自己），或群主移除某人。群主退出＝解散。"""
+    db, me = get_db(), uid()
+    c = db.execute("SELECT * FROM conversations WHERE id=? AND kind='group'", (cid,)).fetchone()
+    if not c or not _is_member(db, cid, me):
+        return jsonify({"error": "不在这个小组里"}), 403
+    if target != me and c["owner_id"] != me:
+        return jsonify({"error": "只有群主能移除成员"}), 403
+    if target == me and c["owner_id"] == me:
+        # 群主走人就解散：留一个没人管的组，别人也退不出、改不了
+        db.execute("DELETE FROM conv_members WHERE conv_id=?", (cid,))
+        db.execute("DELETE FROM chat_msgs WHERE conv_id=?", (cid,))
+        db.execute("DELETE FROM conversations WHERE id=?", (cid,))
+        db.commit()
+        return jsonify({"ok": True, "dissolved": True})
+    db.execute("DELETE FROM conv_members WHERE conv_id=? AND user_id=?", (cid, target))
+    db.commit()
+    _notify_chat(target, {"type": "friend"})
+    return jsonify({"ok": True})
+
+
+RECALL_WINDOW = 2 * 60      # 撤回时限（秒），跟微信一个量级
+
+
+@bp.delete("/api/chat/msg/<int:mid>")
+def chat_msg_del(mid):
+    """撤回或删除一条消息。
+
+        mode=recall  两分钟内撤回自己发的，两边都看不见（对方那侧靠 recalled 列表同步）
+        mode=delete  只在自己这侧删掉（对方留着）——目前先当撤回的兜底，前端只用 recall
+    """
+    db = get_db()
+    me = uid()
+    r = db.execute("SELECT * FROM chat_msgs WHERE id=?", (mid,)).fetchone()
+    # 群消息的 to_uid 是 0，得按「我在不在这个会话里」判
+    inside = r and (me in (r["from_uid"], r["to_uid"])
+                    or (r["conv_id"] and _is_member(db, r["conv_id"], me)))
+    if not inside:
+        return jsonify({"error": "消息不存在"}), 404
+    if r["recalled_at"]:
+        return jsonify({"ok": True})            # 已经撤过了，当成功（重复点不该报错）
+    if r["from_uid"] != me:
+        return jsonify({"error": "只能撤回自己发的消息"}), 403
+    age = db.execute("SELECT (julianday('now','localtime')-julianday(?))*86400",
+                     (r["created_at"],)).fetchone()[0] or 0
+    if age > RECALL_WINDOW:
+        return jsonify({"error": "超过 2 分钟就不能撤回了"}), 400
+    db.execute("UPDATE chat_msgs SET recalled_at=datetime('now','localtime') WHERE id=?", (mid,))
+    # 顺带撤掉它在别人消息中心里的那条通知，别点进去发现是空的
+    if r["to_uid"]:
+        db.execute("DELETE FROM notifications WHERE user_id=? AND dkey=?",
+                   (r["to_uid"], "chat:%d:%d" % (me, mid)))
+        targets = [r["to_uid"]]
+    else:
+        db.execute("DELETE FROM notifications WHERE dkey LIKE ?", ("chatg:%d:%d%%" % (r["conv_id"], mid),))
+        targets = _conv_peers(db, r["conv_id"], me)
+    db.commit()
+    for t in targets:
+        _notify_chat(t, {"type": "msg", "from": me, "group": r["conv_id"] if not r["to_uid"] else 0,
+                         "name": uname(db, me), "preview": "[已撤回]", "silent": True})
+    # 撤回的是文本 → 把原文给回前端，好让「重新编辑」把它塞回输入框
+    return jsonify({"ok": True, "body": r["body"] if r["kind"] == "text" else ""})
+
+
+@bp.get("/api/chat/g/<int:cid>")
+def group_history(cid):
+    """群消息。分页口径和一对一那条完全一样，只是按 conv_id 取。"""
+    db, me = get_db(), uid()
+    if not _is_member(db, cid, me):
+        return jsonify({"error": "不在这个小组里"}), 403
+    after = int(request.args.get("after") or 0)
+    before = int(request.args.get("before") or 0)
+    has_more = False
+    if after:
+        rows = db.execute("SELECT * FROM chat_msgs WHERE conv_id=? AND id>? ORDER BY id LIMIT 200",
+                          (cid, after)).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT * FROM chat_msgs WHERE conv_id=?%s ORDER BY id DESC LIMIT ?"
+            % (" AND id<?" if before else ""),
+            ((cid, before, CHAT_PAGE + 1) if before else (cid, CHAT_PAGE + 1))).fetchall()
+        has_more = len(rows) > CHAT_PAGE
+        rows = list(reversed(rows[:CHAT_PAGE]))
+    names = {r["user_id"]: r["username"] for r in db.execute(
+        "SELECT m.user_id, u.username FROM conv_members m JOIN users u ON u.id=m.user_id "
+        "WHERE m.conv_id=?", (cid,)).fetchall()}
     out = []
     for r in rows:
-        out.append({"id": r["id"], "mine": r["from_uid"] == me, "kind": r["kind"],
-                    "body": r["body"] or "", "file_id": r["file_id"], "file_name": r["file_name"],
-                    "file_size": r["file_size"], "time": r["created_at"]})
-    # 把对方发来的标记已读
-    db.execute("UPDATE chat_msgs SET read_at=datetime('now','localtime') "
-               "WHERE from_uid=? AND to_uid=? AND read_at IS NULL", (fid, me))
-    # 读了这个会话 → 清掉它在消息中心/通知栏里堆积的那几条 chat 通知
-    db.execute("DELETE FROM notifications WHERE user_id=? AND kind='chat' AND link=?",
-               (me, "chatroom:%d" % fid))
-    db.commit()
-    fname = "文件传输助手" if fid == me else uname(db, fid)
-    return jsonify({"messages": out, "me": me, "friend": fname,
-                    "friend_avatar": _uavatar(db, fid), "me_avatar": _uavatar(db, me)})
+        m = _msg_out(r, me, _quote_of(db, r, me))
+        m["who"] = names.get(r["from_uid"], "")     # 群里要显示是谁说的
+        m["from"] = r["from_uid"]
+        out.append(m)
+    recalled = [x[0] for x in db.execute(
+        "SELECT id FROM chat_msgs WHERE conv_id=? AND recalled_at IS NOT NULL "
+        "AND recalled_at > datetime('now','localtime','-1 day')", (cid,)).fetchall()]
+    if not before:
+        _mark_read(db, cid, me)
+        db.execute("DELETE FROM notifications WHERE user_id=? AND kind='chat' AND link=?",
+                   (me, "chatgroup:%d" % cid))
+        db.commit()
+    c = db.execute("SELECT title, announce FROM conversations WHERE id=?", (cid,)).fetchone()
+    return jsonify({"messages": out, "me": me, "has_more": has_more, "recalled": recalled,
+                    "name": c["title"] if c else "", "announce": (c["announce"] if c else "") or "",
+                    "members": [{"id": k, "username": v} for k, v in names.items()]})
+
+
+@bp.post("/api/chat/g/<int:cid>")
+def group_send(cid):
+    """往小组发消息。文本 / 文件 / 内容卡片，跟一对一同一套。"""
+    db, me = get_db(), uid()
+    if not _is_member(db, cid, me):
+        return jsonify({"error": "不在这个小组里"}), 403
+    myname = uname(db, me)
+    gname = (db.execute("SELECT title FROM conversations WHERE id=?", (cid,)).fetchone() or
+             {"title": "小组"})["title"]
+    peers = _conv_peers(db, cid, me)
+
+    def _after(mid, prev):
+        """落库之后统一做的三件事：推给别人、写消息中心、把自己的水位推上去。"""
+        for u in peers:
+            _chat_center_notify_group(db, u, cid, gname, "%s：%s" % (myname, prev), mid)
+        _mark_read(db, cid, me, mid)
+        db.commit()
+        for u in peers:
+            _notify_chat(u, {"type": "msg", "group": cid, "name": gname,
+                             "preview": "%s：%s" % (myname, prev[:50])})
+        row = db.execute("SELECT created_at FROM chat_msgs WHERE id=?", (mid,)).fetchone()
+        return jsonify({"ok": True, "id": mid, "time": row["created_at"] if row else ""})
+
+    if request.files.get("file"):
+        f = request.files["file"]
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(0)
+        if size > DRIVE_MAX:
+            return jsonify({"error": "文件超过 %d MB" % (DRIVE_MAX // (1024 * 1024))}), 400
+        ext = os.path.splitext(f.filename)[1].lower()
+        tmp = os.path.join(_drive_dir(me), "tmp-" + uuid.uuid4().hex + ext)
+        f.save(tmp)
+        digest = _sha256_file(tmp)
+        dup = _dedup_stored(db, me, digest)
+        if dup:
+            os.remove(tmp)
+            stored = dup
+        else:
+            stored = uuid.uuid4().hex + ext
+            os.replace(tmp, os.path.join(_drive_dir(me), stored))
+        db.execute("INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source,sha256) "
+                   "VALUES(?,?,?,?,?,?,?,0,'chat',?)",
+                   (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size, digest))
+        kind = "image" if (f.mimetype or "").startswith("image/") else "file"
+        # 群文件不给每个人各复制一份（人一多就是几十份盘）：消息引用发送方那一份，
+        # chat_file 的鉴权已经是「你是这条消息所在会话的成员就放行」
+        fid_row = db.execute("SELECT id FROM drive_files WHERE owner_id=? AND stored_name=? "
+                             "ORDER BY id DESC LIMIT 1", (me, stored)).fetchone()
+        mid = db.execute(
+            "INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,file_id,file_name,file_size,file_mime,reply_to) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (me, 0, cid, kind, fid_row["id"], f.filename, size, f.mimetype or "",
+             _reply_to_conv(db, cid))).lastrowid
+        return _after(mid, "[图片]" if kind == "image" else "[文件] " + (f.filename or ""))
+
+    data = request.get_json(silent=True) or {}
+    card = data.get("card")
+    if isinstance(card, dict) and card.get("kind") in CARD_KINDS:
+        payload = {"kind": card["kind"], "id": int(card.get("id") or 0),
+                   "title": str(card.get("title") or "")[:120], "sub": str(card.get("sub") or "")[:60]}
+        mid = db.execute("INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,body,reply_to) "
+                         "VALUES(?,?,?,'card',?,?)",
+                         (me, 0, cid, json.dumps(payload, ensure_ascii=False),
+                          _reply_to_conv(db, cid))).lastrowid
+        return _after(mid, "[%s] %s" % (CARD_KINDS[card["kind"]][0], payload["title"]))
+
+    body = (data.get("body") or "").strip()
+    if not body:
+        return jsonify({"error": "空消息"}), 400
+    if len(body) > CHAT_MAX:
+        return jsonify({"error": "消息太长了（%d / %d 字），分两条发吧" % (len(body), CHAT_MAX)}), 400
+    mid = db.execute("INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,body,reply_to) "
+                     "VALUES(?,?,?,'text',?,?)",
+                     (me, 0, cid, body, _reply_to_conv(db, cid))).lastrowid
+    # @提及：被点名的人单独给一条通知，别让他在几十条里自己找
+    for u in _mentioned(db, cid, body, me):
+        _chat_center_notify_group(db, u, cid, gname, "%s 在小组里 @ 了你" % myname, mid, at=True)
+    return _after(mid, body[:60])
+
+
+def _mentioned(db, cid, body, me):
+    """这条消息 @ 了组里的谁。按用户名匹配，@所有人 就是全组。"""
+    if "@" not in body:
+        return []
+    rows = db.execute("SELECT m.user_id, u.username FROM conv_members m JOIN users u ON u.id=m.user_id "
+                      "WHERE m.conv_id=? AND m.user_id<>?", (cid, me)).fetchall()
+    if re.search(r"@(所有人|全体成员|all)", body, re.I):
+        return [r["user_id"] for r in rows]
+    return [r["user_id"] for r in rows if ("@" + (r["username"] or "")) in body]
+
+
+def _reply_to_conv(db, cid):
+    """群里引用的那条必须属于同一个会话。"""
+    raw = (request.form.get("reply_to") if request.files
+           else (request.get_json(silent=True) or {}).get("reply_to"))
+    try:
+        rid = int(raw or 0)
+    except (TypeError, ValueError):
+        return None
+    if not rid:
+        return None
+    ok = db.execute("SELECT 1 FROM chat_msgs WHERE id=? AND conv_id=?", (rid, cid)).fetchone()
+    return rid if ok else None
+
+
+def _chat_center_notify_group(db, to_uid, cid, gname, preview, mid, at=False):
+    db.execute("INSERT OR IGNORE INTO notifications(user_id,kind,dkey,title,body,link) VALUES(?,?,?,?,?,?)",
+               (to_uid, "chat", "chatg:%d:%d%s" % (cid, mid, ":at" if at else ""),
+                ("有人在「%s」@ 你" % gname) if at else ("小组「%s」有新消息" % gname),
+                (preview or "")[:80], "chatgroup:%d" % cid))
+
+
+@bp.get("/api/chat/search")
+def chat_search():
+    """搜聊天记录：会话内（带 with）或全局。消息 + 文件名一起搜。
+
+    走 LIKE 不走 FTS5：见 schema.py 里那段注释（中文分词）。
+    """
+    db = get_db()
+    me = uid()
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 1:
+        return jsonify({"results": []})
+    kw = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
+    # 「我能看见的消息」= 一对一里我是收发方的 + 我所在小组里的
+    mine = ("(from_uid=? OR to_uid=? OR conv_id IN "
+            "(SELECT conv_id FROM conv_members WHERE user_id=?))")
+    args = [me, me, me]
+    scope = ""
+    with_id = int(request.args.get("with") or 0)
+    gid = int(request.args.get("group") or 0)
+    if gid:
+        scope = " AND conv_id=?"
+        args.append(gid)
+    elif with_id:
+        scope = " AND ((from_uid=? AND to_uid=?) OR (from_uid=? AND to_uid=?))"
+        args += [me, with_id, with_id, me]
+    rows = db.execute(
+        "SELECT * FROM chat_msgs WHERE %s%s AND recalled_at IS NULL "
+        "AND (body LIKE ? ESCAPE '\\' OR file_name LIKE ? ESCAPE '\\') "
+        "ORDER BY id DESC LIMIT 60" % (mine, scope), args + [kw, kw]).fetchall()
+    gnames = {r["id"]: r["title"] for r in db.execute(
+        "SELECT c.id, c.title FROM conversations c JOIN conv_members m ON m.conv_id=c.id "
+        "WHERE m.user_id=? AND c.kind='group'", (me,)).fetchall()}
+    out = []
+    for r in rows:
+        if not r["to_uid"] and r["conv_id"] in gnames:      # 群消息
+            item = {"id": r["id"], "peer": r["conv_id"], "group": True,
+                    "peer_name": gnames[r["conv_id"]]}
+        else:
+            peer = r["to_uid"] if r["from_uid"] == me else r["from_uid"]
+            item = {"id": r["id"], "peer": peer, "group": False,
+                    "peer_name": "文件传输助手" if peer == me else uname(db, peer)}
+        item.update({"kind": r["kind"], "time": r["created_at"],
+                     "text": (r["body"] or "") if r["kind"] == "text" else (r["file_name"] or ""),
+                     "file": r["kind"] not in ("text", "card")})
+        out.append(item)
+    return jsonify({"results": out, "q": q})
 
 
 @bp.post("/api/chat/<int:fid>")
@@ -1170,32 +1749,69 @@ def chat_send(fid):
         if size > DRIVE_MAX:
             return jsonify({"error": "文件超过 %d MB" % (DRIVE_MAX // (1024 * 1024))}), 400
         ext = os.path.splitext(f.filename)[1].lower()
-        stored = uuid.uuid4().hex + ext
+        # 先落成临时名：要先算出 sha256 才知道自己云盘里是不是已经有这份内容了
+        tmp = os.path.join(_drive_dir(me), "tmp-" + uuid.uuid4().hex + ext)
+        f.save(tmp)
+        digest = _sha256_file(tmp)
+        dup = _dedup_stored(db, me, digest)
+        if dup:
+            os.remove(tmp)
+            stored = dup
+        else:
+            stored = uuid.uuid4().hex + ext
+            os.replace(tmp, os.path.join(_drive_dir(me), stored))
         # 发送方也留一份在自己云盘「聊天文件」，并作为源
-        f.save(os.path.join(_drive_dir(me), stored))
-        db.execute("INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source) "
-                   "VALUES(?,?,?,?,?,?,?,0,'chat')", (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size))
-        mid = _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me))
+        db.execute("INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source,sha256) "
+                   "VALUES(?,?,?,?,?,?,?,0,'chat',?)",
+                   (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size, digest))
+        mid = _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me),
+                              digest, _reply_to(db, me, fid))
         myname = uname(db, me)
         if fid != me:                                 # 文件传输助手(自己)不给自己发通知
             _chat_center_notify(db, fid, me, myname, "[文件] " + (f.filename or ""), mid or 0)
         db.commit()
         _notify_chat(fid, {"type": "msg", "from": me, "name": myname,
                            "preview": "[文件] " + (f.filename or "")})   # 提交后再秒推（跨设备同步）
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "id": mid})
+    data = request.get_json(silent=True) or {}
+    # 内容卡片：把应用里的一条（错题 / 古诗文 / 素材 / 小记 / 收录词）发过去，对方点开直达
+    card = data.get("card")
+    if isinstance(card, dict) and card.get("kind") in CARD_KINDS:
+        payload = {"kind": card["kind"], "id": int(card.get("id") or 0),
+                   "title": str(card.get("title") or "")[:120],
+                   "sub": str(card.get("sub") or "")[:60]}
+        cur = db.execute("INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,body,reply_to) "
+                         "VALUES(?,?,?,'card',?,?)",
+                         (me, fid, _direct_conv(db, me, fid),
+                          json.dumps(payload, ensure_ascii=False), _reply_to(db, me, fid)))
+        myname = uname(db, me)
+        prev = "[%s] %s" % (CARD_KINDS[card["kind"]][0], payload["title"])
+        if fid != me:
+            _chat_center_notify(db, fid, me, myname, prev[:80], cur.lastrowid)
+        db.commit()
+        _notify_chat(fid, {"type": "msg", "from": me, "name": myname, "preview": prev[:60]})
+        row = db.execute("SELECT created_at FROM chat_msgs WHERE id=?", (cur.lastrowid,)).fetchone()
+        return jsonify({"ok": True, "id": cur.lastrowid, "time": row["created_at"] if row else ""})
     # 文本消息
-    body = (request.get_json(silent=True) or {}).get("body", "").strip()
+    body = (data.get("body") or "").strip()
     if not body:
         return jsonify({"error": "空消息"}), 400
-    cur = db.execute("INSERT INTO chat_msgs(from_uid,to_uid,kind,body) VALUES(?,?,'text',?)",
-                     (me, fid, body[:4000]))
+    # 原先是 body[:4000] 悄悄切一半：粘一篇范文过去，对方收到半篇，两边都不知道。
+    # 前端已有字数提示，这里当最后一道闸，超了就明说。
+    if len(body) > CHAT_MAX:
+        return jsonify({"error": "消息太长了（%d / %d 字），分两条发吧" % (len(body), CHAT_MAX)}), 400
+    cur = db.execute("INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,body,reply_to) "
+                     "VALUES(?,?,?,'text',?,?)",
+                     (me, fid, _direct_conv(db, me, fid), body, _reply_to(db, me, fid)))
     myname = uname(db, me)
     if fid != me:
         _chat_center_notify(db, fid, me, myname, body[:80], cur.lastrowid)
     db.commit()
     _notify_chat(fid, {"type": "msg", "from": me, "name": myname,
                        "preview": body[:60]})           # 秒推给对方（自己的其它设备也会同步）
-    return jsonify({"ok": True})
+    # 带回 id 和时间：前端的乐观气泡靠它从「发送中」转成真消息，不用等下一次拉取
+    row = db.execute("SELECT created_at FROM chat_msgs WHERE id=?", (cur.lastrowid,)).fetchone()
+    return jsonify({"ok": True, "id": cur.lastrowid, "time": row["created_at"] if row else ""})
 
 
 @bp.get("/api/chat/file/<int:fid>")
@@ -1210,10 +1826,24 @@ def chat_file(fid):
         return "文件不存在", 404
     owner = r["owner_id"]
     if owner != me:                    # 不是自己云盘里的 → 必须是自己参与的聊天引用了它
-        party = db.execute("SELECT 1 FROM chat_msgs WHERE file_id=? AND (from_uid=? OR to_uid=?)",
-                           (fid, me, me)).fetchone()
+        # 群文件只存发送方那一份，所以还要认「这条消息在我所在的会话里」
+        party = db.execute(
+            "SELECT 1 FROM chat_msgs WHERE file_id=? AND (from_uid=? OR to_uid=? "
+            "OR conv_id IN (SELECT conv_id FROM conv_members WHERE user_id=?))",
+            (fid, me, me, me)).fetchone()
         if not party:
             return "无权访问", 403
+    # 缩略图：会话里图一多，直接铺原图就是几 MB 白等。复用云盘那套缩略图生成，
+    # 出不来（不是图片 / 没装依赖）就退回原图，不让气泡开天窗。
+    if request.args.get("thumb") == "1":
+        try:
+            tp = _thumb_path(owner, r["stored_name"])
+            if not os.path.exists(tp):
+                _make_thumb(os.path.join(_drive_dir(owner), r["stored_name"]), tp)
+            if os.path.exists(tp):
+                return _no_script(send_file(tp, mimetype="image/jpeg"))
+        except Exception:
+            log.info("聊天图缩略失败，退回原图", exc_info=True)
     inline = request.args.get("inline") == "1"
     resp = send_file(os.path.join(_drive_dir(owner), r["stored_name"]),
                      as_attachment=not inline, download_name=r["name"],
@@ -1224,8 +1854,15 @@ def chat_file(fid):
 
 @bp.get("/api/chat/unread")
 def chat_unread():
-    n = get_db().execute("SELECT COUNT(*) FROM chat_msgs WHERE to_uid=? AND read_at IS NULL",
-                         (uid(),)).fetchone()[0]
+    db, me = get_db(), uid()
+    n = db.execute("SELECT COUNT(*) FROM chat_msgs WHERE to_uid=? AND read_at IS NULL",
+                   (me,)).fetchone()[0]
+    # 小组那部分按水位数（见 _mark_read 里的说明）
+    n += db.execute(
+        "SELECT COALESCE(SUM((SELECT COUNT(*) FROM chat_msgs x WHERE x.conv_id=c.id "
+        "  AND x.id>mm.last_read_id AND x.from_uid<>?)),0) "
+        "FROM conversations c JOIN conv_members mm ON mm.conv_id=c.id AND mm.user_id=? "
+        "WHERE c.kind='group'", (me, me)).fetchone()[0] or 0
     return jsonify({"unread": n})
 
 

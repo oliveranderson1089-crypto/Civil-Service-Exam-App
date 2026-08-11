@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, c, emKey, esc,
-   fmtDay, inkRekey, push, render, toast */
+/* global $, api, appConfirm, artEm, c, emKey, esc, fmtDay, inkRekey, push, render, toast */
 
 /* ============= 成文：把素材真正写成一篇大作文 ============= */
 let wrTab = 'daily', wrCur = null, wrPoll = 0, wrApp = false;
@@ -66,20 +65,20 @@ async function loadWrDays() {
     if (!d.days.length) { box.innerHTML = '<p class="empty">还没有素材，每天 08:00 自动更新～</p>'; return; }
     box.innerHTML = d.days.map(x => x.nosucai ? `
       <div class="wr-day nosucai">
-        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
-        <div class="wr-day-m"><span class="wr-n">⚠️ 这天没素材，写不了（素材每天 08:00 自动更新）</span></div>
+        <div class="wr-day-d">${artEm('🗓')} ${fmtDay(x.date)}</div>
+        <div class="wr-day-m"><span class="wr-n">${artEm('⚠️')} 这天没素材，写不了（素材每天 08:00 自动更新）</span></div>
       </div>` : x.eid ? `
       <div class="wr-day done" data-weid="${x.eid}">
-        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-d">${artEm('🗓')} ${fmtDay(x.date)}</div>
         <div class="wr-day-m"><b>${esc(x.title || '')}</b>
           <span class="wr-tag">${esc(x.topic || '')}</span>
           <span class="wr-w">${x.words} 字</span></div>
-        <button class="btn tiny" data-wgen="${x.date}" data-force="1">🔄 重新生成</button>
+        <button class="btn tiny" data-wgen="${x.date}" data-force="1">${artEm('🔄')} 重新生成</button>
       </div>` : `
       <div class="wr-day">
-        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-d">${artEm('🗓')} ${fmtDay(x.date)}</div>
         <div class="wr-day-m"><span class="wr-n">素材 ${x.n} 条（衔接 ${x.nl}）</span></div>
-        <button class="btn tiny primary" data-wgen="${x.date}">✍️ 写</button>
+        <button class="btn tiny primary" data-wgen="${x.date}">${artEm('✍️')} 写</button>
       </div>`).join('');
   } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
@@ -95,17 +94,17 @@ async function loadYyDays() {
     const band = x => `${YY_POS_LABEL[x.pos] || ''} · ${x.wmin}~${x.wmax}字`;
     box.innerHTML = d.days.map(x => x.eid ? `
       <div class="wr-day done" data-weid="${x.eid}">
-        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-d">${artEm('🗓')} ${fmtDay(x.date)}</div>
         <div class="wr-day-m"><b>${esc(x.title || '')}</b>
           <span class="wr-tag">${esc(x.topic || x.doctype || '')}</span>
           <span class="wr-tag">${esc(band(x))}</span>
           <span class="wr-w">${x.words} 字</span></div>
-        <button class="btn tiny" data-wgen="${x.date}" data-force="1">🔄 重新生成</button>
+        <button class="btn tiny" data-wgen="${x.date}" data-force="1">${artEm('🔄')} 重新生成</button>
       </div>` : `
       <div class="wr-day">
-        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-d">${artEm('🗓')} ${fmtDay(x.date)}</div>
         <div class="wr-day-m"><span class="wr-n">今日文种：${esc(x.doctype)} · ${esc(band(x))}${x.scene ? ' · ' + esc(x.scene) : ''}</span></div>
-        <button class="btn tiny primary" data-wgen="${x.date}">✍️ 写</button>
+        <button class="btn tiny primary" data-wgen="${x.date}">${artEm('✍️')} 写</button>
       </div>`).join('');
   } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
 }
@@ -183,7 +182,7 @@ async function loadWrCompose() {
       : (has ? '🔄 今天这篇重写一遍' : '✍️ 写今天这篇');
     box.innerHTML = d.items.length ? d.items.map(x => `
       <div class="wr-day done" data-weid="${x.id}">
-        <div class="wr-day-d">🗓 ${fmtDay(x.date)}</div>
+        <div class="wr-day-d">${artEm('🗓')} ${fmtDay(x.date)}</div>
         <div class="wr-day-m"><b>${esc(x.title || '')}</b>
           <span class="wr-tag">${esc(x.topic || '')}</span>
           <span class="wr-w">${x.words} 字</span></div>
@@ -243,12 +242,12 @@ async function loadYyMine() {
       const when = fmtDay(t.slice(0, 10)) + (t.length > 12 ? ' ' + t.slice(11, 16) : '');
       return `
       <div class="wr-day done" data-weid="${x.id}">
-        <div class="wr-day-d">🗓 ${esc(when)}</div>
+        <div class="wr-day-d">${artEm('🗓')} ${esc(when)}</div>
         <div class="wr-day-m"><b>${esc(x.title || '')}</b>
-          <span class="wr-tag">${x.form === 'outline' ? '🧭 提纲' : '📄 范文'} · ${esc(x.doctype || '')}</span>
+          <span class="wr-tag">${x.form === 'outline' ? artEm('🧭') + ' 提纲' : artEm('📄') + ' 范文'} · ${esc(x.doctype || '')}</span>
           ${x.scene ? `<span class="wr-tag">${esc(x.scene)}</span>` : ''}
           <span class="wr-w">${x.words} 字</span></div>
-        <button class="btn tiny" data-yydel="${x.id}">🗑 删掉</button>
+        <button class="btn tiny" data-yydel="${x.id}">${artEm('🗑')} 删掉</button>
       </div>`;
     }).join('')
       : '<p class="empty">还没写过。上面写的每一篇都会留在这儿，返回后随时点开。</p>';
@@ -282,13 +281,13 @@ async function loadYyCats() {
             </div>
             <div class="yy-dt-b">
               ${t.outline.length
-                ? `<button class="yy-pill out" data-weid="${t.outline[0].id}">🧭 提纲</button>`
-                : '<span class="yy-pill none">🧭 提纲 · 还没有</span>'}
+                ? `<button class="yy-pill out" data-weid="${t.outline[0].id}">${artEm('🧭')} 提纲</button>`
+                : '<span class="yy-pill none">' + artEm("🧭") + ' 提纲 · 还没有</span>'}
               ${t.full.length
                 ? t.full.map(f => `<button class="yy-pill" data-weid="${f.id}"
                     title="${esc((f.form === 'part' ? '只写部分内容：' : '') + (f.title || ''))}"
                     >${f.form === 'part' ? '✂️' : '📄'} ${esc(f.scene || f.title || '范文')}</button>`).join('')
-                : '<span class="yy-pill none">📄 范文 · 还没有</span>'}
+                : '<span class="yy-pill none">' + artEm("📄") + ' 范文 · 还没有</span>'}
               ${(t.real || []).map(f => `<button class="yy-pill real" data-wrfan="${f.id}"
                   title="${esc(f.src + ' ｜ ' + (f.note || ''))}"
                   >🏛 真题范文${f.title ? '：' + esc(f.title.slice(0, 14)) : ''}</button>`).join('')}
@@ -345,7 +344,7 @@ async function openRealFan(id) {
       ${d.require ? `<div class="rf-req"><b>作答要求</b>${esc(d.require)}</div>` : ''}
       <div class="rf-ans"><b>参考答案</b>${esc(d.content || '').split('\n')
         .filter(x => x.trim()).map(x => `<p>${esc(x.trim())}</p>`).join('')}</div>
-      ${d.note ? `<div class="ye-why">💡 ${esc(d.note)}</div>` : ''}`;
+      ${d.note ? `<div class="ye-why">${artEm('💡')} ${esc(d.note)}</div>` : ''}`;
   } catch (err) { toast(err.message, true); }
 }
 
@@ -474,16 +473,16 @@ function renderWrited() {
       <span class="wr-tag">${esc(d.topic || '')}</span>
       <span class="wd-w ${ok ? '' : 'bad'}">${wtxt}</span>
       <span class="wd-src">${src}</span>
-      <span class="wd-used-n">📎 ${(d.used || []).length} 条${gw ? '规范表述' : '素材'}</span>
+      <span class="wd-used-n">${artEm('📎')} ${(d.used || []).length} 条${gw ? '规范表述' : '素材'}</span>
     </div>
-    ${d.note ? `<p class="wd-note">💡 ${esc(d.note)}</p>` : ''}`;
+    ${d.note ? `<p class="wd-note">${artEm('💡')} ${esc(d.note)}</p>` : ''}`;
   const paras = (s) => (s || '').split('\n').filter(x => x.trim()).map(p => `<p>${esc(p.trim())}</p>`).join('');
   const stripLbl = (s) => (s || '').replace(/^\s*【[^】]{1,8}】\s*\n?/, '');   // 去掉开头重复的「【给定材料】」标签
   // 综合应用能力：题干（给定材料 + 作答要求）在前，参考范文在后
   const timu = isComp ? `<div class="wd-timu">
-      <div class="wd-timu-t">📎 给定材料</div><div class="wd-timu-b">${paras(stripLbl(sp.material))}</div>
-      <div class="wd-timu-t">✍️ 作答要求</div><div class="wd-timu-b">${paras(stripLbl(sp.task))}</div>
-      <div class="wd-timu-t">📄 参考范文</div>
+      <div class="wd-timu-t">${artEm('📎')} 给定材料</div><div class="wd-timu-b">${paras(stripLbl(sp.material))}</div>
+      <div class="wd-timu-t">${artEm('✍️')} 作答要求</div><div class="wd-timu-b">${paras(stripLbl(sp.task))}</div>
+      <div class="wd-timu-t">${artEm('📄')} 参考范文</div>
     </div>` : '';
   // 应用文范文按公文格式排（落款/日期右对齐、称谓顶格）；议论文用普通段落
   const body = gw ? fmtGwBody(d.content, d.title) : paras(d.content);
@@ -502,7 +501,7 @@ function renderWrited() {
       ? d.outline.map(s => `<div class="gw-seg">
           <div class="gw-seg-p">${esc(s.part || '')}</div>
           <div class="gw-seg-t">${esc(s.text || '')}</div>
-          <div class="gw-seg-w">💡 ${esc(s.why || '')}</div>
+          <div class="gw-seg-w">${artEm('💡')} ${esc(s.why || '')}</div>
         </div>`).join('')
       : '<p class="empty">没有批注。</p>';
   } else {
@@ -625,14 +624,14 @@ async function loadSucai() {
     if (!d.items.length) { $('#sc-list').innerHTML = '<p class="empty">还没有素材，每天 08:00 自动生成～</p>'; return; }
     let lastDate = '';
     $('#sc-list').innerHTML = d.items.map(it => {
-      const head = it.date !== lastDate ? `<div class="sc-day">🗓 ${fmtDay(it.date)}</div>` : '';
+      const head = it.date !== lastDate ? `<div class="sc-day">${artEm('🗓')} ${fmtDay(it.date)}</div>` : '';
       lastDate = it.date;
       const col = SC_COLOR[it.kind] || '#666';
       const isLj = it.kind === '衔接表达';
       const exHtml = it.example
         ? `<div class="sc-exwrap"><div class="sc-ex"><b>例句</b> ${esc(it.example)}</div>
-             <button class="sc-exbtn regen" data-scex="${it.id}" data-force="1">🔄 换个例句</button></div>`
-        : (isLj ? `<button class="sc-exbtn" data-scex="${it.id}">✍️ AI 造个例句</button>` : '');
+             <button class="sc-exbtn regen" data-scex="${it.id}" data-force="1">${artEm('🔄')} 换个例句</button></div>`
+        : (isLj ? `<button class="sc-exbtn" data-scex="${it.id}">${artEm('✍️')} AI 造个例句</button>` : '');
       return head + `<div class="gk-card" data-scid="${it.id}">
         <div class="gk-head"><span class="poly-badge" style="background:${col}">${esc(it.kind)}</span>
           ${it.topic ? `<span class="gk-topic">${esc(it.topic)}</span>` : ''}</div>
@@ -658,7 +657,7 @@ $('#sc-list').addEventListener('click', async e => {
       b.disabled = false; b.textContent = label;
     } else {
       b.outerHTML = `<div class="sc-exwrap"><div class="sc-ex"><b>例句</b> ${esc(d.example)}</div>
-        <button class="sc-exbtn regen" data-scex="${b.dataset.scex}" data-force="1">🔄 换个例句</button></div>`;
+        <button class="sc-exbtn regen" data-scex="${b.dataset.scex}" data-force="1">${artEm('🔄')} 换个例句</button></div>`;
     }
   } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = label; }
 });

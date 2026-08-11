@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DT_L, api, c, dtMaterial,
-   emKey, esc, push, toast */
+/* global $, DT_L, api, artEm, c, dtMaterial, emKey, esc, push, toast */
 
 /* ============= 题库（四川省考卷面 · 练习模式） ============= */
 let qz = { set: null, qs: [], idx: 0 };
@@ -65,14 +64,14 @@ function renderQuiz() {
         <div class="cd-sec-b">${emKey(q.explanation || '')}</div></div>` : '';
   const slAns = isSL ? `
     <button class="btn primary" id="qz-showans" style="width:100%;padding:12px;margin-top:12px;">查看参考答案</button>
-    <div class="cd-sec qz-expl hidden" id="qz-ansbox"><div class="cd-sec-t">📄 参考答案</div>
+    <div class="cd-sec qz-expl hidden" id="qz-ansbox"><div class="cd-sec-t">${artEm('📄')} 参考答案</div>
       <div class="cd-sec-b">${emKey(q.explanation || '')}</div></div>` : '';
   $('#qzr-wrap').innerHTML = `
     <div class="rv-progress"><div class="rv-bar" style="width:${doneN / total * 100}%"></div></div>
     <div class="rv-meta-row"><span>第 ${qz.idx + 1} / ${total} 题 · ${esc(q.module)}${q.qtype && q.qtype !== q.module ? '·' + esc(q.qtype) : ''}</span>
       <span>已做 ${doneN} · 对 ${qz.qs.filter(x => x.my_choice && x.my_choice === x.answer).length}</span></div>
     ${(mat && !isFig) ? dtMaterial(mat, 'qz' + qz.idx)          /* 资料分析：真表格 / 图表 */
-      : (q.material && !mat) ? `<div class="qz-mat"><div class="qz-mat-t">📋 ${isSL ? '给定资料' : '材料'}（上下滚动）</div><div class="qz-mat-b">${emKey(q.material)}</div></div>`
+      : (q.material && !mat) ? `<div class="qz-mat"><div class="qz-mat-t">${artEm('📋')} ${isSL ? '给定资料' : '材料'}（上下滚动）</div><div class="qz-mat-b">${emKey(q.material)}</div></div>`
         : ''}
     <div class="gk-card"><div class="qz-q">${qz.idx + 1}. ${emKey(q.question)}</div>
       ${isFig ? `<div class="dt-seq">${(mat.seq || []).join('')}<span class="dt-qm">?</span></div>` : ''}

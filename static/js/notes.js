@@ -7,10 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, IS_MOBILE, KB, OFFICE_EXT, SECTIONS,
-   api, appConfirm, c, composing, createDock, deskMsg,
-   esc, fmtTime, iconFor, lsGet, lsSet, mdToHtml, openAI,
-   openViewerUrl, push, stack, toast */
+/* global $, IC, IS_MOBILE, KB, OFFICE_EXT, SECTIONS, api, appConfirm, artEm, c, composing, createDock, deskMsg, esc, fmtTime, iconFor, lsGet, lsSet, mdToHtml, openAI, openViewerUrl, push, stack, toast */
 
 /* ================= 小记（仿语雀） ================= */
 let curNoteBoard = '';
@@ -173,10 +170,10 @@ function renderComposer() {
        <button class="cp-x" data-imr="${i}">×</button>
      </div>`).join('');
   $('#cp-files').innerHTML = draft.files.map((f, i) =>
-    `<div class="cp-file">📎 <span>${esc(f.name)}</span><button class="cp-x" data-flr="${i}">×</button></div>`).join('');
+    `<div class="cp-file">${artEm('📎')} <span>${esc(f.name)}</span><button class="cp-x" data-flr="${i}">×</button></div>`).join('');
   $('#cp-tags').innerHTML = draft.tags.map((t, i) =>
     `<span class="cp-tag"># ${esc(t)}<button class="cp-x" data-tgr="${i}">×</button></span>`).join('') +
-    `<button type="button" class="cp-tag-add" data-tagadd>＋ 标签</button>`;
+    `<button type="button" class="cp-tag-add" data-tagadd>${artEm('＋')} 标签</button>`;
   const editing = !!draft.id;
   $('#cp-submit').textContent = editing ? '保存' : '发布';
   $('#cp-del').classList.toggle('hidden', !editing);

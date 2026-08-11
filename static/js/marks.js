@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IS_MOBILE, NW_KIND, api, c, esc, lsGet, lsSet, push,
-   stack, toast */
+/* global $, IS_MOBILE, NW_KIND, api, artEm, c, esc, lsGet, lsSet, push, stack, toast */
 
 /* ================= 通用「划重点」（悬浮球 → 🖍） =================
    任何模块的正文都能划：不重渲染页面，而是直接在**已经渲染好的 DOM 里**找到那些句子、就地包一层 <mark>。
@@ -168,11 +167,11 @@ async function mkInject() {
   card.id = 'mk-card'; card.className = 'mk-card';
   // focus 里用 **xx** 标了要强调的词（后端写的），转成粗体，别把星号露出来
   const bold = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-  card.innerHTML = `<div class="mk-card-t">🖍 重点 · 考点</div>
+  card.innerHTML = `<div class="mk-card-t">${artEm('🖍')} 重点 · 考点</div>
     <p class="mk-card-p">${p.focus ? bold(p.focus) + '<br>' : ''}
       点一下，AI 按<b>「${esc(p.name)}」的考法</b>在本页标出：
       ${p.kinds.map(k => `<span class="mk-ck" style="--mk:${p.color[k.k]}">${esc(k.k)}</span>`).join('')}</p>
-    <button class="btn primary" id="mk-go">🖍 帮我划重点</button>`;
+    <button class="btn primary" id="mk-go">${artEm('🖍')} 帮我划重点</button>`;
   root.insertBefore(card, root.firstChild);
 }
 document.addEventListener('click', e => {
@@ -217,8 +216,8 @@ function mkRenderBar(n, cached) {
   mkBarState = { n, cached, prof: mkProf, scope: mkProfScope, st: stack[stack.length - 1] };
   $('#mk-bar').innerHTML = `🖍 划出 <b>${n}</b> 处重点${cached ? ' <i>· 缓存</i>' : ''}
     <button class="btn tiny" id="mk-toggle">看清单</button>
-    <button class="mk-x" id="mk-clear" title="清除">✕</button>`;
-  $('#mk-list').innerHTML = `<div class="mk-lt">🖍 ${esc(p.name)} · 重点考点（${mkMarks.length} 处）</div>
+    <button class="mk-x" id="mk-clear" title="清除">${artEm('✕')}</button>`;
+  $('#mk-list').innerHTML = `<div class="mk-lt">${artEm('🖍')} ${esc(p.name)} · 重点考点（${mkMarks.length} 处）</div>
     ${mkMarks.map((m, i) => `<div class="nw-m" data-mkgo="${i}" style="--mk:${mkColor(m.kind)}">
         <span class="nw-k">${esc(m.kind)}</span>
         <span class="nw-q">${esc(m.quote)}</span>

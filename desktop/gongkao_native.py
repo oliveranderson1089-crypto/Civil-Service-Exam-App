@@ -2,10 +2,12 @@
 # 公考助手 桌面版（原生 GTK + 系统 WebKit2GTK，不依赖 Chrome）。
 # 用系统 python3（自带 gi）运行；一个真·原生窗口加载网页版。
 import base64
+import datetime
 import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import threading
 from shlex import quote as shlex_quote
@@ -44,11 +46,58 @@ except Exception:
         HAVE_TRAY = False
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "5.0"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "5.1"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
          "/usr/share/icons/hicolor/256x256/apps/gongkao-assistant.png"]
+# 六个时段的图标（gen_appicon.py 导的，随包安装）。锚点时刻和 static/js/daylight.js
+# 的 DL_KEYS 一致 —— 网页那套是连续插值，桌面只能挑最近的一张：图标是文件，不是画布。
+ICON_DIR = "/usr/share/gongkao-assistant/icons"
+ICON_PHASES = [(5.0, "dawn"), (8.0, "morning"), (13.0, "day"),
+               (18.0, "dusk"), (20.5, "evening"), (23.0, "night")]
+# 用户目录里的图标优先级高于系统目录：把当前时段那张写到这儿，
+# 桌面菜单/任务栏的图标才会跟着变（/usr 下的动不了，也不该动）
+USER_ICON = os.path.expanduser("~/.local/share/icons/hicolor/512x512/apps/gongkao-assistant.png")
+
+
+def _phase(now=None):
+    """当前时刻最接近哪个时段。跨零点要绕回去：0~5 点属于「夜」那一段。"""
+    h = (now or datetime.datetime.now()).hour + (now or datetime.datetime.now()).minute / 60
+    name = ICON_PHASES[-1][1]
+    for start, n in ICON_PHASES:
+        if h >= start:
+            name = n
+    return name
+
+
+def phase_icon(size=512):
+    """当前时段的图标文件；包里没有（老版本升级上来）就退回原来那张。"""
+    p = os.path.join(ICON_DIR, "gk-%s-%d.png" % (_phase(), size))
+    if os.path.exists(p):
+        return p
+    return next((x for x in ICONS if os.path.exists(x)), "")
+
+
+def sync_user_icon():
+    """把当前时段那张复制到用户图标目录，再刷一次图标缓存。
+
+    这样桌面菜单、任务栏、Dock 上的图标也跟着时段走 —— 但**要下次启动才变**：
+    图标是文件，系统在应用启动时读一次。中途从黄昏跨到夜里，开着的窗口不会自己换。
+    失败一律吞掉：图标好不好看，不值得拦住应用启动。"""
+    try:
+        src = phase_icon(512)
+        if not src or not os.path.exists(src):
+            return
+        os.makedirs(os.path.dirname(USER_ICON), exist_ok=True)
+        if os.path.exists(USER_ICON) and os.path.getsize(USER_ICON) == os.path.getsize(src):
+            return                      # 同一张，别白刷缓存（刷一次几百毫秒）
+        shutil.copyfile(src, USER_ICON)
+        subprocess.Popen(["gtk-update-icon-cache", "-f", "-t",
+                          os.path.expanduser("~/.local/share/icons/hicolor")],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 # edge-tts 可选音色（白名单：网页传来的值要拼进 shell，不能放任）
 EDGE_VOICES = ["zh-CN-XiaoxiaoNeural", "zh-CN-YunxiNeural",
                "zh-CN-XiaoyiNeural", "zh-CN-YunjianNeural"]
@@ -122,6 +171,7 @@ class Gongkao(Gtk.Application):
         if self.win:
             self.win.present()
             return
+        sync_user_icon()          # 桌面菜单/任务栏的图标按当前时段换一张（下次启动生效）
         self.win = Gtk.ApplicationWindow(application=self)
         self.win.set_title("公考助手")
         self.win.set_default_size(1120, 800)
@@ -133,13 +183,12 @@ class Gongkao(Gtk.Application):
             self.add_action(act)
         except Exception:
             pass
-        for p in ICONS:
-            if os.path.exists(p):
-                try:
-                    self.win.set_icon_from_file(p)
-                except Exception:
-                    pass
-                break
+        p = phase_icon(512)
+        if p:
+            try:
+                self.win.set_icon_from_file(p)
+            except Exception:
+                pass
         try:
             self.win.set_wmclass("gongkao-assistant", "公考助手")
         except Exception:
@@ -225,7 +274,7 @@ class Gongkao(Gtk.Application):
         if not HAVE_TRAY:
             return
         try:
-            icon = next((p for p in ICONS if os.path.exists(p)), "")
+            icon = phase_icon(512)
             self.tray = AppIndicator.Indicator.new(
                 "com.gongkao.app", "gongkao-assistant",
                 AppIndicator.IndicatorCategory.APPLICATION_STATUS)

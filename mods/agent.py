@@ -12,7 +12,7 @@ from flask import jsonify
 
 import aiclient
 from core import CFG, CJK_RE, _mark_study, log, lookup, to_pinyin, uid
-from mods.agent_tools import exec_tool, tool, tool_specs
+from mods.agent_tools import exec_tool, tool, tool_label, tool_specs, tool_specs_for
 from mods.ai import _ai_call_or_error
 
 
@@ -28,7 +28,7 @@ AI_RETRIES = 2
 AI_BUDGET = 100
 
 
-def _ai_stream(messages, tools=None, temperature=0.4, max_tokens=1600, deadline=None):
+def _ai_stream(messages, tools=None, temperature=0.4, max_tokens=1600, deadline=None, tier="fast"):
     """一次流式调用，把 aiclient 的事件原样传出来。
 
     走 aiclient 而不是自己拼 URL：模型名解析、官方改名时的探活自愈，跟全站一套。
@@ -41,7 +41,7 @@ def _ai_stream(messages, tools=None, temperature=0.4, max_tokens=1600, deadline=
         # 除以「尝试次数」而不是直接拿剩余时间当超时：timeout 是**每次尝试**的，
         # 带 2 次重试就是三份，不摊开的话总预算会被一次调用撑到三倍。
         timeout = max(5, min(timeout, (deadline - time.time()) / (AI_RETRIES + 1)))
-    return aiclient.stream(messages, tier="fast", temperature=temperature,
+    return aiclient.stream(messages, tier=tier, temperature=temperature,
                            max_tokens=max_tokens, timeout=timeout, cfg=CFG,
                            retries=AI_RETRIES, extra={"tools": tools} if tools else None)
 
@@ -319,13 +319,41 @@ def _t_star_classic(args, db):
 
 
 # ================================================================ 删除类（destructive，需二次确认）
+# 下面三个 preview：确认弹窗要把**那条数据的原文**摆给用户看。没有它，删错题和删小记
+# 只能弹一句「确认删除这条内容？」，用户不知道是哪条，只能盲点确定——删除是不可逆的，
+# 这是最不该省的一步。取不到就返回空串，前端退回通用话术。
+def _pv_entry(args, db):
+    w = (args.get("word") or "").strip()
+    r = db.execute("SELECT word, note FROM entries WHERE user_id=? AND word=?", (uid(), w)).fetchone()
+    if not r:
+        return ""
+    return "%s%s" % (r["word"], "　" + (r["note"] or "")[:60] if r["note"] else "")
+
+
+def _pv_wq(args, db):
+    r = db.execute("SELECT question, board, qtype FROM wrong_questions WHERE id=? AND user_id=?",
+                   (int(args.get("id") or 0), uid())).fetchone()
+    if not r:
+        return ""
+    tag = " · ".join(x for x in (r["board"], r["qtype"]) if x)
+    return "%s%s" % ((r["question"] or "")[:80], "\n" + tag if tag else "")
+
+
+def _pv_note(args, db):
+    r = db.execute("SELECT content, created_at FROM notes WHERE id=? AND user_id=?",
+                   (int(args.get("id") or 0), uid())).fetchone()
+    if not r:
+        return ""
+    return "%s\n记于 %s" % ((r["content"] or "")[:80], (r["created_at"] or "")[:10])
+
+
 @tool("delete_entry",
       "从「成语词语积累」删除某个已收录的词（连带取消常考那边的收藏）。不可逆，需用户确认。",
       {"type": "object", "properties": {
           "word": {"type": "string", "description": "要删除的已收录词"},
           "_confirmed": {"type": "boolean",
                          "description": "仅在用户已明确确认删除后才填 true；首次调用不要填，让系统先要确认"}},
-          "required": ["word"]}, kind="destructive", confirm=True)
+          "required": ["word"]}, kind="destructive", confirm=True, preview=_pv_entry)
 def _t_delete_entry(args, db):
     w = (args.get("word") or "").strip()
     if not w:
@@ -344,7 +372,7 @@ def _t_delete_entry(args, db):
           "id": {"type": "integer", "description": "错题 id（来自 list_wrong_questions）"},
           "_confirmed": {"type": "boolean",
                          "description": "仅在用户已明确确认删除后才填 true；首次调用不要填，让系统先要确认"}},
-          "required": ["id"]}, kind="destructive", confirm=True)
+          "required": ["id"]}, kind="destructive", confirm=True, preview=_pv_wq)
 def _t_delete_wq(args, db):
     wid = int(args.get("id") or 0)
     row = db.execute("SELECT image FROM wrong_questions WHERE id=? AND user_id=?", (wid, uid())).fetchone()
@@ -367,7 +395,7 @@ def _t_delete_wq(args, db):
           "id": {"type": "integer", "description": "小记 id（来自 list_notes）"},
           "_confirmed": {"type": "boolean",
                          "description": "仅在用户已明确确认删除后才填 true；首次调用不要填，让系统先要确认"}},
-          "required": ["id"]}, kind="destructive", confirm=True)
+          "required": ["id"]}, kind="destructive", confirm=True, preview=_pv_note)
 def _t_delete_note(args, db):
     nid = int(args.get("id") or 0)
     if not db.execute("SELECT 1 FROM notes WHERE id=? AND user_id=?", (nid, uid())).fetchone():
@@ -377,11 +405,11 @@ def _t_delete_note(args, db):
     return "已删除小记（id=%d）。" % nid, {"type": "refresh", "what": "notes"}
 
 
-def _round(msgs, tools, temperature, max_tokens, deadline, parts):
+def _round(msgs, tools, temperature, max_tokens, deadline, parts, tier="fast"):
     """跑一次调用：正文边出边往外吐，攒进 parts，返回完整 message（可能含 tool_calls）。"""
     m = {}
     for kind, p in _ai_stream(msgs, tools=tools, temperature=temperature,
-                              max_tokens=max_tokens, deadline=deadline):
+                              max_tokens=max_tokens, deadline=deadline, tier=tier):
         if kind == "content":
             parts.append(p)
             yield "delta", p
@@ -393,28 +421,37 @@ def _round(msgs, tools, temperature, max_tokens, deadline, parts):
 
 
 def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_tokens=2000,
-                           budget=AI_BUDGET):
+                           budget=AI_BUDGET, tier="fast"):
     """带工具调用的对话循环，流式版。产出 (kind, payload)：
 
         ("reasoning", 片段)          模型在想（还没开始写正文）
         ("delta",     片段)          正文增量
         ("tool",      {"name": …})   开始执行某个工具
-        ("done",      {"reply", "actions"})  收尾：整段回复 + 前端要执行的动作
+        ("done",      {"reply", "actions", "trace"})  收尾：整段回复 + 动作 + 工具轨迹
 
     reply 是**这一轮吐出去的全部正文**拼起来的，跟用户屏幕上看到的一致——模型常会
     先说一句「我先查一下…」再调工具，那句话也是回答的一部分，落库时不能丢。
+
+    trace 是这一轮调过的工具（名字、参数、结果摘要）。调用方要把它落库：
+    没有它，刷新会话就看不到 AI 动过哪些数据，下一轮模型也不知道自己查过什么。
     """
     msgs = list(messages)
-    actions, parts = [], []
+    actions, parts, trace = [], [], []
+    # 按最后一句用户消息的意图挑工具（命中不了主题就全给，见 tool_specs_for）
+    last_user = next((m.get("content") or "" for m in reversed(messages)
+                      if m.get("role") == "user"), "")
+    specs = tool_specs_for(last_user)
     deadline = time.time() + budget
+    truncated = True                # 只有「模型自己说完了」那条路会把它改回 False
     try:
         for _ in range(max_rounds):
             if time.time() >= deadline - 5:
                 break               # 预算用光就别再起新一轮工具，剩下的时间留给收尾那句话
-            m = yield from _round(msgs, tool_specs(), temperature, max_tokens, deadline, parts)
+            m = yield from _round(msgs, specs, temperature, max_tokens, deadline, parts, tier)
             tcs = m.get("tool_calls")
             if not tcs:
-                yield "done", {"reply": "".join(parts).strip(), "actions": actions}
+                yield "done", {"reply": "".join(parts).strip(), "actions": actions,
+                               "trace": trace, "truncated": False}
                 return
             msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": tcs})
             need_confirm = False
@@ -424,22 +461,33 @@ def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_toke
                     a = json.loads(fn.get("arguments") or "{}")
                 except Exception:
                     a = {}
-                yield "tool", {"name": fn.get("name") or ""}
+                # label 是给用户看的人话（「查你的错题本」）——前端据此显示在「思考中」那行，
+                # 不再把查询和删除一律说成「正在操作…」
+                yield "tool", {"name": fn.get("name") or "", "label": tool_label(fn.get("name"))}
                 result, action = exec_tool(fn.get("name"), a, db)
                 if action:
                     actions.append(action)
                     if action.get("type") == "confirm":
                         need_confirm = True
+                # 轨迹落库用。结果只留摘要：完整的查询结果可能上千字，存下来既占地方，
+                # 下一轮再喂回去也是浪费——模型要细节可以再查一次。
+                trace.append({"name": fn.get("name") or "", "label": tool_label(fn.get("name")),
+                              "args": a, "result": (result or "")[:400],
+                              "action": (action or {}).get("type") or ""})
                 msgs.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
             if need_confirm:
                 # 删除类要用户确认：停掉工具循环，让模型把「确定删除吗」问出来，
                 # 别在同一轮里自己补个 _confirmed 就把东西删了——确认必须跨一次用户回合。
+                truncated = False   # 这是「等你确认」，不是「没干完」，别给用户弹「继续」
                 break
         # 轮数（或预算）用完还在调工具：再要一次纯文本收尾
         if parts and not parts[-1].endswith("\n"):
             parts.append("\n\n")
-        yield from _round(msgs, None, temperature, max_tokens, deadline, parts)
-        yield "done", {"reply": "".join(parts).strip(), "actions": actions}
+        yield from _round(msgs, None, temperature, max_tokens, deadline, parts, tier)
+        # truncated=True 表示「轮数/预算用完了它还在调工具」——活没干完，只是被迫收尾。
+        # 前端据此给一个「继续」按钮，而不是让用户对着半截总结干瞪眼。
+        yield "done", {"reply": "".join(parts).strip(), "actions": actions,
+                       "trace": trace, "truncated": truncated}
     except Exception as e:
         # 收尾这一下失败时**不能整轮报错**：工具可能已经真的把词收录、把小记写了，
         # 这时候回「AI 调用失败」既是假话，用户还会以为没做成而再做一遍。
@@ -449,27 +497,28 @@ def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_toke
             raise
         log.warning("agentic 收尾调用失败（%r），改用工具结果作答", e)
         parts.append("\n".join(done) + "\n\n（网络不稳，这句总结是直接来自操作结果的，操作本身已完成。）")
-        yield "done", {"reply": "".join(parts).strip(), "actions": actions}
+        yield "done", {"reply": "".join(parts).strip(), "actions": actions, "trace": trace}
 
 
 def ai_chat_agentic(messages, db, **kw):
-    """带工具调用的对话循环，非流式版。返回 (最终回复文本, [前端要执行的 action])。
+    """带工具调用的对话循环，非流式版。返回 (最终回复文本, [action], [工具轨迹])。
 
     只是把流式那条跑干——**逻辑不再有第二份**。老 WebView（拿不到 ReadableStream）
     和内部调用走这条，行为跟流式完全一致，不会出现「网页版修好了、APK 还是老样子」。
     """
     for kind, p in ai_chat_agentic_stream(messages, db, **kw):
         if kind == "done":
-            return p["reply"], p["actions"]
-    return "", []
+            return p["reply"], p["actions"], p.get("trace") or []
+    return "", [], []
 
 
 def _ai_agentic_or_error(messages, db, **kw):
-    """带工具的对话 + 统一错误封装。返回 (reply, actions, None) 或 (None, None, (json,code))。"""
+    """带工具的对话 + 统一错误封装。
+    返回 (reply, actions, trace, None) 或 (None, None, None, (json,code))。"""
     try:
-        reply, actions = ai_chat_agentic(messages, db, **kw)
-        return reply, actions, None
+        reply, actions, trace = ai_chat_agentic(messages, db, **kw)
+        return reply, actions, trace, None
     except Exception as e:
         # 错误话术统一在 aiclient.error_message，别在这儿再抄一份 401/402/429 的分支：
         # 原先两份，改一处漏一处。
-        return None, None, (jsonify({"error": aiclient.error_message(e)}), 502)
+        return None, None, None, (jsonify({"error": aiclient.error_message(e)}), 502)

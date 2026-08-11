@@ -7,9 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, OFFICE_EXT, _svg, anchorMenu, api, appConfirm,
-   back, c, composing, esc, fmtSize, iconFor,
-   openAI, openSearch, openViewerUrl, push, stack, toast */
+/* global $, IC, OFFICE_EXT, _svg, anchorMenu, api, appConfirm, artEm, back, c, composing, esc, fmtSize, iconFor, openAI, openSearch, openViewerUrl, push, stack, toast */
 
 /* ================= 知识库（笔记本 + 文档块编辑器） ================= */
 const ICON_CHEVRON = _svg('<polyline points="9 18 15 12 9 6"/>');
@@ -24,12 +22,12 @@ const ICON_QUOTE2 = _svg('<path d="M4 6h5v7H4z"/><path d="M15 6h5v7h-5z"/>');
 const ICON_BULB = _svg('<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.7 10.7c.5.5.7 1 .7 1.8h6c0-.8.2-1.3.7-1.8A6 6 0 0 0 12 3z"/>');
 const ICON_CODE = _svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>');
 const ICON_CHK = _svg('<polyline points="20 6 9 17 4 12"/>');
-const KB_COVERS = [
-  'linear-gradient(160deg,#3f73b3,#2b5894)', 'linear-gradient(160deg,#d3892f,#a9651b)',
-  'linear-gradient(160deg,#c0473a,#982c22)', 'linear-gradient(160deg,#2f8060,#21614a)',
-  'linear-gradient(160deg,#7a5ea8,#5b4589)', 'linear-gradient(160deg,#2c8c8c,#1f6e6e)',
-  'linear-gradient(160deg,#b08a1e,#876900)', 'linear-gradient(160deg,#46566a,#2f3b48)',
-];
+/* 封面色**不在这里**。八个色号是 style.css 里的 .kbc0…kbc7，主题开着时由
+   js/daylight.js 的 dlKbCovers 顶掉那批变量。这里只负责挂对第几号 ——
+   以前是在这行内写死八条渐变，主题因此一次也没管到知识库（行内样式谁也压不过，
+   而那条扫样式表的守门测试又只认 CSS 里的颜色）。 */
+const KB_COVER_N = 8;
+const kbCoverCls = (nb) => 'kbc' + (((nb && nb.cover) || 0) % KB_COVER_N);
 const kbCoverInner = () => '<span class="kbc-band"></span><span class="kbc-ribbon"></span>';
 const KB = { notebooks: [], nb: null, tree: [], openGroups: {} };
 let DOC = null;
@@ -45,7 +43,7 @@ async function loadNotebooks() {
     $('#kb-empty').classList.add('hidden');
     box.innerHTML = d.items.map(nb => `
       <div class="kb-card" data-nb="${nb.id}">
-        <div class="kb-cover" style="background:${KB_COVERS[(nb.cover || 0) % 8]}">${kbCoverInner()}</div>
+        <div class="kb-cover ${kbCoverCls(nb)}">${kbCoverInner()}</div>
         <div class="kb-card-name">${esc(nb.name)}</div>
         <div class="kb-card-sub">${nb.doc_count} 篇文档</div>
       </div>`).join('');
@@ -65,8 +63,8 @@ function openNbModal(nb) {
   $('#nb-modal-title').textContent = nb ? '知识库设置' : '新建知识库';
   $('#nb-in-name').value = nb ? nb.name : '';
   $('#nb-in-intro').value = nb ? nb.intro : '';
-  $('#nb-cover-pick').innerHTML = KB_COVERS.map((g, i) =>
-    `<div class="nb-cover-opt${i === nbCover ? ' sel' : ''}" data-cv="${i}" style="background:${g}"></div>`).join('');
+  $('#nb-cover-pick').innerHTML = Array.from({ length: KB_COVER_N }, (_, i) =>
+    `<div class="nb-cover-opt kbc${i}${i === nbCover ? ' sel' : ''}" data-cv="${i}"></div>`).join('');
   $('#nb-save').textContent = nb ? '保存' : '新建';
   $('#nb-del').classList.toggle('hidden', !nb);
   $('#nb-modal').classList.remove('hidden');
@@ -118,7 +116,7 @@ async function loadNotebook(id) {
 }
 function renderNotebook() {
   const nb = KB.nb;
-  $('#nb-cover').style.background = KB_COVERS[(nb.cover || 0) % 8];
+  $('#nb-cover').className = 'nb-cover ' + kbCoverCls(nb);
   $('#nb-cover').innerHTML = kbCoverInner();
   $('#nb-name').textContent = nb.name;
   $('#nb-sub').textContent = (nb.intro ? nb.intro + ' · ' : '') + nb.doc_count + ' 篇文档';
@@ -298,7 +296,7 @@ function blockHtml(b) {
     const rows = (b.data.rows && b.data.rows.length) ? b.data.rows : [['', ''], ['', '']];
     let t = `<div class="blk table" data-b="${b.id}" data-t="table"${ind}><table><tbody>`;
     rows.forEach((r, ri) => { t += '<tr>' + r.map((c, ci) => `<td contenteditable="true" data-tr="${ri}" data-tc="${ci}">${c || ''}</td>`).join('') + '</tr>'; });
-    t += `</tbody></table><div class="tbl-tools"><button data-tbl="row" data-tid="${b.id}">＋行</button><button data-tbl="col" data-tid="${b.id}">＋列</button></div></div>`;
+    t += `</tbody></table><div class="tbl-tools"><button data-tbl="row" data-tid="${b.id}">${artEm('＋')}行</button><button data-tbl="col" data-tid="${b.id}">${artEm('＋')}列</button></div></div>`;
     return t;
   }
   if (b.type === 'todo') {

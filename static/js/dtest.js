@@ -10,10 +10,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, PL_MOD_COLOR, api, appConfirm, dtMaterial,
-   esc, lsGet, lsSet, push, toast,
-   qtFmt, qtTotalStart, qtTotalStop, wqlBtnHtml, wqlMark, wqlOpen,
-   wqlRefreshBtns, wqlScan */
+/* global $, PL_MOD_COLOR, api, appConfirm, artEm, dtMaterial, esc, lsGet, lsSet, push, qtFmt, qtTotalStart, qtTotalStop, toast, wqlBtnHtml, wqlMark, wqlOpen, wqlRefreshBtns, wqlScan */
 
 /* ---------------- 每日巩固测试（按当天学的内容 AI 出小测） ---------------- */
 $('#dt-open').onclick = () => openDtest();
@@ -55,8 +52,8 @@ function dtScanWq() {
 function dtModeBar() {
   return `<div class="dt-bar">
     <div class="dt-modes">
-      <button class="dt-mbtn ${dtMode === 'study' ? 'on' : ''}" data-dtm="study">📖 背题模式</button>
-      <button class="dt-mbtn ${dtMode === 'test' ? 'on' : ''}" data-dtm="test">📝 测试模式</button>
+      <button class="dt-mbtn ${dtMode === 'study' ? 'on' : ''}" data-dtm="study">${artEm('📖')} 背题模式</button>
+      <button class="dt-mbtn ${dtMode === 'test' ? 'on' : ''}" data-dtm="test">${artEm('📝')} 测试模式</button>
     </div>
     <div class="dt-mhint">${dtMode === 'study'
       ? '做一题立刻显示这题答案与解析，边做边记'
@@ -64,7 +61,7 @@ function dtModeBar() {
     <div class="dt-count">题量：
       <button class="dt-cbtn ${dtCount === 10 ? 'on' : ''}" data-dtc="10">10 题</button>
       <button class="dt-cbtn ${dtCount === 15 ? 'on' : ''}" data-dtc="15">15 题</button></div>
-    <button class="pl-link-btn" id="dt-records">📋 测试记录</button>
+    <button class="pl-link-btn" id="dt-records">${artEm('📋')} 测试记录</button>
   </div>`;
 }
 async function loadDtest() {
@@ -78,7 +75,7 @@ async function loadDtest() {
       dtClockStop();                   // 没题了（还没生成），钟没有意义
       $('#dt-body').innerHTML = dtModeBar() +
         `<div class="dt-empty">今天还没生成测试。选好模式和题量，AI 会按你今天学的内容出题。</div>
-        <button class="btn primary" id="dt-gen">✨ 生成今日巩固测试</button>`;
+        <button class="btn primary" id="dt-gen">${artEm('✨')} 生成今日巩固测试</button>`;
       $('#dt-gen').onclick = () => dtGen(false);
       bindBar();
       return;
@@ -179,7 +176,7 @@ function renderDtest() {
   if (dtSubmitted) {
     foot = `<div class="dt-score">得分 ${dtScore()} / ${dtItems.length}
        <span class="dt-score-sub">全套建议用时 ${qtFmt(dtTotalSec())}</span></div>
-       <button class="btn" id="dt-again">🔄 换一套新题</button>`;
+       <button class="btn" id="dt-again">${artEm('🔄')} 换一套新题</button>`;
   } else if (dtIsTest()) {
     foot = `<button class="btn primary" id="dt-submit">交卷看结果</button>`;
   } else {

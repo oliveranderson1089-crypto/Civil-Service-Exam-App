@@ -7,9 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global copyText, $, ALL_BOARDS, Ink, KB, api, appConfirm,
-   appPrompt, c, esc, fmtSize, hl, inkHere,
-   kbPrompt, openMatMenu, push, toast */
+/* global $, ALL_BOARDS, Ink, KB, api, appConfirm, appPrompt, artEm, c, copyText, esc, fmtSize, hl, inkHere, kbPrompt, openMatMenu, push, toast */
 
 /* ================= 资料库 ================= */
 const EXT_ICON = {
@@ -17,7 +15,8 @@ const EXT_ICON = {
   png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', svg: '🖼️', bmp: '🖼️',
   html: '🌐', htm: '🌐', txt: '📄', md: '📄', csv: '📊', zip: '🗜️',
 };
-const iconFor = (ext) => EXT_ICON[(ext || '').replace('.', '')] || '📎';
+// 同 drive.js：两套字形，主题下换成跟色的线描
+const iconFor = (ext) => artEm(EXT_ICON[(ext || '').replace('.', '')] || '📎');
 const OFFICE_EXT = ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.rtf'];
 let matBoard = '', matCustomBoards = [];
 async function renderMatFilter() {
@@ -28,7 +27,7 @@ async function renderMatFilter() {
   const all = ALL_BOARDS.concat(matCustomBoards);
   $('#mat-filter').innerHTML = `<button class="chip ${matBoard === '' ? 'active' : ''}" data-mb="">全部</button>` +
     all.map(b => `<button class="chip ${b === matBoard ? 'active' : ''}" data-mb="${esc(b)}">${esc(b)}</button>`).join('') +
-    `<button class="chip chip-newcat" id="mat-newcat">＋ 分类</button>`;
+    `<button class="chip chip-newcat" id="mat-newcat">${artEm('＋')} 分类</button>`;
 }
 async function saveMatBoards() {
   try {
@@ -94,7 +93,7 @@ async function loadMaterials() {
         <span class="mat-icon">${iconFor(m.ext)}</span>
         <div class="mat-info">
           <div class="mat-name">${esc(m.title || m.orig_name)}</div>
-          <div class="mat-meta">${esc((m.ext || '').replace('.', '').toUpperCase())} · ${fmtSize(m.size)}${m.board ? ' · ' + esc(m.board) : ''}${m.shared ? ` · <span class="mat-shared">👥 ${esc(m.shared_from)} 共享</span>` : ''}</div>
+          <div class="mat-meta">${esc((m.ext || '').replace('.', '').toUpperCase())} · ${fmtSize(m.size)}${m.board ? ' · ' + esc(m.board) : ''}${m.shared ? ` · <span class="mat-shared">${artEm('👥')} ${esc(m.shared_from)} 共享</span>` : ''}</div>
         </div>
         <div class="mat-actions">
           <button class="iconbtn mat-more" data-act="menu" title="更多操作">⋮</button>
@@ -561,7 +560,7 @@ function openViewer(id, name, ext) {
 $('#upload-btn').onclick = () => {
   $('#up-board').innerHTML = `<option value="">未分类</option>`
     + ALL_BOARDS.concat(matCustomBoards).map(b => `<option ${b === matBoard ? 'selected' : ''}>${esc(b)}</option>`).join('')
-    + `<option value="__new__">＋ 新建分类…</option>`;
+    + `<option value="__new__">${artEm('＋')} 新建分类…</option>`;
   $('#up-title').value = ''; $('#up-file').value = '';
   $('#upload-modal').classList.remove('hidden');
 };

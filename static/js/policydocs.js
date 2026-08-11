@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, emKey, esc, isDocHeading,
-   mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, emKey, esc, isDocHeading, mdToHtml, push, stack, toast */
 
 /* ================= 时政要文库（重要文件全文 + AI 政策解读） ================= */
 let polyData = null;
@@ -23,7 +22,7 @@ async function openPolicyDocs() {
       return `<div class="poly-card" data-poly="${it.id}">
         <span class="poly-badge" style="background:${col}">${esc(it.category)}</span>
         <div class="poly-t">${esc(it.title)}</div>
-        <div class="poly-meta">全文约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">✓ 已有 AI 解读</span>' : ''}</div>
+        <div class="poly-meta">全文约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">' + artEm("✓") + ' 已有 AI 解读</span>' : ''}</div>
       </div>`;
     }).join('');
   } catch (e) { $('#poly-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
@@ -43,10 +42,10 @@ async function openPolicyDoc(id) {
 function renderPolicyDoc() {
   const d = polyData;
   const ai = d.interpretation
-    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 政策解读</div><div class="cd-sec-b">${mdToHtml(d.interpretation)}</div>
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">${artEm('🤖')} AI 政策解读</div><div class="cd-sec-b">${mdToHtml(d.interpretation)}</div>
         <button class="btn cd-ai-regen" id="poly-regen">重新生成</button></div>`
     : `<div class="poly-genbox"><p class="cd-tip" style="margin:0 0 10px">让 AI 提炼这份文件的核心要点、公考高频考点、可引用金句与答题运用。</p>
-        <button class="btn primary" id="poly-gen" style="width:100%;padding:12px;">🤖 生成 AI 政策解读</button></div>`;
+        <button class="btn primary" id="poly-gen" style="width:100%;padding:12px;">${artEm('🤖')} 生成 AI 政策解读</button></div>`;
   const body = (d.content || '').split('\n').filter(x => x.trim()).map(p => {
     const s = p.trim();
     return isDocHeading(s) ? `<p class="poly-h">${emKey(s)}</p>` : `<p>${emKey(s)}</p>`;

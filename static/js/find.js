@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, back, c, esc, push,
-   toast */
+/* global $, api, appConfirm, artEm, back, c, esc, push, toast */
 
 /* ============= 小题训练：找点 + 写点 =============
    归纳概括 / 综合分析 / 提出对策，难点是同一个：从材料里把要点找出来。
@@ -144,7 +143,7 @@ function fdPaperCard(x, opt = {}) {
       <span class="wr-w">${x.full} 分</span>
       <span class="wr-tag">${esc(x.source || '')}</span>
       ${x.done ? `<span class="fd-done">练过 ${x.done} 次</span>` : ''}</div>
-    <button class="btn danger tiny fd-del" data-fddel="${x.id}" title="删除这道题">🗑</button></div>`;
+    <button class="btn danger tiny fd-del" data-fddel="${x.id}" title="删除这道题">${artEm('🗑')}</button></div>`;
 }
 
 async function loadFindList() {
@@ -325,7 +324,7 @@ function frMat() {
   box.classList.toggle('hidden', fdStep === 3 && fdTab !== 'mat');
   const mk = fdCheck ? { ok: fdCheck.okSents, bad: fdCheck.wrongSents, miss: fdCheck.missSents, near: fdCheck.nearSents } : null;
   box.innerHTML = (fdStep === 3
-    ? `<div class="fr-sec-t">📄 给定资料${fdPaper.material_words ? `（${fdPaper.material_words} 字）` : ''}
+    ? `<div class="fr-sec-t">${artEm('📄')} 给定资料${fdPaper.material_words ? `（${fdPaper.material_words} 字）` : ''}
        <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏 · 橙=沾边</i></div>` : '')
     + frMatHtml(fdPaper.sents, fdPicked, mk);
   frTapMark(null);      // 重渲染把 DOM 换掉了，待定的那一下跟着作废
@@ -406,13 +405,13 @@ function frFoot() {
     // 判定过就把结果一并摆回来（回退到这一步时不该只剩个光秃秃的按钮）
     // 手机上的手势和电脑不是一套，提示语也得跟着换（fdCoarse 认的是「粗指针」= 手指）
     $('#fr-foot').innerHTML = `
-      <div class="fr-tip">🖍 在材料里${fdCoarse()
+      <div class="fr-tip">${artEm('🖍')} 在材料里${fdCoarse()
         ? '<b>连点两下</b>句子勾出你认为的要点（点一下只是待定，再点一下才算勾上，滑动不会误勾）'
         : '<b>点句子</b>勾出你认为的要点（按住拖可以连选）'}。
         这一步<b>只找不写</b> —— 共 ${p.n_points} 个采分点，你勾了 <b id="fr-n">${fdPicked.size}</b> 句。</div>`
       + (fdCheck ? frCheckBody(fdCheck) : '')
       + `<div class="fr-acts">
-        ${fdCheck ? '<button class="btn" id="fr-redo">🔄 全部清空重找</button>' : ''}
+        ${fdCheck ? '<button class="btn" id="fr-redo">' + artEm("🔄") + ' 全部清空重找</button>' : ''}
         <button class="btn primary" id="fr-check">${fdCheck ? '改完了，重新判定' : '看看我找得对不对'}</button>
         ${fdCheck ? '<button class="btn" id="fr-next">下一步：照着写点子 →</button>' : ''}
       </div>`;
@@ -427,15 +426,15 @@ function frFoot() {
     const picked = fdPaper.sents.filter(s => fdPicked.has(s.i));
     const gc = p.doctype;   // 贯彻执行：提示按文种格式成文
     $('#fr-foot').innerHTML = `
-      <div class="fr-tip">✍️ 照着<b>你勾到的（绿色）</b>写要点。${gc
+      <div class="fr-tip">${artEm('✍️')} 照着<b>你勾到的（绿色）</b>写要点。${gc
         ? `这是<b>贯彻执行题</b>，要按<b>${esc(p.doctype)}</b>的格式成文（要点全 + 格式对 + 语言得体）。`
         : `要<b>概括</b>，不是抄原文；<b>分条写</b>。`}
         ${p.word_min}~${p.word_max} 字。</div>
-      ${gc && p.doctype_fmt ? `<div class="fr-fmt-tip">📋 <b>${esc(p.doctype)}</b>格式骨架：${esc(p.doctype_fmt)}</div>` : ''}
+      ${gc && p.doctype_fmt ? `<div class="fr-fmt-tip">${artEm('📋')} <b>${esc(p.doctype)}</b>格式骨架：${esc(p.doctype_fmt)}</div>` : ''}
       <div class="fr-picked">${picked.map(s => `<div>· ${esc(s.t)}</div>`).join('') || '<i>你没勾到任何要点</i>'}</div>
       <textarea id="fr-ans" placeholder="一、…\n二、…\n三、…"></textarea>
       <div class="fr-wc">
-        <button type="button" class="hw-open-btn" data-hw="fr-ans">✍️ 手写输入</button>
+        <button type="button" class="hw-open-btn" data-hw="fr-ans">${artEm('✍️')} 手写输入</button>
         <span><span id="fr-wc">0</span> / ${p.word_max} 字</span>
       </div>
       <div class="fr-acts">
@@ -459,7 +458,7 @@ function frFoot() {
     $('#fr-foot').innerHTML = frStep3Pane() + `
       <div class="fr-acts">
         <button class="btn" id="fr-prev3">← 回去改答案</button>
-        <button class="btn primary" id="fr-again">🔄 再练这道</button>
+        <button class="btn primary" id="fr-again">${artEm('🔄')} 再练这道</button>
         <button class="btn" id="fr-back">换一道</button>
       </div>`;
     // 回去改答案再交 = **新增**一条记录，不覆盖这次的（做题记录里两次都在，能比进步）
@@ -474,12 +473,12 @@ function frCheckBody(r) {
   return `<div class="fr-res">
       <div class="fr-score">找到 <b>${r.found}</b> / ${r.total} 个采分点
         <span class="fr-acc${r.acc < 60 ? ' bad' : ''}">${r.acc}%</span></div>
-      ${r.missed.length ? `<div class="fr-sec miss"><div class="fr-sec-t">❌ 找漏了 ${r.missed.length} 个</div>
+      ${r.missed.length ? `<div class="fr-sec miss"><div class="fr-sec-t">${artEm('❌')} 找漏了 ${r.missed.length} 个</div>
         ${r.missed.map(x => `<div class="fr-item">
           <b>${x.score ? `[${x.score} 分] ` : ""}${esc(x.point)}</b>
           <div class="fr-ev" data-fsgo="${x.sents[0]}">↗ 就在这句：${esc(x.evidence.slice(0, 50))}…</div>
         </div>`).join('')}</div>` : ''}
-      ${r.wrong.length ? `<div class="fr-sec bad"><div class="fr-sec-t">⚠️ 找错了 ${r.wrong.length} 处
+      ${r.wrong.length ? `<div class="fr-sec bad"><div class="fr-sec-t">${artEm('⚠️')} 找错了 ${r.wrong.length} 处
           <i>（这些是干扰信息，不是采分点）</i></div>
         ${r.wrong.map(x => `<div class="fr-item"><div class="fr-ev" data-fsgo="${x.i}">↗ ${esc(x.t.slice(0, 50))}…</div></div>`).join('')}</div>` : ''}
       ${(r.near || []).length ? `<div class="fr-sec near"><div class="fr-sec-t">🟡 沾边 ${r.near.length} 处
@@ -489,7 +488,7 @@ function frCheckBody(r) {
         ${r.dup.map(x => `<div class="fr-item"><b>${esc(x.point)}</b>
           <div class="fr-ev">这一个点你勾了 ${x.sents.length} 句 —— 材料里换了个说法而已，答案里只算一个点</div>
         </div>`).join('')}</div>` : ''}
-      ${r.ok.length ? `<div class="fr-sec ok"><div class="fr-sec-t">✅ 找对了 ${r.ok.length} 个</div>
+      ${r.ok.length ? `<div class="fr-sec ok"><div class="fr-sec-t">${artEm('✅')} 找对了 ${r.ok.length} 个</div>
         ${r.ok.map(x => `<div class="fr-item"><b>${x.score ? `[${x.score} 分] ` : ""}${esc(x.point)}</b></div>`).join('')}</div>` : ''}
     </div>`;
 }
@@ -563,15 +562,15 @@ function frStep3Pane() {
   if (fdTab === 'mat') return '';
   if (fdTab === 'ref') {
     return g.reference
-      ? `<div class="fr-sec"><div class="fr-sec-t">📖 参考答案<i class="fr-legend">${g.ref_words || ''} 字 · 由本题采分点拼装，要点与判分标准一一对应</i></div>
+      ? `<div class="fr-sec"><div class="fr-sec-t">${artEm('📖')} 参考答案<i class="fr-legend">${g.ref_words || ''} 字 · 由本题采分点拼装，要点与判分标准一一对应</i></div>
          <div class="frd-ans">${esc(g.reference).replace(/\n/g, '<br>')}</div></div>`
-      : `<div class="fr-sec"><div class="fr-sec-t">📖 参考答案</div>
+      : `<div class="fr-sec"><div class="fr-sec-t">${artEm('📖')} 参考答案</div>
          <p class="empty">这道题还没生成参考答案（生成是出题之外单独的一次 AI 调用，超时/失败就会空着）。</p>
-         <button class="btn primary" id="fr-refgen">🔄 生成参考答案</button></div>`;
+         <button class="btn primary" id="fr-refgen">${artEm('🔄')} 生成参考答案</button></div>`;
   }
   if (fdTab === 'mine') {
     const n = (fdAnswer || '').replace(/\s/g, '').length;
-    return `<div class="fr-sec"><div class="fr-sec-t">✍️ 我的作答<i class="fr-legend">${n} 字 · 要求 ${fdPaper.word_min}~${fdPaper.word_max} 字</i></div>
+    return `<div class="fr-sec"><div class="fr-sec-t">${artEm('✍️')} 我的作答<i class="fr-legend">${n} 字 · 要求 ${fdPaper.word_min}~${fdPaper.word_max} 字</i></div>
       <div class="frd-ans">${esc(fdAnswer).replace(/\n/g, '<br>')}</div></div>`;
   }
   return frFindRecapHtml(fdCheck && {
@@ -609,13 +608,13 @@ function frResultBody(g) {
           <b>${m[0]} [${it.score} 分] ${esc(it.point || '')}</b>
           <div class="fr-gc">${esc(it.comment || '')}</div></div>`;
       }).join('')}
-      ${g.format ? `<div class="fr-sec fr-fmt"><div class="fr-sec-t">📋 格式（${esc(g.format.doctype || '')}）${g.format.grade ? ` · ${esc(g.format.grade)}` : ''}${g.format.full ? ` · ${g.format.score}/${g.format.full} 分` : ''}</div>
-        ${(g.format.ok || []).length ? `<div class="fr-item">✅ 到位：${g.format.ok.map(esc).join('、')}</div>` : ''}
-        ${(g.format.miss || []).length ? `<div class="fr-item">❌ 欠缺：${g.format.miss.map(esc).join('、')}</div>` : ''}
+      ${g.format ? `<div class="fr-sec fr-fmt"><div class="fr-sec-t">${artEm('📋')} 格式（${esc(g.format.doctype || '')}）${g.format.grade ? ` · ${esc(g.format.grade)}` : ''}${g.format.full ? ` · ${g.format.score}/${g.format.full} 分` : ''}</div>
+        ${(g.format.ok || []).length ? `<div class="fr-item">${artEm('✅')} 到位：${g.format.ok.map(esc).join('、')}</div>` : ''}
+        ${(g.format.miss || []).length ? `<div class="fr-item">${artEm('❌')} 欠缺：${g.format.miss.map(esc).join('、')}</div>` : ''}
         ${g.format.comment ? `<div class="fr-gc">${esc(g.format.comment)}</div>` : ''}</div>` : ''}
       ${(g.style || []).length ? `<div class="fr-sec bad"><div class="fr-sec-t">表述问题</div>
         ${g.style.map(s => `<div class="fr-item">· ${esc(s)}</div>`).join('')}</div>` : ''}
-      ${g.advice ? `<div class="fr-adv">💡 ${esc(g.advice)}</div>` : ''}
+      ${g.advice ? `<div class="fr-adv">${artEm('💡')} ${esc(g.advice)}</div>` : ''}
     </div>`;
 }
 
@@ -630,7 +629,7 @@ function frRecCard(x, opt = {}) {
       ${opt.wrong && x.miss_n ? `<span class="dr-acc bad">漏 ${x.miss_n} 点</span>` : ''}
       ${x.content_score != null ? `<span class="wr-tag">内容 ${x.content_score}/${x.content_full} + 格式 ${x.format_score}/${x.format_full}</span>` : ''}
       <span class="wr-w">${esc((x.created_at || '').slice(5, 16))}</span></div>
-    <button class="btn danger tiny fr-recdel" data-frdel="${x.id}" title="删除这条记录">🗑</button></div>`;
+    <button class="btn danger tiny fr-recdel" data-frdel="${x.id}" title="删除这条记录">${artEm('🗑')}</button></div>`;
 }
 // 删一条记录：直接把卡片从当前列表移除，不重拉/不改题目本身
 async function frDelRec(rid) {
@@ -684,7 +683,7 @@ function frFindRecapHtml(fr) {
   if ((fr.missed || []).length) bits.push('找漏 ' + fr.missed.length);
   if (fr.wrong_n) bits.push('找错 ' + fr.wrong_n);
   if (fr.dup_n) bits.push('找重 ' + fr.dup_n);
-  return `<div class="fr-sec fr-recap"><div class="fr-sec-t">🖍 我的找点过程</div>
+  return `<div class="fr-sec fr-recap"><div class="fr-sec-t">${artEm('🖍')} 我的找点过程</div>
     <div class="fr-item">找到 <b>${fr.found}</b> / ${fr.total} 个采分点
       <span class="fr-acc${acc < 60 ? ' bad' : ''}">${acc}%</span>${bits.length ? ' · ' + bits.join(' · ') : ''}</div>
     ${(fr.missed || []).length ? `<div class="fr-item">当时漏掉：${fr.missed.map(esc).join('；')}</div>` : ''}
@@ -722,7 +721,7 @@ function frRecRender() {
   const showMat = fdRecTab === 'mat' || fdRecTab === 'find';
   $('#frd-mat').classList.toggle('hidden', !showMat);
   $('#frd-mat').innerHTML = showMat
-    ? `<div class="fr-sec-t">📄 给定资料${d.material_words ? `（${d.material_words} 字）` : ''}
+    ? `<div class="fr-sec-t">${artEm('📄')} 给定资料${d.material_words ? `（${d.material_words} 字）` : ''}
        <i class="fr-legend">绿=找对 · 红=找错 · 黄=找漏 · 橙=沾边</i></div>`
       + frMatHtml(d.sents, new Set(d.marks), {
         ok: new Set(d.mark_ok), bad: new Set(d.mark_bad), miss: new Set(d.mark_miss) })
@@ -743,17 +742,17 @@ function frRecRender() {
     body = frResultBody(g);
   } else if (fdRecTab === 'ref') {
     body = d.reference
-      ? `<div class="fr-sec"><div class="fr-sec-t">📖 参考答案<i class="fr-legend">${d.ref_words} 字 · 由本题采分点拼装</i></div>
+      ? `<div class="fr-sec"><div class="fr-sec-t">${artEm('📖')} 参考答案<i class="fr-legend">${d.ref_words} 字 · 由本题采分点拼装</i></div>
          <div class="frd-ans">${esc(d.reference).replace(/\n/g, '<br>')}</div></div>`
-      : `<div class="fr-sec"><div class="fr-sec-t">📖 参考答案</div>
+      : `<div class="fr-sec"><div class="fr-sec-t">${artEm('📖')} 参考答案</div>
          <p class="empty">这道题还没生成参考答案。</p>
-         <button class="btn primary" id="frd-refgen">🔄 生成参考答案</button></div>`;
+         <button class="btn primary" id="frd-refgen">${artEm('🔄')} 生成参考答案</button></div>`;
   } else if (fdRecTab === 'mine') {
-    body = `<div class="fr-sec"><div class="fr-sec-t">✍️ 我写的答案<i class="fr-legend">${(d.answer || '').replace(/\s/g, '').length} 字</i></div>
+    body = `<div class="fr-sec"><div class="fr-sec-t">${artEm('✍️')} 我写的答案<i class="fr-legend">${(d.answer || '').replace(/\s/g, '').length} 字</i></div>
       <div class="frd-ans">${esc(d.answer).replace(/\n/g, '<br>')}</div></div>`;
   }
   $('#frd-body').innerHTML = body
-    + `<div class="fr-acts"><button class="btn primary" id="frd-again">🔄 再练这道</button>
+    + `<div class="fr-acts"><button class="btn primary" id="frd-again">${artEm('🔄')} 再练这道</button>
        <button class="btn" id="frd-back">返回记录</button></div>`;
   $('#frd-again').onclick = () => openFindRun(d.paper_id);
   $('#frd-back').onclick = () => back();

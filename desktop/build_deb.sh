@@ -23,7 +23,8 @@ mkdir -p "$BUILD/DEBIAN" \
          "$BUILD/usr/share/applications" \
          "$BUILD/usr/share/icons/hicolor/512x512/apps" \
          "$BUILD/usr/share/icons/hicolor/256x256/apps" \
-         "$BUILD/usr/share/icons/hicolor/192x192/apps"
+         "$BUILD/usr/share/icons/hicolor/192x192/apps" \
+         "$BUILD/usr/share/gongkao-assistant/icons"
 
 echo "[2/4] 原生启动器 + 桌面项 + 图标"
 cp "$HERE/gongkao_native.py" "$BUILD/usr/bin/$PKG"
@@ -48,6 +49,8 @@ DESK
 cp "$ROOT/static/icon-512.png" "$BUILD/usr/share/icons/hicolor/512x512/apps/$PKG.png"
 cp "$ROOT/static/icon-512.png" "$BUILD/usr/share/icons/hicolor/256x256/apps/$PKG.png"
 cp "$ROOT/static/icon-192.png" "$BUILD/usr/share/icons/hicolor/192x192/apps/$PKG.png"
+# 六个时段的图标：壳启动时按当前时刻挑一张当窗口/托盘图标，并复制进用户图标目录
+cp "$ROOT/static/icons/"gk-*.png "$BUILD/usr/share/gongkao-assistant/icons/"
 
 echo "[3/4] 控制信息"
 INSTALLED_KB=$(du -sk "$BUILD" | cut -f1)

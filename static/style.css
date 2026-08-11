@@ -885,12 +885,20 @@ body.mobile-ui #view-notes .fc-time{font-size:11.5px;color:#9aa3b2;}
 .kb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 16px;}
 @media(min-width:680px){.kb-grid{grid-template-columns:repeat(4,1fr);}}
 .kb-card{cursor:pointer;}
-.kb-cover{position:relative;aspect-ratio:3/4;border-radius:6px 11px 11px 6px;overflow:hidden;
-  box-shadow:0 6px 18px rgba(20,30,50,.2);border-left:4px solid rgba(0,0,0,.18);}
+/* 封面的四样（底色 / 书脊 / 圆角 / 投影）全走变量。八个色号由 .kbc0…kbc7 给（在主题段里），
+   主题开着时由 js/daylight.js 的 dlKbCovers 顶掉 —— 这一层自己不认识任何颜色。 */
+.kb-cover{position:relative;aspect-ratio:3/4;overflow:hidden;
+  background:var(--cv-face,var(--bg2));
+  border-radius:var(--kb-radius,6px 11px 11px 6px);
+  border-left:4px solid var(--cv-spine,rgba(0,0,0,.18));
+  box-shadow:var(--kb-rim,0 0 rgba(0,0,0,0)),var(--kb-shadow,0 6px 18px rgba(20,30,50,.2));}
 .kb-card:active .kb-cover{transform:scale(.98);}
 .kbc-band{position:absolute;left:14%;right:14%;top:16%;height:22%;border-radius:6px;
-  background:rgba(255,255,255,.85);box-shadow:0 2px 6px rgba(0,0,0,.12);}
-.kbc-ribbon{position:absolute;top:0;right:14%;width:16px;height:30px;background:#28c76f;
+  background:var(--kb-band,rgba(255,255,255,.85));color:var(--kb-band-ink,inherit);
+  border:1px solid var(--kb-band-line,transparent);
+  box-shadow:0 2px 6px rgba(0,0,0,.12);}
+.kbc-ribbon{position:absolute;top:0;right:14%;width:16px;height:30px;
+  background:var(--kb-ribbon,#28c76f);
   clip-path:polygon(0 0,100% 0,100% 100%,50% 80%,0 100%);}
 .kb-card-name{font-weight:600;font-size:15px;margin-top:10px;line-height:1.35;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
@@ -901,10 +909,10 @@ body.mobile-ui #view-notes .fc-time{font-size:11.5px;color:#9aa3b2;}
 .kb-fab svg{width:26px;height:26px;}
 .kb-fab:active{transform:scale(.95);}
 
-/* 封面挑选 */
+/* 封面挑选。选择器里那八格也吃同一套变量 —— 挑的时候看到的就是主题下真实的样子 */
 .nb-covers{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;}
 .nb-cover-opt{width:38px;height:50px;border-radius:6px;cursor:pointer;border:2px solid transparent;
-  box-shadow:0 2px 6px rgba(20,30,50,.15);}
+  background:var(--cv-face,var(--bg2));box-shadow:0 2px 6px rgba(20,30,50,.15);}
 .nb-cover-opt.sel{border-color:var(--blue);box-shadow:0 0 0 2px rgba(26,111,181,.3);}
 .modal-box textarea{width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:8px;
   font-size:14px;font-family:inherit;outline:none;resize:vertical;}
@@ -914,8 +922,11 @@ body.mobile-ui #view-notes .fc-time{font-size:11.5px;color:#9aa3b2;}
 /* —— 知识库详情（目录） —— */
 #view-notebook{position:relative;min-height:calc(100dvh - 120px);padding-bottom:96px;}
 .nb-head{display:flex;align-items:center;gap:14px;}
+/* 详情页头上那本小的：色和书脊跟列表页同一套变量，圆角/投影按自己的尺寸来 */
 .nb-cover{width:60px;height:80px;border-radius:5px 9px 9px 5px;flex:0 0 auto;position:relative;overflow:hidden;
-  box-shadow:0 5px 14px rgba(20,30,50,.18);border-left:3px solid rgba(0,0,0,.18);}
+  background:var(--cv-face,var(--bg2));
+  border-left:3px solid var(--cv-spine,rgba(0,0,0,.18));
+  box-shadow:var(--kb-rim,0 0 rgba(0,0,0,0)),0 5px 14px rgba(20,30,50,.18);}
 .nb-meta{min-width:0;flex:1;}
 .nb-name{font-size:21px;font-weight:700;line-height:1.3;word-break:break-word;}
 .nb-sub{font-size:13px;color:var(--muted);margin-top:4px;}
@@ -1159,6 +1170,80 @@ body.mobile-ui .input-grip{display:none;}
 .input-grip:hover::before,body.resizing-ns .input-grip::before{background:var(--blue-fill);}
 body.resizing-ns{cursor:ns-resize;user-select:none;}
 #ai-text:focus{border-color:var(--blue);box-shadow:var(--ring);}
+/* 档位切换：快 / 深度（深度走 aiclient 的 pro 档＝推理模型） */
+.ai-tier{display:inline-flex;flex:none;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.38);
+  border-radius:14px;padding:2px;font-size:11.5px;}
+.ai-tier button{border:none;background:transparent;color:#fff;padding:2px 9px;border-radius:11px;
+  cursor:pointer;font-size:11.5px;white-space:nowrap;}
+.ai-tier button.on{background:#fff;color:#1a6fb5;font-weight:650;}
+/* 工具轨迹卡：收起一行，点开看每一步 */
+.ai-trace{border:1px solid #e3e8f0;border-radius:11px;background:#fafbfd;overflow:hidden;align-self:stretch;}
+.ai-th{display:flex;align-items:center;gap:7px;padding:7px 11px;font-size:12.5px;color:#5a6270;cursor:pointer;}
+.ai-th .ic{color:var(--blue);}
+.ai-th .ar{margin-left:auto;color:#9aa1ac;font-size:11px;}
+.ai-tb{border-top:1px solid #e9edf3;padding:9px 11px;display:flex;flex-direction:column;gap:8px;background:var(--card);}
+.ai-step{display:flex;gap:8px;font-size:12px;line-height:1.55;}
+.ai-step .n{width:16px;height:16px;border-radius:50%;background:#eaf1f9;color:var(--blue);font-size:10px;
+  font-weight:700;display:grid;place-items:center;flex:none;margin-top:2px;}
+.ai-step.bad .n{background:#fbeceb;color:#c0392b;}
+.ai-step .c{min-width:0;word-break:break-word;}
+.ai-step .k{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--blue);}
+.ai-step .r{display:block;color:#8a93a3;font-size:11.5px;}
+body.dark .ai-trace{background:#161d2b;border-color:#243049;}
+body.dark .ai-tb{background:#141b29;border-color:#243049;}
+body.dark .ai-step .n{background:#1c2740;}
+/* 消息下方的操作条（复制 / 重答 / 改问题 / 分支） */
+.ai-acts{display:flex;align-items:center;gap:13px;font-size:12px;color:#9aa1ac;margin-top:-10px;}
+.ai-acts.uacts{align-self:flex-end;}
+.ai-acts span{cursor:pointer;}
+.ai-acts span:hover{color:var(--blue);}
+.ai-msg.ai-err{color:#c0392b;}
+body.dark .ai-msg.ai-err{color:#e8837c;}
+/* 主动开场卡：打开助手先给一句判断 + 几个起手式 */
+.ai-open{border:1px solid #dbe7f4;background:#f6faff;border-radius:13px;padding:12px 13px;align-self:stretch;}
+.ai-open .t{font-size:13.5px;font-weight:650;color:#1f2733;line-height:1.6;}
+.a-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;}
+.a-chip{border:1px solid #cfe0f2;background:var(--card);color:var(--blue);font-size:12px;
+  border-radius:14px;padding:4px 11px;cursor:pointer;}
+.a-chip:hover{background:#eaf3fc;}
+body.dark .ai-open{background:#16202f;border-color:#2a3f57;}
+body.dark .ai-open .t{color:#dbe2ec;}
+body.dark .a-chip{background:#141b29;border-color:#2a3f57;}
+/* 长期记忆面板 */
+.mem-tip{font-size:12px;color:#8a93a3;line-height:1.6;margin:0 2px 6px;}
+.ai-mem{display:flex;gap:9px;align-items:flex-start;background:var(--card);border:1px solid var(--line);
+  border-radius:11px;padding:9px 11px;}
+.ai-mem .c{flex:1;min-width:0;}
+.ai-mem .t{font-size:13.5px;line-height:1.5;}
+.ai-mem .s{font-size:11px;color:#9aa1ac;margin-top:3px;}
+.ai-mem .x{border:none;background:transparent;color:#c3c9d4;font-size:14px;cursor:pointer;flex:none;}
+.ai-mem .x:hover{color:#c0392b;}
+.mem-add{display:flex;gap:7px;padding:10px 12px;border-top:1px solid var(--line);}
+.mem-add input{flex:1;min-width:0;border:1px solid var(--line);border-radius:9px;padding:7px 10px;
+  font-size:13.5px;background:var(--card);color:inherit;}
+.mem-add button{border:none;background:var(--blue-fill);color:#fff;border-radius:9px;padding:7px 14px;
+  font-size:13.5px;cursor:pointer;flex:none;}
+/* 「继续」：上一轮撞到轮数/预算上限、活没干完时才出现 */
+.ai-contwrap{align-self:flex-start;margin-top:-8px;}
+.ai-contbtn{border:1px solid #cfe0f2;background:#f6faff;color:var(--blue);font-size:12.5px;
+  padding:5px 14px;border-radius:16px;cursor:pointer;}
+.ai-contbtn:hover{background:#eaf3fc;}
+body.dark .ai-contbtn{background:#16202f;border-color:#2a3f57;}
+/* 表情面板（聊天和 AI 共用） */
+.emoji-pan{position:fixed;z-index:140;width:min(300px,92vw);max-height:230px;overflow-y:auto;
+  padding:8px;border-radius:12px;background:var(--card);border:1px solid var(--line);
+  box-shadow:0 10px 30px rgba(20,30,50,.22);display:grid;grid-template-columns:repeat(8,1fr);gap:2px;}
+.emoji-pan.hidden{display:none;}
+.emoji-pan button{border:none;background:transparent;font-size:20px;line-height:1;padding:5px 0;
+  border-radius:7px;cursor:pointer;}
+.emoji-pan button:hover{background:rgba(26,111,181,.12);}
+body.dark .emoji-pan{background:#141b29;border-color:#2a3345;}
+/* 停止生成：跟着消息流走（不是钉在输入框上），生成结束就消失 */
+.ai-stopwrap{align-self:flex-start;margin-top:-8px;}
+.ai-stopbtn{border:1px solid var(--line);background:var(--card);color:#4a5160;font-size:12.5px;
+  padding:4px 13px;border-radius:16px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;}
+.ai-stopbtn:hover{border-color:#c0392b;color:#c0392b;}
+body.dark .ai-stopbtn{background:#141b29;border-color:#2a3345;color:#cfd5e0;}
 .ai-sendbtn{border:none;background:var(--blue-fill);color:#fff;border-radius:12px;padding:11px 18px;font-size:15px;cursor:pointer;flex:0 0 auto;}
 .ai-sendbtn:active{background:var(--blue-d);}
 .ai-sendbtn:disabled{opacity:.5;}
@@ -1251,23 +1336,32 @@ body.resizing-ns{cursor:ns-resize;user-select:none;}
      1) 稿纸格 —— 这是这个应用自己的东西（答题卡 / 方格纸），比抽象渐变更像"它"；
      2) 顶部一层极淡的品牌色晕，把视线收到中间；
      3) 只有品牌方章是实色，全屏就这一个重音。 */
-#splash{position:fixed;inset:0;z-index:999;color:var(--text);
-  background:
-    radial-gradient(120% 70% at 50% -10%, rgba(26,111,181,.10), rgba(26,111,181,0) 60%),
-    repeating-linear-gradient(0deg, rgba(26,111,181,.055) 0 1px, transparent 1px 34px),
-    repeating-linear-gradient(90deg, rgba(26,111,181,.055) 0 1px, transparent 1px 34px),
-    linear-gradient(180deg,#fbfcfe,#f2f6fa);
+#splash{position:fixed;inset:0;z-index:999;color:var(--text);overflow:hidden;
+  /* 兜底：js/daylight.js 没跑起来（脚本挂了/极老的壳）时，这张静态的晨光底还在 */
+  background:linear-gradient(180deg,#fff4e0 0%,#fdf3e6 52%,#e8f0f8 100%);
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   padding:0 36px;text-align:center;transition:opacity .5s;}
+/* 五层底图：位置和层序写在这儿，浓淡由 daylight.js 按时刻给 */
+.sp-layer{position:absolute;inset:0;pointer-events:none;}
+#sp-hill{opacity:0;}
+#sp-hill svg{position:absolute;left:0;right:0;bottom:0;width:100%;height:32%;}
+#sp-stars,#sp-trail,#sp-bloom,#sp-grid{opacity:0;}
+/* 那串光点只占下半屏 —— 爬到中间会压在引言上 */
+#sp-trail{top:auto;bottom:0;height:42%;}
+.sp-grain{mix-blend-mode:soft-light;opacity:0;background-repeat:repeat;background-size:64px 64px;}
+.sp-body{position:relative;display:flex;flex-direction:column;align-items:center;
+  width:100%;max-width:420px;}
 #splash.fade{opacity:0;pointer-events:none;}
 .sp-logo{width:84px;height:84px;border-radius:24px;
   background:linear-gradient(150deg,#2b8fd6,#1a6fb5 70%);color:#fff;
   display:grid;place-items:center;font-size:46px;font-weight:800;margin-bottom:16px;
   box-shadow:0 10px 30px rgba(26,111,181,.28),inset 0 1px 0 rgba(255,255,255,.35);}
 .sp-name{font-size:20px;font-weight:700;letter-spacing:.34em;text-indent:.34em;
-  margin-bottom:38px;color:var(--text);}
-.sp-quote{font-size:15.5px;line-height:2.05;text-align:justify;max-width:360px;color:#4a5566;font-family:"Kaiti SC","STKaiti","KaiTi","楷体",serif;}
-.sp-author{margin-top:14px;font-size:14px;color:var(--muted);align-self:flex-end;margin-right:8%;
+  margin-bottom:38px;color:inherit;}
+/* 字色继承 #splash —— 那一层的 color 由 daylight.js 按时刻给（白天墨色、夜里近白）。
+   写死 var(--text) 的话，夜色底上就是深灰字压深蓝底，什么都看不见。 */
+.sp-quote{font-size:15.5px;line-height:2.05;text-align:justify;max-width:360px;color:inherit;font-family:"Kaiti SC","STKaiti","KaiTi","楷体",serif;}
+.sp-author{margin-top:14px;font-size:14px;color:inherit;opacity:.72;align-self:flex-end;margin-right:8%;
   font-family:"Kaiti SC","STKaiti","KaiTi","楷体",serif;}
 .sp-loading{display:flex;gap:8px;margin-top:46px;}
 .sp-loading span{width:8px;height:8px;border-radius:50%;background:rgba(26,111,181,.55);
@@ -1276,7 +1370,9 @@ body.resizing-ns{cursor:ns-resize;user-select:none;}
 .sp-loading span:nth-child(3){animation-delay:.3s;}
 @keyframes sp-b{0%,100%{transform:translateY(0);opacity:.5;}50%{transform:translateY(-7px);opacity:1;}}
 .ad-box{max-width:340px;}
-.ad-msg{font-size:14.5px;line-height:1.7;color:#39414d;margin:4px 0 6px;word-break:break-all;}
+/* pre-wrap：确认删除时要把「要删的那条原文」原样摆出来（多行），textContent 里的
+   换行得留住，否则整段挤成一行看不清删的是什么 */
+.ad-msg{font-size:14.5px;line-height:1.7;color:#39414d;margin:4px 0 6px;word-break:break-word;white-space:pre-wrap;}
 .ad-input{width:100%;border:1.5px solid var(--line);border-radius:9px;padding:10px 12px;
   font-size:14.5px;font-family:inherit;outline:none;resize:vertical;margin:4px 0 6px;}
 .ad-input:focus{border-color:var(--blue);}
@@ -1319,6 +1415,11 @@ body.resizing-ns{cursor:ns-resize;user-select:none;}
   background:#fff;color:#39414d;font-size:15px;font-weight:600;border-radius:13px;padding:13px 15px;
   cursor:pointer;font-family:inherit;margin-bottom:6px;-webkit-tap-highlight-color:transparent;}
 .aih-arr{margin-left:auto;color:#9aa1ac;font-size:18px;}
+.aih-searchbar{margin-top:12px;}
+.aih-searchbar input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:18px;
+  padding:8px 14px;font-size:13.5px;background:var(--card);color:inherit;}
+.aih-searchbar input:focus{border-color:var(--blue);outline:none;box-shadow:var(--ring);}
+body.dark .aih-searchbar input{background:#141b29;border-color:#2a3345;}
 .aih-sec{font-size:12.5px;font-weight:700;color:#8b93a1;margin:16px 2px 8px;letter-spacing:.05em;}
 .aih-item{position:relative;background:#fff;border:1px solid #eef1f5;border-radius:12px;
   padding:12px 40px 12px 14px;margin-bottom:8px;cursor:pointer;box-shadow:var(--shadow);}
@@ -2622,6 +2723,7 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
 .fab-main{position:absolute;inset:0;width:50px;height:50px;border-radius:50%;border:none;cursor:pointer;
   background:linear-gradient(135deg,#7a5cc0,#5b8def);color:#fff;font-size:20px;font-weight:800;
   box-shadow:0 5px 16px rgba(90,92,192,.45);transition:transform .22s;display:grid;place-items:center;}
+.fab-main svg{width:22px;height:22px;}
 .fab-main:active{transform:scale(.94);}
 .fab.open .fab-main{transform:rotate(135deg);}
 /* 展开菜单：竖排「图标 + 标签」胶囊，一列到底、标签常显，加工具只是往下多一条，
@@ -3464,12 +3566,142 @@ body.dark .ch-cn{color:#e2e7ef;}
   color:#fff;display:grid;place-items:center;font-weight:700;font-size:15px;}
 .cr-time{align-self:center;font-size:11.5px;color:#9aa3b0;background:rgba(0,0,0,.05);
   padding:2px 9px;border-radius:8px;margin:3px auto;}
-.cr-bubble{max-width:70%;padding:9px 13px;border-radius:10px;font-size:15px;line-height:1.6;
+/* 气泡和它下面那行状态（发送中 / 已送达 / 已读 / 失败）竖排在一格里。
+   max-width 从气泡挪到这一格：状态行才不会把行宽撑到 100%。 */
+.cr-bcol{display:flex;flex-direction:column;gap:3px;min-width:0;max-width:70%;}
+.cr-row.mine .cr-bcol{align-items:flex-end;}
+.cr-meta{font-size:11px;color:#a3abb8;padding:0 3px;line-height:1.5;}
+.cr-bubble.sending{opacity:.62;}
+.cr-bubble.failed{outline:1px solid #e0524d;outline-offset:1px;}
+.cr-fail{color:#e0524d;cursor:pointer;}
+.cr-fail:hover{text-decoration:underline;}
+.cr-spin{display:inline-block;width:9px;height:9px;border:1.6px solid #c3ccd8;border-top-color:transparent;
+  border-radius:50%;animation:crspin .8s linear infinite;vertical-align:0;}
+@keyframes crspin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){.cr-spin{animation:none;}}
+/* 顶部「加载更早」：首屏只给最近 50 条，更早的按需翻 */
+.cr-more{align-self:center;flex:none;min-height:1px;}
+.cr-morebtn{border:1px solid var(--line);background:var(--card);color:var(--blue);font-size:12.5px;
+  padding:4px 14px;border-radius:14px;cursor:pointer;}
+.cr-morebtn:hover{background:rgba(26,111,181,.08);}
+.cr-moreend{font-size:11.5px;color:#a3abb8;}
+/* ---- 学习小组（群聊）---- */
+.ch-av-g{background:linear-gradient(135deg,#3f9e7c,#2d7f62)!important;}
+.ch-nmem{font-size:11px;color:#9aa1ac;font-weight:400;margin-left:5px;}
+.ch-at{color:var(--blue);font-weight:600;}
+.ch-newgroup{display:block;width:100%;border:1px dashed var(--line);background:transparent;
+  color:var(--blue);font-size:13px;padding:7px;border-radius:10px;cursor:pointer;margin-bottom:8px;}
+.ch-newgroup:hover{background:rgba(26,111,181,.07);border-style:solid;}
+.cr-infobtn{margin-left:auto;border:none;background:transparent;font-size:19px;color:#6b7484;
+  cursor:pointer;padding:0 4px;line-height:1;}
+.cr-announce{flex:none;margin:8px 12px 0;background:#fff8e8;border:1px solid #f3e0b5;border-radius:10px;
+  padding:8px 11px;font-size:12.5px;color:#7a6224;line-height:1.55;}
+.cr-announce.hidden{display:none;}
+body.dark .cr-announce{background:#2a2416;border-color:#5c4a1f;color:#d8bf90;}
+/* 群里的发言人署名（一对一不显示，两个人还署名很啰嗦） */
+.cr-who{font-size:11px;color:#9aa1ac;margin:0 3px -1px;}
+.cr-at{color:var(--blue);font-weight:600;}
+.cr-atme{color:#c0392b;font-weight:700;background:rgba(192,57,43,.1);border-radius:4px;padding:0 3px;}
+body.dark .cr-atme{background:rgba(232,139,132,.16);color:#e8938c;}
+.cp-check{flex-direction:row;align-items:center;gap:9px;cursor:pointer;}
+.cp-check input{width:16px;height:16px;accent-color:var(--blue);flex:none;}
+.mem-add button.danger{background:transparent;color:#c0392b;border:1px solid #e7c3bf;}
+/* 内容卡片：应用里的一条被发进聊天 */
+.cr-card{background:var(--card);border:1px solid #e2e8f1;border-radius:12px;padding:10px 11px;
+  width:212px;max-width:100%;cursor:pointer;}
+.cr-card:hover{border-color:var(--blue);}
+.cr-card .k{font-size:10.5px;color:var(--blue);font-weight:650;letter-spacing:.04em;}
+.cr-card .t{font-size:13px;color:#1f2733;line-height:1.5;margin-top:5px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.cr-card .f{font-size:11px;color:#9aa1ac;margin-top:7px;border-top:1px solid #f0f3f7;padding-top:6px;}
+.cr-bubble.card{padding:4px;background:transparent!important;border:none!important;}
+body.dark .cr-card{background:#141b29;border-color:#243049;}
+body.dark .cr-card .t{color:#dbe2ec;}
+body.dark .cr-card .f{border-top-color:#243049;}
+/* 发卡片时的选择器 */
+.cr-picker{position:fixed;inset:0;z-index:145;background:rgba(15,25,40,.34);display:grid;place-items:center;padding:20px;}
+.cr-picker.hidden{display:none;}
+.cp-box{background:var(--card);border-radius:15px;width:min(420px,100%);max-height:70vh;
+  display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 40px rgba(10,20,40,.3);}
+.cp-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;
+  border-bottom:1px solid var(--line);font-size:14.5px;font-weight:650;}
+.cp-head button{border:none;background:transparent;font-size:16px;color:#9aa1ac;cursor:pointer;}
+.cp-list{overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px;}
+.cp-item{display:flex;flex-direction:column;gap:3px;text-align:left;border:1px solid var(--line);
+  background:transparent;border-radius:10px;padding:9px 11px;cursor:pointer;color:inherit;}
+.cp-item:hover{border-color:var(--blue);background:rgba(26,111,181,.06);}
+.cp-item .t{font-size:13.5px;line-height:1.45;}
+.cp-item .s{font-size:11.5px;color:#9aa1ac;}
+/* 引用条：气泡里那一小块原文 */
+.cr-quote{border-left:3px solid rgba(20,50,90,.22);background:rgba(20,50,90,.06);border-radius:0 6px 6px 0;
+  padding:4px 8px;margin:-2px 0 6px;font-size:12.5px;line-height:1.5;color:#4d5766;cursor:pointer;
+  max-height:4.6em;overflow:hidden;}
+.cr-quote b{font-weight:600;}
+body.dark .cr-quote{background:rgba(255,255,255,.07);border-left-color:rgba(255,255,255,.22);color:#a7b1c0;}
+.cr-row.mine .cr-quote{background:rgba(0,0,0,.07);border-left-color:rgba(0,0,0,.2);color:#2c4530;}
+/* 被引用的那条跳过去时闪一下 */
+.cr-hl .cr-bubble{animation:crhl 1.4s ease;}
+@keyframes crhl{0%,60%{box-shadow:0 0 0 3px rgba(26,111,181,.35);}100%{box-shadow:none;}}
+@media (prefers-reduced-motion:reduce){.cr-hl .cr-bubble{animation:none;box-shadow:0 0 0 3px rgba(26,111,181,.35);}}
+/* 撤回后那行灰字 */
+.cr-sys{align-self:center;font-size:11.5px;color:#9aa3b0;background:rgba(0,0,0,.05);
+  padding:3px 11px;border-radius:9px;margin:2px auto;}
+body.dark .cr-sys{background:rgba(255,255,255,.08);color:#8b93a1;}
+.cr-reedit{color:var(--blue);cursor:pointer;margin-left:4px;}
+.cr-reedit:hover{text-decoration:underline;}
+.cr-link{color:var(--blue);text-decoration:underline;text-underline-offset:2px;word-break:break-all;}
+.cr-row.mine .cr-link{color:#0b4a1e;}
+body.dark .cr-row.mine .cr-link{color:#cdf0cd;}
+/* 长按 / 右键菜单 */
+.cr-menu{position:fixed;z-index:140;min-width:140px;padding:4px;border-radius:12px;background:#fff;
+  box-shadow:0 10px 30px rgba(20,30,50,.24);border:1px solid rgba(0,0,0,.06);}
+.cr-menu.hidden{display:none;}
+.cr-menu button{display:block;width:100%;text-align:left;border:none;background:transparent;
+  padding:8px 12px;border-radius:8px;font-size:13.5px;color:#1f2733;cursor:pointer;}
+.cr-menu button:hover{background:rgba(26,111,181,.1);color:var(--blue);}
+.cr-menu button.danger{color:#c0392b;}
+.cr-menu button.danger:hover{background:rgba(192,57,43,.1);color:#c0392b;}
+body.dark .cr-menu{background:#141b29;border-color:#2a3345;}
+body.dark .cr-menu button{color:#cfd6e2;}
+/* 输入框上方的引用栏 */
+.cr-replybar{display:flex;align-items:center;gap:7px;background:#eef3f9;border-radius:9px;
+  padding:6px 10px;font-size:12.5px;color:#5a6270;}
+.cr-replybar.hidden{display:none;}
+.cr-replybar b{color:#1f2733;font-weight:600;}
+.cr-replybar .x{margin-left:auto;color:#9aa1ac;cursor:pointer;padding:0 4px;}
+body.dark .cr-replybar{background:#1b2231;color:#a7b1c0;}
+body.dark .cr-replybar b{color:#dbe2ec;}
+/* 会话列表上方的搜索框 + 结果 */
+.ch-searchbar{display:flex;align-items:center;gap:6px;padding:0 2px 8px;position:relative;}
+.ch-searchbar input{flex:1;min-width:0;border:1px solid var(--line);border-radius:18px;
+  padding:7px 13px;font-size:13.5px;background:var(--card);color:inherit;}
+.ch-searchbar input:focus{border-color:var(--blue);outline:none;box-shadow:var(--ring);}
+.ch-sx{position:absolute;right:10px;border:none;background:transparent;color:#9aa1ac;cursor:pointer;font-size:14px;}
+.ch-sx.hidden{display:none;}
+.ch-sres{background:var(--card);border:1px solid #eef1f5;border-radius:11px;padding:9px 11px;
+  margin-bottom:7px;cursor:pointer;}
+.ch-sres:hover{border-color:var(--blue);}
+.ch-sh{display:flex;justify-content:space-between;font-size:11.5px;color:#9aa1ac;}
+.ch-sb{font-size:13.5px;color:#1f2733;margin-top:3px;line-height:1.5;word-break:break-word;}
+.ch-sb mark{background:#fdf0c8;color:#8a6a12;border-radius:2px;padding:0 1px;}
+body.dark .ch-sres{background:#141b29;border-color:#243049;}
+body.dark .ch-sb{color:#dbe2ec;}
+body.dark .ch-sb mark{background:#4a3c12;color:#f0d78a;}
+.cr-count{font-size:11px;color:#a3abb8;text-align:right;font-variant-numeric:tabular-nums;}
+.cr-count.warn{color:#c4661f;font-weight:600;}
+.ch-tick{color:#8aa8c4;}
+body.dark .cr-meta,body.dark .cr-moreend,body.dark .cr-count{color:#79828f;}
+body.dark .cr-morebtn{background:#141b29;border-color:#2a3345;}
+.cr-bubble{max-width:100%;padding:9px 13px;border-radius:10px;font-size:15px;line-height:1.6;
   word-break:break-word;position:relative;}
 .cr-row.theirs .cr-bubble{background:#fff;border:1px solid #eef0f3;}
 .cr-row.mine .cr-bubble{background:#95d466;color:#0f2b12;}    /* 微信绿：自己发的 */
 .cr-bubble.image,.cr-bubble.file{padding:4px;background:transparent!important;border:none!important;}
-.cr-img{max-width:210px;max-height:260px;border-radius:6px;display:block;cursor:pointer;}
+/* 先占好位再加载：没有尺寸的 img 在加载完成前高度是 0，会让「进来滚到底」算错位置
+   （滚完图片才撑开）。给一个宽度和最小高度，布局从一开始就稳定。 */
+.cr-img{width:210px;max-width:100%;min-height:120px;max-height:260px;object-fit:cover;
+  background:rgba(20,40,80,.06);border-radius:6px;display:block;cursor:pointer;}
+body.dark .cr-img{background:rgba(255,255,255,.06);}
 .cr-file{display:flex;align-items:center;gap:10px;padding:10px 12px;text-decoration:none;color:inherit;
   background:#fff;border:1px solid #eef0f3;border-radius:8px;min-width:180px;max-width:230px;}
 .cr-fic{font-size:26px;flex:none;}
@@ -4189,6 +4421,89 @@ body.dark .tr-stat.warn{background:#382c12;color:#e0b872;}
 body.dark .tr-stat.good{background:#16321f;color:#6fbc92;}
 body.dark .tr-stat.new{background:#152a3d;color:#7db8ea;}
 
+/* ================= 库 / 我的 的首屏（界面重构 P4） =================
+   这两页的条目天天点，说明文字看第二遍就是噪音，而一屏只摆得下五六条。
+   库换成图标格（一屏摆得下全部容器）+ 最近打开；我的换成完成度环 + 一行一件的紧凑清单。
+   其余标签页仍是原来的目录条（.tab-row），这里的类名一概另起，互不影响。 */
+.tab-sub{display:block;font-size:12.5px;font-weight:400;color:var(--muted);margin-top:3px;}
+
+.lb-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:2px 0 4px;}
+.lb-tile{background:var(--card);border:1px solid var(--line);border-radius:14px;cursor:pointer;
+  padding:14px 8px 12px;display:flex;flex-direction:column;align-items:center;gap:7px;
+  font-family:inherit;box-shadow:var(--shadow);}
+.lb-tile:active{transform:scale(.98);}
+.lb-tile:hover{border-color:var(--blue);}
+/* 图标底色只用来区分容器，不表达状态：一律低饱和，别让六个格子比内容还响。
+   （试过实色方块 + 白图形那一路，更响更抓眼，但和这个应用通篇的浅色调不是一路人，
+   最后还是选了细线描边这版。） */
+.lb-ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;}
+.lb-ic svg{width:22px;height:22px;}
+.lb-amber{background:#fdf1dc;color:#8a5a00;}
+.lb-blue{background:#e8f1fa;color:#1a6fb5;}
+.lb-violet{background:#eee9fb;color:#5b46a8;}
+.lb-teal{background:#e2f2ef;color:#1f6a5e;}
+.lb-sky{background:#e4f0fb;color:#2a6ea8;}
+.lb-gold{background:#fbf0d8;color:#8a6a12;}
+.lb-n{font-size:14px;font-weight:600;}
+/* 数量是次要信息，没有就留空——空着比写个「0 条」体面 */
+.lb-c{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:14px;}
+
+/* 一组 = 一张卡，行与行之间只有一条细线。
+   每行各是一张带阴影的卡（首页 .td-row 那样）在这里不行：我的有九行、库的最近打开有八条，
+   一行一张卡光是卡间距就吃掉小半屏，而这两页的价值恰恰是「一屏看全」。 */
+.tv-rows{background:var(--card);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;}
+.tv-row{cursor:pointer;padding:13px 14px;display:flex;align-items:center;gap:10px;}
+.tv-row+.tv-row{border-top:1px solid var(--line);}
+.tv-row:active{background:var(--bg2);}
+.tv-text{display:flex;flex-direction:column;min-width:0;margin-right:auto;}
+.tv-name{font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tv-text .tv-name{margin-right:0;}
+.tv-sub{font-size:12px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tv-row>.tv-name{margin-right:auto;}
+.tv-tag{flex:0 0 auto;margin-left:8px;font-size:11.5px;color:var(--muted);
+  background:var(--bg2);border-radius:20px;padding:2px 9px;}
+.tv-row .td-badge+.tv-tag{margin-left:6px;}
+.tv-empty{background:var(--card);border-radius:12px;box-shadow:var(--shadow);
+  padding:14px;font-size:13.5px;color:var(--muted);}
+
+/* 骨架屏：占位块和真内容**同高同位**，数据回来就地替换，页面一格不跳。
+   原来是一块矮矮的「加载中…」，数据一到整页往下窜一截 —— 人眼看到的就是"闪一下"。
+   微光是从右往左扫，慢一点（1.4s）：加载态自己太活泼，会把注意力从内容上抢走。 */
+.tv-sk{display:inline-block;height:13px;border-radius:6px;vertical-align:middle;
+  background:linear-gradient(90deg,#eceff4 25%,#f6f8fb 37%,#eceff4 63%);
+  background-size:400% 100%;animation:tv-sk 1.4s ease-in-out infinite;}
+@keyframes tv-sk{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
+.tv-sk.sk-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;}
+.tv-sk.sk-tag{width:38px;height:16px;border-radius:20px;margin-left:auto;flex:0 0 auto;}
+.tv-sk.sk-c{height:11px;}
+.tv-sk.sk-v{height:20px;margin:6px 0;}
+.tv-sk.sk-ring{width:64px;height:64px;border-radius:50%;flex:0 0 auto;}
+.td-hero-t .tv-sk{display:block;}
+.td-hero-t.sk-col{flex:1;}
+/* 骨架是"还没到"的提示，不是动画表演。系统开了减弱动态就别晃 */
+@media(prefers-reduced-motion:reduce){.tv-sk{animation:none;}}
+/* 我的：完成度环那张卡整张可点（去计划记录），给个手型别让人以为它只是块牌子 */
+#tab-groups .td-hero{cursor:pointer;}
+
+body.dark .lb-tile,body.dark .tv-rows,body.dark .tv-empty{
+  background:#1a2233;border-color:#2a3345;box-shadow:0 2px 10px rgba(0,0,0,.35);}
+body.dark .tv-row+.tv-row{border-top-color:#2a3345;}
+body.dark .tv-sk{background:linear-gradient(90deg,#222b3c 25%,#2b3548 37%,#222b3c 63%);
+  background-size:400% 100%;}
+body.dark .tv-row:active{background:#242e40;}
+body.dark .tv-tag{background:#242e40;}
+body.dark .lb-amber{background:#382c12;color:#e0b872;}
+body.dark .lb-blue{background:#152a3d;color:#7db8ea;}
+body.dark .lb-violet{background:#231f3a;color:#a99ae0;}
+body.dark .lb-teal{background:#14302b;color:#6fbca9;}
+body.dark .lb-sky{background:#152a3d;color:#8cc0ea;}
+body.dark .lb-gold{background:#332a12;color:#d9bb6a;}
+
+/* 电脑端一行摆得下更多：图标格跟着宽度自己排，不锁死三列 */
+@media(min-width:761px){
+  .lb-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
+}
+
 /* ================= 电脑端左侧导航栏（界面重构 P3） =================
    和手机的底部标签栏是同一份 TAB_DEFS 的两个形态，谁出现只由断点决定：
    ≤760 出底栏，≥761 出左栏。中间不留空档，任何宽度下都有常驻导航。
@@ -4523,11 +4838,617 @@ body.dark .acct-nav button.on{background:var(--blue-fill);color:#fff;}
 .topbar-actions .logo-min:hover{box-shadow:0 0 0 3px rgba(26,111,181,.18);}
 
 /* 启动页夜间：底纹和晕都换成深底那一套，不然一进门先闪一屏白 */
-body.dark #splash{color:#e8ecf4;
-  background:
-    radial-gradient(120% 70% at 50% -10%, rgba(84,163,224,.12), rgba(84,163,224,0) 60%),
-    repeating-linear-gradient(0deg, rgba(140,180,220,.05) 0 1px, transparent 1px 34px),
-    repeating-linear-gradient(90deg, rgba(140,180,220,.05) 0 1px, transparent 1px 34px),
-    linear-gradient(180deg,#121a26,#0d1218);}
-body.dark .sp-name{color:#e8ecf4;}
-body.dark .sp-quote{color:#aab4c2;}
+/* 启动屏不再跟 body.dark 走：底色由**时刻**决定（js/daylight.js），
+   夜里本来就是墨色的。再让主题盖一层，日夜曲线就白算了。 */
+
+/* ================= 主题风格（美术方向） =================
+   四套可选的美术方向：宣纸与印 / 天光琉璃 / 墨山 / 节气色。
+   默认一套都不开，界面就是原来的样子 —— 这是可选项，不是改版。
+
+   色值不在这儿，在 js/daylight.js 的 DL_ART：它按当前时刻插值，写成 body 上的
+   inline 变量。这里只管**材质和形状**（纸纹、毛玻璃、墨块、朱印），颜色一律取变量。
+
+   这一段**放在文件最后**是有意的：body.dark 那一大串卡片规则和下面同特异度，
+   靠后来者居上盖过去。挪到前面主题就不生效了。 */
+
+/* 尺寸和平铺一律走默认（repeat / auto）：这几层全是渐变，auto 就等于铺满整个元素，
+   而界格那两层要靠自己内部的 26px 循环 —— 写死 cover 会把循环一起拉伸。 */
+#art-wall{position:fixed;inset:0;z-index:-2;pointer-events:none;}
+#art-wall::after{content:"";position:absolute;inset:0;
+  background-image:var(--art-grain-img,none);background-size:120px 120px;
+  mix-blend-mode:soft-light;opacity:var(--art-grain,0);}
+/* 没开主题时这一层整个不存在，省得白白多一个合成层 */
+body:not(.art-on) #art-wall{display:none;}
+
+/* body 那条 background:#f5f7fb 是写死的（不是 var(--bg)），不顶掉的话壁纸永远被它盖住 */
+body.art-on{background:var(--bg);}
+body.art-on main,body.art-on.dark main{background:transparent;}
+
+/* 卡片交回给变量管。这串选择器抄的是上面 body.dark 那条的同一份清单 ——
+   两处要一起改，漏一个就是那类卡片在主题下还是白的。 */
+body.art-on .home-card,body.art-on .gk-card,body.art-on .poly-card,body.art-on .pd-item,
+body.art-on .mat-item,body.art-on .aih-item,body.art-on .item,body.art-on .cd-sec,
+body.art-on .cs-overview,body.art-on .cs-kq,body.art-on .acct-sec,body.art-on .rv-flash,
+body.art-on .board-card,body.art-on .feed-card,body.art-on .composer,body.art-on .bkb-gen,
+body.art-on .poly-genbox,body.art-on .pd-search,body.art-on .qz-mat,body.art-on .sr-item,
+body.art-on .wq-item,body.art-on .nb-card,body.art-on .ex-card,body.art-on .ex-pick,
+body.art-on .placeholder-box,body.art-on .lb-tile,body.art-on .tv-rows,body.art-on .tv-empty{
+  background:var(--card);border-color:var(--line);color:var(--text);}
+body.art-on .tv-row+.tv-row{border-top-color:var(--line);}
+body.art-on .tv-tag,body.art-on .tr-stat{background:var(--bg2);color:var(--muted);}
+
+/* 模块图标现在带两套字形：实色版（.lb-g，默认）和线描版（.lb-gl，只给宣纸用）。
+   两套都在 DOM 里，换主题只是换显示哪一套 —— 不用重渲染「库」那一页。
+   line-height:0 是因为 span 会给里面的 svg 垫出一条基线间隙，格子就不居中了。 */
+.lb-g,.lb-gl{display:block;line-height:0;}
+.lb-gl{display:none;}
+
+/* ---------------- 一 · 宣纸与印 ----------------
+   模块面是一张宣纸，图标是墨线，唯一的彩色是右下角那枚朱印。
+   朱只做装饰不当交互色：交互色仍是墨蓝，免得和「危险/删除」的红撞车。 */
+body.art-paper .lb-ic{
+  background:linear-gradient(155deg,var(--art-tile1),var(--art-tile2));
+  color:var(--art-ink);position:relative;overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(128,128,128,var(--art-rim,.24)),0 2px 6px rgba(20,20,26,.13);}
+/* 纸纤维。44px 上要减半，壁纸那个浓度铺到指甲盖大小只会把墨线一起洗淡 */
+body.art-paper .lb-ic::before{content:"";position:absolute;inset:0;
+  background-image:var(--art-grain-img,none);background-size:70px 70px;
+  mix-blend-mode:soft-light;opacity:var(--art-icgrain,.2);}
+/* 朱印落右下（国画的规矩），躲开右上角——那是角标的位置 */
+body.art-paper .lb-ic::after{content:"";position:absolute;right:6px;bottom:6px;
+  width:6.5px;height:6.5px;border-radius:1.2px;background:var(--art-seal);opacity:.9;
+  box-shadow:inset 0 0 0 1px var(--art-tile1);}
+body.art-paper .lb-g{display:none;}
+body.art-paper .lb-gl{display:block;position:relative;}
+body.art-paper .lb-ic svg{width:24px;height:24px;}
+
+/* ---------------- 二 · 天光琉璃 ----------------
+   模块面是磨砂玻璃，本身没颜色，颜色全是背后透上来的天色。
+   backdrop-filter 只给**卡片和图标**，不给列表行：一屏几十个模糊层，
+   安卓 WebView 和桌面版的 WebKitGTK 会直接掉帧。 */
+body.art-glass .home-card,body.art-glass .gk-card,body.art-glass .acct-sec,
+body.art-glass .board-card,body.art-glass .lb-tile,body.art-glass .tv-rows,
+body.art-glass .tabbar,body.art-glass .siderail{
+  backdrop-filter:blur(10px) saturate(1.2);-webkit-backdrop-filter:blur(10px) saturate(1.2);
+  box-shadow:inset 0 0 0 1px var(--art-glass-line),0 4px 16px rgba(10,20,40,.10);}
+body.art-glass .lb-ic{
+  background:var(--art-glass);color:var(--text);position:relative;overflow:hidden;
+  backdrop-filter:blur(9px) saturate(1.25);-webkit-backdrop-filter:blur(9px) saturate(1.25);
+  box-shadow:inset 0 0 0 1px var(--art-glass-line),0 3px 9px rgba(10,20,40,.16);}
+/* 每个模块背后藏一盏自己的低彩度灯，隔着毛玻璃只剩一点晕。
+   六个模块只靠字形区分是这一稿最弱的地方，这盏灯是仅有的一点颜色线索。 */
+body.art-glass .lb-ic::before{content:"";position:absolute;left:-18%;bottom:-28%;
+  width:90%;height:90%;border-radius:50%;background:var(--tone);
+  filter:blur(11px);opacity:var(--art-glow,.3);}
+body.art-glass .lb-ic svg{position:relative;--tone:transparent;}
+
+/* ---------------- 三 · 墨山 ----------------
+   整屏没有第二个颜色。墨块全天不变，夜里长出一圈月白发丝线把自己从暗底上抠出来
+   —— 就是启动图标里 rim 那一招。 */
+body.art-ink .lb-ic{background:var(--art-blk);color:var(--art-glyph);--tone:var(--art-blk);
+  box-shadow:0 2px 7px rgba(10,12,16,.20),
+    inset 0 0 0 1px rgba(238,236,228,var(--art-rim,0));}
+
+/* ---------------- 四 · 节气色 ----------------
+   保留实色圆角块 + 白字形（44px 上验证过的），只把配色换成传统色。
+   六个色相全天锁死，随时间变的只是掺进去多少 tint —— 认色识别模块的前提是色相不动。
+   夜里**不压暗**：压暗六块就一起糊进背景（现有代码里已经踩过这个坑）。 */
+body.art-hue .lb-amber{--tone:var(--art-t0);background:linear-gradient(150deg,var(--art-t0a),var(--art-t0));}
+body.art-hue .lb-blue{--tone:var(--art-t1);background:linear-gradient(150deg,var(--art-t1a),var(--art-t1));}
+body.art-hue .lb-violet{--tone:var(--art-t2);background:linear-gradient(150deg,var(--art-t2a),var(--art-t2));}
+body.art-hue .lb-teal{--tone:var(--art-t3);background:linear-gradient(150deg,var(--art-t3a),var(--art-t3));}
+body.art-hue .lb-sky{--tone:var(--art-t4);background:linear-gradient(150deg,var(--art-t4a),var(--art-t4));}
+body.art-hue .lb-gold{--tone:var(--art-t5);background:linear-gradient(150deg,var(--art-t5a),var(--art-t5));}
+
+/* ---------------- 设置页里的主题选择 ----------------
+   每一格自己就是那套主题的缩影：底色是它的壁纸，方块是它的模块图标。
+   光写名字选不出来 —— 这四个名字谁也不知道长什么样。 */
+.art-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:9px;}
+.art-opt{border:1.5px solid var(--line);background:var(--card);border-radius:12px;cursor:pointer;
+  padding:0;overflow:hidden;font-family:inherit;color:inherit;text-align:center;display:block;}
+.art-opt:focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
+.art-opt.on{border-color:var(--blue);box-shadow:var(--ring);}
+.art-sw{height:52px;position:relative;display:flex;align-items:center;justify-content:center;gap:5px;}
+.art-sw i{width:15px;height:15px;border-radius:4.5px;display:block;}
+.art-nm{font-size:12.5px;padding:6px 4px 7px;line-height:1.35;}
+.art-opt.on .art-nm{color:var(--blue);font-weight:700;}
+.art-hint-off{font-size:12px;color:var(--muted);margin:9px 0 0;}
+.art-clock{margin-top:14px;padding-top:13px;border-top:1px solid var(--line);}
+.art-clock-t{font-size:13.5px;font-weight:600;margin-bottom:8px;}
+
+/* ---------------- 主题也要管「大功能图标」 ----------------
+   .hc-logo 是全应用功能图标的公共类：全部功能九宫格、板块页、常识/理论/常考的板块卡、
+   申论类型、题库详情、AI 的快捷入口 —— 七个文件、二十多处都走它。改这一处就全覆盖，
+   原来只有「库」那六格（.lb-ic）跟着主题走，别的还是那套通用的橙蓝紫。
+
+   **这里必须用 !important**，不是偷懒：
+     · 每个功能各有一条 .home-card[data-go="xxx"] .hc-logo{background:…}
+     · 常识板块 / 申论类型 / 题库详情三处的底色是**服务端给的数据**，写成了行内 style，
+       行内样式没有选择器能压过 —— 只能 !important。
+   主题的定位本来就是"整屏接管"，压过下面所有配色是它的本分。 */
+
+/* 一 · 宣纸与印：一张纸 + 墨字 + 右下一枚朱印 */
+/* **不要给 .hc-logo 加 overflow:hidden**：今日复习的 99+ 和聊天未读那两个角标
+   挂在 top:-6px;right:-8px，是**故意探出去**的，一裁就没了。
+   要裁的只是纸纹那一层，让它自己 border-radius:inherit 就够。 */
+body.art-paper .hc-logo{
+  background:linear-gradient(155deg,var(--art-tile1),var(--art-tile2))!important;
+  color:var(--art-ink)!important;position:relative;
+  box-shadow:inset 0 0 0 1px rgba(128,128,128,var(--art-rim,.24)),0 4px 12px rgba(20,20,26,.14)!important;}
+body.art-paper .hc-logo svg{color:var(--art-ink);}
+body.art-paper .hc-logo::before{content:"";position:absolute;inset:0;border-radius:inherit;
+  background-image:var(--art-grain-img,none);background-size:80px 80px;
+  mix-blend-mode:soft-light;opacity:var(--art-icgrain,.2);}
+body.art-paper .hc-logo::after{content:"";position:absolute;right:7px;bottom:7px;
+  width:7px;height:7px;border-radius:1.3px;background:var(--art-seal);opacity:.9;
+  box-shadow:inset 0 0 0 1px var(--art-tile1);}
+
+/* 三 · 墨山：一块墨 + 挖白字形，夜里补月白发丝线 */
+body.art-ink .hc-logo{
+  background:var(--art-blk)!important;color:var(--art-glyph)!important;
+  box-shadow:0 4px 12px rgba(10,12,16,.22),
+    inset 0 0 0 1px rgba(238,236,228,var(--art-rim,0))!important;}
+body.art-ink .hc-logo svg{color:var(--art-glyph);}
+
+/* 二 · 天光琉璃：一块玻璃。**这里不加 backdrop-filter** —— 图标本来就压在
+   已经磨砂过的卡片上，再糊一层看不出差别，却是一屏十几个模糊层的代价。 */
+body.art-glass .hc-logo{
+  background:var(--art-glass)!important;color:var(--text)!important;
+  box-shadow:inset 0 0 0 1px var(--art-glass-line),0 4px 12px rgba(10,20,40,.16)!important;}
+body.art-glass .hc-logo svg{color:var(--text);}
+
+/* 四 · 节气色：功能图标有十几个，硬塞进六个传统色反而认不出谁是谁 ——
+   六色识别留给「库」那六格（那是每天点的容器），这里改成让原色**走同一条掺色曲线**：
+   彩度压到传统色的区间，再盖一层当前时刻的 tint。既跟主题、也跟时刻，
+   而且服务端数据给的那些颜色不用一个个列出来也能跟上。 */
+body.art-hue .hc-logo{position:relative;filter:saturate(.7) brightness(.97);}
+/* 掺色层盖住**整块**（含字形），不是只盖背景：字和底一起朝 tint 走，
+   两者的对比度是一起压的，读起来不会掉。角标在 inset:0 之外，压不到它。 */
+body.art-hue .hc-logo::after{content:"";position:absolute;inset:0;border-radius:inherit;
+  pointer-events:none;background:var(--art-tint,transparent);opacity:var(--art-amt,0);}
+
+/* ================= 电脑端专用的四套（青瓷 / 卷宗 / 夜航 / 白台） =================
+   为什么单独成段：上面四套是照手机屏做的（竖构图、大色块、居中排版），
+   这四套是照 27 寸屏重画的 —— 横构图启动屏，质感靠**边框和密度**而不是一块大色。
+   两端各出各的（js/daylight.js 的 dlArtKey 按 761px 分），所以下面这些规则
+   实际只会在宽屏上生效；写在 media 里的只有会被窄屏误伤的那几条（启动屏布局）。
+
+   色值同样不在这儿，在 DL_ART。这里只管材质和形状。 */
+
+/* ---- 横构图的启动屏 ----
+   居中的一竖条在 16:10 里两边空得发慌。正文靠左、右半留给美术层（#sp-art）。
+   限定在 761px 以上：真机换到窄窗口时（这四套已经不生效了）不该留着这套布局。 */
+@media(min-width:761px){
+  body.art-desk #splash{align-items:flex-start;text-align:left;padding:0 8vw;}
+  body.art-desk .sp-body{align-items:flex-start;max-width:min(46vw,540px);width:auto;}
+  body.art-desk .sp-quote{max-width:none;}
+  body.art-desk .sp-author{align-self:flex-end;margin-right:0;}
+  /* 白台的正文贴着那条基线排（基线 = 界面里顶栏底边的位置），不垂直居中：
+     启动到进入是接着的，中途不跳一下 */
+  body.art-studio #splash{justify-content:flex-start;padding-top:calc(50vh + 6vmin);}
+  body.art-studio .sp-name{margin-bottom:22px;}
+  body.art-studio .sp-loading{margin-top:26px;}
+  body.art-studio .sp-loading span{width:26px;height:3px;border-radius:99px;}
+}
+
+/* ---- 五 · 青瓷 ----
+   釉色只在壁纸和启动屏上；读字的这一面是米白纸。模块图标是一块釉，字形挖白。
+   卡片**不投影只描边**：大屏上一堆浮起来的卡片会显得脏，细线更像专业工具。 */
+body.art-celadon .lb-ic,body.art-celadon .hc-logo{
+  background:linear-gradient(150deg,var(--art-tile1),var(--art-tile2))!important;
+  color:var(--art-glyph)!important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,var(--art-rim,.16)),0 3px 10px rgba(24,54,46,.18)!important;}
+body.art-celadon .lb-ic svg,body.art-celadon .hc-logo svg{color:var(--art-glyph);}
+body.art-celadon .home-card,body.art-celadon .gk-card,body.art-celadon .board-card,
+body.art-celadon .lb-tile,body.art-celadon .tv-rows,body.art-celadon .acct-sec,
+body.art-celadon .feed-card,body.art-celadon .nb-card{
+  box-shadow:inset 0 0 0 1px var(--line);border-color:transparent;}
+
+/* ---- 六 · 卷宗 ----
+   顶栏是压住整面牛皮的墨绿封条，左栏的选中项是从深底里抽出来的一页纸
+   （白底 + 左侧朱色书脊）—— 比换个背景色更说明"我在这一册里"。
+   朱只做记号，交互色仍是墨绿。圆角收到 5px、卡片带一道硬投影：像叠着的纸，不是悬浮的玻璃。 */
+body.art-dossier .topbar{background:var(--art-band);border-bottom-color:rgba(0,0,0,.28);}
+body.art-dossier .topbar #top-title,body.art-dossier .topbar .brand-min{color:#f2ecdd;}
+body.art-dossier .topbar .logout,body.art-dossier .topbar .navbtn,
+body.art-dossier .tb-search{background:rgba(246,242,230,.12);border-color:rgba(246,242,230,.26);color:#e8e0cc;}
+body.art-dossier .tb-search kbd{background:transparent;border-color:rgba(246,242,230,.26);color:#e8e0cc;}
+body.art-dossier .tb-search:hover,body.art-dossier .topbar .logout:hover,
+body.art-dossier .topbar .navbtn:hover{background:rgba(246,242,230,.2);color:#fff;}
+body.art-dossier .logo-min{background:rgba(246,242,230,.16);color:#f4efe2;}
+/* 书脊那 3px 是朱的；选中项翻成纸色底 + 墨绿字，和"抽出一页"是同一个意思 */
+body.art-dossier .siderail .sr-t.on,body.art-dossier .siderail .sr-i.on{
+  background:var(--card);color:var(--blue);box-shadow:inset 3px 0 0 var(--art-seal);}
+body.art-dossier .siderail .sr-i.on svg{color:var(--blue);}
+body.art-dossier .lb-ic,body.art-dossier .hc-logo{
+  background:linear-gradient(150deg,var(--art-tile1),var(--art-tile2))!important;
+  color:var(--art-ink)!important;position:relative;
+  border-radius:5px;
+  box-shadow:inset 0 0 0 1px rgba(120,96,58,var(--art-rim,.22)),2px 3px 0 rgba(120,100,66,.16)!important;}
+body.art-dossier .lb-ic svg,body.art-dossier .hc-logo svg{color:var(--art-ink);}
+/* 右下那枚朱记号（和「宣纸与印」同一处位置：躲开右上角的角标） */
+body.art-dossier .hc-logo::after{content:"";position:absolute;right:6px;bottom:6px;
+  width:6px;height:6px;border-radius:1px;background:var(--art-seal);opacity:.9;}
+body.art-dossier .card,body.art-dossier .home-card,body.art-dossier .gk-card,
+body.art-dossier .board-card,body.art-dossier .lb-tile,body.art-dossier .acct-sec,
+body.art-dossier .feed-card,body.art-dossier .nb-card,body.art-dossier .tv-rows{
+  border-radius:5px;box-shadow:inset 0 0 0 1px var(--line),2px 3px 0 rgba(120,100,66,.10);}
+
+/* ---- 七 · 夜航 ----
+   选中项不用实心块，用左侧一道青蓝竖条 + 一层淡底：暗底上一整块亮色太重，
+   眼睛整晚都被它拽着。界面里没有暖色 —— 那个位置留给"错题"的红。 */
+body.art-night .siderail .sr-t.on,body.art-night .siderail .sr-i.on{
+  background:rgba(88,182,216,.13);color:var(--blue);box-shadow:inset 3px 0 0 var(--blue);}
+body.art-night .siderail .sr-i.on svg{color:var(--blue);}
+body.art-night .lb-ic,body.art-night .hc-logo{
+  background:linear-gradient(150deg,var(--art-tile1),var(--art-tile2))!important;
+  color:var(--art-glyph)!important;
+  box-shadow:inset 0 0 0 1px rgba(140,200,230,var(--art-rim,.3)),0 2px 10px rgba(0,0,0,.4)!important;}
+body.art-night .lb-ic svg,body.art-night .hc-logo svg{color:var(--art-glyph);}
+body.art-night .home-card,body.art-night .gk-card,body.art-night .board-card,
+body.art-night .lb-tile,body.art-night .tv-rows,body.art-night .acct-sec,
+body.art-night .feed-card,body.art-night .nb-card{
+  box-shadow:inset 0 0 0 1px var(--line);border-color:transparent;}
+
+/* ---- 八 · 白台 ----
+   一点装饰都不要：零阴影、纯细线、小圆角。同屏能多放两三张卡而不显乱，
+   长题干和材料题在宽屏上最吃这个。选中项是浅蓝底 + 左侧细竖条，不用实心蓝块。 */
+body.art-studio .card,body.art-studio .home-card,body.art-studio .gk-card,
+body.art-studio .board-card,body.art-studio .lb-tile,body.art-studio .acct-sec,
+body.art-studio .feed-card,body.art-studio .nb-card,body.art-studio .tv-rows,
+body.art-studio .composer{
+  border-radius:6px;box-shadow:inset 0 0 0 1px var(--line);border-color:transparent;}
+body.art-studio .home-card:hover,body.art-studio .board-card:hover{
+  transform:none;box-shadow:inset 0 0 0 1px var(--blue);}
+body.art-studio .siderail .sr-t.on,body.art-studio .siderail .sr-i.on{
+  background:var(--bg2);color:var(--blue);box-shadow:inset 3px 0 0 var(--blue);}
+body.art-studio .siderail .sr-i.on svg{color:var(--blue);}
+body.art-studio .lb-ic,body.art-studio .hc-logo{
+  background:linear-gradient(150deg,var(--art-tile1),var(--art-tile2))!important;
+  color:var(--art-ink)!important;border-radius:7px;
+  box-shadow:inset 0 0 0 1px var(--line)!important;}
+body.art-studio .lb-ic svg,body.art-studio .hc-logo svg{color:var(--art-ink);}
+
+/* 全国考情 / 云盘 / 聊天这三个图标是彩色 emoji（📣 ☁️ 💬），**任何主题都改不动它的颜色**。
+   默认外观保留 emoji（那是本来的样子），一旦开了主题就换成 SVG 字形
+   （js/core.js 的 IC.flag / cloud / chat）—— 两套都在 DOM 里，CSS 决定露哪一套，
+   换主题不用重渲染九宫格。和「库」那六格的实色/线描双字形是同一个路子。
+
+   曾经试过给单色主题的 .hc-logo 加 filter:grayscale(1) 来压 emoji：**是错的**，
+   filter 会连同伪元素一起吃掉，右下那枚朱印——宣纸唯一的彩色——当场变灰。 */
+.hc-em,.hc-sv{display:grid;place-items:center;line-height:1;}
+.hc-sv{display:none;}
+body.art-on .hc-em{display:none;}
+body.art-on .hc-sv{display:grid;}
+
+/* ---------------- 主题也要管悬浮球 / 真题大按钮 / 常识字块 ----------------
+   这三处是截图里点名的"还没跟上主题"。共同点：颜色写死在样式表或行内，
+   跟主题没有任何连线。
+
+   **全都要 !important**，理由各不相同，都不是偷懒：
+     · 悬浮球那四个胶囊是 #fab-pad / #fab-shot / #fab-ink 三条 **ID 选择器**，
+       ID 的特异度比任何类组合都高，不 !important 压不过；
+     · 常识板块 / 申论类型的底色是**服务端数据**写成的行内 style，同样没有选择器能赢。 */
+
+/* 一 · 悬浮球：和模块图标同一种材质（纸 / 玻璃 / 墨 / 传统色 / 釉…）。
+   八套主题各自报三个变量（js/daylight.js 的 fab()），这里只写一条。
+
+   四个胶囊里的 ✏️📷📒📝 是彩色 emoji，**主题改不动它们**（和九宫格那三个一样）。
+   同样的办法：默认保留 emoji，开了主题才换成 SVG 字形，两套都在 DOM 里。
+   （AI 那个是文字不是 emoji，本来就跟 currentColor 走，不用管。） */
+.fab-em,.fab-sv{display:grid;place-items:center;line-height:1;}
+.fab-sv{display:none;}
+.fab-sv svg{width:17px;height:17px;}
+body.art-on .fab-em{display:none;}
+body.art-on .fab-sv{display:grid;}
+
+body.art-on .fab-main,body.art-on .fab-act{
+  background:var(--art-fab)!important;color:var(--art-fab-ink)!important;
+  box-shadow:inset 0 0 0 1px var(--art-fab-rim),0 5px 16px rgba(16,20,28,.26)!important;}
+/* 节气色是靠六个色相认模块的，胶囊也各取一色，别在这一稿里退成同一块 */
+body.art-hue #fab-ai{background:var(--art-t1)!important;}
+body.art-hue #fab-pad{background:var(--art-t0)!important;}
+body.art-hue #fab-note{background:var(--art-t3)!important;}
+body.art-hue #fab-ink{background:var(--art-t2)!important;}
+body.art-hue #fab-shot{background:var(--art-t4)!important;}
+body.art-hue .fab-act{color:#fff!important;}
+
+/* 二 · 真题页那两个大按钮：去掉渐变，改「主实心 + 次描边」。
+   渐变按钮是这套界面里唯一还在用渐变的地方，主次关系用实心/描边表达更齐。
+   同一条也管住那根进度条。 */
+body.art-on .rq-big{background:var(--blue-fill)!important;color:#fff!important;}
+body.art-on .rq-big.alt{background:transparent!important;color:var(--text)!important;
+  box-shadow:inset 0 0 0 1.5px var(--line)!important;}
+body.art-on .rq-fill{background:var(--blue)!important;}
+
+/* 三 · 常识板块那七个字块。
+   宣纸 / 墨山 / 琉璃 / 电脑端四套：上面 .hc-logo 那几条已经把它们统一成
+   一张纸、一块墨、一块玻璃了 —— 这三套的立意本来就是"整屏没有第二个颜色"，
+   七个板块靠那个汉字区分。
+   只有节气色要保留按色识别，映射到传统色盘（序号由 changshi.js 按 CS_COLOR 的
+   固定顺序给，不随接口返回的顺序变，否则今天人文是缃、明天就成了赭）。 */
+body.art-hue .hc-logo.cs-c0{background:var(--art-t0)!important;}
+body.art-hue .hc-logo.cs-c1{background:var(--art-t1)!important;}
+body.art-hue .hc-logo.cs-c2{background:var(--art-t2)!important;}
+body.art-hue .hc-logo.cs-c3{background:var(--art-t3)!important;}
+body.art-hue .hc-logo.cs-c4{background:var(--art-t4)!important;}
+body.art-hue .hc-logo.cs-c5{background:var(--art-t5)!important;}
+body.art-hue .hc-logo[class*="cs-c"]{color:#fff!important;}
+
+/* 四 · 长尾兜底。
+   这一串是样式表里**剩下那些写死彩色**的去处：只在某一页出现一次的页头、进度条、
+   头像底、骨架屏…… 逐条配主题色做得完，但下次谁新加一条又会漏（这一轮就是这么漏的）。
+   所以统一套一层滤镜（浓度由 --art-tail 按主题给）：颜色不再是原来的彩度，
+   至少不会有一块荧光跳出来。单色那两稿几乎抽干净，暖调的偏一点棕。
+
+   **这不是"做完了"**，只是保底。哪天某一处值得精确对待，就从这串里摘出来单写一条。
+   tests/frontend/arttheme.test.js 有一条扫样式表的测试钉着：新加的写死彩色
+   必须出现在主题段里（精确接管或落进这一串），否则测试红。 */
+body.art-on .ai-head,body.art-on .pl-head,body.art-on .qn-head,body.art-on .tm-head,
+body.art-on .acct-hero,body.art-on .bk-practice,body.art-on .ck-daily,body.art-on .cls-daily,
+body.art-on .plr-bar,body.art-on .plr-off,body.art-on .rq-bar,body.art-on .rv-bar,
+body.art-on .ch-av,body.art-on .ch-av-self,body.art-on .ch-av-g,body.art-on .cr-av,
+body.art-on .skin-av,body.art-on .skin-prev,body.art-on .tv-sk{
+  filter:var(--art-tail,none);}
+
+/* ================= 主题也要管「知识库」那一屏 =================
+   这一块是这一轮返工的正题。它此前一处都没跟上主题，原因和别处不同：
+   八个封面色写死在 **js/kb.js 的 KB_COVERS**，而且是**行内 style** 渲染的
+   —— 上面那条扫样式表的守门测试只认 CSS 里的渐变，抓不到 JS 里的颜色，
+   所以八套主题上线以来没人知道它漏了。修法是把颜色搬进变量：
+   下面八条 .kbc0…kbc7 是唯一认识"第几本是什么色"的地方，
+   兜底值就是原来那八条渐变（**没开主题时外观分毫不变**），
+   主题开着时由 js/daylight.js 的 dlKbCovers 顶掉。 */
+
+/* 一 · 八个色号。--cv-face / --cv-spine 由 .kb-cover / .nb-cover / .nb-cover-opt 三处消费。
+   为什么不写成 8 套主题 × 8 本 = 64 条规则：加第九套主题时必漏，和悬浮球那处一个道理。 */
+.kbc0{--cv-face:var(--kb-c0,linear-gradient(160deg,#3f73b3,#2b5894));--cv-spine:var(--kb-s0,rgba(0,0,0,.18));}
+.kbc1{--cv-face:var(--kb-c1,linear-gradient(160deg,#d3892f,#a9651b));--cv-spine:var(--kb-s1,rgba(0,0,0,.18));}
+.kbc2{--cv-face:var(--kb-c2,linear-gradient(160deg,#c0473a,#982c22));--cv-spine:var(--kb-s2,rgba(0,0,0,.18));}
+.kbc3{--cv-face:var(--kb-c3,linear-gradient(160deg,#2f8060,#21614a));--cv-spine:var(--kb-s3,rgba(0,0,0,.18));}
+.kbc4{--cv-face:var(--kb-c4,linear-gradient(160deg,#7a5ea8,#5b4589));--cv-spine:var(--kb-s4,rgba(0,0,0,.18));}
+.kbc5{--cv-face:var(--kb-c5,linear-gradient(160deg,#2c8c8c,#1f6e6e));--cv-spine:var(--kb-s5,rgba(0,0,0,.18));}
+.kbc6{--cv-face:var(--kb-c6,linear-gradient(160deg,#b08a1e,#876900));--cv-spine:var(--kb-s6,rgba(0,0,0,.18));}
+.kbc7{--cv-face:var(--kb-c7,linear-gradient(160deg,#46566a,#2f3b48));--cv-spine:var(--kb-s7,rgba(0,0,0,.18));}
+
+/* 二 · 题签和缎带已经在上面吃变量了，这里只补白台那一条：
+   「一点装饰都不要」的那一稿连书签旗都不该有 —— 只留书脊那 6px 的色。 */
+body.art-studio .kbc-ribbon{display:none;}
+body.art-studio .kb-cover{border-left-width:6px;}
+body.art-studio .nb-cover{border-left-width:5px;}
+
+/* 三 · 新建按钮。它和主悬浮球是同一种东西，所以直接复用那套材质变量
+   （--art-fab 三样，八套主题各自报过），不再单独配一套。
+   写死的那圈蓝光晕（rgba(26,111,181,.45)）在青瓷/宣纸底上会浮一层蓝雾。 */
+body.art-on .kb-fab{
+  background:var(--art-fab)!important;color:var(--art-fab-ink)!important;
+  box-shadow:inset 0 0 0 1px var(--art-fab-rim),0 8px 22px rgba(16,20,28,.26)!important;}
+
+/* 四 · 底部那条胶囊。原来是 #1c1c1e + 40% 黑投影，八套里只有夜航接得住。
+   改成主题的卡片面 + 细描边 —— 和左栏、顶栏是同一种"面"。
+   连 .notes-pill 一起写：小记那条和这条是同一个组件、同一处写死。 */
+body.art-on .notes-pill,body.art-on .kb-pill{
+  background:var(--card)!important;
+  box-shadow:inset 0 0 0 1px var(--line),0 8px 24px rgba(16,20,28,.22)!important;}
+body.art-on .np-btn{color:var(--text);}
+body.art-on .np-btn:not(:last-child)::after{background:var(--line);}
+body.art-on .np-ai{color:var(--blue);}
+
+/* 五 · 目录树。文档蓝 #3aa0c2、分组橙 #f0a500、箭头、分隔线四处都写死。
+   两个图标不退成同一色：分组仍比文档重一档（用强调色），层级还在。 */
+body.art-on .nb-node{border-bottom-color:var(--line)!important;background:transparent!important;}
+body.art-on .nb-node:active{background:var(--bg2)!important;}
+body.art-on .nb-ntitle{color:var(--text)!important;}
+body.art-on .nb-nicon{color:var(--muted)!important;}
+body.art-on .nb-nicon.doc{color:var(--blue)!important;}
+body.art-on .nb-nicon.group{color:var(--text)!important;}
+body.art-on .nb-twirl,body.art-on .nb-ndots,body.art-on .nb-edit{color:var(--muted);}
+body.art-on .nb-ndots:active,body.art-on .nb-edit:active{background:var(--bg2)!important;}
+body.art-on .nb-toc-head{border-top-color:var(--line);}
+
+/* 六 · 文档编辑器的顶栏和底部工具条 */
+body.art-on .doc-top{background:var(--card)!important;border-bottom-color:var(--line)!important;}
+body.art-on .doc-toolbar{background:var(--bg2)!important;border-top-color:var(--line)!important;}
+body.art-on .doc-iconbtn,body.art-on .dtb{background:transparent!important;color:var(--text)!important;}
+body.art-on .doc-iconbtn:active,body.art-on .dtb:active{background:var(--bg2)!important;}
+body.art-on .doc-done{color:var(--blue)!important;}
+body.art-on .doc-title:empty:before,body.art-on .blk-edit:empty:before{color:var(--muted);}
+
+/* 七 · 正文块里那一堆写死色。这些**不进长尾滤镜**：滤镜只压彩度，
+   而代码块那样一整块近黑的板子在宣纸/白台上压完还是一块黑板。
+   一律换成"主题的第二层面 + 细描边"，八套通吃。 */
+body.art-on .blk-edit{color:var(--text)!important;}
+body.art-on .blk.sel{background:var(--bg2)!important;box-shadow:inset 0 0 0 1px var(--line)!important;}
+body.art-on .blk.quote{border-left-color:var(--line);}
+body.art-on .blk.quote .blk-edit{color:var(--muted)!important;}
+body.art-on .blk.callout{background:var(--bg2)!important;border-color:var(--line)!important;}
+body.art-on .blk.callout .blk-edit{color:var(--text)!important;}
+body.art-on .blk.code{background:var(--bg2)!important;box-shadow:inset 0 0 0 1px var(--line);}
+body.art-on .blk.code .blk-edit{color:var(--text)!important;}
+body.art-on .blk.divider hr{border-top-color:var(--line);}
+body.art-on .blk.list:before{background:var(--muted);}
+body.art-on .blk.todo .blk-chk{border-color:var(--line);}
+body.art-on .blk.todo.done .blk-edit{color:var(--muted)!important;}
+body.art-on .blk.table td{background:transparent!important;border-color:var(--line)!important;}
+body.art-on .blk.table td:focus{background:var(--bg2)!important;}
+body.art-on .blk.table .tbl-tools button{background:var(--bg2)!important;border-color:var(--line);color:var(--muted)!important;}
+body.art-on .blk-file-card{background:var(--bg2)!important;border-color:var(--line)!important;}
+body.art-on .blk-acts button,body.art-on .blk-ins-grid button{
+  background:var(--bg2)!important;color:var(--text)!important;}
+body.art-on .blk-acts button:active,body.art-on .blk-ins-grid button:active{background:var(--line)!important;}
+body.art-on .blk-ins-grid .bi{color:var(--muted)!important;}
+
+/* ================= 第二代：五种画风 × 两端（十套） =================
+   分工和上面八套完全一样：色值在 js/daylight.js 的 DL_ART，这里只管**材质和形状**。
+
+   要写的比上面八套少 —— 这十套的性格有一半是**画**出来的：每套带一册图标
+   （js/articons.js，葫芦 / 坩埚 / 汽水瓶 / 冒汽的锅 / 洒水壶）和一幅卡通壁纸
+   （daylight.js 的 DL_SCENE）。这里只补图标底的形状和卡片的手势。
+
+   同一种画风的手机版和电脑版**材质相同**，所以写成一条选择器组：构图的差别在
+   壁纸的摆位（dlArtWall2 里手机压右下角、电脑摊右侧）和横构图启动屏，不在这里。
+   逼两端各写一遍只会多出十条一模一样的规则，改一处漏一处。
+
+   透明度一律用中性灰 rgba(128,128,128,x)：明暗两端都成立，不用为夜间再写一遍，
+   也不用让 JS 多吐一个变量出来。 */
+
+/* 卡片手势要盖的那批。抄的是上面 body.art-on 那条的同一份清单（只留会成片出现的），
+   两处要一起改 —— 漏一个就是那类卡片在这套主题下还是圆角白卡。 */
+
+/* ---- 一 · 御前手账 / 御前案头 ----
+   图标底是葫芦弧（上圆下鼓），卡片是虚线剪边的手账贴纸，顶栏底栏压一条纸胶带。
+   朱只做记号：右下那颗 5px 的点是全屏唯一的红，交互色仍是墨竹青。 */
+body.art-meow .lb-ic,body.art-meowdesk .lb-ic{
+  background:linear-gradient(155deg,var(--art-tile1),var(--art-tile2));
+  color:var(--art-ink);position:relative;
+  border-radius:47% 47% 43% 43%/57% 57% 43% 43%;
+  box-shadow:inset 0 0 0 1px rgba(128,128,128,var(--art-rim,.2));}
+body.art-meow .lb-ic::after,body.art-meowdesk .lb-ic::after{content:"";position:absolute;
+  right:5px;bottom:5px;width:5px;height:5px;border-radius:50%;
+  background:var(--art-seal);opacity:.85;}
+body.art-meow .hc-logo,body.art-meowdesk .hc-logo{
+  background:linear-gradient(155deg,var(--art-tile1),var(--art-tile2))!important;
+  color:var(--art-ink)!important;border-radius:47% 47% 43% 43%/57% 57% 43% 43%!important;
+  box-shadow:inset 0 0 0 1px rgba(128,128,128,var(--art-rim,.2)),0 4px 12px rgba(20,20,26,.12)!important;}
+body.art-meow .hc-logo svg,body.art-meowdesk .hc-logo svg{color:var(--art-ink);}
+body.art-meow .home-card,body.art-meow .board-card,body.art-meow .lb-tile,
+body.art-meow .gk-card,body.art-meow .item,body.art-meow .mat-item,body.art-meow .acct-sec,
+body.art-meowdesk .home-card,body.art-meowdesk .board-card,body.art-meowdesk .lb-tile,
+body.art-meowdesk .gk-card,body.art-meowdesk .item,body.art-meowdesk .mat-item,
+body.art-meowdesk .acct-sec{border-style:dashed;box-shadow:none;}
+/* 纸胶带：45° 斜纹。手机上它横在顶栏和底栏，电脑上左栏那条竖着当装订边 */
+body.art-meow .topbar,body.art-meow .tabbar,body.art-meowdesk .topbar{
+  background-image:repeating-linear-gradient(45deg,rgba(128,128,128,.11) 0 6px,transparent 6px 12px);}
+body.art-meowdesk .siderail{
+  background-image:repeating-linear-gradient(45deg,rgba(128,128,128,.13) 0 6px,transparent 6px 12px);
+  background-size:13px 100%;background-repeat:no-repeat;background-position:left top;}
+
+/* ---- 二 · 女巫茶会 / 女巫账房 ----
+   一张一张的铜版画广告牌：直角、1.5px 实框外再留一道白隙再一道框，全屏没有阴影。
+   图标**不填底、只描边** —— 参考图那些广告里的小插图就是这个语言。 */
+body.art-witch .lb-ic,body.art-witchdesk .lb-ic{
+  background:transparent;color:var(--art-ink);border-radius:2px;
+  box-shadow:inset 0 0 0 1.2px var(--art-ink);}
+body.art-witch .hc-logo,body.art-witchdesk .hc-logo{
+  background:transparent!important;color:var(--art-ink)!important;border-radius:2px!important;
+  box-shadow:inset 0 0 0 1.4px var(--art-ink),0 0 0 1px var(--card),0 0 0 2.4px rgba(128,128,128,.3)!important;}
+body.art-witch .hc-logo svg,body.art-witchdesk .hc-logo svg{color:var(--art-ink);}
+body.art-witch .home-card,body.art-witch .board-card,body.art-witch .lb-tile,
+body.art-witch .gk-card,body.art-witch .item,body.art-witch .mat-item,body.art-witch .acct-sec,
+body.art-witchdesk .home-card,body.art-witchdesk .board-card,body.art-witchdesk .lb-tile,
+body.art-witchdesk .gk-card,body.art-witchdesk .item,body.art-witchdesk .mat-item,
+body.art-witchdesk .acct-sec{
+  border:1.4px solid var(--text);border-radius:2px;
+  box-shadow:0 0 0 1px var(--card),0 0 0 2.2px rgba(128,128,128,.3);}
+body.art-witch .btn,body.art-witch .chip,body.art-witchdesk .btn,body.art-witchdesk .chip{border-radius:2px;}
+body.art-witch .topbar,body.art-witch .tabbar{border-color:var(--text);border-width:2px;}
+body.art-witchdesk .topbar,body.art-witchdesk .siderail{border-color:var(--text);border-width:2px;}
+
+/* ---- 三 · 像素蜜桃 / 像素工位 ----
+   圆角全部收成 0，边框不用 border —— 用四道 2px 位移阴影拼，四个角自然缺一格，
+   那才是像素框（圆角和 border 都画不出缺角）。 */
+body.art-pixel .lb-ic,body.art-pixeldesk .lb-ic{
+  background:var(--card);color:var(--blue);border-radius:0;
+  box-shadow:0 -2px 0 var(--blue),0 2px 0 var(--blue),-2px 0 0 var(--blue),2px 0 0 var(--blue);}
+body.art-pixel .hc-logo,body.art-pixeldesk .hc-logo{
+  background:var(--card)!important;color:var(--blue)!important;border-radius:0!important;
+  box-shadow:0 -2px 0 var(--blue),0 2px 0 var(--blue),-2px 0 0 var(--blue),2px 0 0 var(--blue)!important;}
+body.art-pixel .hc-logo svg,body.art-pixeldesk .hc-logo svg{color:var(--blue);}
+body.art-pixel .home-card,body.art-pixel .board-card,body.art-pixel .lb-tile,
+body.art-pixel .gk-card,body.art-pixel .item,body.art-pixel .mat-item,body.art-pixel .acct-sec,
+body.art-pixel .tv-rows,body.art-pixel .tv-empty,body.art-pixel .feed-card,
+body.art-pixeldesk .home-card,body.art-pixeldesk .board-card,body.art-pixeldesk .lb-tile,
+body.art-pixeldesk .gk-card,body.art-pixeldesk .item,body.art-pixeldesk .mat-item,
+body.art-pixeldesk .acct-sec,body.art-pixeldesk .tv-rows,body.art-pixeldesk .tv-empty,
+body.art-pixeldesk .feed-card{
+  border:none;border-radius:0;
+  box-shadow:0 -2px 0 var(--line),0 2px 0 var(--line),-2px 0 0 var(--line),2px 0 0 var(--line);}
+/* 顶栏那条横杠和左栏那条竖杠是一对：整扇窗被两条 3px 的猩红框住，
+   这是像素窗口最认得出的一笔（漏了顶栏那条，窗户就只剩半个框）。 */
+body.art-pixel .topbar,body.art-pixeldesk .topbar{border-bottom:3px solid var(--blue);}
+/* 数字走等宽：像素风里数字是主角，也真的更好读（题数、正确率、倒计时都成列） */
+body.art-pixel,body.art-pixeldesk{font-variant-numeric:tabular-nums;}
+body.art-pixel .btn,body.art-pixel .chip,body.art-pixel .pill,
+body.art-pixeldesk .btn,body.art-pixeldesk .chip,body.art-pixeldesk .pill{border-radius:0;}
+body.art-pixel .tabbar{border-top:3px solid var(--blue);}
+body.art-pixeldesk .siderail{border-right:3px solid var(--blue);}
+
+/* ---- 四 · 炸物猫铺 / 猫铺暖帘 ----
+   2px 全黑描边 + 3px 不带模糊的位移阴影，就是贴纸从纸上翘起来那一下。
+   描边色走 --line：夜里整套翻成米白描边，深底白线，不用为夜间另写一条。
+   **阴影只给卡片和图标**：题库那种三十行的列表每行都带硬阴影会沉。 */
+body.art-tempura .lb-ic,body.art-tempuradesk .lb-ic{
+  background:linear-gradient(155deg,var(--art-tile1),var(--art-tile2));
+  color:var(--art-ink);border-radius:9px;border:2px solid var(--line);}
+body.art-tempura .hc-logo,body.art-tempuradesk .hc-logo{
+  background:linear-gradient(155deg,var(--art-tile1),var(--art-tile2))!important;
+  color:var(--art-ink)!important;border:2px solid var(--line);
+  box-shadow:3px 3px 0 var(--line)!important;}
+body.art-tempura .hc-logo svg,body.art-tempuradesk .hc-logo svg{color:var(--art-ink);}
+body.art-tempura .home-card,body.art-tempura .board-card,body.art-tempura .lb-tile,
+body.art-tempura .gk-card,body.art-tempura .acct-sec,
+body.art-tempuradesk .home-card,body.art-tempuradesk .board-card,body.art-tempuradesk .lb-tile,
+body.art-tempuradesk .gk-card,body.art-tempuradesk .acct-sec{
+  border:2.2px solid var(--line);box-shadow:3px 3px 0 var(--line);}
+body.art-tempura .item,body.art-tempura .mat-item,
+body.art-tempuradesk .item,body.art-tempuradesk .mat-item{
+  border:1.8px solid var(--line);box-shadow:none;}
+body.art-tempura .btn.primary,body.art-tempuradesk .btn.primary{
+  border:2px solid var(--line);box-shadow:2px 2px 0 var(--line);}
+/* 暖帘：电脑端顶栏是一整幅靛蓝。宽屏顶栏是全屏最长的一条，正适合当店门口那幅帘 ——
+   手机端顶栏太短，做出来只是一条色带，所以那边不做。 */
+body.art-tempuradesk .topbar{background:var(--art-band);color:#fff8e8;
+  border-bottom:2.5px solid var(--line);}
+body.art-tempuradesk .topbar .logout,body.art-tempuradesk .topbar #top-title,
+body.art-tempuradesk .tb-search{color:#f0e6d0;}
+
+/* ---- 五 · 家庭菜园 / 苗圃工作台 ----
+   圆形图标底取自参考图那排「维生素 C 24mg / 27%」的营养圆标 —— 它天生就是
+   正确率和完成度的形状。红绿分工死：绿是交互和完成，红只做数字和强调，
+   番茄红从不做按钮底（会被读成危险），也从不单独承载信息（对色弱友好）。 */
+body.art-garden .lb-ic,body.art-gardendesk .lb-ic{
+  background:var(--card);color:var(--blue);border-radius:50%;
+  box-shadow:inset 0 0 0 1.4px var(--line);}
+body.art-garden .hc-logo,body.art-gardendesk .hc-logo{
+  background:var(--card)!important;color:var(--blue)!important;border-radius:50%!important;
+  box-shadow:inset 0 0 0 1.4px var(--line),0 3px 10px rgba(20,26,16,.10)!important;}
+body.art-garden .hc-logo svg,body.art-gardendesk .hc-logo svg{color:var(--blue);}
+body.art-garden .home-card,body.art-garden .board-card,body.art-garden .lb-tile,
+body.art-garden .gk-card,body.art-garden .item,body.art-garden .mat-item,body.art-garden .acct-sec,
+body.art-gardendesk .home-card,body.art-gardendesk .board-card,body.art-gardendesk .lb-tile,
+body.art-gardendesk .gk-card,body.art-gardendesk .item,body.art-gardendesk .mat-item,
+body.art-gardendesk .acct-sec{border-radius:12px;box-shadow:0 1px 2px rgba(40,60,30,.06);}
+/* 顶栏下沿那道番茄红缎带。参考图满纸都是缎带，这里只留一道 —— 铺开就花了 */
+body.art-garden .topbar,body.art-gardendesk .topbar{
+  box-shadow:0 2px 0 var(--art-seal),0 3px 0 var(--line);border-bottom:none;}
+body.art-garden .tabbar{border-top:2px solid var(--art-seal);}
+
+/* ---- 界面里那些彩色 emoji（js/articons.js 的 artEm）----
+   两套字形都在 DOM 里：没开主题露 emoji（外观分毫不变），开了主题露线描 SVG。
+   SVG 走 currentColor，跟的是所在按钮的文字色 —— 主题换到哪它跟到哪，不用逐处配色。
+   inline-grid + 1em 见方：它嵌在按钮文字里，不能像 .hc-em 那样按 44px 的方块来摆。 */
+.em-sw{display:inline-grid;place-items:center;width:1.15em;height:1.15em;
+  vertical-align:-.18em;flex:0 0 auto;}
+.em-sw .em-e{display:grid;place-items:center;line-height:1;}
+.em-sw .em-s{display:none;}
+.em-sw .em-s svg{width:1.06em;height:1.06em;display:block;}
+body.art-on .em-sw .em-e{display:none;}
+body.art-on .em-sw .em-s{display:grid;}
+
+/* ---- 几处写死的彩色：主题下精确接管（不再只靠 --art-tail 那层滤镜） ----
+   滤镜只能把颜色弄脏，弄不成主题色。这几处面积大、天天见，值得单写：
+   AI 面板的头、计划页那排浅蓝按钮、复习卡的类别徽章、AI 项目那枚图标。 */
+body.art-on .ai-head{background:var(--blue-fill);color:#fff;}
+body.art-on .pl-link-btn{background:var(--bg2);border-color:var(--line);color:var(--blue);}
+body.art-on .pl-link-btn:active{background:var(--line);}
+body.art-on .ts-plan{background:var(--bg2);color:var(--blue);}
+/* 复习卡那枚类别徽章的底色是 js/review.js 按 kind 写成行内 style 的，压不过 —— 只能 !important。
+   五个 kind 原来是五个色相（蓝/红/青/棕/紫），主题下不按色相分了：那五个色相在任何一套
+   主题里都是五块跳出来的杂色，而"这张卡属于哪一类"底下那行字已经写着了。 */
+body.art-on #rvf-kind{background:var(--blue-fill)!important;color:#fff!important;}
+/* AI 面板的「项目」图标是一张写死配色的 SVG（紫底白格 + 黄点）。
+   主题下整枚交给当前色：底用图标底那块材质，格子挖白。 */
+body.art-on .ai-folder rect[fill="#5b6cf0"]{fill:var(--blue-fill);}
+body.art-on .ai-folder path[fill="#7d8cf8"]{fill:#fff;opacity:.18;}
+body.art-on .ai-folder rect[fill="#fff"]{fill:#fff;}
+body.art-on .ai-folder circle[fill="#ffd66b"]{fill:var(--blue);}

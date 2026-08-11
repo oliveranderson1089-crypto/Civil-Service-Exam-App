@@ -103,7 +103,8 @@ test('沉浸式页面让位：做题页和小记不出标签栏，页面底部�
 test('管理后台只给管理员看', (t) => {
   const h = boot(); t.after(() => h.close());
   tap(h, 'me');
-  const names = () => $$(h, '#tab-groups .tab-row .tr-n').map(b => b.textContent);
+  // 「我的」走的是自定义首屏（js/tabviews.js），条目是 .tv-row 不是通用目录条
+  const names = () => $$(h, '#tab-groups .tv-row .tv-name').map(b => b.textContent);
   assert.ok(!names().includes('管理后台'), '非管理员也看得到后台入口');
 
   h.run("ME = { is_admin: true }");

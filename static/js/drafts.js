@@ -7,10 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, appPrompt, c, draft,
-   esc, padCur, padDraftId, padInit, padInited, padMode,
-   padOnView, padOpen, padRebuild, padSave, padSetData, padStatus,
-   push, toast */
+/* global $, api, appConfirm, appPrompt, artEm, c, draft, esc, padCur, padDraftId, padInit, padInited, padMode, padOnView, padOpen, padRebuild, padSave, padSetData, padStatus, push, toast */
 
 /* ---------- 草稿本：错题本里，平时打草稿用（多本 / 云端保存 / 手机电脑同步） ---------- */
 function openDrafts() { push({ view: 'drafts' }); loadDrafts(); }
@@ -26,7 +23,7 @@ async function loadDrafts() {
           <div class="dr-t">${esc(it.title || '未命名')}</div>
           <div class="dr-foot">
             <span class="dr-m">${it.pages || 1} 页 · ${(it.updated_at || '').slice(5, 16)}</span>
-            <button class="dr-del" data-del="${it.id}" title="删除">✕</button>
+            <button class="dr-del" data-del="${it.id}" title="删除">${artEm('✕')}</button>
           </div>
         </div>
       </div>`).join('');

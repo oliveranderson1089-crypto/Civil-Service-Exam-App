@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global esc */
+/* global artEm, esc */
 
 /* ---------- 资料分析的材料：表格 / 柱状图 / 折线图 / 饼图（内联 SVG，无外部库） ----------
    颜色用 CSS 变量（--c1..--c4），日/夜间自动切换，不用重新渲染。配色经色盲分离度与对比度校验。 */
@@ -105,6 +105,6 @@ function dtMaterial(m, i, prev) {
   const tb = { headers: ['项目', ...(m.labels || [])],
     rows: (m.series || []).map(s => [s.name, ...s.data.map(v => dtNum(v))]) };
   return `<div class="dt-mat">${head}${dtChart(m)}${dtLegend(m.series || [])}
-    <button class="ch-tbtn" data-chtb="${i}">📋 看数据表</button>
+    <button class="ch-tbtn" data-chtb="${i}">${artEm('📋')} 看数据表</button>
     <div class="ch-tbwrap hidden" id="chtb-${i}">${dtTable(tb)}</div></div>`;
 }

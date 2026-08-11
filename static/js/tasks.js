@@ -9,7 +9,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, composing, esc, toast */
+/* global $, api, appConfirm, artEm, composing, esc, toast */
 async function loadDaily() {
   $('#tk-daily-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
@@ -19,7 +19,7 @@ async function loadDaily() {
       <div class="tk-item ${it.done ? 'done' : ''}" data-td="${it.id}">
         <span class="tk-check">${it.done ? '✓' : ''}</span>
         <span class="tk-text">${esc(it.text)}</span>
-        <button class="tk-del" data-tddel="${it.id}">🗑</button>
+        <button class="tk-del" data-tddel="${it.id}">${artEm('🗑')}</button>
       </div>`).join('') : '<p class="empty">还没有每日任务，下面加一条吧～</p>';
   } catch (e) { $('#tk-daily-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }

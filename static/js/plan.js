@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, back, composing, esc,
-   loadDaily, loadShared, ntfGo, push, toast */
+/* global $, api, appConfirm, artEm, back, composing, esc, loadDaily, loadShared, ntfGo, push, toast */
 
 /* ============= 任务清单（每日任务 + 互监待办） ============= */
 function openTasks() { push({ view: 'tasks', title: '任务清单' }); tkSwitch('plan'); }
@@ -72,15 +71,15 @@ function renderRoadmap(rm, prof) {
       ? '周六复盘（稍满）：上午一套行测限时套题（严格 120 分钟）→ 下午全套订正 + 错因归因 → 晚上把本周错题过一遍。<b>今天不排新知识</b>，但别偷懒。'
       : '周日复盘（更轻）：本周错题再过一遍 + 快速回看这周的新词 / 素材 / 时政，然后<b>休半天</b>放松。今天不排新任务，收收心准备下周。'}</div>` : ''}
     <div class="plr-quota"><span class="plr-qt">今日行测定额</span>${quota}</div>
-    <div class="plr-sl">📝 申论：${esc(ph.shenlun)}</div>
+    <div class="plr-sl">${artEm('📝')} 申论：${esc(ph.shenlun)}</div>
     <div class="plr-detail ${plRoadOpen ? '' : 'hidden'}">
-      <div class="plr-sec">🎯 本阶段正确率目标</div>
+      <div class="plr-sec">${artEm('🎯')} 本阶段正确率目标</div>
       <table class="plr-tb">${acc}</table>
-      <div class="plr-sec">📌 模块优先级</div>
+      <div class="plr-sec">${artEm('📌')} 模块优先级</div>
       <div class="plr-p">${esc(dd.priority || '')}<div class="plr-why">${esc(dd.priority_why || '')}</div></div>
       <div class="plr-sec">🔁 本阶段每周要做到</div>
       <ul class="plr-ul">${(ph.weekly || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
-      <div class="plr-sec">📚 每日固定动作（用 App 现成内容）</div>
+      <div class="plr-sec">${artEm('📚')} 每日固定动作（用 App 现成内容）</div>
       <ul class="plr-ul">${(dd.fixed || []).map(x =>
         `<li>${esc(x.t)}${x.link ? ` <i class="pl-go" data-plgo="${esc(x.link)}">去做 ›</i>` : ''}
           <span class="plr-note">${esc(x.note || '')}</span></li>`).join('')}</ul>
@@ -97,7 +96,7 @@ function renderRoadmap(rm, prof) {
   if (prof && prof.minutes < 300) {
     box.insertAdjacentHTML('beforeend',
       `<div class="plr-warn">你的「每天可学」只填了 ${prof.minutes} 分钟，这套定额是按 6~8 小时排的。
-        建议去「⚙️ 备考信息」改成 <b>420</b> 分钟左右，规划助手才会把任务排够。</div>`);
+        建议去「${artEm('⚙️')} 备考信息」改成 <b>420</b> 分钟左右，规划助手才会把任务排够。</div>`);
   }
 }
 $('#pl-road').addEventListener('click', async e => {
@@ -185,7 +184,7 @@ function renderPlan(d) {
         </span>
         ${it.reason ? `<span class="tk-who">${esc(it.reason)}</span>` : ''}
       </span>
-      <button class="tk-del" data-pldel="${it.id}">🗑</button>
+      <button class="tk-del" data-pldel="${it.id}">${artEm('🗑')}</button>
     </div>`;
   }).join('') : '<p class="empty">今天还没有计划。点下面的按钮，规划助手会看着你的复习进度和错题给你排一份。</p>';
 }
@@ -324,7 +323,7 @@ async function loadPlanLog() {
         <details class="plh-arch">
           <summary>${a.summary && a.summary.indexOf('【找回】') === 0 ? '🛟 找回的上一版' : '🕓 旧版本'} · ${esc((a.created_at || '').slice(5, 16))} · ${a.total} 条 / ${a.minutes_total} 分钟
             ${day.is_today ? `<button class="plh-restore" data-restore="${a.id}">恢复为今天</button>` : ''}</summary>
-          ${a.summary ? `<div class="plh-sum">💡 ${esc(a.summary.replace('【找回】', ''))}</div>` : ''}
+          ${a.summary ? `<div class="plh-sum">${artEm('💡')} ${esc(a.summary.replace('【找回】', ''))}</div>` : ''}
           ${plItemsHtml(a.items || [])}
         </details>`).join('');
       return `<div class="plh-day">

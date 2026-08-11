@@ -7,15 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, AI_FOLDER, ALL_BOARDS, DESKTOP_VER, ME, aiCurProject, anchorMenu, api,
-   appConfirm, appPrompt, chSwitch, chTab, crInRoom, crLoad,
-   esc, fabClamp, init, inkHere, loadAiHome, loadCsBoard,
-   loadDrive, loadEntries, loadFanwen, loadFeed, loadFeedTags, loadGaikuo,
-   loadGongwen, loadMaterials, loadNews, loadNotebooks, loadPartyDict, loadPlanLog,
-   loadReview, loadShared, loadSucai, loadVideos, loadWrongq, lsGet,
-   lsSet, matBoard, matCustomBoards, matPickMembers, openAI, openAiProject,
-   padToggle, push, qnOpen, refreshChatBadge, shotAsk, stack,
-   toast, wrSwitch, wrTab */
+/* global $, AI_FOLDER, ALL_BOARDS, DESKTOP_VER, ME, aiCurProject, anchorMenu, api, appConfirm, appPrompt, artEm, chSwitch, chTab, crInRoom, crLoad, esc, fabClamp, init, inkHere, loadAiHome, loadCsBoard, loadDrive, loadEntries, loadFanwen, loadFeed, loadFeedTags, loadGaikuo, loadGongwen, loadMaterials, loadNews, loadNotebooks, loadPartyDict, loadPlanLog, loadReview, loadShared, loadSucai, loadVideos, loadWrongq, lsGet, lsSet, matBoard, matCustomBoards, matPickMembers, openAI, openAiProject, padToggle, push, qnOpen, refreshChatBadge, shotAsk, stack, toast, wrSwitch, wrTab */
 
 /* ============= 多端自动同步：数据变了自动刷新当前视图，无需手动更新 ============= */
 let _syncToken = null, _syncBusy = false;
@@ -169,10 +161,10 @@ function openAiChatMenu(btn, id, title, projId, starred) {
   const ps = $('#ai-panel')._projects || [];
   $('#acm-list').innerHTML = `
     <button data-acm="star">${starred ? '☆ 取消置顶' : '⭐ 置顶'}</button>
-    <button data-acm="rename">✏️ 重命名</button>
+    <button data-acm="rename">${artEm('✏️')} 重命名</button>
     ${ps.length ? `<button data-acm="move">${AI_FOLDER} 移动到项目 ›</button>` : ''}
-    ${aiMenuCtx.projId ? '<button data-acm="unproj">📤 移出项目</button>' : ''}
-    <button data-acm="del" class="acm-danger">🗑 删除对话</button>`;
+    ${aiMenuCtx.projId ? '<button data-acm="unproj">' + artEm("📤") + ' 移出项目</button>' : ''}
+    <button data-acm="del" class="acm-danger">${artEm('🗑')} 删除对话</button>`;
   anchorMenu($('#ai-chatmenu'), btn);
 }
 $('#ai-chatmenu').addEventListener('click', async e => {

@@ -36,12 +36,13 @@ _TAG = re.compile(r"<[^>]+>")
 _IMG = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
 
-def _brief(s, n=34):
+def _brief(s, alt="无标题", n=34):
     """小记没有标题，拿正文首行当标题：先去掉图片和标签，再截断。
-    截断前先掐到第一个换行 —— 长笔记的第二行往往和第一行毫无关系，混在一行里读不通。"""
+    截断前先掐到第一个换行 —— 长笔记的第二行往往和第一行毫无关系，混在一行里读不通。
+    只贴了张图、一个字没写的小记不少（截图记录居多），这种给「图片小记」而不是「无标题」。"""
     s = _TAG.sub("", _IMG.sub("", s or "")).strip()
     s = s.split("\n", 1)[0].strip()
-    return (s[:n] + "…") if len(s) > n else (s or "无标题")
+    return (s[:n] + "…") if len(s) > n else (s or alt)
 
 
 # 「库」里五个容器各自怎么取最近的几条。
@@ -50,7 +51,7 @@ def _brief(s, n=34):
 # 资料库和云盘只有 created_at（它们是「传进来」的，没有编辑动作）。
 _RECENT = [
     ("note", "小记",
-     "SELECT id, COALESCE(content,''), updated_at FROM notes "
+     "SELECT id, COALESCE(content,''), updated_at, COALESCE(images,'') FROM notes "
      "WHERE user_id=? ORDER BY updated_at DESC, id DESC LIMIT 6"),
     ("kbdoc", "知识库",
      "SELECT id, COALESCE(NULLIF(title,''),'无标题文档'), updated_at FROM kb_nodes "
@@ -84,7 +85,8 @@ def lib_home():
     recent = []
     for kind, label, sql in _RECENT:
         for r in _rows(db, sql, (u,)):
-            title = _brief(r[1]) if kind == "note" else (r[1] or "无标题")
+            title = _brief(r[1], "图片小记" if len(r) > 3 and r[3] not in ("", "[]") else "无标题") \
+                if kind == "note" else (r[1] or "无标题")
             recent.append({"kind": kind, "label": label, "id": r[0],
                            "title": title, "at": r[2] or ""})
     recent.sort(key=lambda x: x["at"], reverse=True)
@@ -120,9 +122,16 @@ _STARS = [
 
 
 def _star_count(db, u):
+    """收藏总数。
+
+    **不能拿 _rows(sql) 的行数来数**：_STARS 里每条 SQL 都带着 LIMIT 60（那是给
+    「最近收藏」列表用的），照着数的话每类最多 60、总数永远卡在 360，收藏得越多越不准。
+    把 LIMIT 之前的部分包一层 COUNT(*)，数的才是真实总数。
+    """
     n = 0
     for _, _, sql in _STARS:
-        n += len(_rows(db, sql, (u,)))
+        body = re.sub(r"\s+ORDER\s+BY\b.*$", "", sql, flags=re.I | re.S)
+        n += _num(db, "SELECT COUNT(*) FROM (%s)" % body, (u,))
     return n
 
 

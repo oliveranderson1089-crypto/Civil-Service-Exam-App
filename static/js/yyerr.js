@@ -10,7 +10,7 @@
  * 零 AI 调用：题目全部来自 yy_items 里的成对错例（错句 + 改正 + 扣分理由），
  * 那批数据是从 71 篇自产范文里用格式检查器捞出来的，判据都有真题实证。
  */
-/* global $, api, esc, push, toast */
+/* global $, api, artEm, esc, push, toast */
 
 let yeItems = [], yeIdx = 0, yeAnswered = [], yeDone = 0;
 
@@ -32,7 +32,7 @@ function yeRender() {
       <div class="ye-q">下面这样写，对不对？</div>
       <div class="ye-text">${esc(it.text)}</div>
       ${picked ? '' : `<div class="ye-btns">
-        <button class="btn ye-pick" data-ye="right">✓ 对</button>
+        <button class="btn ye-pick" data-ye="right">${artEm('✓')} 对</button>
         <button class="btn ye-pick" data-ye="wrong">✗ 错</button>
       </div>`}
       ${picked ? `
@@ -41,9 +41,9 @@ function yeRender() {
       </div>
       <div class="ye-pair">
         <div class="ye-bad">✗ ${esc(it.bad)}</div>
-        <div class="ye-good">✓ ${esc(it.good)}</div>
+        <div class="ye-good">${artEm('✓')} ${esc(it.good)}</div>
       </div>
-      ${it.why ? `<div class="ye-why">💡 ${esc(it.why)}</div>` : ''}
+      ${it.why ? `<div class="ye-why">${artEm('💡')} ${esc(it.why)}</div>` : ''}
       <div class="ye-btns">
         <button class="btn primary" id="ye-next">${yeIdx + 1 >= yeItems.length ? '看成绩' : '下一题'}</button>
       </div>` : ''}
@@ -62,10 +62,10 @@ function yeSummary() {
         <div class="ye-pair">
           <div class="ye-meta">${esc(it.where || '')} · ${esc(it.check)}</div>
           <div class="ye-bad">✗ ${esc(it.bad)}</div>
-          <div class="ye-good">✓ ${esc(it.good)}</div>
-          ${it.why ? `<div class="ye-why">💡 ${esc(it.why)}</div>` : ''}
+          <div class="ye-good">${artEm('✓')} ${esc(it.good)}</div>
+          ${it.why ? `<div class="ye-why">${artEm('💡')} ${esc(it.why)}</div>` : ''}
         </div>`).join('')
-        : '<div class="ye-fb ok">✅ 全对，格式这块没问题</div>'}
+        : '<div class="ye-fb ok">' + artEm("✅") + ' 全对，格式这块没问题</div>'}
       <div class="ye-btns"><button class="btn primary" id="ye-again">再来一组</button></div>
     </div>`;
 }

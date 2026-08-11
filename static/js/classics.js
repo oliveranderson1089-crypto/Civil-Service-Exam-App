@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, esc, mdToHtml, push,
-   stack, toast */
+/* global $, api, artEm, c, esc, mdToHtml, push, stack, toast */
 
 /* ================= 古诗文速查（唐诗宋词·四书五经） ================= */
 const CLS_BADGE = { '唐诗': '#c0392b', '宋词': '#7b5ea7', '元曲': '#2c8c8c', '诗经': '#2f8060', '先秦': '#b08a1e', '汉魏六朝': '#8a6d3b', '明清': '#4a6785', '论语': '#1a6fb5', '孟子': '#1a6fb5', '大学': '#b08a1e', '中庸': '#b08a1e', '孙子兵法': '#9b2c22', '资治通鉴': '#5a4b8a', '增广贤文': '#2c7a5a' };
@@ -24,7 +23,7 @@ async function loadClsDaily() {
     const d = await api('/api/classics/daily');
     if (!d || d.error) { $('#cls-daily').classList.add('hidden'); return; }
     $('#cls-daily').innerHTML = `
-      <div class="cd-daily-tag">📖 每日一诗 · 申论 + 常识</div>
+      <div class="cd-daily-tag">${artEm('📖')} 每日一诗 · 申论 + 常识</div>
       <div class="cd-daily-title" data-clsopen="${d.id}">${esc(d.title)}<span class="cd-daily-meta">${esc((d.dynasty || '') + ' · ' + (d.author || ''))}</span></div>
       <div class="cd-daily-line">${esc(d.first_line || '')}</div>
       ${d.apply ? `<div class="cd-daily-apply"><b>申论运用</b> ${esc(d.apply)}</div>` : ''}
@@ -151,7 +150,7 @@ function renderCDetail() {
   const aiBox = hasAI
     ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">AI 讲解</div><div class="cd-sec-b">${mdToHtml(d.ai_explain)}</div>
         <button class="btn cd-ai-regen" id="cd-ai-regen">重新生成</button></div>`
-    : `<button class="btn primary cd-ai-btn" id="cd-ai-btn">🤖 AI 讲解${(d.translation || d.appreciation) ? '（生成后替换开源译文/赏析）' : ''}</button>`;
+    : `<button class="btn primary cd-ai-btn" id="cd-ai-btn">${artEm('🤖')} AI 讲解${(d.translation || d.appreciation) ? '（生成后替换开源译文/赏析）' : ''}</button>`;
   $('#cd-wrap').innerHTML = `
     <div class="cd-head">
       <span class="cls-badge" style="background:${CLS_BADGE[d.category] || '#888'}">${esc(d.category)}</span>

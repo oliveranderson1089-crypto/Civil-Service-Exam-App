@@ -63,3 +63,27 @@ test('blockHtml：divider / todo 各按类型渲染', (t) => {
   const box = h.window.document.createElement('div'); box.innerHTML = todo;
   assert.ok(box.querySelector('.blk.todo.done'), '已完成的待办没加 done 类');
 });
+
+/* ---- 封面色：这一轮返工的正题 ----
+   八个封面色原本是 KB_COVERS 里八条渐变，**以行内 style 渲染**。行内样式没有
+   任何选择器压得过，主题于是一处都管不到知识库；而扫样式表的那条守门测试
+   只认 CSS 里的颜色，也就一直没人知道漏了。
+   现在色住在 style.css 的 .kbc0…kbc7 里，JS 只负责挂对第几号。 */
+test('封面：只挂色号 class，不写行内底色（写了主题就压不过）', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const cls = h.run('kbCoverCls');
+  assert.strictEqual(cls({ cover: 3 }), 'kbc3');
+  assert.strictEqual(cls({ cover: 0 }), 'kbc0', 'cover 为 0 时落回了别的号');
+  assert.strictEqual(cls({}), 'kbc0', '没选过封面的旧数据该落在 0 号');
+  assert.strictEqual(cls(null), 'kbc0', 'nb 为空时不该炸');
+  // 越界要绕回来：封面数改了、或后端存了个大数，不能算出 kbc9 这种没有规则的号
+  assert.strictEqual(cls({ cover: 8 }), 'kbc0', '色号没有对 8 取模');
+  assert.strictEqual(cls({ cover: 13 }), 'kbc5');
+
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '../../static/js/kb.js'), 'utf8');
+  assert.ok(!/kb-cover[^>]*style="background/.test(src),
+    '列表页的封面又写回行内底色了 —— 主题压不过行内样式');
+  assert.ok(!/nb-cover'\)\.style\.background\s*=/.test(src),
+    '详情页那本小的又写回行内底色了');
+});

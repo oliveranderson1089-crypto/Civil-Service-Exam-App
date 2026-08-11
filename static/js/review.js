@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, back, emKey, esc, push,
-   refreshReviewBadge, toast */
+/* global $, api, artEm, back, emKey, esc, push, refreshReviewBadge, toast */
 
 /* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
 const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文', gushi: '古诗', yy: '应用文错例' };
@@ -96,8 +95,8 @@ function rvSelect(group) {
     const done = rvDoneToday[group] || 0;
     const lim = (rvLim || {})[group] || 0;
     $('#rv-empty').innerHTML = done > 0
-      ? `<p class="empty">✅ 「${RV_LNAME[group] || ''}」今日已完成 <b>${done}</b> 条${lim ? '（每日量 ' + lim + '）' : ''}，明天见～<br><span style="font-size:13px;color:var(--muted)">想多背可到「每日复习量」调高上限。</span></p>`
-      : '<p class="empty">🎉 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、古诗、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p>';
+      ? `<p class="empty">${artEm('✅')} 「${RV_LNAME[group] || ''}」今日已完成 <b>${done}</b> 条${lim ? '（每日量 ' + lim + '）' : ''}，明天见～<br><span style="font-size:13px;color:var(--muted)">想多背可到「每日复习量」调高上限。</span></p>`
+      : '<p class="empty">' + artEm("🎉") + ' 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、古诗、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p>';
     $('#rv-empty').classList.remove('hidden');
     return;
   }
@@ -163,7 +162,7 @@ async function rvEnsureExample() {
     const ai = (d.src || '').startsWith('AI');
     it.back = (it.back || '') + '\n\n✍️ 例句：' + d.example + (d.src ? '\n　　—— ' + d.src : '');
     tip.className = 'rv-ex';
-    tip.innerHTML = `<div class="rv-ex-t">✍️ ${esc(d.example)}</div>
+    tip.innerHTML = `<div class="rv-ex-t">${artEm('✍️')} ${esc(d.example)}</div>
       <div class="ck-ex-src ${ai ? 'ai' : 'real'}">${ai ? '✎' : '📰'} ${esc(d.src || '')}</div>`;
   } catch (_) { tip.remove(); }
   it._exLoading = false;

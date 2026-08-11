@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, emKey, esc, isDocHeading,
-   mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, emKey, esc, isDocHeading, mdToHtml, push, stack, toast */
 
 /* ============= 经典著作（毛泽东选集） ============= */
 let wkData = null;
@@ -20,7 +19,7 @@ async function openWorks() {
     $('#wk-list').innerHTML = d.items.map(it => `
       <div class="poly-card" data-work="${it.id}">
         <div class="poly-t" style="font-size:15.5px">${it.ord + 1}. ${esc(it.title)}</div>
-        <div class="poly-meta">${esc(it.book)} · 约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">✓ 已有AI导读</span>' : ''}</div>
+        <div class="poly-meta">${esc(it.book)} · 约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">' + artEm("✓") + ' 已有AI导读</span>' : ''}</div>
       </div>`).join('');
   } catch (e) { $('#wk-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
@@ -39,17 +38,17 @@ async function openWorkDetail(id) {
 function renderWork() {
   const d = wkData;
   const ai = d.interpretation
-    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 导读</div><div class="cd-sec-b">${mdToHtml(d.interpretation)}</div>
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">${artEm('🤖')} AI 导读</div><div class="cd-sec-b">${mdToHtml(d.interpretation)}</div>
         <button class="btn cd-ai-regen" id="wk-regen">重新生成</button></div>`
     : `<div class="poly-genbox"><p class="cd-tip" style="margin:0 0 10px">让 AI 梳理这篇文章的写作背景、核心观点、名句与公考运用。</p>
-        <button class="btn primary" id="wk-gen" style="width:100%;padding:12px;">🤖 生成 AI 导读</button></div>`;
+        <button class="btn primary" id="wk-gen" style="width:100%;padding:12px;">${artEm('🤖')} 生成 AI 导读</button></div>`;
   const body = (d.content || '').split('\n').filter(x => x.trim()).map(p => {
     const s2 = p.trim();
     return isDocHeading(s2) ? `<p class="poly-h">${emKey(s2)}</p>` : `<p>${emKey(s2)}</p>`;
   }).join('');
   $('#wk-wrap').innerHTML = `
     <div class="poly-head"><h2>${esc(d.title)}</h2>
-      <div class="news-date">📕 ${esc(d.book)}</div></div>
+      <div class="news-date">${artEm('📕')} ${esc(d.book)}</div></div>
     ${ai}
     <div class="poly-readert">全文</div>
     <div class="poly-reader">${body}</div>`;

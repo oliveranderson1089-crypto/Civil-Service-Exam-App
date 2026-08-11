@@ -170,7 +170,7 @@ def test_预算耗尽就不再起新一轮工具(monkeypatch):
     monkeypatch.setattr(agent, "_ai_stream", _fake_stream(events))
     monkeypatch.setattr(agent, "exec_tool", lambda n, a, db: ("做完了", None))
     monkeypatch.setattr(agent, "tool_specs", lambda: [{"x": 1}])
-    reply, actions = agent.ai_chat_agentic([], None, max_rounds=4, budget=0.01)
+    reply, actions, _trace = agent.ai_chat_agentic([], None, max_rounds=4, budget=0.01)
     assert calls == [False], "预算耗尽还继续调工具，就会叠出十分钟的请求"
     assert reply == "收尾"
 
@@ -187,7 +187,7 @@ def test_工具已执行时收尾失败不报调用失败(monkeypatch):
     monkeypatch.setattr(agent, "exec_tool",
                         lambda n, a, db: ("已把「垣」加入成语词语积累。", {"type": "refresh", "what": "entries"}))
     monkeypatch.setattr(agent, "tool_specs", lambda: [{"x": 1}])
-    reply, actions = agent.ai_chat_agentic([], None, max_rounds=1)
+    reply, actions, _trace = agent.ai_chat_agentic([], None, max_rounds=1)
     assert "已把「垣」加入" in reply
     assert actions == [{"type": "refresh", "what": "entries"}], "动作必须照常带回前端去刷新列表"
 
@@ -219,7 +219,9 @@ def test_调工具前说的那句话也算进回复(monkeypatch):
     monkeypatch.setattr(agent, "tool_specs", lambda: [{"x": 1}])
     got = list(agent.ai_chat_agentic_stream([], None, max_rounds=1))
     assert ("delta", "我先查一下。") in got
-    assert ("tool", {"name": "x"}) in got
+    # 只认工具名：payload 里还带 label（给用户看的人话，「正在查你的错题本…」），
+    # 断言整个字典相等的话，往这条事件上加字段就会误报。
+    assert any(k == "tool" and p.get("name") == "x" for k, p in got)
     reply = got[-1][1]["reply"]
     assert "我先查一下。" in reply and "垣读 yuán。" in reply
 
@@ -231,7 +233,7 @@ def test_非流式只是把流式跑干(monkeypatch):
 
     monkeypatch.setattr(agent, "_ai_stream", _fake_stream(events))
     monkeypatch.setattr(agent, "tool_specs", lambda: [{"x": 1}])
-    assert agent.ai_chat_agentic([], None) == ("答", [])
+    assert agent.ai_chat_agentic([], None)[:2] == ("答", [])
 
 
 # ---------------------------------------------------------------- SSE 端点

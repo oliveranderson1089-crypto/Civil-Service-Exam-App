@@ -160,8 +160,8 @@ test('原来的九宫格没丢：还在 #home-cards，从「我的 › 全部功
 
   h.run("ME = { is_admin: false }");
   doc.querySelector('#tabbar [data-tb="me"]').click();
-  const row = [...doc.querySelectorAll('#tab-groups .tr-n')].find(b => b.textContent === '全部功能');
+  const row = [...doc.querySelectorAll('#tab-groups .tv-name')].find(b => b.textContent === '全部功能');
   assert.ok(row, '「我的」里没有「全部功能」入口，老九宫格就成了孤儿页');
-  row.closest('.tab-row').click();
+  row.closest('.tv-row').click();
   assert.strictEqual(doc.body.dataset.view, 'allfeats');
 });

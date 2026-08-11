@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, api, appConfirm, c, esc,
-   matBoard, openViewerUrl, push, qz, render, toast */
+/* global $, IC, api, appConfirm, artEm, c, esc, matBoard, openViewerUrl, push, qz, render, toast */
 
 /* ================= 题库：模拟卷 / 题目解析 ================= */
 function openQuiz() {
@@ -77,7 +76,7 @@ async function loadDocqa() {
           ${t.status === 'running' ? `<div class="dq-bar"><i style="width:${pct}%"></i></div>` : ''}
         </div>
         <div class="sl-hi-s ${cls}" style="font-size:13px">${t.status === 'done' ? '完成' : t.status === 'error' ? '失败' : pct + '%'}</div>
-        <button class="sl-hi-del" data-dqdel="${t.id}">🗑</button>
+        <button class="sl-hi-del" data-dqdel="${t.id}">${artEm('🗑')}</button>
       </div>`;
     }).join('') : '<p class="empty">还没有解析任务。上传一份讲义，AI 会把里面没答案的例题解出来。</p>';
     clearInterval(dqPoll);
@@ -107,8 +106,8 @@ async function openDocqaTask(tid) {
       <div class="slt-desc">识别 ${t.questions.length} 道题 · ${esc(t.created_at.slice(0, 16))}</div>`;
     const src = t.extra.src_mid, out = t.extra.out_mid;
     $('#dqd-files').innerHTML = `
-      <button class="dqd-f" data-dqopen="${src}|原件">📄 打开原件</button>
-      <button class="dqd-f primary" data-dqopen="${out}|含答案解析">✅ 打开含答案解析副本</button>`;
+      <button class="dqd-f" data-dqopen="${src}|原件">${artEm('📄')} 打开原件</button>
+      <button class="dqd-f primary" data-dqopen="${out}|含答案解析">${artEm('✅')} 打开含答案解析副本</button>`;
     $('#dqd-qs').innerHTML = t.questions.map((q, i) => `
       <div class="slp good">
         <div class="slp-head"><span class="slp-no">${i + 1}</span>

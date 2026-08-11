@@ -9,7 +9,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, ME, api, appConfirm, composing, esc, toast */
+/* global $, ME, api, appConfirm, artEm, composing, esc, toast */
 let tkMembers = [], tkMeId = 0, tkItemsById = {};
 /* 先看组队状态：没组队 → 组队 UI；已组队 → 队头 + 互监清单 */
 async function loadShared() {
@@ -46,14 +46,14 @@ function renderTeamHeader(t) {
   const disIn = (t.incoming || []).find(r => r.kind === 'disband');
   const disOut = (t.outgoing || []).find(r => r.kind === 'disband');
   let dis = '';
-  if (disIn) dis = `<div class="tm-req tm-warn"><span>⚠️ <b>${esc(shortName(p ? p.name : '搭档'))}</b> 申请解散组队</span>
+  if (disIn) dis = `<div class="tm-req tm-warn"><span>${artEm('⚠️')} <b>${esc(shortName(p ? p.name : '搭档'))}</b> 申请解散组队</span>
     <span class="tm-acts"><button class="btn tiny primary" data-tmacc="${disIn.id}">同意解散</button>
     <button class="btn tiny" data-tmrej="${disIn.id}">不同意</button></span></div>`;
   else if (disOut) dis = `<div class="tm-req"><span>⏳ 已申请解散，等对方同意</span>
     <button class="btn tiny" data-tmcancel="${disOut.id}">撤回</button></div>`;
   const st = t.study || { streak: 0, total: 0 };
   $('#tk-team').innerHTML = `
-    <div class="tm-head"><span>🤝 已与 <b>${esc(shortName(p ? p.name : '搭档'))}</b> 组队互监</span>
+    <div class="tm-head"><span>${artEm('🤝')} 已与 <b>${esc(shortName(p ? p.name : '搭档'))}</b> 组队互监</span>
       ${disOut || disIn ? '' : '<button class="btn tiny" id="tm-disband">解散组队</button>'}</div>
     <div class="tm-streak">🔥 连续学习 <b>${st.streak}</b> 天 · 累计 <b>${st.total}</b> 天</div>
     ${dis}`;
@@ -119,9 +119,9 @@ function renderSharedItem(it) {
     .map(m => `${shortName(m.name)}（${shortName(byMap[m.id] || '?')} 确认）`);
   const all = tkMembers.length && tkMembers.every(m => ids.includes(m.id));
   return `<div class="tk-item tk-multi ${all ? 'done' : ''}" data-ts="${it.id}">
-    <span class="tk-text">${it.is_plan ? '<i class="ts-plan">📅 规划</i> ' : ''}${esc(it.text)}<span class="tk-who">${it.is_plan ? '来自 ' + esc(shortName(it.created_by)) + ' 的今日计划' : '发起 ' + esc(shortName(it.created_by))}${all ? ' · 🎉 双方都已确认' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
+    <span class="tk-text">${it.is_plan ? '<i class="ts-plan">' + artEm("📅") + ' 规划</i> ' : ''}${esc(it.text)}<span class="tk-who">${it.is_plan ? '来自 ' + esc(shortName(it.created_by)) + ' 的今日计划' : '发起 ' + esc(shortName(it.created_by))}${all ? ' · 🎉 双方都已确认' : (who.length ? ' · ✅ ' + esc(who.join('、')) : '')}</span></span>
     <span class="tk-boxes">${boxes}</span>
-    ${it.is_plan ? '' : `<button class="tk-del" data-tsdel="${it.id}">🗑</button>`}
+    ${it.is_plan ? '' : `<button class="tk-del" data-tsdel="${it.id}">${artEm('🗑')}</button>`}
   </div>`;
 }
 // 就地替换某一条（保持滚动位置：只换这一个节点，别整表重排）

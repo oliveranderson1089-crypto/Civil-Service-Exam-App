@@ -12,28 +12,59 @@ tool_specs()/exec_tool() 两个口子，不用再碰。
 读工具一律 action=None，把查到的数据以紧凑 JSON 回给模型，让它据实回答。
 """
 import json
+import re
 from datetime import datetime
 
-from core import _study_stats, get_db, lookup, uid
+from core import _study_stats, get_db, log, lookup, uid
 
 # name -> {"spec": {...}, "handler": fn, "kind": str, "confirm": bool}
 TOOL_REGISTRY = {}
 
 
-def tool(name, desc, params, kind="write", confirm=False):
+def tool(name, desc, params, kind="write", confirm=False, preview=None):
     """把一个工具登记进注册表。
 
     kind: read（只查）| write（新增，可撤销）| update（改已有）|
           destructive（删除/覆盖，需确认）| navigate（跳前端页）
     confirm: True 时破坏性操作要二次确认——没带 _confirmed 就先回确认请求，不真执行。
+    preview: 仅 confirm 类要给。(args, db) -> 一句话说清「要删的到底是哪一条」，
+             进确认弹窗给用户看。没有它，删错题/删小记只能弹「确认删除这条内容？」，
+             用户根本不知道是哪条，只能盲点确定。
     """
     def deco(fn):
         TOOL_REGISTRY[name] = {
             "spec": {"type": "function", "function": {
                 "name": name, "description": desc, "parameters": params}},
-            "handler": fn, "kind": kind, "confirm": confirm}
+            "handler": fn, "kind": kind, "confirm": confirm, "preview": preview}
         return fn
     return deco
+
+
+# 工具名 → 给用户看的人话。流式时前端拿它显示「正在查你的错题本…」，
+# 而不是所有工具一律显示成「正在操作…」——这个助手能改能删，得说清在动谁的数据。
+TOOL_LABELS = {
+    "get_user_overview": "查你的数据总览", "get_library_stats": "查题库规模",
+    "lookup_word": "查词义", "global_search": "全局搜索",
+    "list_words": "查你的收录", "list_wrong_questions": "查你的错题本",
+    "list_notes": "查你的小记", "get_today_review": "查今天要复习的",
+    "get_daily_tasks": "查今天的任务", "get_plan_today": "查今天的计划",
+    "get_plan_progress": "查计划进度", "search_yy": "查言语题",
+    "search_sucai": "找素材", "list_bookmarks": "查你的收藏",
+    "get_daily_news": "查今日时政", "search_classics": "找古诗文",
+    "search_changshi": "查常识", "list_materials": "查资料库",
+    "search_kb": "查知识库", "get_study_stats": "查学习统计",
+    "add_word": "收录到成语词语积累", "open_feature": "打开功能",
+    "create_note": "记一条小记", "add_wrong_question": "加进错题本",
+    "update_wrong_question": "修改错题", "star_word": "收藏词条",
+    "append_to_note": "追加到小记", "add_daily_task": "加每日任务",
+    "complete_daily_task": "完成任务", "complete_plan_item": "完成计划项",
+    "star_classic": "收藏古诗文", "delete_entry": "删除收录的词",
+    "delete_wrong_question": "删除错题", "delete_note": "删除小记",
+}
+
+
+def tool_label(name):
+    return TOOL_LABELS.get(name) or ("调用 " + str(name or ""))
 
 
 def tool_specs(kinds=None):
@@ -42,15 +73,70 @@ def tool_specs(kinds=None):
             if not kinds or t["kind"] in kinds]
 
 
+# 读工具按主题分组，配一组触发词。**只用来裁读工具**：
+# 写/改/删/导航一律全给（用户明确要求时才会用到，裁掉就变成「它突然不会做这件事了」）。
+READ_GROUPS = (
+    ("错题|做错|错的题|订正|判断推理|言语|资料分析|常识|申论|行测",
+     ("list_wrong_questions", "get_study_stats", "search_yy")),
+    ("复习|背|记忆|遗忘|今天学|今日",
+     ("get_today_review", "get_daily_tasks", "get_plan_today", "get_plan_progress")),
+    ("计划|进度|坚持|连续|多少天|正确率|成绩",
+     ("get_plan_today", "get_plan_progress", "get_study_stats", "get_user_overview")),
+    ("成语|词语|实词|收录|积累|释义|什么意思|读音",
+     ("list_words", "lookup_word", "search_changshi")),
+    ("小记|笔记|记过|写过",
+     ("list_notes", "list_bookmarks")),
+    ("古诗|诗词|文言|名句|古文|典故",
+     ("search_classics",)),
+    ("素材|范文|时评|金句|例子|案例",
+     ("search_sucai", "get_daily_news", "list_materials")),
+    ("时政|新闻|政策|会议|讲话",
+     ("get_daily_news", "search_sucai", "search_changshi")),
+    ("资料|文件|讲义|知识库|题库|多少题",
+     ("list_materials", "search_kb", "get_library_stats")),
+)
+# 无论问什么都带上的读工具：总览 + 全局搜索是「不知道去哪找」时的兜底
+ALWAYS_READ = ("get_user_overview", "global_search")
+
+
+def tool_specs_for(text, min_tools=12):
+    """按这句话的意图挑工具。命中不了任何主题就**原样全给**——宁可多给，
+    也不能让模型因为工具被裁掉而回一句「我做不到」。
+
+    动机：34 个工具的 schema 每轮都发一遍，既是固定开销，也让模型在一堆相近的
+    list_*/get_* 里挑，选错的概率随数量上升。
+    """
+    t = text or ""
+    hit = set()
+    for pat, names in READ_GROUPS:
+        if re.search(pat, t):
+            hit.update(names)
+    if not hit:
+        return tool_specs()
+    keep = hit | set(ALWAYS_READ)
+    out = [v["spec"] for k, v in TOOL_REGISTRY.items()
+           if v["kind"] != "read" or k in keep]
+    # 裁得只剩几个反而更容易选错（模型会硬套手上有的那个），太少就别裁了
+    return out if len(out) >= min_tools else tool_specs()
+
+
 def exec_tool(name, args, db):
     """执行一个工具。返回 (给模型看的结果文本, 给前端的 action | None)。"""
     t = TOOL_REGISTRY.get(name)
     if not t:
         return "未知工具：" + str(name), None
     if t["confirm"] and not args.get("_confirmed"):
-        # 破坏性操作：先把「要用户点确认」这件事回给模型和前端，确认后带 _confirmed 重调才真做
+        # 破坏性操作：先把「要用户点确认」这件事回给模型和前端，确认后带 _confirmed 重调才真做。
+        # summary 是那条数据的原文摘要，直接进确认弹窗——不能让人对着「这条内容」盲点确定。
+        summary = ""
+        if t.get("preview"):
+            try:
+                summary = t["preview"](args, db) or ""
+            except Exception:
+                log.warning("确认预览生成失败：%s", name, exc_info=True)
         return ("「%s」是删除类操作，需要用户确认后才能执行。请向用户复述将删除的内容并等待确认。" % name,
-                {"type": "confirm", "tool": name, "args": args})
+                {"type": "confirm", "tool": name, "args": args,
+                 "label": tool_label(name), "summary": summary})
     return t["handler"](args, db)
 
 

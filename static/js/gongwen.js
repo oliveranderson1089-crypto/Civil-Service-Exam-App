@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, esc, push, toast */
+/* global $, api, appConfirm, artEm, esc, push, toast */
 
 /* ============= 应用文 · 应用文上位词（公文规范上位表述，按场景归类） ============= */
 function gwCard(it) {
@@ -16,9 +16,9 @@ function gwCard(it) {
   return `<div class="gw-card">
     <div class="gw-top"><span class="gw-scene">${esc(it.scene)}</span>
       ${it.doctype ? `<span class="gw-doc">${esc(it.doctype)}</span>` : ''}
-      ${it.source === 'ai' ? `<button class="gw-del" data-gwdel="${it.id}" title="删除">✕</button>` : ''}</div>
+      ${it.source === 'ai' ? `<button class="gw-del" data-gwdel="${it.id}" title="删除">${artEm('✕')}</button>` : ''}</div>
     <div class="gw-chips">${chips}</div>
-    ${it.note ? `<div class="gw-note">💡 ${esc(it.note)}</div>` : ''}
+    ${it.note ? `<div class="gw-note">${artEm('💡')} ${esc(it.note)}</div>` : ''}
     ${it.example ? `<div class="gw-eg"><span class="gw-lab">示范</span>${esc(it.example)}</div>` : ''}
   </div>`;
 }

@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, deskMsg, esc, fmtDay,
-   push, toast */
+/* global $, api, artEm, c, deskMsg, esc, fmtDay, push, toast */
 
 /* ============= 每日新闻视频（抓 → AI 按公考价值筛 → 只留最值得看的）=============
    信源全是**白名单里的官方媒体**：央视网（新闻联播/焦点访谈/东方时空/今日关注/环球视线，
@@ -195,7 +194,7 @@ async function playVideo(id) {
       <div class="vp-head">
         <div class="vp-t">${esc(d.title || '')}</div>
         <div class="vp-src">${esc(d.source || '')}</div>
-        <button class="vp-x" title="关闭（Esc）">✕</button>
+        <button class="vp-x" title="关闭（Esc）">${artEm('✕')}</button>
       </div>
       <div class="vp-stage">
         ${d.mode === 'iframe'
@@ -217,7 +216,7 @@ async function playVideo(id) {
           <option value="1.25">1.25×</option><option value="1.5">1.5×</option>
           <option value="2">2×</option>
         </select>
-        <button class="vp-fs" title="全屏">⛶</button>
+        <button class="vp-fs" title="全屏">${artEm('⛶')}</button>
       </div>`}
       <div class="vp-foot">
         <a href="#" class="vp-out">在浏览器里打开 ↗</a>

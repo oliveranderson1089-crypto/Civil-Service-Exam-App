@@ -9,7 +9,7 @@
  * 前端自己算的话两边差一个标点就对不上，表现是收过的题显示成没收过、
  * 再点一次又收出第二条。
  */
-/* global $, WQ_BOARDS, api, appConfirm, esc, toast */
+/* global $, WQ_BOARDS, api, appConfirm, artEm, esc, toast */
 
 /* 板块清单用错题本那一份（js/wrongq.js 的 WQ_BOARDS）——这儿再抄一遍的话，
    加一个板块就得改两处，漏改的表现是：同一条错题，从刷题端打开选不到那个板块、
@@ -175,7 +175,7 @@ async function wqlOpen(kind, key, payload, onChange) {
     <div class="wql-head">
       <b>${cur ? '错题本 · 这道题' : '收进错题本'}</b>
       ${w.src_name ? `<span class="wql-src">来自${esc(w.src_name)}</span>` : ''}
-      <button class="wql-x" data-wqlact="close">✕</button>
+      <button class="wql-x" data-wqlact="close">${artEm('✕')}</button>
     </div>
     <label class="wql-l">题目</label>
     <textarea id="wql-q" class="wql-ta" rows="5">${esc(w.question || '')}</textarea>

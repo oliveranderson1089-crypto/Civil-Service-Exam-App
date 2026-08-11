@@ -12,14 +12,41 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<!-- 启动加载页 -->
+<!-- 主题风格的壁纸层（js/daylight.js 按当前时刻画）。没选主题时 CSS 让它整个消失。
+     单独一层而不是复用 body.has-wall 的 ::before：那一层是**用户自己上传的壁纸**，
+     两者要能共存，且用户上传的优先盖在上面。 -->
+<div id="art-wall" aria-hidden="true"></div>
+<!-- 启动加载页。底图五层（天光/方格/晨晕/星子/山脊/光点）由 js/daylight.js 按当前时刻算，
+     CSS 里那套是兜底：脚本没跑起来也还是一张能看的启动屏。 -->
 <div id="splash">
-  <div class="sp-logo">公</div>
-  <div class="sp-name">公考助手</div>
-  <div class="sp-quote">“考公的主要矛盾：对全科平衡发展的追求同积累不足、知识点不熟练以及题型掌握不全面之间的矛盾。”</div>
-  <div class="sp-author">—— 李佩根</div>
-  <div class="sp-loading"><span></span><span></span><span></span></div>
+  <div class="sp-layer" id="sp-grid"></div>
+  <div class="sp-layer" id="sp-bloom"></div>
+  <div class="sp-layer" id="sp-stars"></div>
+  <div class="sp-layer" id="sp-hill">
+    <svg viewBox="0 0 100 42" preserveAspectRatio="none">
+      <path d="M0 20 C 14 12, 24 18, 38 11 S 62 4, 74 12 S 90 18, 100 13 L100 42 L0 42Z" fill="#0d2a47" opacity=".95"/>
+      <path d="M0 20 C 14 12, 24 18, 38 11 S 62 4, 74 12 S 90 18, 100 13" fill="none" stroke="#f0b429" stroke-width=".45" opacity=".6"/>
+      <path d="M0 30 C 18 24, 30 30, 46 22 S 72 16, 86 24 S 96 27, 100 25 L100 42 L0 42Z" fill="#07172a"/>
+    </svg>
+  </div>
+  <div class="sp-layer" id="sp-trail"></div>
+  <!-- 电脑端那四套主题的美术层（开片纹 / 装订线 / 地平线 / 基线）。内容由 daylight.js
+       按主题现拼；手机端和默认外观下它是空的，空 div 不产生合成层。 -->
+  <div class="sp-layer" id="sp-art"></div>
+  <div class="sp-layer sp-grain" id="sp-grain"></div>
+  <div class="sp-body">
+    <div class="sp-logo">公</div>
+    <div class="sp-name">公考助手</div>
+    <div class="sp-quote">“考公的主要矛盾：对全科平衡发展的追求同积累不足、知识点不熟练以及题型掌握不全面之间的矛盾。”</div>
+    <div class="sp-author">—— 李佩根</div>
+    <div class="sp-loading"><span></span><span></span><span></span></div>
+  </div>
 </div>
+<!-- 必须紧跟在启动屏后面、排在所有脚本最前：晚一拍就是肉眼可见的闪一下。
+     data-early 是给 assets.py 看的：**不要**把它并进 bundle —— 打包器会把整个 bundle
+     挪到第一个 <script> 的位置，而那时下面的 DOM 还没解析，$('#crumb') 就是 null，
+     整个应用当场停在启动屏（真出过，就是这一行引起的）。 -->
+<script src="js/daylight.js" data-early></script>
 <header class="topbar">
   <button id="nav-back" class="navbtn hidden">‹ 返回</button>
   <div class="brand-min">
@@ -32,7 +59,7 @@
   </button>
   <div class="topbar-actions">
     <span id="tb-days" class="tb-days hidden"></span>
-    <button id="notify-btn" class="logout notify-btn" title="消息">🔔<span id="notify-dot" class="notify-dot hidden"></span></button>
+    <button id="notify-btn" class="logout notify-btn" title="消息"><span class="em-sw"><span class="em-e">🔔</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15.5V11a6 6 0 0 0-12 0v4.5L4.5 18h15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg></span></span><span id="notify-dot" class="notify-dot hidden"></span></button>
     <button id="home-btn" class="logout" title="回到首页">首页</button>
     <button id="account-btn" class="logout" title="账户 / 个人信息">账户</button>
     <button id="admin-btn" class="logout hidden" title="管理后台">后台</button>
@@ -67,7 +94,7 @@
     <h2 class="view-title" id="board-title"></h2>
     <div class="home-cards" id="board-features"></div>
     <div class="placeholder-box hidden" id="board-ph">
-      <div class="ph-icon">🚧</div>
+      <div class="ph-icon"><span class="em-sw"><span class="em-e">🚧</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 8.6h17.2v6.8H3.4z"/><path d="M5 20.4V8.6M19 20.4V8.6"/><path d="M6.6 15.4l5-6.8M12.4 15.4l5-6.8"/></svg></span></span></div>
       <h2 id="board-ph-title"></h2>
       <p>该板块功能正在建设中。<br>你可以先到「小记」按板块记笔记，或在「资料库」存放该板块的资料。</p>
     </div>
@@ -78,6 +105,13 @@
     <h2 class="view-title" id="tab-title"></h2>
     <div class="tab-chips hidden" id="tab-chips"></div>
     <div id="tab-groups"></div>
+  </section>
+
+  <!-- ===== 收藏夹（库 › 收藏：六个模块的星标并成一张单子，js/tabviews.js） ===== -->
+  <section id="view-stars" class="view hidden">
+    <h2 class="view-title">收藏</h2>
+    <div class="tab-chips" id="st-chips"></div>
+    <div id="st-list"></div>
   </section>
 
   <!-- ===== 小记（仿语雀：板块栏 + 编辑器 + 动态流） ===== -->
@@ -143,7 +177,7 @@
             <div class="feed-filter" id="feed-tags"></div>
           </div>
           <div class="feed" id="feed"></div>
-          <p id="feed-empty" class="empty hidden">还没有小记，点下面的 ＋ 写一条吧～</p>
+          <p id="feed-empty" class="empty hidden">还没有小记，点下面的 <span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 写一条吧～</p>
         </div>
       </div>
     </div>
@@ -181,7 +215,7 @@
   <!-- ===== 资料库 ===== -->
   <section id="view-materials" class="view hidden">
     <div class="mat-head">
-      <h2 class="view-title" style="margin:0;">📁 资料库</h2>
+      <h2 class="view-title" style="margin:0;"><span class="em-sw"><span class="em-e">📁</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span></span> 资料库</h2>
       <div class="mat-head-btns">
         <label class="btn cam-btn" title="拍照上传">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>拍照
@@ -208,7 +242,7 @@
           <span class="pv-py" id="pv-py"></span>
           <span class="pv-tag" id="pv-cat"></span>
           <span class="pv-found" id="pv-found"></span>
-          <button id="pv-ai" class="pv-ai hidden">🤖 AI 解释并收录</button>
+          <button id="pv-ai" class="pv-ai hidden"><span class="em-sw"><span class="em-e">🤖</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="7.4" width="16.8" height="12.4" rx="3"/><path d="M12 7.4V4M9.4 12.6h.01M14.6 12.6h.01M9.6 16.4h4.8"/><path d="M1.6 12v3M22.4 12v3"/></svg></span></span> AI 解释并收录</button>
         </div>
         <div class="pv-field"><label>释义</label><textarea id="pv-exp" rows="2"></textarea></div>
         <div class="pv-field" id="pv-der-wrap"><label>出处</label><textarea id="pv-der" rows="1"></textarea></div>
@@ -246,7 +280,7 @@
   <!-- ===== 知识库：列表 ===== -->
   <section id="view-kb" class="view hidden">
     <div class="kb-grid" id="kb-list"></div>
-    <p id="kb-empty" class="empty hidden">还没有知识库，点右下角 ＋ 新建一个笔记本。</p>
+    <p id="kb-empty" class="empty hidden">还没有知识库，点右下角 <span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新建一个笔记本。</p>
     <button class="kb-fab" id="kb-fab" title="新建知识库">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     </button>
@@ -266,7 +300,7 @@
     </div>
     <div class="nb-toc-head">目录</div>
     <div class="nb-tree" id="nb-tree"></div>
-    <p id="nb-empty" class="empty hidden">还没有内容，点下面 ＋ 新建文档或分组。</p>
+    <p id="nb-empty" class="empty hidden">还没有内容，点下面 <span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新建文档或分组。</p>
     <div class="notes-pill kb-pill" id="nb-pill">
       <button class="np-btn" data-nbpill="search" aria-label="搜索">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -320,15 +354,15 @@
         <button id="rd-theme" title="护眼背景">护眼</button>
         <button id="rd-copy" title="复制全文">复制</button>
       </span>
-      <button id="viewer-ink" class="btn" title="在文件上勾画批注（笔迹会保留）">✏️ 批注</button>
+      <button id="viewer-ink" class="btn" title="在文件上勾画批注（笔迹会保留）"><span class="em-sw"><span class="em-e">✏️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L8 18.4l-3.8.8.8-3.8z"/></svg></span></span> 批注</button>
       <button id="viewer-play" class="btn hidden" title="幻灯片播放">▶ 播放</button>
-      <button id="viewer-full" class="btn" title="全屏">⛶ 全屏</button>
+      <button id="viewer-full" class="btn" title="全屏"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span> 全屏</button>
       <button id="viewer-mode" class="btn hidden">阅读模式</button>
       <a id="viewer-dl" class="btn" download>下载</a>
     </div>
     <div id="viewer-reader" class="reader hidden"></div>
     <iframe id="viewer-frame" title="文件预览"></iframe>
-    <button id="viewer-exit" title="退出全屏">✕</button>
+    <button id="viewer-exit" title="退出全屏"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
   </section>
 
   <!-- ===== 幻灯片播放（PPT/PDF 逐页出图，比整份下载快两个数量级） ===== -->
@@ -339,7 +373,7 @@
       <button id="ss-prev" title="上一页">‹</button>
       <span id="ss-page">1 / 1</span>
       <button id="ss-next" title="下一页">›</button>
-      <button id="ss-close" title="退出播放">✕</button>
+      <button id="ss-close" title="退出播放"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
     <div class="ss-hit ss-hit-l" id="ss-hl"></div>
     <div class="ss-hit ss-hit-r" id="ss-hr"></div>
@@ -405,7 +439,7 @@
       <input id="wq-input" type="search" placeholder="搜题干 / 题型 / 知识点…" autocomplete="off">
     </div>
     <div class="wq-tools">
-      <button class="btn" id="wq-drafts">📓 草稿本</button>
+      <button class="btn" id="wq-drafts"><span class="em-sw"><span class="em-e">📓</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.4 3.6H19v16.8H7.4z"/><path d="M5 5.6h2.4M5 9h2.4M5 12.4h2.4M5 15.8h2.4M5 19.2h2.4"/></svg></span></span> 草稿本</button>
       <span class="wq-tools-h">平时打草稿、演算用，写完自动存</span>
     </div>
     <div class="cls-cats" id="wq-cats"></div>
@@ -421,7 +455,7 @@
 
   <!-- ===== 草稿本（错题本里；平时打草稿，多本、云端保存） ===== -->
   <section id="view-drafts" class="view hidden">
-    <div class="pd-intro">平时打草稿 / 演算用：手写不识别，自动保存，手机和电脑同步。点右下角 ＋ 新建一本。</div>
+    <div class="pd-intro">平时打草稿 / 演算用：手写不识别，自动保存，手机和电脑同步。点右下角 <span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新建一本。</div>
     <div id="dr-list" class="dr-list"></div>
     <p id="dr-empty" class="empty hidden"></p>
     <button class="kb-fab" id="dr-fab" title="新建草稿">
@@ -443,7 +477,7 @@
       <select id="wqa-board"></select>
       <div class="wqa-lb">我的答案 / 参考解析 <span class="wqa-hint">选填，帮 AI 分析更准</span></div>
       <textarea id="wqa-a" rows="3" placeholder="选填…"></textarea>
-      <button class="btn primary wqa-go" id="wqa-go">🤖 AI 分析并收录</button>
+      <button class="btn primary wqa-go" id="wqa-go"><span class="em-sw"><span class="em-e">🤖</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="7.4" width="16.8" height="12.4" rx="3"/><path d="M12 7.4V4M9.4 12.6h.01M14.6 12.6h.01M9.6 16.4h4.8"/><path d="M1.6 12v3M22.4 12v3"/></svg></span></span> AI 分析并收录</button>
     </div>
   </section>
 
@@ -487,21 +521,21 @@
     <nav class="acct-nav" id="acct-nav"></nav>
 
     <div class="acct-sec" data-ag="账号">
-      <div class="acct-sec-t">📧 邮箱</div>
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">📧</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="5" width="18.8" height="14" rx="2"/><path d="M2.6 6.4L12 13l9.4-6.6"/></svg></span></span> 邮箱</div>
       <p class="acct-hint">用于登录展示与找回密码提示。</p>
       <input id="acct-email-in" type="email" placeholder="绑定邮箱（如 you@example.com）">
       <button class="btn primary acct-btn" id="acct-email-save">保存邮箱</button>
     </div>
 
     <div class="acct-sec" data-ag="账号">
-      <div class="acct-sec-t">🔒 修改密码</div>
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">🔒</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.4" y="10.4" width="15.2" height="10" rx="2"/><path d="M8 10.4V7.6a4 4 0 0 1 8 0v2.8"/><path d="M12 14.4v2.4"/></svg></span></span> 修改密码</div>
       <input id="acct-oldpw" type="password" placeholder="原密码">
       <input id="acct-newpw" type="password" placeholder="新密码（至少 6 位）">
       <button class="btn primary acct-btn" id="acct-pw-save">修改密码</button>
     </div>
 
     <div class="acct-sec" data-ag="账号">
-      <div class="acct-sec-t">🛡️ 密保问题</div>
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">🛡️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7.4 2.6v6c0 4.4-3 7.6-7.4 9.4-4.4-1.8-7.4-5-7.4-9.4v-6z"/></svg></span></span> 密保问题</div>
       <p class="acct-hint">忘记密码时用于身份验证。</p>
       <select id="acct-secq"></select>
       <input id="acct-seca" type="text" placeholder="新答案（留空则不修改）">
@@ -509,16 +543,34 @@
     </div>
 
     <div class="acct-sec" data-ag="外观">
-      <div class="acct-sec-t">🌗 外观</div>
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">🌗</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M12 3.4a8.6 8.6 0 0 1 0 17.2z"/></svg></span></span> 外观</div>
       <div class="theme-row" id="theme-row">
-        <button class="theme-opt" data-theme="light">☀️ 日间</button>
-        <button class="theme-opt" data-theme="dark">🌙 夜间</button>
-        <button class="theme-opt" data-theme="auto">🔄 跟随系统</button>
+        <button class="theme-opt" data-theme="light"><span class="em-sw"><span class="em-e">☀️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.6v2.8M12 18.6v2.8M2.6 12h2.8M18.6 12h2.8M5.4 5.4l2 2M16.6 16.6l2 2M18.6 5.4l-2 2M5.4 18.6l2-2"/></svg></span></span> 日间</button>
+        <button class="theme-opt" data-theme="dark"><span class="em-sw"><span class="em-e">🌙</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.6A8.4 8.4 0 1 1 9.4 4 6.6 6.6 0 0 0 20 14.6z"/></svg></span></span> 夜间</button>
+        <button class="theme-opt" data-theme="auto"><span class="em-sw"><span class="em-e">🔄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 12a8.4 8.4 0 0 1-14.6 5.6"/><path d="M3.6 12a8.4 8.4 0 0 1 14.6-5.6"/><path d="M18.2 2.6v3.8h-3.8M5.8 21.4v-3.8h3.8"/></svg></span></span> 跟随系统</button>
+      </div>
+      <p class="art-hint-off hidden" id="theme-taken">「跟随天光」开着，日夜由当前时刻决定，这三个按钮暂时不起作用。</p>
+    </div>
+
+    <!-- 主题风格。五格（默认 + 当前这一端的四套美术方向）由 js/theme.js 按 DL_ART 现拼，
+         色值不写在 HTML 里：一份色表喂预览格和真界面，两边永远对得上。
+         电脑端和手机端各有各的四套、各记各的选择，所以下面这行提示也由 JS 按端写。 -->
+    <div class="acct-sec" data-ag="外观">
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">🎨</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4c-5 0-8.6 3.6-8.6 8.6 0 4.6 3.4 8.4 7.4 8.4 1.4 0 2-.8 2-1.8 0-1.6-1.4-1.8-1.4-3 0-1 .8-1.8 2-1.8h1.6c3 0 5.6-2.2 5.6-5.2 0-3-3.2-5.2-8.6-5.2z"/><circle cx="8" cy="10" r="1"/><circle cx="12" cy="7.6" r="1"/><circle cx="16" cy="10" r="1"/></svg></span></span> 主题风格</div>
+      <p class="acct-hint" id="art-scope-hint">给整个界面换一套美术方向：模块面、图标和壁纸一起变。不选就是现在的样子。</p>
+      <div class="art-grid" id="art-grid"></div>
+      <div class="art-clock hidden" id="art-clock-row">
+        <div class="art-clock-t">跟着一天的时刻走</div>
+        <div class="theme-row">
+          <button class="theme-opt art-clk" data-artclk="1"><span class="em-sw"><span class="em-e">🌗</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M12 3.4a8.6 8.6 0 0 1 0 17.2z"/></svg></span></span> 跟随天光</button>
+          <button class="theme-opt art-clk" data-artclk="0"><span class="em-sw"><span class="em-e">📌</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3.6h6l-1 5.4 4 3.4v2H6v-2l4-3.4z"/><path d="M12 14.4v6"/></svg></span></span> 固定不变</button>
+        </div>
+        <p class="art-hint-off" id="art-clock-hint"></p>
       </div>
     </div>
 
     <div class="acct-sec hidden" id="acct-tts" data-ag="外观">
-      <div class="acct-sec-t">🔊 朗读音色</div>
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">🔊</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.4h3.4L12 5.4v13.2L7.4 14.6H4z"/><path d="M15.6 9.4a3.6 3.6 0 0 1 0 5.2M18.2 6.8a7.2 7.2 0 0 1 0 10.4"/></svg></span></span> 朗读音色</div>
       <p class="acct-hint">电脑桌面版用的是系统语音引擎，可以换。</p>
       <div class="theme-row" id="tts-eng-row"></div>
       <select id="tts-voice" class="hidden"></select>
@@ -526,7 +578,7 @@
     </div>
 
     <div class="acct-sec" data-ag="外观">
-      <div class="acct-sec-t">🖼️ 外观定制</div>
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">🖼</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.6" width="18" height="14.8" rx="2"/><circle cx="8.6" cy="9.6" r="1.6"/><path d="M3.6 17l5-5 4.4 4.4 3-2.8 4.4 4"/></svg></span></span>️ 外观定制</div>
       <p class="acct-hint">换头像和壁纸。图片只存在你自己的账号下，手机和电脑同步。</p>
       <div class="skin-row">
         <div class="skin-item">
@@ -562,15 +614,15 @@
     </div>
 
     <div class="acct-sec" data-ag="客户端">
-      <div class="acct-sec-t">📥 下载客户端</div>
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">📥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 14.4V18a2 2 0 0 0 2 2h12.8a2 2 0 0 0 2-2v-3.6h-5l-1.4 2.4H10l-1.4-2.4z"/><path d="M12 3.6v8.2M8.6 8.6L12 12l3.4-3.4"/></svg></span></span> 下载客户端</div>
       <p class="acct-hint">装成独立应用更顺手：自己的图标、独立窗口、单独登录。</p>
-      <a class="btn acct-btn" href="/apk" download="gongkao.apk">📱 安卓手机版（.apk）</a>
-      <a class="btn acct-btn" href="/deb" download="gongkao.deb">💻 电脑桌面版（Linux .deb）</a>
+      <a class="btn acct-btn" href="/apk" download="gongkao.apk"><span class="em-sw"><span class="em-e">📱</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.4" y="2.6" width="11.2" height="18.8" rx="2.4"/><path d="M10.4 18.6h3.2"/></svg></span></span> 安卓手机版（.apk）</a>
+      <a class="btn acct-btn" href="/deb" download="gongkao.deb"><span class="em-sw"><span class="em-e">💻</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="11.4" rx="2"/><path d="M2 19.4h20"/></svg></span></span> 电脑桌面版（Linux .deb）</a>
       <p class="acct-hint" style="margin-top:6px">桌面版装法：下载后 <code>sudo dpkg -i gongkao.deb</code>，或双击用「软件安装器」打开；装好在应用菜单搜「公考助手」。</p>
     </div>
 
     <div class="acct-sec hidden" id="acct-app" data-ag="客户端">
-      <div class="acct-sec-t" id="acct-app-t">📱 App</div>
+      <div class="acct-sec-t" id="acct-app-t"><span class="em-sw"><span class="em-e">📱</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.4" y="2.6" width="11.2" height="18.8" rx="2.4"/><path d="M10.4 18.6h3.2"/></svg></span></span> App</div>
       <button class="btn acct-btn" id="acct-refresh">刷新页面</button>
       <button class="btn acct-btn" id="acct-update">检查更新</button>
       <button class="btn acct-btn apk-only" id="acct-notify">手机通知</button>
@@ -591,7 +643,7 @@
     </div>
     <div class="pd-cats" id="pd-cats"></div>
     <div class="pd-toolbar">
-      <button id="pd-recite" class="pd-recite-btn">🎯 背诵模式</button>
+      <button id="pd-recite" class="pd-recite-btn"><span class="em-sw"><span class="em-e">🎯</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="4.4"/><circle cx="12" cy="12" r="1.2"/></svg></span></span> 背诵模式</button>
       <span class="pd-recite-hint hidden" id="pd-recite-hint">释义已隐藏 · 点卡片显示 / 再点收起</span>
     </div>
     <div class="pd-list" id="pd-list"></div>
@@ -614,10 +666,10 @@
       提出问题→分析问题→给对策，还有可直接借鉴的过渡句和金句。点开看全文 + AI 拆解。</div>
     <div class="date-strip" id="fw-tabs">
       <button class="chip active" data-fwb="">全部</button>
-      <button class="chip" data-fwb="star">⭐ 收藏</button>
+      <button class="chip" data-fwb="star"><span class="em-sw"><span class="em-e">⭐</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17.3l-5.4 2.9 1-6.1L3.2 9.8l6.1-.9z"/></svg></span></span> 收藏</button>
     </div>
     <div class="vd-bar">
-      <button class="btn tiny" id="fw-refresh">🔄 抓今天的</button>
+      <button class="btn tiny" id="fw-refresh"><span class="em-sw"><span class="em-e">🔄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 12a8.4 8.4 0 0 1-14.6 5.6"/><path d="M3.6 12a8.4 8.4 0 0 1 14.6-5.6"/><path d="M18.2 2.6v3.8h-3.8M5.8 21.4v-3.8h3.8"/></svg></span></span> 抓今天的</button>
       <span id="fw-msg" class="vd-msg"></span>
     </div>
     <div id="fw-list" class="fw-list"></div>
@@ -636,12 +688,12 @@
       <input type="search" id="dv-search" class="dv-search" placeholder="搜全盘文件名…">
       <button class="btn tiny dv-sortbtn" id="dv-sort" title="排序"><span id="dv-sort-label">最新在前</span> ▾</button>
       <button class="btn tiny" id="dv-grid" title="列表 / 网格">▦ 网格</button>
-      <button class="btn tiny" id="dv-share-list" title="我分享出去的链接">🔗 分享</button>
-      <button class="btn tiny" id="dv-paste">📋 粘贴</button>
-      <button class="btn tiny" id="dv-trash">🗑 回收站</button>
-      <button class="btn tiny" id="dv-newfolder">＋ 文件夹</button>
-      <label class="btn tiny">⬆ 传文件夹<input type="file" id="dv-upfolder" webkitdirectory directory multiple hidden></label>
-      <label class="btn tiny primary">⬆ 上传<input type="file" id="dv-upfile" multiple hidden></label>
+      <button class="btn tiny" id="dv-share-list" title="我分享出去的链接"><span class="em-sw"><span class="em-e">🔗</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.6 1.6"/><path d="M14 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.6-1.6"/></svg></span></span> 分享</button>
+      <button class="btn tiny" id="dv-paste"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 粘贴</button>
+      <button class="btn tiny" id="dv-trash"><span class="em-sw"><span class="em-e">🗑</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M6.5 6.5l1 13h9l1-13"/><path d="M9.5 6.5V4h5v2.5"/><path d="M10 10v6M14 10v6"/></svg></span></span> 回收站</button>
+      <button class="btn tiny" id="dv-newfolder"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 文件夹</button>
+      <label class="btn tiny"><span class="em-sw"><span class="em-e">⬆</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"/><path d="M6 11l6-6 6 6"/></svg></span></span> 传文件夹<input type="file" id="dv-upfolder" webkitdirectory directory multiple hidden></label>
+      <label class="btn tiny primary"><span class="em-sw"><span class="em-e">⬆</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"/><path d="M6 11l6-6 6 6"/></svg></span></span> 上传<input type="file" id="dv-upfile" multiple hidden></label>
     </div>
     <div id="dv-batch" class="dv-batch hidden">
       <span id="dv-batch-n"></span>
@@ -655,7 +707,7 @@
     </div>
     <div id="dv-list" class="dv-list"></div>
     <div id="dv-menu" class="dv-menu hidden"></div>
-    <div class="dv-drop"><span>📥 松手上传到当前文件夹（支持整个文件夹）</span></div>
+    <div class="dv-drop"><span><span class="em-sw"><span class="em-e">📥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 14.4V18a2 2 0 0 0 2 2h12.8a2 2 0 0 0 2-2v-3.6h-5l-1.4 2.4H10l-1.4-2.4z"/><path d="M12 3.6v8.2M8.6 8.6L12 12l3.4-3.4"/></svg></span></span> 松手上传到当前文件夹（支持整个文件夹）</span></div>
   </section>
 
   <!-- ===== 聊天：会话/好友列表 ===== -->
@@ -664,10 +716,16 @@
     <div id="chat-2pane">
       <aside id="chat-side">
         <div class="ch-tabs" id="ch-tabs">
-          <button class="ch-tab active" data-cht="convos">💬 消息</button>
-          <button class="ch-tab" data-cht="friends">👥 好友</button>
-          <button class="ch-tab" data-cht="add">＋ 加好友<span class="ch-reqbadge hidden" id="ch-reqbadge"></span></button>
+          <button class="ch-tab active" data-cht="convos"><span class="em-sw"><span class="em-e">💬</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4A8 8 0 1 1 21 12z"/></svg></span></span> 消息</button>
+          <button class="ch-tab" data-cht="friends"><span class="em-sw"><span class="em-e">👥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.4A6 6 0 0 1 21 20"/></svg></span></span> 好友</button>
+          <button class="ch-tab" data-cht="add"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 加好友<span class="ch-reqbadge hidden" id="ch-reqbadge"></span></button>
         </div>
+        <div class="ch-searchbar" id="ch-searchbar">
+          <input id="ch-msgsearch" placeholder="搜聊天记录、文件…" autocomplete="off">
+          <button type="button" id="ch-msgsearch-x" class="ch-sx hidden" title="清空">✕</button>
+        </div>
+        <button type="button" id="ch-newgroup" class="ch-newgroup">＋ 新建学习小组</button>
+        <div id="ch-searchres" class="ch-pane hidden"></div>
         <div id="ch-convos" class="ch-pane"></div>
         <div id="ch-friends" class="ch-pane hidden"></div>
         <div id="ch-add" class="ch-pane hidden">
@@ -680,21 +738,32 @@
         <div id="cr-peer" class="cr-peer hidden">
           <button id="cr-back" class="cr-back" title="返回列表">‹</button>
           <span id="cr-peername"></span>
+          <button id="cr-info" class="cr-infobtn" title="会话信息">⋮</button>
         </div>
+        <div id="cr-announce" class="cr-announce hidden"></div>
         <div id="cr-msgs" class="cr-msgs"></div>
+        <div id="cr-menu" class="cr-menu hidden"></div>
+        <div id="emoji-pan" class="emoji-pan hidden"></div>
+        <div id="cr-picker" class="cr-picker hidden"></div>
         <div class="cr-input hidden" id="cr-input">
+          <div id="cr-replybar" class="cr-replybar hidden"></div>
           <div class="input-tools">
-            <label class="cr-attbtn" title="发文件/图片">📎<input type="file" id="cr-file" multiple hidden></label>
+            <label class="cr-attbtn" title="发文件/图片"><span class="em-sw"><span class="em-e">📎</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7-7l8.4-8.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></span></span><input type="file" id="cr-file" multiple hidden></label>
+            <button type="button" class="cr-attbtn" data-crcard="wrongq" title="发一道错题">📓</button>
+            <button type="button" class="cr-attbtn" data-crcard="classic" title="发一篇古诗文">📖</button>
+            <button type="button" class="cr-attbtn" data-crcard="sucai" title="发一条素材">📁</button>
+            <button type="button" class="cr-attbtn" data-crcard="note" title="发一条小记">🗒️</button>
           </div>
           <div class="input-row">
-            <button type="button" class="input-mic" disabled title="语音输入（暂未开放）">🎤</button>
+            <button type="button" class="input-mic" disabled title="语音输入（暂未开放）"><span class="em-sw"><span class="em-e">🎤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
             <textarea id="cr-text" rows="1" placeholder="发消息…（可拖文件进来）"></textarea>
-            <button type="button" class="input-emoji" disabled title="表情（暂未开放）">🙂</button>
-            <button type="button" id="cr-plus" class="input-plus">➕</button>
+            <button type="button" class="input-emoji" disabled title="表情（暂未开放）"><span class="em-sw"><span class="em-e">🙂</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M9 9.6h.01M15 9.6h.01"/><path d="M8.6 14c1.8 2 5 2 6.8 0"/></svg></span></span></button>
+            <button type="button" id="cr-plus" class="input-plus"><span class="em-sw"><span class="em-e">➕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
             <button class="btn primary" id="cr-send">发送</button>
           </div>
+          <div id="cr-count" class="cr-count hidden"></div>
         </div>
-        <div id="cr-empty" class="cr-empty">💬 选一个会话，开始聊天</div>
+        <div id="cr-empty" class="cr-empty"><span class="em-sw"><span class="em-e">💬</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4A8 8 0 1 1 21 12z"/></svg></span></span> 选一个会话，开始聊天</div>
       </section>
     </div>
   </section>
@@ -707,13 +776,13 @@
     <div class="date-strip" id="vd-tabs">
       <button class="chip active" data-vdb="">全部</button>
       <button class="chip" data-vdb="国内">🇨🇳 国内</button>
-      <button class="chip" data-vdb="国际">🌏 国际</button>
-      <button class="chip" data-vdb="四川">🐼 四川</button>
-      <button class="chip" data-vdb="备考">📚 备考</button>
-      <button class="chip" data-vdb="star">⭐ 收藏</button>
+      <button class="chip" data-vdb="国际"><span class="em-sw"><span class="em-e">🌏</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M3.4 12h17.2"/><path d="M12 3.4c4.4 4.6 4.4 12.6 0 17.2-4.4-4.6-4.4-12.6 0-17.2z"/></svg></span></span> 国际</button>
+      <button class="chip" data-vdb="四川"><span class="em-sw"><span class="em-e">🐼</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7"/><circle cx="6.4" cy="6.6" r="2.6"/><circle cx="17.6" cy="6.6" r="2.6"/><path d="M9.4 12.4h.01M14.6 12.4h.01"/><path d="M10.6 16.4c.9.8 1.9.8 2.8 0"/></svg></span></span> 四川</button>
+      <button class="chip" data-vdb="备考"><span class="em-sw"><span class="em-e">📚</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h4v15H4zM10 5h4v15h-4z"/><path d="M16.2 5.6l3.8 1-3.4 13.8-3.8-1"/></svg></span></span> 备考</button>
+      <button class="chip" data-vdb="star"><span class="em-sw"><span class="em-e">⭐</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17.3l-5.4 2.9 1-6.1L3.2 9.8l6.1-.9z"/></svg></span></span> 收藏</button>
     </div>
     <div class="vd-bar">
-      <button class="btn tiny" id="vd-refresh">🔄 手动刷新</button>
+      <button class="btn tiny" id="vd-refresh"><span class="em-sw"><span class="em-e">🔄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 12a8.4 8.4 0 0 1-14.6 5.6"/><path d="M3.6 12a8.4 8.4 0 0 1 14.6-5.6"/><path d="M18.2 2.6v3.8h-3.8M5.8 21.4v-3.8h3.8"/></svg></span></span> 手动刷新</button>
       <span id="vd-msg" class="vd-msg"></span>
       <span class="vd-src">信源：央视网（新闻联播/焦点访谈/东方时空/今日关注/环球视线）· 川观新闻（四川日报社）· B站官方认证号（央视新闻/人民日报/新华社/中国日报/四川观察/半月谈）　「备考」= 半月谈公考的申论·面试讲解课　视频在 APP 内直接播放</span>
     </div>
@@ -729,7 +798,7 @@
       <span class="chip" data-nb="四川">四川</span>
       <span class="chip" data-nb="国际">国际</span>
       <span class="chip" data-nb="习语">习语</span>
-      <span class="chip" data-nb="收藏">⭐ 收藏</span>
+      <span class="chip" data-nb="收藏"><span class="em-sw"><span class="em-e">⭐</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17.3l-5.4 2.9 1-6.1L3.2 9.8l6.1-.9z"/></svg></span></span> 收藏</span>
     </div>
     <div id="news-dates" class="date-strip"></div>
     <div id="news-list" class="poly-list"></div>
@@ -748,8 +817,8 @@
     </div>
     <div class="ex-bar">
       <input id="ex-q" type="search" placeholder="搜标题，如 选调 / 监狱 / 补充录用">
-      <button class="btn tiny" id="ex-follow">📍 关注地区</button>
-      <button class="btn tiny" id="ex-refresh">🔄 立即抓取</button>
+      <button class="btn tiny" id="ex-follow"><span class="em-sw"><span class="em-e">📍</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.4s6.6-6.2 6.6-11a6.6 6.6 0 1 0-13.2 0c0 4.8 6.6 11 6.6 11z"/><circle cx="12" cy="10.2" r="2.4"/></svg></span></span> 关注地区</button>
+      <button class="btn tiny" id="ex-refresh"><span class="em-sw"><span class="em-e">🔄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 12a8.4 8.4 0 0 1-14.6 5.6"/><path d="M3.6 12a8.4 8.4 0 0 1 14.6-5.6"/><path d="M18.2 2.6v3.8h-3.8M5.8 21.4v-3.8h3.8"/></svg></span></span> 立即抓取</button>
     </div>
     <div id="ex-kinds" class="ex-chips"></div>
     <div id="ex-regions" class="ex-chips"></div>
@@ -807,8 +876,8 @@
            换成年份窗口和卷种筛 —— 和行测那边同一套说法。 -->
       <div id="fd-src" class="gw-chips fd-src">
         <span class="gw-sug-t">题源：</span>
-        <button class="chip tiny on" data-fdsrc="ai">🤖 AI 出题</button>
-        <button class="chip tiny" data-fdsrc="real">📄 真题练习</button>
+        <button class="chip tiny on" data-fdsrc="ai"><span class="em-sw"><span class="em-e">🤖</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="7.4" width="16.8" height="12.4" rx="3"/><path d="M12 7.4V4M9.4 12.6h.01M14.6 12.6h.01M9.6 16.4h4.8"/><path d="M1.6 12v3M22.4 12v3"/></svg></span></span> AI 出题</button>
+        <button class="chip tiny" data-fdsrc="real"><span class="em-sw"><span class="em-e">📄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.6h4"/></svg></span></span> 真题练习</button>
         <span id="fd-srcnote" class="fd-srcnote"></span>
       </div>
       <div id="fd-realopt" class="gw-chips fd-realopt hidden">
@@ -820,8 +889,8 @@
       </div>
       <div class="fd-bar">
         <input id="fd-topic" type="text" placeholder="话题（留空则自动从近期时政里挑）">
-        <button class="btn primary" id="fd-gen">✍️ 出一道</button>
-        <button class="btn" id="fd-up">📄 上传真题</button>
+        <button class="btn primary" id="fd-gen"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 出一道</button>
+        <button class="btn" id="fd-up"><span class="em-sw"><span class="em-e">📄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.6h4"/></svg></span></span> 上传真题</button>
         <input id="fd-file" type="file" accept=".pdf,.doc,.docx,.txt,image/*" class="hidden">
       </div>
       <div id="fd-msg" class="fd-msg"></div>
@@ -833,9 +902,9 @@
     </div>
     <div class="sl-hist-head"><span>我的题</span>
       <span class="fd-headbtns">
-        <button class="btn tiny" id="fd-recs">📋 做题记录</button>
-        <button class="btn tiny" id="fd-wrong">❌ 错题记录</button>
-        <button class="btn tiny" id="fd-manage">🗑 管理</button>
+        <button class="btn tiny" id="fd-recs"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 做题记录</button>
+        <button class="btn tiny" id="fd-wrong"><span class="em-sw"><span class="em-e">❌</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span> 错题记录</button>
+        <button class="btn tiny" id="fd-manage"><span class="em-sw"><span class="em-e">🗑</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M6.5 6.5l1 13h9l1-13"/><path d="M9.5 6.5V4h5v2.5"/><path d="M10 10v6M14 10v6"/></svg></span></span> 管理</button>
       </span></div>
     <div id="fd-list" class="sl-hist"></div>
     <div id="fd-batchbar" class="fd-batchbar hidden">
@@ -930,12 +999,12 @@
       </div>
       <div class="dr-cfg-row"><label>模式</label>
         <div id="dr-modes" class="chip-row">
-          <button class="chip active" data-drm="study">📖 背题模式</button>
-          <button class="chip" data-drm="exam">📝 测试模式</button>
+          <button class="chip active" data-drm="study"><span class="em-sw"><span class="em-e">📖</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10 4.8 7.4 4.2 3.5 4.4v13.2c3.9-.2 6.5.4 8.5 2.1 2-1.7 4.6-2.3 8.5-2.1V4.4c-3.9-.2-6.5.4-8.5 2.1z"/><path d="M12 6.5v13.2"/></svg></span></span> 背题模式</button>
+          <button class="chip" data-drm="exam"><span class="em-sw"><span class="em-e">📝</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H5a1.6 1.6 0 0 0-1.6 1.6v13A1.6 1.6 0 0 0 5 20.2h13a1.6 1.6 0 0 0 1.6-1.6V13"/><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L12 14.4l-3.6.8.8-3.6z"/></svg></span></span> 测试模式</button>
         </div>
       </div>
       <div class="dr-modetip" id="dr-modetip"></div>
-      <button class="btn tiny" id="dr-recs">📋 做题记录</button>
+      <button class="btn tiny" id="dr-recs"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 做题记录</button>
     </div>
     <div id="dr-methods"></div>
     <div id="dr-missing"></div>
@@ -963,16 +1032,16 @@
   <!-- ===== 成文：把素材真正写成一篇大作文 ===== -->
   <section id="view-write" class="view hidden">
     <div class="tk-tabs" id="wr-tabs">
-      <button class="tk-tab active" data-wk="daily">📅 每日成文</button>
-      <button class="tk-tab" data-wk="compose">🧩 综合应用</button>
-      <button class="tk-tab" data-wk="yycat">📋 文种大全</button>
-      <button class="tk-tab" data-wk="yywrite">✍️ 自选成文</button>
+      <button class="tk-tab active" data-wk="daily"><span class="em-sw"><span class="em-e">📅</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="5" width="17.2" height="15.4" rx="2"/><path d="M3.4 9.8h17.2M8.4 2.8v4M15.6 2.8v4"/></svg></span></span> 每日成文</button>
+      <button class="tk-tab" data-wk="compose"><span class="em-sw"><span class="em-e">🧩</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.6h6c0-1.6 1-2.4 2-2.4s2 .8 2 2.4h6v6c1.6 0 2.4 1 2.4 2s-.8 2-2.4 2v6H4z"/></svg></span></span> 综合应用</button>
+      <button class="tk-tab" data-wk="yycat"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 文种大全</button>
+      <button class="tk-tab" data-wk="yywrite"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 自选成文</button>
     </div>
     <div id="wr-daily" class="wr-pane">
       <div class="pd-intro" id="wr-daily-intro">按<b>素材更新的日期</b>成文：当天的人物事例 / 理论论据 / 衔接表达全用上，
         政治理论和常考提法按当天话题现捞。素材背了不会用等于没背。</div>
       <div class="wr-bar">
-        <button class="btn primary" id="wr-backfill">⚡ 一键补齐往期</button>
+        <button class="btn primary" id="wr-backfill"><span class="em-sw"><span class="em-e">⚡</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.4 2.6L5 13.4h5.4L10 21.4 19 10.2h-5.6z"/></svg></span></span> 一键补齐往期</button>
         <span id="wr-bfmsg" class="wr-bfmsg"></span>
       </div>
       <div id="wr-days" class="sl-hist"></div>
@@ -980,16 +1049,16 @@
     <div id="wr-compose" class="wr-pane hidden">
       <div class="pd-intro" id="wr-compose-intro">不限日期，<b>AI 自己选题</b>——跨全部素材库挑真正用得上的，
         每天一篇范文。选题要是省考真考的方向，不选空泛口号。</div>
-      <div class="wr-bar"><button class="btn primary" id="wr-gen-cp">✍️ 写今天这篇</button></div>
+      <div class="wr-bar"><button class="btn primary" id="wr-gen-cp"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 写今天这篇</button></div>
       <div id="wr-cplist" class="sl-hist"></div>
     </div>
     <!-- 应用文 · 文种大全：一键铺开 + 按分类浏览各文种的提纲/范文 -->
     <div id="wr-yycat" class="wr-pane hidden">
       <div class="pd-intro">应用文和大作文不是一回事：大作文考<b>怎么论证</b>，应用文考<b>格式 + 要点 + 语言得体</b>。
-        每个文种都给两样：<b>🧭 提纲</b>（框架式要点式，看清由哪几块组成）和 <b>📄 范文</b>（成篇，逐段带批注）。
+        每个文种都给两样：<b><span class="em-sw"><span class="em-e">🧭</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M15.6 8.4L13.4 13l-4.6 2.2L11 10.6z"/></svg></span></span> 提纲</b>（框架式要点式，看清由哪几块组成）和 <b><span class="em-sw"><span class="em-e">📄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.6h4"/></svg></span></span> 范文</b>（成篇，逐段带批注）。
         <b>提纲本身不是文种</b>，是一种呈现方式，任何文种都能套。</div>
       <div class="wr-bar">
-        <button class="btn primary" id="yy-batch">⚡ 一键铺开所有文种</button>
+        <button class="btn primary" id="yy-batch"><span class="em-sw"><span class="em-e">⚡</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.4 2.6L5 13.4h5.4L10 21.4 19 10.2h-5.6z"/></svg></span></span> 一键铺开所有文种</button>
         <span id="yy-bfmsg" class="wr-bfmsg"></span>
       </div>
       <div id="yy-cats"></div>
@@ -1020,14 +1089,14 @@
         </div>
         <div class="gw-row"><label>要哪种</label>
           <div class="gw-chips" id="yy-forms">
-            <button class="chip active" data-yyf="full">📄 范文（成篇）</button>
-            <button class="chip" data-yyf="outline">🧭 提纲（框架要点）</button>
+            <button class="chip active" data-yyf="full"><span class="em-sw"><span class="em-e">📄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.6h4"/></svg></span></span> 范文（成篇）</button>
+            <button class="chip" data-yyf="outline"><span class="em-sw"><span class="em-e">🧭</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M15.6 8.4L13.4 13l-4.6 2.2L11 10.6z"/></svg></span></span> 提纲（框架要点）</button>
           </div>
         </div>
-        <button class="btn primary" id="yy-go">✍️ 写这一篇</button>
+        <button class="btn primary" id="yy-go"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 写这一篇</button>
       </div>
       <!-- 写过的都留着：一篇要跑一次 AI，看完一返回就找不回来等于白写 -->
-      <div class="wr-bar"><b id="yy-mine-t">✍️ 我写过的</b></div>
+      <div class="wr-bar"><b id="yy-mine-t"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 我写过的</b></div>
       <div id="yy-mine"></div>
     </div>
   </section>
@@ -1035,13 +1104,13 @@
   <section id="view-writed" class="view hidden">
     <div id="wd-head" class="wd-head"></div>
     <div class="wd-acts" id="wd-acts">
-      <button class="btn wd-act" id="wd-edit">✏️ 编辑</button>
-      <button class="btn wd-act hidden" id="wd-align" title="让提纲上的每条论点，在正文段首真的找得到">🧭 对齐提纲</button>
+      <button class="btn wd-act" id="wd-edit"><span class="em-sw"><span class="em-e">✏️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L8 18.4l-3.8.8.8-3.8z"/></svg></span></span> 编辑</button>
+      <button class="btn wd-act hidden" id="wd-align" title="让提纲上的每条论点，在正文段首真的找得到"><span class="em-sw"><span class="em-e">🧭</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M15.6 8.4L13.4 13l-4.6 2.2L11 10.6z"/></svg></span></span> 对齐提纲</button>
     </div>
     <div class="tk-tabs" id="wd-tabs">
-      <button class="tk-tab active" data-wd="text">📄 全文</button>
-      <button class="tk-tab" data-wd="used">📎 用到的素材</button>
-      <button class="tk-tab" data-wd="outline">🧭 提纲</button>
+      <button class="tk-tab active" data-wd="text"><span class="em-sw"><span class="em-e">📄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.6h4"/></svg></span></span> 全文</button>
+      <button class="tk-tab" data-wd="used"><span class="em-sw"><span class="em-e">📎</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7-7l8.4-8.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></span></span> 用到的素材</button>
+      <button class="tk-tab" data-wd="outline"><span class="em-sw"><span class="em-e">🧭</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M15.6 8.4L13.4 13l-4.6 2.2L11 10.6z"/></svg></span></span> 提纲</button>
     </div>
     <div id="wd-text" class="wd-pane wd-body"></div>
     <div id="wd-used" class="wd-pane hidden"></div>
@@ -1058,9 +1127,9 @@
         <textarea id="wd-ed-content" rows="20"></textarea>
       </div>
       <div class="wd-ed-row"><label>说明</label><input id="wd-ed-note" type="text" maxlength="200"></div>
-      <p class="wd-ed-warn">💡 改完正文后，「用到的素材」会重新逐条核对，正文里已经找不到的会自动摘掉。</p>
+      <p class="wd-ed-warn"><span class="em-sw"><span class="em-e">💡</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.4 18h5.2"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.4 11c.6.5.9 1.2 1 2h4.8c.1-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></svg></span></span> 改完正文后，「用到的素材」会重新逐条核对，正文里已经找不到的会自动摘掉。</p>
       <div class="wd-ed-btns">
-        <button class="btn primary" id="wd-ed-save">💾 保存</button>
+        <button class="btn primary" id="wd-ed-save"><span class="em-sw"><span class="em-e">💾</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 5.6a2 2 0 0 1 2-2h10.8l4 4v10.8a2 2 0 0 1-2 2H5.6a2 2 0 0 1-2-2z"/><path d="M7.6 3.6h8v5h-8z"/><path d="M7.6 13.6h8.8v6.8H7.6z"/></svg></span></span> 保存</button>
         <button class="btn" id="wd-ed-cancel">取消</button>
       </div>
     </div>
@@ -1094,9 +1163,9 @@
   <!-- ===== 申论（四大题型讲义 + AI 逐点批改） ===== -->
   <section id="view-shenlun" class="view hidden">
     <div class="pd-intro">上传真题自动拆题，逐题作答、AI 逐点批改——每一分都说得清来源。</div>
-    <div class="sl-quick"><button class="btn primary" id="sl-essays">📚 范文推荐</button></div>
+    <div class="sl-quick"><button class="btn primary" id="sl-essays"><span class="em-sw"><span class="em-e">📚</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h4v15H4zM10 5h4v15h-4z"/><path d="M16.2 5.6l3.8 1-3.4 13.8-3.8-1"/></svg></span></span> 范文推荐</button></div>
     <div class="sl-hist-head"><span>我的真题卷</span>
-      <button class="btn tiny" id="sl-upload">📄 上传真题</button></div>
+      <button class="btn tiny" id="sl-upload"><span class="em-sw"><span class="em-e">📄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.6h4"/></svg></span></span> 上传真题</button></div>
     <div id="sl-papers" class="sl-hist"></div>
     <div class="sl-hist-head"><span>题型讲义</span></div>
     <div id="sl-types" class="home-cards cs-cards"></div>
@@ -1107,7 +1176,7 @@
 
   <!-- ===== 范文推荐 ===== -->
   <section id="view-essays" class="view hidden">
-    <div class="es-warn">⚠️ <b>AI 仿真卷，非真题</b> · 材料与案例均为 AI 命制、不可当真实事例引用；仅按真题字数规格仿真，用作练笔与范文模板。</div>
+    <div class="es-warn"><span class="em-sw"><span class="em-e">⚠️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.6L21.4 20H2.6z"/><path d="M12 9.6v4.8M12 17.4h.01"/></svg></span></span> <b>AI 仿真卷，非真题</b> · 材料与案例均为 AI 命制、不可当真实事例引用；仅按真题字数规格仿真，用作练笔与范文模板。</div>
     <div class="pd-intro">按热门话题命制的仿真卷：给定资料严格按真题字数规格，每道题都配完整参考答案。</div>
     <div class="tk-tabs" id="es-tabs">
       <button class="tk-tab active" data-esk="zuowen">大作文范文</button>
@@ -1118,7 +1187,7 @@
   </section>
 
   <section id="view-essayd" class="view hidden">
-    <div class="es-warn">⚠️ <b>AI 仿真卷，非真题</b> · 材料与案例为 AI 命制，不可当真实事例引用。</div>
+    <div class="es-warn"><span class="em-sw"><span class="em-e">⚠️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.6L21.4 20H2.6z"/><path d="M12 9.6v4.8M12 17.4h.01"/></svg></span></span> <b>AI 仿真卷，非真题</b> · 材料与案例为 AI 命制，不可当真实事例引用。</div>
     <div id="esd-head" class="slt-head"></div>
     <div class="tk-tabs slr-tabs" id="esd-tabs">
       <button class="tk-tab active" data-esd="q">题目</button>
@@ -1128,7 +1197,7 @@
     <div id="esd-q" class="slr-pane"></div>
     <div id="esd-m" class="slr-pane hidden"></div>
     <div id="esd-a" class="slr-pane hidden"></div>
-    <button class="btn primary slt-go" id="esd-practice">✍️ 用这套卷练习（进批改）</button>
+    <button class="btn primary slt-go" id="esd-practice"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 用这套卷练习（进批改）</button>
   </section>
 
   <!-- 真题卷详情：材料 + 题目列表 -->
@@ -1146,7 +1215,7 @@
     <div id="slt-head" class="slt-head"></div>
     <div id="slt-goals" class="slt-goals"></div>
     <div id="slt-map" class="slt-map"></div>
-    <button class="btn primary slt-go" id="slt-go">✍️ 用这个题型练一题</button>
+    <button class="btn primary slt-go" id="slt-go"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 用这个题型练一题</button>
   </section>
 
   <section id="view-slgrade" class="view hidden">
@@ -1155,8 +1224,8 @@
     <!-- 做题模式：模考=直接写（对应考场真实情境）；练习=先在材料上找点、判完再写。
          只有真题的小题才有得选，自由练没有预标采分点。 -->
     <div id="slg-mode" class="slg-mode hidden">
-      <button class="chip tiny on" data-slgm="exam">📝 模考模式<i>直接作答，还原考场</i></button>
-      <button class="chip tiny" data-slgm="drill">🖍 练习模式<i>先找点，判完再写</i></button>
+      <button class="chip tiny on" data-slgm="exam"><span class="em-sw"><span class="em-e">📝</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H5a1.6 1.6 0 0 0-1.6 1.6v13A1.6 1.6 0 0 0 5 20.2h13a1.6 1.6 0 0 0 1.6-1.6V13"/><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L12 14.4l-3.6.8.8-3.6z"/></svg></span></span> 模考模式<i>直接作答，还原考场</i></button>
+      <button class="chip tiny" data-slgm="drill"><span class="em-sw"><span class="em-e">🖍</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.4l1-4 10-10 3 3-10 10z"/><path d="M15 6.4l2.6-2.6a1.7 1.7 0 0 1 2.4 2.4L17.4 8.8"/><path d="M3.4 21h6"/></svg></span></span> 练习模式<i>先找点，判完再写</i></button>
     </div>
     <div id="slg-find" class="slg-find hidden"></div>
     <div id="slg-body">
@@ -1171,8 +1240,8 @@
     <label class="slg-lb">我的答案 <span id="slg-req"></span></label>
     <textarea id="slg-a" rows="9" placeholder="写下你的作答…"></textarea>
     <div class="slg-toolbar">
-      <button type="button" class="hw-open-btn" data-hw="slg-a">✍️ 手写输入</button>
-      <button type="button" class="btn tiny hidden" id="slg-mat">📋 给定资料（可勾画）</button>
+      <button type="button" class="hw-open-btn" data-hw="slg-a"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 手写输入</button>
+      <button type="button" class="btn tiny hidden" id="slg-mat"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 给定资料（可勾画）</button>
       <div id="slg-count" class="slg-count"></div>
     </div>
     <div class="slg-row">
@@ -1219,7 +1288,7 @@
     <div id="ckb-head" class="ckb-head"></div>
     <div class="ckb-tools">
       <input id="ckb-search" placeholder="在本板块内搜索…">
-      <button class="btn" id="ckb-ai" title="AI 补充">✨ AI 补充</button>
+      <button class="btn" id="ckb-ai" title="AI 补充"><span class="em-sw"><span class="em-e">✨</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.9L18.8 9.8l-4.9 1.9L12 16.6l-1.9-4.9L5.2 9.8l4.9-1.9z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg></span></span> AI 补充</button>
     </div>
     <div id="ckb-list" class="ckb-list"></div>
   </section>
@@ -1237,9 +1306,9 @@
   <!-- ===== 任务清单（每日任务 + 互监待办） ===== -->
   <section id="view-tasks" class="view hidden">
     <div class="tk-tabs">
-      <button class="tk-tab active" data-tkt="plan">📅 备考规划</button>
-      <button class="tk-tab" data-tkt="daily">📋 每日任务</button>
-      <button class="tk-tab" data-tkt="shared">🤝 互监待办</button>
+      <button class="tk-tab active" data-tkt="plan"><span class="em-sw"><span class="em-e">📅</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="5" width="17.2" height="15.4" rx="2"/><path d="M3.4 9.8h17.2M8.4 2.8v4M15.6 2.8v4"/></svg></span></span> 备考规划</button>
+      <button class="tk-tab" data-tkt="daily"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 每日任务</button>
+      <button class="tk-tab" data-tkt="shared"><span class="em-sw"><span class="em-e">🤝</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.6 11.4l4-4 3.4 2.6 2-1.6 2 1.6 3.4-2.6 4 4"/><path d="M8.4 13l2.6 2.6M11 15.6l2.6 2.4M6 10.6l2.4 2.4"/><path d="M13.6 18l2.4-2.2 3.4-3.2"/></svg></span></span> 互监待办</button>
     </div>
 
     <div id="tk-plan" class="tk-pane">
@@ -1272,19 +1341,19 @@
         <div id="pl-prog" class="tk-prog"></div>
         <div id="pl-list" class="tk-list"></div>
         <div class="pl-acts">
-          <button class="btn primary" id="pl-gen">✨ 让规划助手排今天的计划</button>
-          <button class="btn tiny" id="pl-edit">⚙️ 备考信息</button>
+          <button class="btn primary" id="pl-gen"><span class="em-sw"><span class="em-e">✨</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.9L18.8 9.8l-4.9 1.9L12 16.6l-1.9-4.9L5.2 9.8l4.9-1.9z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg></span></span> 让规划助手排今天的计划</button>
+          <button class="btn tiny" id="pl-edit"><span class="em-sw"><span class="em-e">⚙️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.6v2.8M12 18.6v2.8M2.6 12h2.8M18.6 12h2.8M5.4 5.4l2 2M16.6 16.6l2 2M18.6 5.4l-2 2M5.4 18.6l2-2"/></svg></span></span> 备考信息</button>
         </div>
         <div class="pl-links">
-          <button class="pl-link-btn" id="pl-hist">📆 计划记录</button>
-          <button class="pl-link-btn" id="pl-analyze">📊 分析进度</button>
+          <button class="pl-link-btn" id="pl-hist"><span class="em-sw"><span class="em-e">📆</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="5" width="17.2" height="15.4" rx="2"/><path d="M3.4 9.8h17.2M8.4 2.8v4M15.6 2.8v4"/><path d="M7.6 13.4h3v3h-3z"/></svg></span></span> 计划记录</button>
+          <button class="pl-link-btn" id="pl-analyze"><span class="em-sw"><span class="em-e">📊</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.4h16"/><path d="M6.6 20.4V11M11.4 20.4V5M16.2 20.4v-6"/></svg></span></span> 分析进度</button>
         </div>
         <div class="tk-add"><input id="pl-in" placeholder="自己加一条…"><button class="btn primary" id="pl-add">添加</button></div>
       </div>
     </div>
     <div id="tk-daily" class="tk-pane hidden">
       <div class="pd-intro">你自定义的每日任务，每天清零重打卡（如"背10个成语""做1篇资料分析"）</div>
-      <button class="pl-link-btn" id="dt-open" style="margin-bottom:12px">🧪 今日巩固测试 · 测测今天学的</button>
+      <button class="pl-link-btn" id="dt-open" style="margin-bottom:12px"><span class="em-sw"><span class="em-e">🧪</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.4 2.6v7.8L5 18.4a2.2 2.2 0 0 0 1.9 3.2h10.2A2.2 2.2 0 0 0 19 18.4l-4.4-8V2.6"/><path d="M8 2.6h8"/><path d="M7.2 14.6h9.6"/></svg></span></span> 今日巩固测试 · 测测今天学的</button>
       <div id="tk-daily-prog" class="tk-prog"></div>
       <div id="tk-daily-list" class="tk-list"></div>
       <div class="tk-add"><input id="tk-daily-in" placeholder="添加每日任务…"><button class="btn primary" id="tk-daily-add">添加</button></div>
@@ -1292,7 +1361,7 @@
     <div id="tk-shared" class="tk-pane hidden">
       <div id="tk-team"></div>   <!-- 组队状态 / 组队邀请，JS 渲染 -->
       <div id="tk-board" class="hidden">
-        <div class="pd-intro">交叉确认 · 你只能勾<b>搭档</b>那一格（🔒 是你自己的，等对方来勾），两格都打勾才算完成💪</div>
+        <div class="pd-intro">交叉确认 · 你只能勾<b>搭档</b>那一格（<span class="em-sw"><span class="em-e">🔒</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.4" y="10.4" width="15.2" height="10" rx="2"/><path d="M8 10.4V7.6a4 4 0 0 1 8 0v2.8"/><path d="M12 14.4v2.4"/></svg></span></span> 是你自己的，等对方来勾），两格都打勾才算完成<span class="em-sw"><span class="em-e">💪</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 15.6c0-3.4 2.4-5.4 5.4-5.4 2.2 0 3.4 1 4.6 1s2-.8 2-2c0-1.6-1.4-2.4-1.4-4"/><path d="M3.4 15.6v3a2 2 0 0 0 2 2h9.4c3.4 0 5.8-2.2 5.8-5.4 0-3-2-4.8-4.6-5.2"/></svg></span></span></div>
         <div id="tk-shared-head" class="tk-head"></div>
         <div id="tk-shared-list" class="tk-list"></div>
         <div class="tk-add"><input id="tk-shared-in" placeholder="添加待办（两人可见）…"><button class="btn primary" id="tk-shared-add">添加</button></div>
@@ -1312,7 +1381,7 @@
   <!-- 备考计划记录 + 进度分析 -->
   <section id="view-planlog" class="view hidden">
     <div class="plh-top">
-      <button class="btn primary" id="plh-analyze-btn">📊 分析我的备考进度</button>
+      <button class="btn primary" id="plh-analyze-btn"><span class="em-sw"><span class="em-e">📊</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.4h16"/><path d="M6.6 20.4V11M11.4 20.4V5M16.2 20.4v-6"/></svg></span></span> 分析我的备考进度</button>
       <span class="plh-tip">看看每天完成了多少、哪些模块被冷落了</span>
     </div>
     <div id="plh-analysis" class="plh-analysis hidden"></div>
@@ -1336,13 +1405,13 @@
   <!-- ===== 今日复习（遗忘曲线 · 墨墨式卡片） ===== -->
   <section id="view-review" class="view hidden">
     <div class="tk-tabs rv-tabs" id="rv-tabs">
-      <button class="tk-tab active" data-rvg="word">📖 词语句子<span class="rv-n"></span></button>
-      <button class="tk-tab" data-rvg="daily">📝 每日积累<span class="rv-n"></span></button>
-      <button class="tk-tab" data-rvg="gushi">🎋 古诗<span class="rv-n"></span></button>
-      <button class="tk-tab" data-rvg="wrongq">❌ 错题<span class="rv-n"></span></button>
+      <button class="tk-tab active" data-rvg="word"><span class="em-sw"><span class="em-e">📖</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10 4.8 7.4 4.2 3.5 4.4v13.2c3.9-.2 6.5.4 8.5 2.1 2-1.7 4.6-2.3 8.5-2.1V4.4c-3.9-.2-6.5.4-8.5 2.1z"/><path d="M12 6.5v13.2"/></svg></span></span> 词语句子<span class="rv-n"></span></button>
+      <button class="tk-tab" data-rvg="daily"><span class="em-sw"><span class="em-e">📝</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H5a1.6 1.6 0 0 0-1.6 1.6v13A1.6 1.6 0 0 0 5 20.2h13a1.6 1.6 0 0 0 1.6-1.6V13"/><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L12 14.4l-3.6.8.8-3.6z"/></svg></span></span> 每日积累<span class="rv-n"></span></button>
+      <button class="tk-tab" data-rvg="gushi"><span class="em-sw"><span class="em-e">🎋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21V6"/><path d="M8 10c-2.6 0-4.2-1.6-4.2-4.2C6.4 5.8 8 7.4 8 10zM8 15c2.6 0 4.2-1.6 4.2-4.2C9.6 10.8 8 12.4 8 15z"/><path d="M16 21V9"/><path d="M16 13c2.4 0 3.8-1.4 3.8-3.8C17.4 9.2 16 10.6 16 13z"/></svg></span></span> 古诗<span class="rv-n"></span></button>
+      <button class="tk-tab" data-rvg="wrongq"><span class="em-sw"><span class="em-e">❌</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span> 错题<span class="rv-n"></span></button>
     </div>
     <div class="rv-limbar">
-      <button class="btn tiny" id="rv-limtog">⚙️ 每日复习量</button>
+      <button class="btn tiny" id="rv-limtog"><span class="em-sw"><span class="em-e">⚙️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 2.6v2.8M12 18.6v2.8M2.6 12h2.8M18.6 12h2.8M5.4 5.4l2 2M16.6 16.6l2 2M18.6 5.4l-2 2M5.4 18.6l2-2"/></svg></span></span> 每日复习量</button>
       <span id="rv-limsum" class="rv-limsum"></span>
     </div>
     <div id="rv-lim" class="rv-lim hidden">
@@ -1351,7 +1420,7 @@
       <div class="rv-lim-rows" id="rv-lim-rows"></div>
       <button class="btn primary" id="rv-limsave">保存</button>
     </div>
-    <div id="rv-empty" class="hidden"><p class="empty">🎉 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、应用文错例、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p></div>
+    <div id="rv-empty" class="hidden"><p class="empty"><span class="em-sw"><span class="em-e">🎉</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 20.6l5.2-13 8 8z"/><path d="M14 3.4c1.6 0 2.4 1 2.4 2.4M18 7.4c1.4-.6 2.6 0 3 1.2M15.6 10.6c.8 1.2 2.2 1.4 3.4.8"/></svg></span></span> 这个板块今天没有要复习的内容。收录的成语/古诗文、每日素材、应用文错例、错题会按遗忘曲线（1/2/4/7/15/30/60 天）分别出现。</p></div>
     <div id="rv-card-wrap" class="hidden">
       <div class="rv-progress"><div class="rv-bar" id="rv-bar"></div></div>
       <div class="rv-meta-row"><span id="rv-pos"></span><span id="rv-round"></span></div>
@@ -1372,7 +1441,7 @@
         <button class="rvb rvb-forget" id="rv-forget">忘记<small>今日 重现</small></button>
       </div>
     </div>
-    <div id="rv-done" class="hidden"><p class="empty">🎉 今日复习全部完成！明天见～</p></div>
+    <div id="rv-done" class="hidden"><p class="empty"><span class="em-sw"><span class="em-e">🎉</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 20.6l5.2-13 8 8z"/><path d="M14 3.4c1.6 0 2.4 1 2.4 2.4M18 7.4c1.4-.6 2.6 0 3 1.2M15.6 10.6c.8 1.2 2.2 1.4 3.4.8"/></svg></span></span> 今日复习全部完成！明天见～</p></div>
   </section>
 
   <!-- ===== 题库（套卷列表） ===== -->
@@ -1392,7 +1461,7 @@
     <div class="pd-intro">上传讲义/资料（PDF、Word、PPT）→ AI 找出里面<b>没有答案的例题</b>，逐题给出答案与解析，
       并生成一份「含答案解析」副本（原页排版不动，解析插在该页之后）。原件与副本都会留在资料库，方便对比。</div>
     <div class="dq-up">
-      <button class="btn primary" id="dq-upload">📄 上传讲义识题</button>
+      <button class="btn primary" id="dq-upload"><span class="em-sw"><span class="em-e">📄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.6h4"/></svg></span></span> 上传讲义识题</button>
       <input id="dq-file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" multiple class="hidden">
     </div>
     <div id="dq-list" class="sl-hist"></div>
@@ -1431,7 +1500,7 @@
   <!-- ===== 常识积累 · 板块页 ===== -->
   <section id="view-csboard" class="view hidden">
     <div class="cs-overview" id="cs-overview">
-      <div class="cs-ov-head" id="cs-ov-toggle">📋 总体考情 <span class="cs-ov-arrow">▾</span></div>
+      <div class="cs-ov-head" id="cs-ov-toggle"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 总体考情 <span class="cs-ov-arrow">▾</span></div>
       <div class="cs-ov-body hidden" id="cs-ov-body"></div>
     </div>
     <div id="cs-topics" class="date-strip"></div>
@@ -1636,12 +1705,14 @@
   <div id="aiv-home" class="aiv">
     <div class="ai-head">
       <span class="ai-title">AI 助手</span>
-      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button><button class="ai-x ai-full" title="全屏 / 还原">⛶</button><button id="ai-close" class="ai-x" title="关闭">✕</button>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button><button class="ai-x ai-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button><button id="ai-close" class="ai-x" title="关闭"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
     <div class="aih-scroll">
-      <button class="aih-new" id="aih-new">＋ 新对话</button>
+      <button class="aih-new" id="aih-new"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新对话</button>
       <button class="aih-projects" id="aih-projects"><svg class="ai-folder" viewBox="0 0 48 48"><rect x="2" y="2" width="44" height="44" rx="13" fill="#5b6cf0"/><path fill="#7d8cf8" opacity=".5" d="M2 15C2 7.8 7.8 2 15 2h18c7.2 0 13 5.8 13 13v2H2z"/><rect x="11" y="11" width="11.5" height="11.5" rx="3.5" fill="#fff"/><rect x="25.5" y="11" width="11.5" height="11.5" rx="3.5" fill="#fff" opacity=".82"/><rect x="11" y="25.5" width="11.5" height="11.5" rx="3.5" fill="#fff" opacity=".82"/><circle cx="31.2" cy="31.2" r="5.8" fill="#ffd66b"/></svg> 项目 <span id="aih-pcount"></span><span class="aih-arr">›</span></button>
-      <div class="aih-sec">最近对话</div>
+      <button class="aih-projects" id="aih-mem" title="AI 记住的关于我的事">🧠 长期记忆<span class="aih-arr">›</span></button>
+      <div class="aih-searchbar"><input id="aih-search" placeholder="搜对话内容…" autocomplete="off"></div>
+      <div class="aih-sec" id="aih-sec">最近对话</div>
       <div id="aih-recents"></div>
     </div>
   </div>
@@ -1650,8 +1721,8 @@
     <div class="ai-head">
       <button class="ai-backbtn" data-aiback="home">‹</button>
       <span class="ai-title">项目</span>
-      <button id="aip-new" class="ai-headbtn">＋ 新建</button>
-      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button><button class="ai-x ai-full" title="全屏 / 还原">⛶</button><button class="ai-x" data-aiback="close">✕</button>
+      <button id="aip-new" class="ai-headbtn"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新建</button>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button><button class="ai-x ai-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button><button class="ai-x" data-aiback="close"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
     <div class="aih-scroll" id="aip-list"></div>
   </div>
@@ -1660,8 +1731,8 @@
     <div class="ai-head">
       <button class="ai-backbtn" data-aiback="projects">‹</button>
       <span class="ai-title" id="aipd-title">项目</span>
-      <button id="aipd-new" class="ai-headbtn">＋ 新对话</button>
-      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button><button class="ai-x ai-full" title="全屏 / 还原">⛶</button><button class="ai-x" data-aiback="close">✕</button>
+      <button id="aipd-new" class="ai-headbtn"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新对话</button>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button><button class="ai-x ai-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button><button class="ai-x" data-aiback="close"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
     <div class="aih-scroll" id="aipd-chats"></div>
   </div>
@@ -1671,22 +1742,23 @@
     <div class="ai-head">
       <button class="ai-backbtn" data-aiback="home">‹</button>
       <span class="ai-title" id="aic-title">新对话</span>
-      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button><button class="ai-x ai-full" title="全屏 / 还原">⛶</button><button class="ai-x" data-aiback="close">✕</button>
+      <span class="ai-tier" id="ai-tier" title="快=日常问答；深度=推理模型，复杂题目更稳"><button type="button" data-tier="fast" class="on">快</button><button type="button" data-tier="pro">深度</button></span>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button><button class="ai-x ai-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button><button class="ai-x" data-aiback="close"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
     <div id="ai-msgs" class="ai-msgs"></div>
     <div id="ai-atts" class="ai-atts"></div>
     <div class="ai-input" id="ai-input">
       <div class="input-tools">
-        <button type="button" id="ai-tools" class="ai-attbtn" title="工具：点一下让 AI 做，或直接打开功能">🧰</button>
-        <button id="ai-attach" class="ai-attbtn" title="上传图片/文件">📎</button>
-        <button type="button" class="ai-attbtn hw-open-btn" data-hw="ai-text" title="手写输入（写完自动转文字）">✍️</button>
-        <button type="button" class="ai-attbtn hidden" id="ai-shot" title="截图（可用手写笔圈选）">📷</button>
+        <button type="button" id="ai-tools" class="ai-attbtn" title="工具：点一下让 AI 做，或直接打开功能"><span class="em-sw"><span class="em-e">🧰</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="8" width="18.8" height="11.4" rx="2"/><path d="M2.6 12.4h18.8"/><path d="M8.6 8V6.2a2 2 0 0 1 2-2h2.8a2 2 0 0 1 2 2V8"/></svg></span></span></button>
+        <button id="ai-attach" class="ai-attbtn" title="上传图片/文件"><span class="em-sw"><span class="em-e">📎</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7-7l8.4-8.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></span></span></button>
+        <button type="button" class="ai-attbtn hw-open-btn" data-hw="ai-text" title="手写输入（写完自动转文字）"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span></button>
+        <button type="button" class="ai-attbtn hidden" id="ai-shot" title="截图（可用手写笔圈选）"><span class="em-sw"><span class="em-e">📷</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="13" rx="2.5"/><circle cx="12" cy="13" r="3.8"/><path d="M8.5 6.5l1.4-2.6h4.2l1.4 2.6"/></svg></span></span></button>
       </div>
       <div class="input-row">
-        <button type="button" class="input-mic" disabled title="语音输入（暂未开放）">🎤</button>
+        <button type="button" class="input-mic" disabled title="语音输入（暂未开放）"><span class="em-sw"><span class="em-e">🎤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
         <textarea id="ai-text" rows="1" placeholder="问点什么…（可附图片/文件）"></textarea>
-        <button type="button" class="input-emoji" disabled title="表情（暂未开放）">🙂</button>
-        <button type="button" id="ai-plus" class="input-plus">➕</button>
+        <button type="button" class="input-emoji" disabled title="表情（暂未开放）"><span class="em-sw"><span class="em-e">🙂</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M9 9.6h.01M15 9.6h.01"/><path d="M8.6 14c1.8 2 5 2 6.8 0"/></svg></span></span></button>
+        <button type="button" id="ai-plus" class="input-plus"><span class="em-sw"><span class="em-e">➕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
         <button id="ai-send" class="ai-sendbtn">发送</button>
       </div>
     </div>
@@ -1698,13 +1770,14 @@
 <!-- AI 附件来源选择 -->
 <div id="ai-attsheet" class="ctxmenu hidden">
   <div class="acm-list">
-    <button data-aiatt="photo">📷 拍照</button>
-    <button data-aiatt="image">🖼️ 选图片</button>
-    <button data-aiatt="file">📄 选文件（PDF/Word/文本）</button>
+    <button data-aiatt="photo"><span class="em-sw"><span class="em-e">📷</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="13" rx="2.5"/><circle cx="12" cy="13" r="3.8"/><path d="M8.5 6.5l1.4-2.6h4.2l1.4 2.6"/></svg></span></span> 拍照</button>
+    <button data-aiatt="image"><span class="em-sw"><span class="em-e">🖼</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.6" width="18" height="14.8" rx="2"/><circle cx="8.6" cy="9.6" r="1.6"/><path d="M3.6 17l5-5 4.4 4.4 3-2.8 4.4 4"/></svg></span></span>️ 选图片</button>
+    <button data-aiatt="file"><span class="em-sw"><span class="em-e">📄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.6h4"/></svg></span></span> 选文件（PDF/Word/文本）</button>
   </div>
 </div>
 
 <!-- AI 工具面板：可搜索、分组的快捷工具（点一下让 AI 做，或直接打开功能页） -->
+<div id="ai-memsheet" class="cr-picker hidden"></div>
 <div id="ai-toolsheet" class="note-sheet hidden" style="z-index:130;">
   <div class="ns-mask" data-sheet-close></div>
   <div class="ns-panel">
@@ -1723,23 +1796,23 @@
 <!-- 资料条目操作菜单 -->
 <div id="mat-menu" class="ctxmenu hidden">
   <div class="acm-list">
-    <button data-mm="share">📤 分享到其他应用</button>
-    <button data-mm="team">👥 共享给队友</button>
-    <button data-mm="rename">✏️ 重命名</button>
-    <button data-mm="dup">🗐 复制一份</button>
-    <button data-mm="dl">⬇️ 下载</button>
-    <button data-mm="del" class="acm-danger">🗑 删除</button>
+    <button data-mm="share"><span class="em-sw"><span class="em-e">📤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 14.4V18a2 2 0 0 0 2 2h12.8a2 2 0 0 0 2-2v-3.6h-5l-1.4 2.4H10l-1.4-2.4z"/><path d="M12 12.2V4M8.6 7.4L12 4l3.4 3.4"/></svg></span></span> 分享到其他应用</button>
+    <button data-mm="team"><span class="em-sw"><span class="em-e">👥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.4A6 6 0 0 1 21 20"/></svg></span></span> 共享给队友</button>
+    <button data-mm="rename"><span class="em-sw"><span class="em-e">✏️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L8 18.4l-3.8.8.8-3.8z"/></svg></span></span> 重命名</button>
+    <button data-mm="dup"><span class="em-sw"><span class="em-e">🗐</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7.4" y="7.4" width="13" height="13" rx="2"/><path d="M16.6 7.4V5.6a2 2 0 0 0-2-2H5.6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h1.8"/></svg></span></span> 复制一份</button>
+    <button data-mm="dl"><span class="em-sw"><span class="em-e">⬇</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v15"/><path d="M6 13l6 6 6-6"/></svg></span></span>️ 下载</button>
+    <button data-mm="del" class="acm-danger"><span class="em-sw"><span class="em-e">🗑</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M6.5 6.5l1 13h9l1-13"/><path d="M9.5 6.5V4h5v2.5"/><path d="M10 10v6M14 10v6"/></svg></span></span> 删除</button>
   </div>
 </div>
 
 <!-- 截图裁剪层：拿到整张截图后，鼠标拖矩形 或 手写笔自由圈，圈完裁下来发给 AI -->
 <div id="shot" class="shot hidden">
   <div class="shot-bar">
-    <span class="shot-t">📷 圈出要问 AI 的部分</span>
+    <span class="shot-t"><span class="em-sw"><span class="em-e">📷</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="13" rx="2.5"/><circle cx="12" cy="13" r="3.8"/><path d="M8.5 6.5l1.4-2.6h4.2l1.4 2.6"/></svg></span></span> 圈出要问 AI 的部分</span>
     <span class="shot-hint">鼠标拖矩形 · 手写笔可自由圈</span>
     <button class="btn tiny" id="shot-all">整张都要</button>
     <button class="btn tiny" id="shot-redo">重圈</button>
-    <button class="btn primary tiny" id="shot-ok">✓ 发给 AI</button>
+    <button class="btn primary tiny" id="shot-ok"><span class="em-sw"><span class="em-e">✓</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.6l4.8 4.8L19.4 6.6"/></svg></span></span> 发给 AI</button>
     <button class="btn tiny" id="shot-cancel">取消</button>
   </div>
   <div class="shot-wrap"><canvas id="shot-cv"></canvas></div>
@@ -1748,17 +1821,17 @@
 <!-- 给定资料面板：可停靠半屏、可拖大小、可用手写笔在原文上勾画（像考场划重点） -->
 <div id="matpad" class="matpad dockable hidden dk-right">
   <div class="mat-bar">
-    <span class="mat-t">📋 给定资料</span>
-    <button class="pad-t" data-mt="pan" title="浏览：手指滑动看材料（默认）">✋</button>
-    <button class="pad-t" data-mt="hl" title="荧光笔">🖍️</button>
-    <button class="pad-t" data-mt="pen" title="笔">✏️</button>
-    <button class="pad-t" data-mt="eraser" title="橡皮">🧽</button>
+    <span class="mat-t"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 给定资料</span>
+    <button class="pad-t" data-mt="pan" title="浏览：手指滑动看材料（默认）"><span class="em-sw"><span class="em-e">✋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12.4V5.6a1.5 1.5 0 0 1 3 0v6.4"/><path d="M12 11.6V4.6a1.5 1.5 0 0 1 3 0v7"/><path d="M15 11.8V6.8a1.5 1.5 0 0 1 3 0v7.8a5.8 5.8 0 0 1-5.8 5.8h-2A5.2 5.2 0 0 1 7 14.6"/><path d="M9 12.4V9.6a1.5 1.5 0 0 0-3 0v5"/></svg></span></span></button>
+    <button class="pad-t" data-mt="hl" title="荧光笔"><span class="em-sw"><span class="em-e">🖍</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.4l1-4 10-10 3 3-10 10z"/><path d="M15 6.4l2.6-2.6a1.7 1.7 0 0 1 2.4 2.4L17.4 8.8"/><path d="M3.4 21h6"/></svg></span></span>️</button>
+    <button class="pad-t" data-mt="pen" title="笔"><span class="em-sw"><span class="em-e">✏️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L8 18.4l-3.8.8.8-3.8z"/></svg></span></span></button>
+    <button class="pad-t" data-mt="eraser" title="橡皮"><span class="em-sw"><span class="em-e">🧽</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.6a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5.4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 12.6h16"/></svg></span></span></button>
     <span class="mat-colors" id="mat-colors"></span>
-    <button class="pad-t" id="mat-clear" title="清除全部勾画">🗑</button>
+    <button class="pad-t" id="mat-clear" title="清除全部勾画"><span class="em-sw"><span class="em-e">🗑</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M6.5 6.5l1 13h9l1-13"/><path d="M9.5 6.5V4h5v2.5"/><path d="M10 10v6M14 10v6"/></svg></span></span></button>
     <span class="mat-right">
-      <button class="pad-t" id="mat-dock" title="按住拖到屏幕任一边 → 停靠那半边">✥</button>
-      <button class="pad-t" id="mat-full" title="全屏 / 还原">⛶</button>
-      <button class="pad-t" id="mat-close" title="收起">✕</button>
+      <button class="pad-t" id="mat-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button>
+      <button class="pad-t" id="mat-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button>
+      <button class="pad-t" id="mat-close" title="收起"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </span>
   </div>
   <div class="mat-scroll" id="mat-scroll">
@@ -1789,28 +1862,31 @@
 
 <!-- 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；长按可拖动 -->
 <div id="fab" class="fab">
-  <button class="fab-act" id="fab-ink" title="在当前页面上勾画批注（笔迹会保留）">✏️<i>批注</i></button>
-  <button class="fab-act" id="fab-shot" title="截图（框选/圈选，可问 AI 或存起来）" hidden>📷<i>截图</i></button>
-  <button class="fab-act" id="fab-note" title="随手记一条（不打断当前页面）">📒<i>小记</i></button>
-  <button class="fab-act" id="fab-pad" title="草稿纸">📝<i>草稿纸</i></button>
+  <button class="fab-act" id="fab-ink" title="在当前页面上勾画批注（笔迹会保留）"><span class="fab-em"><span class="em-sw"><span class="em-e">✏️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L8 18.4l-3.8.8.8-3.8z"/></svg></span></span></span><span class="fab-sv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 12.2a6 6 0 0 0-8.5-8.5L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/></svg></span><i>批注</i></button>
+  <button class="fab-act" id="fab-shot" title="截图（框选/圈选，可问 AI 或存起来）" hidden><span class="fab-em"><span class="em-sw"><span class="em-e">📷</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="13" rx="2.5"/><circle cx="12" cy="13" r="3.8"/><path d="M8.5 6.5l1.4-2.6h4.2l1.4 2.6"/></svg></span></span></span><span class="fab-sv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2 2 0 0 1 5 6.5h2.2l1.4-2h6.8l1.4 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.6"/></svg></span><i>截图</i></button>
+  <button class="fab-act" id="fab-note" title="随手记一条（不打断当前页面）"><span class="fab-em"><span class="em-sw"><span class="em-e">📒</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.6H18v16.8H6.4z"/><path d="M6.4 3.6a2.2 2.2 0 0 0 0 16.8"/><path d="M18 8h2.4M18 12h2.4"/></svg></span></span></span><span class="fab-sv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 5.4A2.2 2.2 0 0 1 7.4 3.2h6l5.4 5.4v10a2.2 2.2 0 0 1-2.2 2.2H7.4a2.2 2.2 0 0 1-2.2-2.2z"/><path d="M13.4 3.4v4.4a1 1 0 0 0 1 1h4.4"/><path d="M8.4 13.4h7.2M8.4 16.6h4.6"/></svg></span><i>小记</i></button>
+  <button class="fab-act" id="fab-pad" title="草稿纸"><span class="fab-em"><span class="em-sw"><span class="em-e">📝</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H5a1.6 1.6 0 0 0-1.6 1.6v13A1.6 1.6 0 0 0 5 20.2h13a1.6 1.6 0 0 0 1.6-1.6V13"/><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L12 14.4l-3.6.8.8-3.6z"/></svg></span></span></span><span class="fab-sv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17.5 15.1 6.4l2.6 2.6L6.6 20.1l-3.4.8z"/><path d="M15.1 6.4 17.3 4.2a1.85 1.85 0 0 1 2.6 2.6l-2.2 2.2"/></svg></span><i>草稿纸</i></button>
   <button class="fab-act" id="fab-ai" title="AI 助手">AI<i>AI 助手</i></button>
-  <button class="fab-main" id="fab-btn" title="工具">✦</button>
+  <!-- 图案是「＋」不是 ✦：展开时 CSS 把它转 135°，正好变成 ✕，开合两态自带语义。
+       用 SVG 不用文字：字形要跟着主题的字色走（currentColor），文字符号在各系统上
+       字重和基线也对不齐。 -->
+  <button class="fab-main" id="fab-btn" title="工具" aria-label="工具"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
 </div>
 
 <!-- 通用手写批注层：透明画布盖在任意内容上，笔/荧光笔/橡皮/清屏，笔迹按页面保存 -->
 <div id="ink" class="ink hidden">
   <canvas id="ink-cv"></canvas>
   <div id="ink-bar" class="ink-bar">
-    <button class="ink-t" data-inkt="scroll" title="浏览/滑动（不勾画，可滚动页面）">✋</button>
-    <button class="ink-t on" data-inkt="pen" title="笔">✏️</button>
-    <button class="ink-t" data-inkt="hl" title="荧光笔">🖍️</button>
-    <button class="ink-t" data-inkt="eraser" title="橡皮（划过即擦）">🧽</button>
+    <button class="ink-t" data-inkt="scroll" title="浏览/滑动（不勾画，可滚动页面）"><span class="em-sw"><span class="em-e">✋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12.4V5.6a1.5 1.5 0 0 1 3 0v6.4"/><path d="M12 11.6V4.6a1.5 1.5 0 0 1 3 0v7"/><path d="M15 11.8V6.8a1.5 1.5 0 0 1 3 0v7.8a5.8 5.8 0 0 1-5.8 5.8h-2A5.2 5.2 0 0 1 7 14.6"/><path d="M9 12.4V9.6a1.5 1.5 0 0 0-3 0v5"/></svg></span></span></button>
+    <button class="ink-t on" data-inkt="pen" title="笔"><span class="em-sw"><span class="em-e">✏️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L8 18.4l-3.8.8.8-3.8z"/></svg></span></span></button>
+    <button class="ink-t" data-inkt="hl" title="荧光笔"><span class="em-sw"><span class="em-e">🖍</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.4l1-4 10-10 3 3-10 10z"/><path d="M15 6.4l2.6-2.6a1.7 1.7 0 0 1 2.4 2.4L17.4 8.8"/><path d="M3.4 21h6"/></svg></span></span>️</button>
+    <button class="ink-t" data-inkt="eraser" title="橡皮（划过即擦）"><span class="em-sw"><span class="em-e">🧽</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.6a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5.4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 12.6h16"/></svg></span></span></button>
     <span class="ink-colors" id="ink-colors"></span>
     <input type="range" id="ink-size" min="1" max="12" step="1" value="3" title="粗细">
     <button class="ink-t" id="ink-undo" title="撤销">↶</button>
-    <button class="ink-t" id="ink-clear" title="全屏清除">🗑 清屏</button>
+    <button class="ink-t" id="ink-clear" title="全屏清除"><span class="em-sw"><span class="em-e">🗑</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M6.5 6.5l1 13h9l1-13"/><path d="M9.5 6.5V4h5v2.5"/><path d="M10 10v6M14 10v6"/></svg></span></span> 清屏</button>
     <button class="ink-t ink-orph hidden" id="ink-orph" title="有批注找不到原文了，点开处理"></button>
-    <button class="ink-t ink-done" id="ink-done" title="收起批注（笔迹已保存）">✓ 完成</button>
+    <button class="ink-t ink-done" id="ink-done" title="收起批注（笔迹已保存）"><span class="em-sw"><span class="em-e">✓</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.6l4.8 4.8L19.4 6.6"/></svg></span></span> 完成</button>
   </div>
   <!-- 重新挂锚时的提示条：让用户在页面上点一个新位置 -->
   <div id="ink-pick" class="ink-pick hidden"><span id="ink-pick-t"></span><button id="ink-pick-x">取消</button></div>
@@ -1833,7 +1909,7 @@
 <!-- 快速记：悬浮球点开，浮在当前页面上，记完就走，不跳转 -->
 <div id="qnote" class="qnote hidden">
   <div class="qn-head">
-    <b>📒 随手记</b>
+    <b><span class="em-sw"><span class="em-e">📒</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.6H18v16.8H6.4z"/><path d="M6.4 3.6a2.2 2.2 0 0 0 0 16.8"/><path d="M18 8h2.4M18 12h2.4"/></svg></span></span> 随手记</b>
     <select id="qn-board" title="归到哪个板块"></select>
     <button class="qn-x" id="qn-close" title="关闭">×</button>
   </div>
@@ -1841,9 +1917,9 @@
   <div id="qn-imgs" class="cp-thumbs"></div>
   <div id="qn-files" class="cp-files"></div>
   <div class="qn-foot">
-    <label class="btn tiny">🖼 图片<input type="file" id="qn-file" accept="image/*" multiple hidden></label>
-    <label class="btn tiny">📎 附件<input type="file" id="qn-attfile" multiple hidden></label>
-    <button type="button" class="btn tiny hw-open-btn" data-hw="qn-text" title="手写输入（写完自动转文字）">✍️ 手写</button>
+    <label class="btn tiny"><span class="em-sw"><span class="em-e">🖼</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.6" width="18" height="14.8" rx="2"/><circle cx="8.6" cy="9.6" r="1.6"/><path d="M3.6 17l5-5 4.4 4.4 3-2.8 4.4 4"/></svg></span></span> 图片<input type="file" id="qn-file" accept="image/*" multiple hidden></label>
+    <label class="btn tiny"><span class="em-sw"><span class="em-e">📎</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7-7l8.4-8.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></span></span> 附件<input type="file" id="qn-attfile" multiple hidden></label>
+    <button type="button" class="btn tiny hw-open-btn" data-hw="qn-text" title="手写输入（写完自动转文字）"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 手写</button>
     <input id="qn-tags" type="text" placeholder="标签，逗号分隔（可空）">
     <button class="btn primary" id="qn-save">记下</button>
   </div>
@@ -1857,34 +1933,34 @@
 <div id="pad" class="pad dockable hidden dk-bottom">
   <div class="pad-bar">
     <div class="pad-grp pad-doc hidden" id="pad-doc">
-      <button class="pad-t" id="pad-name" title="点一下改名">📓</button>
+      <button class="pad-t" id="pad-name" title="点一下改名"><span class="em-sw"><span class="em-e">📓</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7.4 3.6H19v16.8H7.4z"/><path d="M5 5.6h2.4M5 9h2.4M5 12.4h2.4M5 15.8h2.4M5 19.2h2.4"/></svg></span></span></button>
       <span class="pad-title" id="pad-title"></span>
       <span class="pad-st" id="pad-st"></span>
     </div>
     <div class="pad-grp">
-      <button class="pad-t" data-tool="pen" title="笔">✏️</button>
-      <button class="pad-t" data-tool="hl" title="荧光笔">🖍️</button>
-      <button class="pad-t" data-tool="eraser" title="橡皮">🧽</button>
+      <button class="pad-t" data-tool="pen" title="笔"><span class="em-sw"><span class="em-e">✏️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L8 18.4l-3.8.8.8-3.8z"/></svg></span></span></button>
+      <button class="pad-t" data-tool="hl" title="荧光笔"><span class="em-sw"><span class="em-e">🖍</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20.4l1-4 10-10 3 3-10 10z"/><path d="M15 6.4l2.6-2.6a1.7 1.7 0 0 1 2.4 2.4L17.4 8.8"/><path d="M3.4 21h6"/></svg></span></span>️</button>
+      <button class="pad-t" data-tool="eraser" title="橡皮"><span class="em-sw"><span class="em-e">🧽</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.6a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5.4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 12.6h16"/></svg></span></span></button>
       <span class="pad-colors" id="pad-colors"></span>
       <input type="range" id="pad-size" min="1" max="14" step="1" value="3" title="笔的粗细">
     </div>
     <div class="pad-grp">
       <button class="pad-t" id="pad-undo" title="撤销 (Ctrl+Z)">↶</button>
       <button class="pad-t" id="pad-redo" title="重做 (Ctrl+Y)">↷</button>
-      <button class="pad-t" id="pad-clear" title="清空 / 删除本页">🗑</button>
+      <button class="pad-t" id="pad-clear" title="清空 / 删除本页"><span class="em-sw"><span class="em-e">🗑</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M6.5 6.5l1 13h9l1-13"/><path d="M9.5 6.5V4h5v2.5"/><path d="M10 10v6M14 10v6"/></svg></span></span></button>
       <button class="pad-t" id="pad-bg" title="纸张：空白 / 方格 / 横线">⊞</button>
     </div>
     <div class="pad-grp pad-pages">
       <button class="pad-t" id="pad-prev" title="上一页">◀</button>
       <span id="pad-pg" class="pad-pg">1 / 1</span>
       <button class="pad-t" id="pad-next" title="下一页">▶</button>
-      <button class="pad-t" id="pad-add" title="新增一页">＋</button>
+      <button class="pad-t" id="pad-add" title="新增一页"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
     </div>
     <div class="pad-grp pad-right">
       <button class="pad-t" id="pad-png" title="保存为图片">⤓</button>
-      <button class="pad-t" id="pad-dock" title="按住拖到屏幕任一边 → 停靠到那半边（松手即吸附）">✥</button>
-      <button class="pad-t" id="pad-mode" title="全屏 / 还原">⛶</button>
-      <button class="pad-t" id="pad-close" title="收起草稿纸">✕</button>
+      <button class="pad-t" id="pad-dock" title="按住拖到屏幕任一边 → 停靠到那半边（松手即吸附）"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button>
+      <button class="pad-t" id="pad-mode" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button>
+      <button class="pad-t" id="pad-close" title="收起草稿纸"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
   </div>
   <div class="pad-cvwrap"><canvas id="pad-cv"></canvas></div>
@@ -1910,11 +1986,11 @@
 <div id="hw-modal" class="hw-modal hidden">
   <div class="hw-sheet">
     <div class="hw-bar">
-      <span class="hw-title">✍️ 手写输入</span>
+      <span class="hw-title"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span> 手写输入</span>
       <label class="hw-auto" id="hw-eng-wrap" title="不打勾=云端 Google(更准)；打勾=本地/端上识别(更快，准度稍逊)"><input type="checkbox" id="hw-eng"><span>更快</span></label>
       <label class="hw-auto"><input type="checkbox" id="hw-auto"><span>自动上屏</span></label>
-      <button id="hw-fs" class="hw-icon" title="全屏透明（看得到后面的答案）">⛶</button>
-      <button id="hw-close" class="hw-x" title="关闭">✕</button>
+      <button id="hw-fs" class="hw-icon" title="全屏透明（看得到后面的答案）"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button>
+      <button id="hw-close" class="hw-x" title="关闭"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
     <div id="hw-cands" class="hw-cands"><span class="hw-hint">在下面田字格里写一个字，会自动识别</span></div>
     <div class="hw-canvas-wrap">
@@ -1928,7 +2004,7 @@
       <button id="hw-space" class="hw-btn">空格</button>
       <button id="hw-nl" class="hw-btn">换行</button>
       <button id="hw-back" class="hw-btn">⌫ 删字</button>
-      <button id="hw-pan" class="hw-btn" title="滑动：让画布看穿，可滚动后面参考的内容">✋ 滑动</button>
+      <button id="hw-pan" class="hw-btn" title="滑动：让画布看穿，可滚动后面参考的内容"><span class="em-sw"><span class="em-e">✋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12.4V5.6a1.5 1.5 0 0 1 3 0v6.4"/><path d="M12 11.6V4.6a1.5 1.5 0 0 1 3 0v7"/><path d="M15 11.8V6.8a1.5 1.5 0 0 1 3 0v7.8a5.8 5.8 0 0 1-5.8 5.8h-2A5.2 5.2 0 0 1 7 14.6"/><path d="M9 12.4V9.6a1.5 1.5 0 0 0-3 0v5"/></svg></span></span> 滑动</button>
       <button id="hw-done" class="hw-btn hw-done">完成</button>
     </div>
     <div class="hw-preview">已输入 <b id="hw-count">0</b> 字 · 写完点候选字即填入</div>
@@ -1937,7 +2013,7 @@
 
 <!-- 朗读控制条（朗读中显示：停止 / 语速） -->
 <div id="read-ctrl" class="read-ctrl hidden">
-  <span class="rc-anim">🔊</span>
+  <span class="rc-anim"><span class="em-sw"><span class="em-e">🔊</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.4h3.4L12 5.4v13.2L7.4 14.6H4z"/><path d="M15.6 9.4a3.6 3.6 0 0 1 0 5.2M18.2 6.8a7.2 7.2 0 0 1 0 10.4"/></svg></span></span></span>
   <span class="rc-label">朗读中</span>
   <button id="read-rate" class="rc-rate">1.0×</button>
   <button id="read-stop" class="rc-stop">停止</button>
@@ -1946,6 +2022,7 @@
      每个文件里都有顶层执行语句（合计 415 个事件绑定），它们依赖彼此的先后。
      加文件时想清楚它该插在哪一段，别图省事往末尾追。 -->
 <script src="js/core.js"></script>
+<script src="js/articons.js"></script>
 <!-- 这两个是**被依赖的工具**，所以紧跟 core：做题倒计时、错题本联动，
      专项练/历年真题/巩固测试/题库四个刷题模块都调它们。顶层只定义函数、
      不绑事件，插在这儿不会打乱后面那 415 个绑定的先后。 -->
@@ -2014,6 +2091,7 @@
 <script src="js/qsheet.js"></script>
 <script src="js/qpanel.js"></script>
 <script src="js/tabs.js"></script>
+<script src="js/tabviews.js"></script>
 <script src="js/today.js"></script>
 </body>
 </html>

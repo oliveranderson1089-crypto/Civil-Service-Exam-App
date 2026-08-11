@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DOC, IS_MOBILE, TITLES, api, ckBoard, csBoard,
-   esc, matBoard, nwCur, stack */
+/* global $, DOC, IS_MOBILE, TITLES, api, artEm, ckBoard, csBoard, esc, matBoard, nwCur, stack */
 
 /* ================= 书签：看到哪了 =================
    长文（经典著作 / 要文库 / 范文 / 知识库文档）看到一半退出来，回头根本找不到位置。
@@ -76,7 +75,7 @@ async function bmRestore() {             // 进阅读页时问一句：上次看
     bmCur = b;
     $('#bm-tip').innerHTML = `🔖 上次看到 <b>${Math.round(b.pos * 100)}%</b> 处 · <i>${(b.updated_at || '').slice(5, 16)}</i>
       <button class="btn tiny" id="bm-go">跳回去</button>
-      <button class="bm-x" id="bm-hide">✕</button>`;
+      <button class="bm-x" id="bm-hide">${artEm('✕')}</button>`;
     $('#bm-tip').classList.remove('hidden');
     bmHideT = setTimeout(bmHide, BM_AUTOHIDE);
   } catch (_) { /* 取不到书签就不显示「跳回去」，不影响正常阅读 */ }
@@ -99,7 +98,7 @@ function matPickMembers(members) {
     el.innerHTML = `<div class="ns-mask" data-sheet-close></div>
       <div class="ns-panel">
         <div class="ns-handle"></div>
-        <div class="ns-title">👥 共享给队友</div>
+        <div class="ns-title">${artEm('👥')} 共享给队友</div>
         <p class="acct-hint" style="padding:0 16px;margin:0 0 6px">勾上就共享给他（他能在资料库看到并下载，但不能改不能删）；取消勾选就收回。</p>
         <div class="ms-list">${members.map(m => `
           <label class="ms-row"><input type="checkbox" value="${m.id}" ${m.shared ? 'checked' : ''}>

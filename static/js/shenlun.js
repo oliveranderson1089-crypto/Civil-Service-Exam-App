@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, IS_MOBILE, api, appConfirm, c,
-   esc, frCheckBody, frMatHtml, matOpen, openEssays, push, state, toast */
+/* global $, IC, IS_MOBILE, api, appConfirm, artEm, c, esc, frCheckBody, frMatHtml, matOpen, openEssays, push, state, toast */
 /* frMatHtml / frCheckBody 来自 find.js（它在 index.html 里先加载）：
    真题批改的「练习模式」和小题训练的找点是同一件事 —— 同一套采分点、同一套判定、
    同一套按句渲染。渲染规则必须共用一份，两边各写一套迟早会判得不一样。 */
@@ -77,11 +76,11 @@ async function loadSlPapers() {
     $('#sl-papers').innerHTML = d.items.length ? d.items.map(p => `
       <div class="sl-hi" data-slp="${p.id}">
         <div class="sl-hi-main">
-          <div class="sl-hi-t">📄 ${esc(p.title)}</div>
+          <div class="sl-hi-t">${artEm('📄')} ${esc(p.title)}</div>
           <div class="sl-hi-m">${p.total} 道题 · 已做 ${p.done} 道 · ${esc(p.created_at.slice(5, 16))}</div>
         </div>
         <div class="sl-hi-s ${p.done >= p.total ? 'good' : 'ok'}">${p.done}<span>/${p.total}</span></div>
-        <button class="sl-hi-del" data-slpdel="${p.id}">🗑</button>
+        <button class="sl-hi-del" data-slpdel="${p.id}">${artEm('🗑')}</button>
       </div>`).join('') : '<p class="empty">还没有真题卷。点右上角「上传真题」，PDF/Word/图片都行，会自动拆出各道题。</p>';
   } catch (_) { /* 列表拉不到就显示空态，下次进来会重试 */ }
 }
@@ -149,7 +148,7 @@ async function loadSlHistory() {
           <div class="sl-hi-m">${esc(it.created_at.slice(5, 16))} · ${lv}${w}</div>
         </div>
         <div class="sl-hi-s ${pct >= 0.8 ? 'good' : pct >= 0.6 ? 'ok' : 'bad'}">${it.score}<span>/${it.full}</span></div>
-        <button class="sl-hi-del" data-sldel="${it.id}">🗑</button>
+        <button class="sl-hi-del" data-sldel="${it.id}">${artEm('🗑')}</button>
       </div>`;
     }).join('') : '<p class="empty">还没有批改记录，挑一道题练一练吧～</p>';
   } catch (_) { /* 列表拉不到就显示空态，下次进来会重试 */ }
@@ -298,7 +297,7 @@ function slRenderFind() {
   const mk = c ? { ok: c.okSents, bad: c.wrongSents, miss: c.missSents, near: c.nearSents } : null;
   const what = f.is_essay ? '立意 / 分论点 / 论据' : '要点';
   $('#slg-find').innerHTML = `
-    <div class="fr-tip">🖍 在材料里<b>点句子</b>勾出你认为的${esc(what)}（按住拖可以连选）。
+    <div class="fr-tip">${artEm('🖍')} 在材料里<b>点句子</b>勾出你认为的${esc(what)}（按住拖可以连选）。
       ${f.is_essay
         ? '大作文没有采分点，这一步找的是<b>动笔前的备料</b>：题目那句话的出处、可当分论点的侧面、能直接引的案例数据。'
         : '这一步<b>只找不写</b>。'}
@@ -307,7 +306,7 @@ function slRenderFind() {
     <div id="slg-mat-sents" class="fr-mat">${frMatHtml(f.sents, slPicked, mk)}</div>
     ${c ? frCheckBody(c) : ''}
     <div class="fr-acts">
-      ${c ? '<button class="btn" id="slg-redo">🔄 重新找一遍</button>' : ''}
+      ${c ? '<button class="btn" id="slg-redo">' + artEm("🔄") + ' 重新找一遍</button>' : ''}
       <button class="btn primary" id="slg-check">${c ? '改完了，重新判定' : '看看我找得对不对'}</button>
       ${c ? '<button class="btn" id="slg-towrite">下一步：照着写 →</button>' : ''}
     </div>`;
@@ -321,7 +320,7 @@ function slRenderFind() {
       $('#slg-find').classList.add('hidden');
       $('#slg-body').classList.remove('hidden');
       const picked = slFind.sents.filter(s => slPicked.has(s.i));
-      $('#slg-picked').innerHTML = `<div class="fr-sec-t">🖍 你勾到的（照着这些写）</div>`
+      $('#slg-picked').innerHTML = `<div class="fr-sec-t">${artEm('🖍')} 你勾到的（照着这些写）</div>`
         + `<div class="fr-picked">${picked.map(s => `<div>· ${esc(s.t)}</div>`).join('')
           || '<i>你没勾到任何要点</i>'}</div>`;
       $('#slg-picked').classList.remove('hidden');
@@ -454,9 +453,9 @@ function renderSlResult(r) {
         <span class="slp-score">${p.got}<i>/${p.max}</i></span></div>
       ${p.yours ? `<div class="slp-yours"><b>你的：</b>${esc(p.yours)}</div>`
       : `<div class="slp-yours slp-none">这一点没有作答</div>`}
-      ${(p.hits || []).map(h => `<div class="slp-li hit">✓ ${esc(h)}</div>`).join('')}
+      ${(p.hits || []).map(h => `<div class="slp-li hit">${artEm('✓')} ${esc(h)}</div>`).join('')}
       ${(p.partial || []).map(h => `<div class="slp-li part">— ${esc(h)}</div>`).join('')}
-      ${(p.misses || []).map(h => `<div class="slp-li miss">✕ ${esc(h)}</div>`).join('')}
+      ${(p.misses || []).map(h => `<div class="slp-li miss">${artEm('✕')} ${esc(h)}</div>`).join('')}
       ${p.material ? `<div class="slp-mat"><b>对照材料${
         // 句号只有「按预标采分点评分」时才有 —— 现场提炼那条老路给不出原文位置。
         // 句号是相对「给定资料N」那一则的，所以得把是哪一则一并标出来，否则对不上整份材料。
@@ -466,7 +465,7 @@ function renderSlResult(r) {
     </div>`;
   }).join('')
     // 采分点是预先标好的：同一份答案再批一次分数不会飘，值得让用户看见
-    + (r.std_points ? `<div class="slr-wtag">📌 本题按<b>预标采分点</b>评分：标尺固定、结果可复现，"对照材料"是逐字锚定到原句的</div>` : '')
+    + (r.std_points ? `<div class="slr-wtag">${artEm('📌')} 本题按<b>预标采分点</b>评分：标尺固定、结果可复现，"对照材料"是逐字锚定到原句的</div>` : '')
     + ((r.advice || []).length ? `<div class="slr-advice"><div class="slt-sec">改进建议</div><ul>`
     + r.advice.map(a => `<li>${esc(a)}</li>`).join('') + `</ul></div>` : '');
 
@@ -480,7 +479,7 @@ function renderSlResult(r) {
     : `<div class="slt-sec">参考范文（${esc(r.type_name || '')}）</div>
        <p class="empty">这次没生成出范文（生成范文是批改之外单独的一次 AI 调用，超时/失败就会空着）。<br>
        点下面的按钮单独重生成，不用重跑整份批改。</p>
-       ${r.id ? `<button class="btn primary" id="slr-regen" data-rid="${r.id}">🔄 重新生成参考范文</button>` : ''}`;
+       ${r.id ? `<button class="btn primary" id="slr-regen" data-rid="${r.id}">${artEm('🔄')} 重新生成参考范文</button>` : ''}`;
 
   $('#slr-orig').innerHTML = `<div class="slt-sec">题干</div>
     <div class="slr-reftext">${esc(r.question || '').replace(/\n/g, '<br>')}</div>

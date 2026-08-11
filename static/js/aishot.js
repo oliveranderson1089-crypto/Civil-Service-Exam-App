@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, aiHandleAttach, api, c, deskMsg, loadMaterials,
-   openAI, push, qnAddImgs, qnOpen, stack, toast */
+/* global $, aiHandleAttach, api, artEm, c, deskMsg, loadMaterials, openAI, push, qnAddImgs, qnOpen, stack, toast */
 
 /* ================= AI：截图 / 粘贴图片 / 手写输入 =================
    识图必须走智谱 GLM-4.6V —— 实测 DeepSeek 的 API 直接拒收图片
@@ -156,12 +155,12 @@ function shotChoose(file) {
   el.innerHTML = `<div class="ns-mask" data-sheet-close></div>
     <div class="ns-panel">
       <div class="ns-handle"></div>
-      <div class="ns-title">📷 截图好了，怎么用它？</div>
+      <div class="ns-title">${artEm('📷')} 截图好了，怎么用它？</div>
       <img src="${url}" style="max-width:100%;max-height:38vh;display:block;margin:0 auto 12px;border-radius:8px;">
       <div class="acm-list">
-        <button data-sd="ai">🤖 问 AI（讲解 / 出处 / 怎么做）</button>
-        <button data-sd="note">📒 存到小记</button>
-        <button data-sd="mat">📚 存到资料库</button>
+        <button data-sd="ai">${artEm('🤖')} 问 AI（讲解 / 出处 / 怎么做）</button>
+        <button data-sd="note">${artEm('📒')} 存到小记</button>
+        <button data-sd="mat">${artEm('📚')} 存到资料库</button>
       </div>
     </div>`;
   el.classList.remove('hidden');

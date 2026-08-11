@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, emKey, esc, fmtDay,
-   mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, emKey, esc, fmtDay, mdToHtml, push, stack, toast */
 
 /* ================= 人民时评·申论范文（每日抓人民日报评论版） ================= */
 let fwBoard = '', fwData = null;
@@ -40,7 +39,7 @@ async function loadFanwen() {
         </div>
         <div class="fw-t">${esc(it.title)}</div>
         ${it.pullquote ? `<div class="fw-pull">${esc(it.pullquote)}</div>` : ''}
-        <div class="fw-meta">${it.author ? esc(it.author) + ' · ' : ''}约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">✓ 已有 AI 拆解</span>' : ''}</div>
+        <div class="fw-meta">${it.author ? esc(it.author) + ' · ' : ''}约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">' + artEm("✓") + ' 已有 AI 拆解</span>' : ''}</div>
       </div>`).join('');
   } catch (e) { $('#fw-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
@@ -86,17 +85,17 @@ let fwReadMode = 'plain';        // plain=纯读；annotated=对照精读（AI �
 function renderFanwen() {
   const d = fwData;
   const ai = d.analysis
-    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 范文拆解</div><div class="cd-sec-b">${mdToHtml(d.analysis)}</div>
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">${artEm('🤖')} AI 范文拆解</div><div class="cd-sec-b">${mdToHtml(d.analysis)}</div>
         <button class="btn cd-ai-regen" id="fw-regen">重新生成</button></div>`
     : `<div class="poly-genbox"><p class="cd-tip" style="margin:0 0 10px">让 AI 拆开讲：中心论点、结构脉络、亮点、可仿写的过渡句金句，以及能用在哪些主题。</p>
-        <button class="btn primary" id="fw-gen" style="width:100%;padding:12px;">🤖 生成 AI 范文拆解</button></div>`;
+        <button class="btn primary" id="fw-gen" style="width:100%;padding:12px;">${artEm('🤖')} 生成 AI 范文拆解</button></div>`;
   const paras = (d.content || '').split('\n').filter(x => x.trim());
   const ann = d.annotations || {};
   const annotated = fwReadMode === 'annotated';
   // 对照精读：每段后面紧跟这段的 AI 批注 —— 解读和正文对得上，不用两头翻
   const body = paras.map((p, i) => {
     let html = `<p>${emKey(p.trim())}</p>`;
-    if (annotated && ann[i]) html += `<div class="fw-anno">💡 ${emKey(ann[i])}</div>`;
+    if (annotated && ann[i]) html += `<div class="fw-anno">${artEm('💡')} ${emKey(ann[i])}</div>`;
     return html;
   }).join('');
   const toolbar = `<div class="fw-readbar">

@@ -7,6 +7,7 @@
 import json
 import os
 import tempfile
+import time
 import uuid
 
 from flask import Blueprint, jsonify, request
@@ -16,6 +17,32 @@ from mods.ai import vision_configured, vision_ocr
 from mods.files import IMAGE_EXT, _extract_text, _ocr_image
 
 bp = Blueprint("attach", __name__)
+
+# 发给 AI 看的原图暂存处。**只是暂存**：留 3 天足够一场对话里反复追问，
+# 再久就是白占盘 —— 会话历史里存的是文件名和抽出的文字，不靠这些图。
+AI_IMG_DIR = os.path.join(BASE, "uploads", "_aiimg")
+AI_IMG_KEEP_DAYS = 3
+
+
+def _sweep_ai_imgs():
+    """顺手清掉过期的暂存图。跟着上传走，不另起定时器。"""
+    try:
+        cutoff = time.time() - AI_IMG_KEEP_DAYS * 86400
+        for fn in os.listdir(AI_IMG_DIR):
+            p = os.path.join(AI_IMG_DIR, fn)
+            if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+                os.remove(p)
+    except Exception:
+        log.debug("暂存图清理失败", exc_info=True)
+
+
+def ai_img_path(name):
+    """把前端带回来的文件名还原成磁盘路径。挡掉路径穿越 —— 这个名字是从请求里来的。"""
+    name = os.path.basename(name or "")
+    if not name:
+        return ""
+    p = os.path.join(AI_IMG_DIR, name)
+    return p if os.path.exists(p) else ""
 
 # 常识积累的板块元数据（changshi_meta.json）——这块路由也在本模块里
 _CS_META = {}
@@ -57,12 +84,24 @@ def ai_extract_attachment():
                 err = "这个格式（%s）暂时提取不出文字，可先转成 PDF 或截图上传" % (ext or "未知")
     except Exception as e:
         err = "解析失败：%s" % e
-    finally:
-        try:
+    keep = ""
+    try:
+        # 图片：**原图留下来**，不像以前那样抽完文字就删。抽文字够应付文字题，但图形推理和
+        # 资料分析的图表在抽取那一步就没了 —— 行测两个大板块恰恰全在图里。留着路径，
+        # 对话那边把原图直接交给视觉模型（aisession 的 vision 分支），文字继续当兜底。
+        if is_img:
+            os.makedirs(AI_IMG_DIR, exist_ok=True)
+            keep = uuid.uuid4().hex + ext
+            os.replace(tmp, os.path.join(AI_IMG_DIR, keep))
+            _sweep_ai_imgs()
+        else:
             os.remove(tmp)
-        except Exception:
-            log.debug("临时文件没删掉", exc_info=True)
+    except Exception as e:
+        keep = ""
+        log.info("附件临时文件处理失败：%r", e)
     text = (text or "").strip()
+    if is_img and (keep or text):
+        return jsonify({"text": text[:6000], "name": f.filename, "image": keep})
     if not text:
         return jsonify({"error": err or "没能从附件中提取到文字"}), 200
     return jsonify({"text": text[:6000], "name": f.filename})

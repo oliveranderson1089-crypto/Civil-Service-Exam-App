@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IN_APP, PAGE_SIZE, api, appConfirm, c,
-   composing, esc, push, toast */
+/* global $, IN_APP, PAGE_SIZE, api, appConfirm, artEm, c, composing, esc, push, toast */
 
 /* ================= 成语 / 词语 ================= */
 let state = { filter: 'all', q: '', items: [], page: 1, pages: 1 };
@@ -110,7 +109,7 @@ function renderEntries() {
       <div class="item-head"><span class="item-word">${esc(it.word)}</span>
         <span class="item-py">${esc(it.pinyin)}</span><span class="item-cat">${esc(it.category)}</span></div>
       ${it.explanation ? `<div class="item-exp">${esc(it.explanation)}</div>` : ''}
-      ${sub.join('')}${it.note ? `<div class="item-note">📝 ${esc(it.note)}</div>` : ''}
+      ${sub.join('')}${it.note ? `<div class="item-note">${artEm('📝')} ${esc(it.note)}</div>` : ''}
     </div>`;
   }).join('');
 }

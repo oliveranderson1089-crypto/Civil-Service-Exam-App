@@ -7,9 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global qsClear, qsRender, $, DT_L, api, back, c,
-   dtMaterial, esc, push, toast,
-   qtStart, qtStop, wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
+/* global $, DT_L, api, artEm, back, c, dtMaterial, esc, push, qsClear, qsRender, qtStart, qtStop, toast, wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
 
 /* ============= 专项练（行测六大板块）=============
    资料分析 / 判断推理 / 数量关系 —— 题型固定、有套路、拼速度，**题由程序生成**，答案由构造保证。
@@ -77,7 +75,7 @@ function renderDrillTypes() {
       ? `<div class="dr-mth"><div class="dr-mth-t">📐 解题方法（讲义第一章）</div>
           ${d.methods.map(m => `<div class="dr-mth-i">· ${esc(m)}</div>`).join('')}</div>` : '';
     $('#dr-missing').innerHTML = d.missing
-      ? `<div class="dr-miss">⚠️ ${esc(d.missing)}</div>` : '';
+      ? `<div class="dr-miss">${artEm('⚠️')} ${esc(d.missing)}</div>` : '';
     box.innerHTML = d.types.map((t, i) => {
       const done = t.n > 0;
       const weak = done && t.acc < Math.round(drCoef * 100);   // 低于这个难度的预期得分率 = 薄弱
@@ -95,7 +93,7 @@ function renderDrillTypes() {
           <span class="dr-eng ${t.eng}">${t.eng === 'prog' ? '程序出题' : 'AI 出题'}</span>
           ${t.eng === 'ai' && t.bank_all
             ? `<span class="dr-bank" title="AI 出的题要过第二个模型的独立核验才发给你做；答案不一致的不出">
-                 ✓ ${t.bank_ok} 道已核验${t.bank_all > t.bank_ok ? `（筛掉 ${t.bank_all - t.bank_ok}）` : ''}</span>` : ''}
+                 ${artEm('✓')} ${t.bank_ok} 道已核验${t.bank_all > t.bank_ok ? `（筛掉 ${t.bank_all - t.bank_ok}）` : ''}</span>` : ''}
           ${drSrc === 'ai' ? '' : `<span class="dr-real${t.real_ok ? '' : ' none'}">
              ${t.real_n ? `📄 真题 ${t.real_n} 道` : '📄 无真题'}</span>`}
           ${done ? `做过 ${t.n} 题 · 平均 ${t.sec} 秒${t.sec > drLimit ? '（超时）' : ''}` : `限时 ${drLimit} 秒/题`}</div>
@@ -110,7 +108,7 @@ function renderDrillTypes() {
       return `<div class="dr-card dr-all${off ? ' dr-off' : ''}" data-drt=""${off ? ' data-droff="1"' : ''}>
         <div class="dr-card-h"><b>🎲 混合练</b></div>
         <p class="dr-desc">所有题型随机出，模拟真实考场</p>
-        <div class="dr-meta">${drSrc === 'ai' ? '' : `<span class="dr-real${d.real_mix_ok ? '' : ' none'}">📄 真题 ${d.real_total || 0} 道 / ${d.real_types_ok || 0} 个题型够刷</span> · `}限时 ${drLimit} 秒/题</div></div>`;
+        <div class="dr-meta">${drSrc === 'ai' ? '' : `<span class="dr-real${d.real_mix_ok ? '' : ' none'}">${artEm('📄')} 真题 ${d.real_total || 0} 道 / ${d.real_types_ok || 0} 个题型够刷</span> · `}限时 ${drLimit} 秒/题</div></div>`;
     })();
   } catch (e) {
     // renderDrillTypes 现在会被题源点击直接调用，那条路上抛异常就是未捕获，
@@ -305,7 +303,7 @@ function drPick(letter) {
       · 用时 <b class="${over ? 'over' : ''}">${sec.toFixed(0)} 秒</b>${over ? `（限时 ${lim} 秒，慢了）` : ''}
       · 正确答案 <b>${esc(it.answer)}</b></div>
     <div class="dt-exp">${bold(it.explain)}</div>
-    ${it.tip ? `<div class="dr-tip">⚡ <b>秒杀技巧</b>：${bold(it.tip)}</div>` : ''}
+    ${it.tip ? `<div class="dr-tip">${artEm('⚡')} <b>秒杀技巧</b>：${bold(it.tip)}</div>` : ''}
     ${/* 做错的题服务端交卷时才自动收；这里给个当场的口子：补错因、或者把手滑点错的移出去 */''}
     ${it.wq_key ? `<div class="dr-wql">${wqlBtnHtml(it.wq_kind || 'drill', it.wq_key)}</div>` : ''}
     <button class="btn primary" id="dr-next">${drIdx + 1 >= drItems.length ? '看结果' : '下一题 →'}</button>`;
@@ -372,8 +370,8 @@ async function drResult() {
         ${wqlBtnHtml(it.wq_kind || 'drill', it.wq_key)}</div>`;
     }).join('')}</div>
         <div class="dr-acts">
-          <button class="btn primary" id="dr-again">🔄 再来 ${drN} 题</button>
-          <button class="btn" id="dr-see">📋 看每题详情</button>
+          <button class="btn primary" id="dr-again">${artEm('🔄')} 再来 ${drN} 题</button>
+          <button class="btn" id="dr-see">${artEm('📋')} 看每题详情</button>
           <button class="btn" id="dr-back">换个题型</button>
         </div>
       </div>`;

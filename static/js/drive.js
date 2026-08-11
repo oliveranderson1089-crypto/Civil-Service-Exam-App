@@ -7,15 +7,15 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, back, clipFiles, copyText, esc,
-   lsDel, lsGet, lsSet, openViewerUrl, push, stack, toast */
+/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, artEm, back, clipFiles, copyText, esc, lsDel, lsGet, lsSet, openViewerUrl, push, stack, toast */
 
 /* ================= 云盘 ================= */
 let dvFolder = '';
 const FILE_ICON = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', ppt: '📙', pptx: '📙',
   png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', apk: '📦', exe: '📦', dmg: '📦',
   zip: '🗜️', rar: '🗜️', '7z': '🗜️', mp4: '🎬', mp3: '🎵', txt: '📄', md: '📄', html: '🌐' };
-const dvIcon = e => FILE_ICON[(e || '').replace('.', '').toLowerCase()] || '📎';
+// 包成两套字形：没开主题还是原来那个彩色 emoji，开了主题换成跟色的线描（js/articons.js）
+const dvIcon = e => artEm(FILE_ICON[(e || '').replace('.', '').toLowerCase()] || '📎');
 function fSize(n) {
   n = n || 0;
   if (n < 1024) return n + ' B';
@@ -48,13 +48,13 @@ function dvRow(it) {
     // 搜索结果里的文件夹，路径要用它自己的 folder 拼，不能用当前目录
     const path = (it.folder ? it.folder + '/' : '') + it.name;
     return `<div class="dv-item dv-dir">${pick}
-      <span class="dv-ic" data-dvopen="${esc(path)}">📁</span>
+      <span class="dv-ic" data-dvopen="${esc(path)}">${artEm('📁')}</span>
       <div class="dv-info" data-dvopen="${esc(path)}">
         <div class="dv-name">${esc(it.name)}</div>
         <div class="dv-meta">文件夹</div></div>
       <span class="dv-acts">${more}</span></div>`;
   }
-  const where = (dvQuery && it.folder) ? ' · 📁 ' + esc(it.folder) : '';
+  const where = (dvQuery && it.folder) ? ' · ' + artEm('📁') + ' ' + esc(it.folder) : '';
   const name = it.viewable
     ? `<div class="dv-name dv-can" data-dvview="${it.id}" data-ext="${esc(it.ext || '')}">${esc(it.name)}</div>`
     : `<div class="dv-name">${esc(it.name)}</div>`;
@@ -82,14 +82,14 @@ function dvTrashRow(it) {
   /* 「原在 …」那串可以很长（原在 📁 四川省考/公考/…）。名字和它都放进可收缩的
      .dv-info 里，按钮才不会被顶出屏幕 —— 手机上原来点不到「恢复」就是栽在这儿。 */
   return `<div class="dv-item">
-    <span class="dv-ic">${it.is_dir ? '📁' : dvIcon(it.ext)}</span>
+    <span class="dv-ic">${it.is_dir ? artEm('📁') : dvIcon(it.ext)}</span>
     <div class="dv-info">
       <div class="dv-name">${esc(it.name)}</div>
-      <div class="dv-meta">${it.is_dir ? '文件夹' : fSize(it.size)} · 删于 ${esc((it.deleted_at || '').slice(5, 16))}${it.folder ? ' · 原在 📁 ' + esc(it.folder) : ''}</div>
+      <div class="dv-meta">${it.is_dir ? '文件夹' : fSize(it.size)} · 删于 ${esc((it.deleted_at || '').slice(5, 16))}${it.folder ? ' · 原在 ' + artEm('📁') + ' ' + esc(it.folder) : ''}</div>
     </div>
     <span class="dv-acts">
       <button class="dv-act" data-dvrestore="${it.id}" title="恢复">↩︎ 恢复</button>
-      <button class="dv-del" data-dvpurge="${it.id}" title="彻底删除">🗑</button></span></div>`;
+      <button class="dv-del" data-dvpurge="${it.id}" title="彻底删除">${artEm('🗑')}</button></span></div>`;
 }
 
 async function loadTrash() {
@@ -97,7 +97,7 @@ async function loadTrash() {
   dvSel.clear(); dvBatchBar();
   try {
     const d = await api('/api/drive/trash');
-    $('#dv-crumb').innerHTML = `<a data-dvcd="">☁️ 云盘</a> / 🗑 回收站`;
+    $('#dv-crumb').innerHTML = `<a data-dvcd="">${artEm('☁️')} 云盘</a> / ${artEm('🗑')} 回收站`;
     // 回收站里的东西还占着配额 —— 不说清楚，用户会奇怪「删了怎么没腾出空间」
     $('#dv-used').textContent = d.held
       ? '回收站占用 ' + fSize(d.held) + '（' + d.days + ' 天后自动清空）'
@@ -126,11 +126,11 @@ async function loadDrive() {
     $('#dv-used').textContent = '已用 ' + fSize(d.used) + (d.quota ? ' / ' + fSize(d.quota) : '');
     // 面包屑（搜索时改成显示搜索状态，点「云盘」退回浏览）
     if (dvQuery) {
-      $('#dv-crumb').innerHTML = `<a data-dvcd="">☁️ 云盘</a> / 🔍 搜「${esc(dvQuery)}」`;
+      $('#dv-crumb').innerHTML = `<a data-dvcd="">${artEm('☁️')} 云盘</a> / 🔍 搜「${esc(dvQuery)}」`;
     } else {
       const parts = dvFolder ? dvFolder.split('/') : [];
       let acc = '';
-      $('#dv-crumb').innerHTML = `<a data-dvcd="">☁️ 云盘</a>` + parts.map(p => {
+      $('#dv-crumb').innerHTML = `<a data-dvcd="">${artEm('☁️')} 云盘</a>` + parts.map(p => {
         acc = acc ? acc + '/' + p : p; return ` / <a data-dvcd="${esc(acc)}">${esc(p)}</a>`;
       }).join('');
     }
@@ -245,9 +245,9 @@ $('#dv-share-list').onclick = async () => {
   el.innerHTML = `<div class="ns-mask" data-sheet-close></div><div class="ns-panel">
     <div class="ns-handle"></div><div class="ns-title">我分享出去的链接</div>
     <div class="ms-list">${d.shares.length ? d.shares.map(s => `<div class="ms-frow">
-      🔗 ${esc(s.name)}<br><small>下载 ${s.hits} 次 · 有效期至 ${esc((s.expires_at || '不限').slice(0, 10))}</small>
+      ${artEm('🔗')} ${esc(s.name)}<br><small>下载 ${s.hits} 次 · 有效期至 ${esc((s.expires_at || '不限').slice(0, 10))}</small>
       <button class="btn tiny" data-dvunshare="${s.id}">撤销</button></div>`).join('')
-    : '<p class="empty">还没分享过。文件行上点 🔗 就能生成链接。</p>'}</div>
+    : '<p class="empty">还没分享过。文件行上点 ' + artEm("🔗") + ' 就能生成链接。</p>'}</div>
     <div class="ms-acts"><button class="btn" id="dvsh-close">关闭</button></div></div>`;
   el.classList.remove('hidden');
   const close = () => el.classList.add('hidden');
@@ -456,8 +456,8 @@ async function dvPickFolder() {
     const el = $('#mat-share-sheet');
     el.innerHTML = `<div class="ns-mask" data-sheet-close></div><div class="ns-panel">
       <div class="ns-handle"></div><div class="ns-title">移动到哪个文件夹</div>
-      <div class="ms-list"><button class="ms-frow" data-dvto="">☁️ 云盘（根目录）</button>
-      ${folders.map(f => `<button class="ms-frow" data-dvto="${esc(f)}">📁 ${esc(f)}</button>`).join('')}</div>
+      <div class="ms-list"><button class="ms-frow" data-dvto="">${artEm('☁️')} 云盘（根目录）</button>
+      ${folders.map(f => `<button class="ms-frow" data-dvto="${esc(f)}">${artEm('📁')} ${esc(f)}</button>`).join('')}</div>
       <div class="ms-acts"><button class="btn" id="dvto-cancel">取消</button></div></div>`;
     el.classList.remove('hidden');
     const done = v => { el.classList.add('hidden'); res(v); };

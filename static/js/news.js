@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, emKey, esc, injectReadBtns,
-   mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, emKey, esc, injectReadBtns, mdToHtml, push, stack, toast */
 
 /* ============= 每日时政（爬虫 + AI 三行式；国内/四川/国际 三板块，全局共享） ============= */
 let newsBoard = '党内', newsDate = '';
@@ -33,7 +32,7 @@ async function loadXiyu() {
     if (!d.items.length) { $('#news-list').innerHTML = '<p class="empty">还没有金句，每天清晨自动从习近平讲话数据库提炼～</p>'; return; }
     let lastDate = '';
     $('#news-list').innerHTML = d.items.map(it => {
-      const head = it.date !== lastDate ? `<div class="sc-day">🗓 ${fmtDay(it.date)}</div>` : '';
+      const head = it.date !== lastDate ? `<div class="sc-day">${artEm('🗓')} ${fmtDay(it.date)}</div>` : '';
       lastDate = it.date;
       const apply = it.apply || it.note || '';
       const bg = (it.note && it.note !== apply) ? it.note : '';
@@ -74,7 +73,7 @@ async function loadNews() {
       const sum = (it.ai_summary || '').trim();
       return `<div class="poly-card news-card" data-news="${it.id}">
         <button class="news-star ${it.starred ? 'on' : ''}" data-nstar="${it.id}">${it.starred ? '★' : '☆'}</button>
-        <div class="news-date">🗓 ${esc(it.pub_date || '')} · ${esc(it.source || '')}</div>
+        <div class="news-date">${artEm('🗓')} ${esc(it.pub_date || '')} · ${esc(it.source || '')}</div>
         <div class="poly-t" style="font-size:16px;padding-right:34px;">${esc(it.title)}</div>
         ${sum ? `<div class="news-sum" style="white-space:pre-wrap">${esc(sum)}</div>` : ''}
       </div>`;
@@ -158,7 +157,7 @@ function nwRender(d) {
   const marks = d.marks || [];
   // 重点清单：先看这个就够了，没时间就别读全文
   const list = marks.length ? `
-    <div class="cd-sec nw-marks"><div class="cd-sec-t">🖍 重点 · 考点（${marks.length} 处，原文里已划出）</div>
+    <div class="cd-sec nw-marks"><div class="cd-sec-t">${artEm('🖍')} 重点 · 考点（${marks.length} 处，原文里已划出）</div>
       ${marks.map((m, i) => {
         const k = NW_KIND[m.kind] || NW_KIND['提法'];
         return `<div class="nw-m" data-nwgo="${i}" style="--mk:${k.c}">
@@ -171,13 +170,13 @@ function nwRender(d) {
         `<span style="--mk:${v.c}"><i></i>${k}：${v.d}</span>`).join('')}</div>
     </div>`
     : `<div class="cd-sec nw-marks">
-        <div class="cd-sec-t">🖍 重点 · 考点</div>
+        <div class="cd-sec-t">${artEm('🖍')} 重点 · 考点</div>
         <p class="empty" style="padding:6px 0 12px">还没划重点。点一下，AI 会在原文里把该记的地方标出来（约 20 秒），不用通读全文。</p>
-        <button class="btn primary" id="nw-mark">🖍 帮我划重点</button>
+        <button class="btn primary" id="nw-mark">${artEm('🖍')} 帮我划重点</button>
       </div>`;
 
   const ai = d.ai_summary
-    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">🤖 AI 摘要 · 三行式</div><div class="cd-sec-b">${mdToHtml(d.ai_summary)}</div></div>` : '';
+    ? `<div class="cd-sec cd-ai"><div class="cd-sec-t">${artEm('🤖')} AI 摘要 · 三行式</div><div class="cd-sec-b">${mdToHtml(d.ai_summary)}</div></div>` : '';
 
   // 原文：把逐字挑出的重点句原样标出来（服务端核对过，必然命中）
   const marked = nwMarkup(d.content || '', marks);
@@ -186,7 +185,7 @@ function nwRender(d) {
 
   $('#news-wrap').innerHTML = `
     <div class="poly-head"><h2>${esc(d.title)}</h2>
-      <div class="news-date">🗓 ${esc(d.pub_date || '')} · ${esc(d.source || '')}</div>
+      <div class="news-date">${artEm('🗓')} ${esc(d.pub_date || '')} · ${esc(d.source || '')}</div>
       <a class="poly-src" href="${esc(d.url)}" target="_blank" rel="noopener">原文来源 ↗</a></div>
     ${list}
     ${ai}
@@ -234,7 +233,7 @@ async function loadGaikuo() {
         <div class="gk-head"><span class="gk-no">${i + 1}</span><span class="gk-topic">${esc(it.topic)}</span></div>
         ${it.raw ? `<div class="gk-raw"><span class="gk-lab">材料</span>${esc(it.raw)}</div>` : ''}
         <div class="gk-sent"><span class="gk-lab gk-lab-s">概括</span><b>${esc(it.sentence)}</b></div>
-        ${it.tip ? `<div class="gk-tip">💡 ${esc(it.tip)}</div>` : ''}
+        ${it.tip ? `<div class="gk-tip">${artEm('💡')} ${esc(it.tip)}</div>` : ''}
       </div>`).join('');
   } catch (e) { $('#gk-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }

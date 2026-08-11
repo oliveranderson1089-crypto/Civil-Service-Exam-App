@@ -36,6 +36,27 @@ def _newest_mtime(paths):
     return max(p.stat().st_mtime for p in paths)
 
 
+def _check_tags_at_end(html):
+    """确认可打包的那串 <script> 都在 DOM 后面。
+
+    打包是把它们**整体挪到第一个标签的位置**。所以只要有一个可打包的脚本被插在页面中间
+    （比如贴着启动屏那段 DOM），整个 bundle 就会提前到 DOM 还没解析完时执行 ——
+    第一个 $('#xxx') 就是 null，应用当场停在启动页，而且**只在打包后的线上才复现**
+    （测试是等 DOM 全解析完再求值的，照样绿）。这条闸把它变成"退回不打包"，而不是白屏。
+
+    要早于 DOM 加载的脚本，给标签加个属性（如 data-early）绕开 _SCRIPT_RE 即可。
+    """
+    m = _SCRIPT_RE.search(html)
+    if not m:
+        return
+    last_dom = max(html.rfind("</section>"), html.rfind("</main>"), html.rfind("</div>"))
+    if last_dom > m.start():
+        raise RuntimeError(
+            "可打包的 <script> 出现在 DOM 中间（位置 %d，DOM 收尾在 %d）："
+            "打包会把整个 bundle 提前到那儿执行，应用会停在启动页。"
+            "要早加载就给那个标签加 data-early 之类的属性绕开打包。" % (m.start(), last_dom))
+
+
 def _rebuild():
     """读 index.html + 56 个 js，拼 bundle、算哈希、压 gzip、把标签换成一个 bundle 标签。"""
     idx = Path(STATIC) / "index.html"
@@ -44,6 +65,7 @@ def _rebuild():
     if not srcs:
         raise RuntimeError("index.html 里没找到 <script src=js/*.js> 标签，放弃打包")
     files = [Path(STATIC) / s for s in srcs]
+    _check_tags_at_end(html)
     css = Path(STATIC) / "style.css"
     mtime = _newest_mtime([idx, *files] + ([css] if css.exists() else []))
 

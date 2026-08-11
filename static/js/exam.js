@@ -3,7 +3,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, esc, fmtDay, mdSafeHref, push, toast */
+/* global $, api, artEm, esc, fmtDay, mdSafeHref, push, toast */
 
 /* ============= 全国考情 ============= */
 // 'follow' = 只看关注的省（默认）。它不是一个真的地区，是「我关注的那几个 + 全国性的」。
@@ -52,7 +52,7 @@ async function loadExam() {
 
   const followTxt = exFollow.length ? exFollow.join('/') : '未设置';
   $('#ex-regions').innerHTML =
-    `<span class="chip ${exRegion === 'follow' ? 'active' : ''}" data-exr="follow">📍 我关注的（${esc(followTxt)}）</span>`
+    `<span class="chip ${exRegion === 'follow' ? 'active' : ''}" data-exr="follow">${artEm('📍')} 我关注的（${esc(followTxt)}）</span>`
     + `<span class="chip ${exRegion === '' ? 'active' : ''}" data-exr="">不限地区</span>`
     + exRegions.map(r => `<span class="chip ${exRegion === r ? 'active' : ''}" data-exr="${esc(r)}"
         >${esc(r)}${d.by_region[r] ? ' ' + d.by_region[r] : ''}</span>`).join('');

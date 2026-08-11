@@ -55,7 +55,7 @@ test('顶层符号：694 个，拆分后一个都不能丢', (t) => {
   const h = boot(); t.after(() => h.close());
   // 从 index.html 里读真实的加载清单 —— app.js 已按区段拆成 js/*.js
   const html = fs.readFileSync(path.join(__dirname, '../../static/index.html'), 'utf8');
-  const files = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map(m => m[1]);
+  const files = [...html.matchAll(/<script src="(js\/[^"]+)"[^>]*><\/script>/g)].map(m => m[1]);
   const src = files.map(f => fs.readFileSync(path.join(__dirname, '../../static', f), 'utf8')).join('\n');
   const names = new Set();
   for (const m of src.matchAll(/^(?:async )?function ([\w$]+)\s*\(/gm)) names.add(m[1]);

@@ -8,9 +8,7 @@
  * 一眼能对着算），错项逐条列。原卷解析仍然保留，折叠起来给想看原文的人。
  *
  */
-/* global qsClear, qsRender, $, api, appConfirm, back, esc, push, toast,
-   qtFmt, qtStart, qtStop, qtTotalStart, qtTotalStop,
-   wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
+/* global $, api, appConfirm, artEm, back, esc, push, qsClear, qsRender, qtFmt, qtStart, qtStop, qtTotalStart, qtTotalStop, toast, wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
 
 let rqOv = null, rqItems = [], rqIdx = 0, rqAns = {}, rqSec = {};
 let rqRates = {};   // 考点 → 近 30 天正确率（跟出题一起回来，见 mods/realq.py 的 _qtype_rates）
@@ -72,7 +70,7 @@ function renderRealqHome() {
         <b>智能刷</b><span>${d.due ? `${d.due} 道该重刷 · 排在最前` : '没做过的优先'}</span></button>
       <button class="rq-big alt" data-rqgo="papers"><b>整卷真题</b><span>按年份/卷种 · 背题或模考</span></button>
     </div>
-    <button class="btn tiny" id="rq-recs">📋 做题记录</button>
+    <button class="btn tiny" id="rq-recs">${artEm('📋')} 做题记录</button>
 
     <div class="rq-sec">按题型刷</div>
     ${Object.keys(byMod).map(m => `
@@ -111,8 +109,8 @@ async function openRealPapers() {
     box.innerHTML = `<div class="rq-sec">整卷 · ${d.items.length} 份卷子</div>
       <div class="dt-bar">
         <div class="dt-modes" id="rq-pmodes">
-          <button class="dt-mbtn${rqPaperMode === 'study' ? ' on' : ''}" data-rqpm="study">📖 背题模式</button>
-          <button class="dt-mbtn${rqPaperMode === 'exam' ? ' on' : ''}" data-rqpm="exam">📝 测试模式</button>
+          <button class="dt-mbtn${rqPaperMode === 'study' ? ' on' : ''}" data-rqpm="study">${artEm('📖')} 背题模式</button>
+          <button class="dt-mbtn${rqPaperMode === 'exam' ? ' on' : ''}" data-rqpm="exam">${artEm('📝')} 测试模式</button>
         </div>
         <div class="dt-mhint" id="rq-pmhint">${rqPmHint()}</div>
       </div>
@@ -267,7 +265,8 @@ function rqRender() {
   const mm = (n) => Math.floor(n / 60) + ':' + String(Math.round(n % 60)).padStart(2, '0');
   rqRelated(it, reveal && chosen !== it.answer);
   qsRender('#rq-side', {
-    title: `${esc(rqScope || it.qtype || '真题')} · ${rqItems.length} 题`,
+    // 不在这儿 esc：qsRender 渲染 title 时自己会 esc，转两次的话卷名里的 & 会显示成 &amp;
+    title: `${rqScope || it.qtype || '真题'} · ${rqItems.length} 题`,
     stat: secs.length
       ? `已答 ${Object.keys(rqAns).length} · 用时 ${mm(used)} · 均 ${Math.round(used / secs.length)} 秒/题`
       : `已答 ${Object.keys(rqAns).length} / ${rqItems.length}`,
@@ -377,7 +376,7 @@ async function rqFinish() {
     : '<p class="rq-hint">全对，这批题会按遗忘曲线往后排。</p>'}
       <div class="rq-done-acts">
         <button class="btn" id="rq-again">再来一组</button>
-        <button class="btn ghost" id="rq-torec">📋 做题记录</button>
+        <button class="btn ghost" id="rq-torec">${artEm('📋')} 做题记录</button>
       </div></div>
       ${rqExam ? rqReviewHtml(d.results) : ''}`;
     $('#rq-again').onclick = () => rqStart({ mode: 'smart', n: rqN }, '智能刷');

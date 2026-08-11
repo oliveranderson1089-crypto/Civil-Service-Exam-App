@@ -33,8 +33,10 @@ const EXPORTS = [
 function boot(opts = {}) {
   const html = fs.readFileSync(path.join(ROOT, 'static/index.html'), 'utf8');
   /* 按 index.html 里 <script> 的真实顺序拼起来 —— 顺序是行为的一部分，
-     写死一份清单迟早跟 index.html 走散，所以直接从它里面读。 */
-  const srcs = [...html.matchAll(/<script src="(js\/[^"]+)"><\/script>/g)].map(m => m[1]);
+     写死一份清单迟早跟 index.html 走散，所以直接从它里面读。
+     正则要允许标签带属性：早加载的那个（data-early）也得算进来，
+     漏掉它就是在测一个没有启动屏配色的应用。 */
+  const srcs = [...html.matchAll(/<script src="(js\/[^"]+)"[^>]*><\/script>/g)].map(m => m[1]);
   if (!srcs.length) throw new Error('index.html 里没找到 js/*.js —— 拆分结构变了？');
   const js = srcs.map(f => `//# ${f}\n` + fs.readFileSync(path.join(ROOT, 'static', f), 'utf8')).join('\n;\n');
   const dom = new JSDOM(html, {

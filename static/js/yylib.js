@@ -7,7 +7,7 @@
  * 空格子也要看得见：库里哪个文种、哪一块还没素材，正是这个页面该回答的问题。
  * 所以有素材的和没素材的都列，不做「没有就不显示」——那样看上去永远是齐的。
  */
-/* global $, api, esc, push, toast */
+/* global $, api, artEm, esc, push, toast */
 
 let ylCats = [], ylKind = '';
 
@@ -54,9 +54,9 @@ function ylItemCard(it) {
         ${it.src === 'real' ? '<span class="yl-evi">真题实证</span>'
                             : '<span class="yl-freq zero">人工种子</span>'}</div>
       <div class="yl-text"><b>${esc(it.title || '')}</b></div>
-      <div class="ye-good">✓ ${esc(it.good || '')}</div>
+      <div class="ye-good">${artEm('✓')} ${esc(it.good || '')}</div>
       ${it.bad ? `<div class="ye-bad">✗ ${esc(it.bad)}</div>` : ''}
-      ${it.note ? `<div class="ye-why">💡 ${esc(it.note)}</div>` : ''}
+      ${it.note ? `<div class="ye-why">${artEm('💡')} ${esc(it.note)}</div>` : ''}
     </div>`;
   }
   if (it.kind === '错例') {
@@ -64,15 +64,15 @@ function ylItemCard(it) {
       <div class="yl-item-h">${esc(it.part || '')} · ${esc(it.kind)}
         ${it.freq > 1 ? `<span class="yl-freq">犯过 ${it.freq} 次</span>` : ''}</div>
       <div class="ye-bad">✗ ${esc(it.bad || '')}</div>
-      <div class="ye-good">✓ ${esc(it.good || '')}</div>
-      ${it.note ? `<div class="ye-why">💡 ${esc(it.note)}</div>` : ''}
+      <div class="ye-good">${artEm('✓')} ${esc(it.good || '')}</div>
+      ${it.note ? `<div class="ye-why">${artEm('💡')} ${esc(it.note)}</div>` : ''}
       ${it.src_ref ? `<div class="yl-src">来源 ${esc(it.src_ref)}</div>` : ''}
     </div>`;
   }
   return `<div class="yl-item">
     <div class="yl-item-h">${esc(it.part || '')} · ${esc(it.kind)}</div>
     <div class="yl-text">${esc(it.text || '')}</div>
-    ${it.note ? `<div class="ye-why">💡 ${esc(it.note)}</div>` : ''}
+    ${it.note ? `<div class="ye-why">${artEm('💡')} ${esc(it.note)}</div>` : ''}
     ${it.example ? `<div class="ye-good">示范：${esc(it.example)}</div>` : ''}
     ${it.src_ref ? `<div class="yl-src">来源 ${esc(it.src_ref)}</div>` : ''}
   </div>`;

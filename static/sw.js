@@ -1,6 +1,6 @@
 // 网络优先：在线总是拿最新页面/样式/脚本，断网才用缓存兜底。
 // （避免旧的「缓存优先」导致更新后还显示旧样式）
-const CACHE = 'gongkao-v217';   // 启动页浅色改版、顶栏头像回归、新应用图标
+const CACHE = 'gongkao-v221';   // 悬浮球换「＋」并接进主题；真题按钮/常识字块/长尾收口
 
 self.addEventListener('install', e => { self.skipWaiting(); });
 

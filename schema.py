@@ -71,6 +71,31 @@ _GONGWEN_SEED = [
 ]
 
 
+def _migrate_chat_convs(con):
+    """把历史消息挂到会话上：每一对聊过天的人补一条 direct 会话，回填 conv_id。
+
+    幂等——只处理 conv_id IS NULL 的行，跑多少次都一样。老消息不动 read_at，
+    但要把成员的 last_read_id 初始化到「他已经读过的最后一条」，
+    否则升级完的第一眼，所有人的未读数都会从 0 变成全部历史。
+    """
+    rows = con.execute(
+        "SELECT DISTINCT MIN(from_uid,to_uid) a, MAX(from_uid,to_uid) b "
+        "FROM chat_msgs WHERE conv_id IS NULL AND from_uid IS NOT NULL AND to_uid IS NOT NULL"
+    ).fetchall()
+    for a, b in rows:
+        cur = con.execute("INSERT INTO conversations(kind,title) VALUES('direct','')")
+        cid = cur.lastrowid
+        con.execute("UPDATE chat_msgs SET conv_id=? WHERE conv_id IS NULL AND "
+                    "MIN(from_uid,to_uid)=? AND MAX(from_uid,to_uid)=?", (cid, a, b))
+        for u in ({a, b}):
+            # 他读过的最后一条 = 别人发给他、且已标已读的最大 id（自己发的当然算读过）
+            last = con.execute(
+                "SELECT COALESCE(MAX(id),0) FROM chat_msgs WHERE conv_id=? AND "
+                "(from_uid=? OR read_at IS NOT NULL)", (cid, u)).fetchone()[0]
+            con.execute("INSERT OR IGNORE INTO conv_members(conv_id,user_id,last_read_id) "
+                        "VALUES(?,?,?)", (cid, u, last))
+
+
 def _cols(con, table):
     return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
 
@@ -1027,6 +1052,85 @@ def init_db():
     # ai_chats 补 starred（置顶）
     if "starred" not in _cols(con, "ai_chats"):
         con.execute("ALTER TABLE ai_chats ADD COLUMN starred INTEGER DEFAULT 0")
+    # 聊天消息补三列（方案乙：消息发出去之后还能做点什么）
+    #   reply_to    —— 引用回复指向的那条消息 id
+    #   recalled_at —— 撤回时间。**不删行**：删了的话对方那侧的增量拉取（after=id）
+    #                  永远看不到这条的变化，气泡会一直留在他屏幕上。留行改状态才同步得过去。
+    #   edited_at   —— 预留给「重新编辑」
+    for col in ("reply_to", "recalled_at", "edited_at"):
+        if col not in _cols(con, "chat_msgs"):
+            con.execute("ALTER TABLE chat_msgs ADD COLUMN %s %s"
+                        % (col, "INTEGER" if col == "reply_to" else "TEXT"))
+    # ---- 会话模型（群聊的地基）----
+    # 原来消息是「from_uid/to_uid 两列指人」，从根上排除了多人。改成「消息属于某个会话」：
+    # 一对一也建一条 direct 会话，群聊是 group。**两列保留不动**，一对一那些路径照旧能走，
+    # 迁移也就能一步步来、随时退得回去。
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS conversations(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT DEFAULT 'direct',           -- direct=一对一（含文件传输助手）/ group=小组
+            title TEXT DEFAULT '',                -- 群名；direct 不用
+            owner_id INTEGER,                     -- 群主
+            announce TEXT DEFAULT '',             -- 群公告
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS conv_members(
+            conv_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            -- 未读一律按「读到哪条」算水位，不再逐条数 read_at：
+            -- 群聊里一条消息有多个读者，单条上的 read_at 根本表达不了。
+            last_read_id INTEGER DEFAULT 0,
+            muted INTEGER DEFAULT 0,
+            joined_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(conv_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmem_user ON conv_members(user_id);
+    """)
+    if "conv_id" not in _cols(con, "chat_msgs"):
+        con.execute("ALTER TABLE chat_msgs ADD COLUMN conv_id INTEGER")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_msgs(conv_id, id)")
+    _migrate_chat_convs(con)
+    # 搜索走 LIKE 而不是 FTS5：FTS5 的 unicode61 不给中文切词（整串算一个 token），
+    # trigram 又要求查询词至少 3 个字（搜「李萌」就废了）。这个库的消息量级下
+    # LIKE 完全够快，而且不用维护触发器同步——中文场景这是更对的取舍，不是偷懒。
+    con.execute("CREATE INDEX IF NOT EXISTS idx_chat_time ON chat_msgs(to_uid, from_uid, created_at)")
+    # ai_msgs 补两列：
+    #   kind   —— 'text'(默认) / 'error'。生成失败时那句「（本次回答失败：…）」也要落库
+    #             （不然用户问过的话都没了），但它**不能进下一轮上下文**：模型会以为自己
+    #             真这么答过，连着失败几次就积一堆自述失败的假回答。
+    #   attach —— 这一轮附件的原文（JSON: [{name,text}]）。以前附件全文是直接拼进 content 的，
+    #             于是刷新会话后「用户那句话」变成了整篇 PDF，标题也从它截前 24 字。
+    #             现在 content 只存人看的那句，全文放这里，重建上下文时按需注入。
+    #   meta   —— kind='tool' 那些行的轨迹（JSON: {name,label,args,result}）。以前工具
+    #             调用在生成结束就被丢掉：刷新会话看不到 AI 动过哪些数据，下一轮重建
+    #             上下文时模型也看不到自己查过什么，于是同样的查询反复调。
+    for col in ("kind", "attach", "meta"):
+        if col not in _cols(con, "ai_msgs"):
+            con.execute("ALTER TABLE ai_msgs ADD COLUMN %s TEXT" % col)
+    # 会话记住自己用的是哪个档位（fast=快 / pro=深度），重进不用再切
+    if "tier" not in _cols(con, "ai_chats"):
+        con.execute("ALTER TABLE ai_chats ADD COLUMN tier TEXT DEFAULT 'fast'")
+    # AI 长期记忆：跨会话记住「我考四川省考」「资料分析弱」这类事实。
+    # **可查可删**是硬要求——记忆最怕悄悄记错还一直用，所以来源和用过几次都留着。
+    con.executescript("""
+        CREATE TABLE IF NOT EXISTS ai_memories(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            kind TEXT DEFAULT 'fact',         -- fact=对话里沉淀 / auto=由数据自动归纳
+            text TEXT NOT NULL,
+            source TEXT,                      -- 「来自 7 月 12 日的对话」这类人话
+            hits INTEGER DEFAULT 0,           -- 被带进上下文多少次
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_aimem ON ai_memories(user_id, id DESC);
+        -- 项目资料：挂在项目下的参考文本（讲义/真题/自己的申论答案），提问时按需注入
+        CREATE TABLE IF NOT EXISTS ai_project_files(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            name TEXT, text TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_aipf ON ai_project_files(project_id);
+    """)
     # 应用文比大作文多一层：得先有「文种 + 发文场景 + 我是谁 + 写给谁」才谈得上选素材
     if "spec" not in _cols(con, "daily_essays"):
         con.execute("ALTER TABLE daily_essays ADD COLUMN spec TEXT")
