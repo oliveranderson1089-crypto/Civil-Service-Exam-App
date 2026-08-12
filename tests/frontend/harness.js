@@ -40,7 +40,9 @@ function boot(opts = {}) {
   if (!srcs.length) throw new Error('index.html 里没找到 js/*.js —— 拆分结构变了？');
   const js = srcs.map(f => `//# ${f}\n` + fs.readFileSync(path.join(ROOT, 'static', f), 'utf8')).join('\n;\n');
   const dom = new JSDOM(html, {
-    url: 'http://localhost:8011/',
+    // 默认 localhost；opts.url 可换成局域网 http 直连那种「不安全上下文」，
+    // 有些能力（录音）只在安全上下文下才有，测提示语要用得上
+    url: opts.url || 'http://localhost:8011/',
     runScripts: 'outside-only',
     pretendToBeVisual: true,
   });
@@ -107,6 +109,11 @@ function boot(opts = {}) {
     debug: (...a) => logs.debug.push(a.join(' ')),
     log: () => {},
   };
+
+  /* 壳注入的全局（window.__desktop / __desktopPlat 之类）。
+     真实的桌面壳是在页面脚本之前注入的，所以这里也必须在 eval 之前赋值 ——
+     放到后面的话，IS_DESKTOP 这种「加载时就定好」的常量已经算完了，测的就不是那回事。 */
+  if (opts.window) Object.assign(w, opts.window);
 
   // 必须跟 app.js 在**同一个 eval** 里：它的 const/function 都在那个作用域内，
   // 分两次 eval 的话第二次根本看不见第一次的东西。

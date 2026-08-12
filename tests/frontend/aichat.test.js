@@ -73,3 +73,33 @@ test('工具面板「打开功能」镜像首页卡片，点击像点首页图�
   assert.strictEqual(h.window.__nav, 'xingce', '点打开功能项应像点首页图标一样跳转到对应板块');
   assert.strictEqual(h.toasts[h.toasts.length - 1].msg, '已打开「行测」');
 });
+
+/* 确认框这层原来只服务删除，文案写死了「此操作不可撤销」。
+   现在写长期记忆也走同一条路——记忆随时能删，照着删除那样吓唬人是错的；
+   反过来，删除那句警告一个字都不能少。 */
+test('要 AI 记住一件事：确认框问的是记什么，不说「不可撤销」', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('window.__msg = null; appConfirm = (m) => { window.__msg = m; return Promise.resolve(false); };');
+  await h.run(`aiConfirm({ type: 'confirm', tool: 'remember_fact', kind: 'write',
+    label: '记住这件事', summary: '目标是四川省考，2026 年 3 月笔试',
+    args: { text: '目标是四川省考，2026 年 3 月笔试' } })`);
+  const msg = h.window.__msg;
+  assert.match(msg, /记住这件事/);
+  assert.match(msg, /四川省考/, '得让人看清要记的是哪一句');
+  assert.doesNotMatch(msg, /不可撤销/, '记忆随时能删，别照删除那样吓唬人');
+  // 页面启动本身会发几条请求，只看确认这条
+  assert.strictEqual(h.calls.filter(c => c.url.includes('/confirm')).length, 0,
+                     '用户点了取消，就不该真去执行');
+});
+
+test('删除仍然照旧警告不可撤销', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run('window.__msg = null; appConfirm = (m) => { window.__msg = m; return Promise.resolve(false); };');
+  await h.run(`aiConfirm({ type: 'confirm', tool: 'delete_note', kind: 'destructive',
+    label: '删除小记', summary: '今天背了 20 个成语', args: { id: 3 } })`);
+  assert.match(h.window.__msg, /不可撤销/);
+  // 老动作没带 kind（服务端还没更新那一刻）：按删除处理，宁可多问一句
+  h.run('window.__msg = null;');
+  await h.run(`aiConfirm({ type: 'confirm', tool: 'delete_note', label: '删除小记', args: { id: 3 } })`);
+  assert.match(h.window.__msg, /不可撤销/);
+});

@@ -50,29 +50,50 @@ async function checkApkUpdate(manual) {
     notes: d.notes || '修复问题、优化体验。', size: pkgSize(d.size),
     btn: '立即更新', key,
     onGo: () => {
-      try { GongkaoNative.updateApp(location.origin + d.url); }
-      catch (_) { toast('更新失败，请到浏览器下载', true); }
+      // 壳会把下载进度画到通知栏；App 还开着的时候顺带用 toast 报一下百分比
+      try { GongkaoNative.updateApp(location.origin + d.url, 'v' + (d.version_name || d.version_code)); }
+      catch (_) {
+        try { GongkaoNative.updateApp(location.origin + d.url); }   // 老壳只认单参数
+        catch (__) { toast('更新失败，请到浏览器下载', true); }
+      }
     },
   });
 }
+
+/* 安卓壳下载新版 APK 的进度：0~100，-1 = 失败（壳那边已经弹了 Toast 和通知，别再叠一层）。
+   通知栏那条常驻进度条才是主入口——用户多半切走了；这里只是留在 App 里时也看得见。 */
+window.__updProgress = (pct) => {
+  if (pct < 0) return;
+  toast(pct >= 100 ? '下载完成，按提示安装' : '正在下载新版… ' + pct + '%');
+};
 
 async function checkDesktopUpdate(manual) {
   let d;
   try { d = await api('/api/desktop/version'); } catch (_) { if (manual) toast('检查更新失败', true); return; }
   const cur = parseInt(DESKTOP_VER.replace(/\./g, ''), 10) || 0;    // "3.2" → 32
 
+  /* 两个桌面端各有各的安装包，按壳注入的平台标志挑一套。
+     ⚠️ 服务端的 deb_* 字段没有改名，就是为了让已经装在机器上的老 Linux 壳继续认得。 */
+  const isWin = window.__desktopPlat === 'win';
+  const pkg = isWin
+    ? { avail: d.win_available, code: d.win_code, name: d.win_name, notes: d.win_notes,
+        size: d.win_size, url: d.win_url, tag: 'win',
+        file: (d.win_url || '').split('/').pop() || 'gongkao-setup.exe' }
+    : { avail: d.deb_available, code: d.deb_code, name: d.deb_name, notes: d.deb_notes,
+        size: d.deb_size, url: d.deb_url, tag: 'deb', file: 'gongkao.deb' };
+
   // ① 桌面壳本身有新版 → 必须重新下载安装包
-  if (d.deb_available && d.deb_code > cur) {
-    const key = 'deb' + d.deb_code;
+  if (pkg.avail && pkg.code > cur) {
+    const key = pkg.tag + pkg.code;          // 跳过标记按平台分开记，别互相盖
     if (!manual && lsGet('skipUpdate') === key) return;
     updModal({
-      title: '发现桌面版新版本', ver: 'v' + (d.deb_name || d.deb_code),
-      notes: (d.deb_notes || '优化体验。') + '\n这次改动涉及桌面客户端本身，需要重新下载安装包更新。',
-      size: pkgSize(d.deb_size), btn: '下载更新', key,
+      title: '发现桌面版新版本', ver: 'v' + (pkg.name || pkg.code),
+      notes: (pkg.notes || '优化体验。') + '\n这次改动涉及桌面客户端本身，需要重新下载安装包更新。',
+      size: pkgSize(pkg.size), btn: '下载更新', key,
       onGo: () => {
         toast('开始下载…完成后按提示安装');
         const a = document.createElement('a');
-        a.href = d.deb_url; a.download = 'gongkao.deb';
+        a.href = pkg.url; a.download = pkg.file;
         document.body.appendChild(a); a.click(); a.remove();
       },
     });
@@ -113,9 +134,20 @@ if (IS_DESKTOP || IN_APP) {
 }
 /* 桌面壳下载完成后回调（更新包下好了 → 告诉用户怎么装） */
 window.__onDownloaded = (path) => {
-  if (!/\.deb$/i.test(path || '')) return;
-  appConfirm(
-    '已保存到：' + path + '\n\n双击它用「软件安装器」打开即可完成更新，'
-    + '或在终端执行：sudo dpkg -i "' + path + '"\n装好后重新打开公考助手就是新版。',
-    { title: '更新包已下载完成', okText: '知道了' });
+  const p = path || '';
+  const tip = { title: '更新包已下载完成', okText: '知道了' };
+  if (/\.deb$/i.test(p)) {
+    appConfirm(
+      '已保存到：' + p + '\n\n双击它用「软件安装器」打开即可完成更新，'
+      + '或在终端执行：sudo dpkg -i "' + p + '"\n装好后重新打开公考助手就是新版。', tip);
+  } else if (/\.exe$/i.test(p)) {
+    appConfirm(
+      '已保存到：' + p + '\n\n双击它安装即可完成更新。\n'
+      + '首次运行 Windows 可能拦一下（「已保护你的电脑」）——点「更多信息 → 仍要运行」，'
+      + '这是没买代码签名证书的正常表现。\n装好后重新打开公考助手就是新版。', tip);
+  } else if (/gongkao-win.*\.zip$/i.test(p)) {
+    appConfirm(
+      '已保存到：' + p + '\n\n这是便携版：解压出来，运行里面的「公考助手.exe」即可。'
+      + '\n更新的话，把新解压的目录盖掉旧的就行（登录状态不在目录里，不会丢）。', tip);
+  }
 };

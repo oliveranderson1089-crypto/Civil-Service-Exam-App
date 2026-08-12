@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>截图</title>
+<!-- 框选层：背景是刚抓下来的那张静止的屏幕图，拖一个矩形选区。
+     选区的「亮」不是把外面涂黑，而是给选区一圈超大的阴影 —— 一个元素就够，
+     不用四块 div 拼窗口，拖动时也不会有接缝闪烁。 -->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; cursor: crosshair; background: #000; }
+  #bg { position: fixed; inset: 0; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+  #dim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); }
+  #sel {
+    position: fixed; display: none; border: 1px solid #1a6fb5;
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .45);      /* 选区外面全压暗 */
+  }
+  #size {
+    position: absolute; top: -26px; left: 0; white-space: nowrap;
+    background: #1a6fb5; color: #fff; font: 12px/20px "Microsoft YaHei", system-ui, sans-serif;
+    padding: 0 8px; border-radius: 4px;
+  }
+  #tip {
+    position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+    background: rgba(20, 26, 34, .82); color: #fff; padding: 8px 18px; border-radius: 999px;
+    font: 14px/1.6 "Microsoft YaHei", system-ui, sans-serif; pointer-events: none;
+  }
+</style>
+<img id="bg" alt="">
+<div id="dim"></div>
+<div id="sel"><span id="size"></span></div>
+<div id="tip">拖动鼠标框选要截的区域 · 按 Esc 取消</div>
+<script>
+  const bg = document.getElementById('bg');
+  const dim = document.getElementById('dim');
+  const sel = document.getElementById('sel');
+  const size = document.getElementById('size');
+  const tip = document.getElementById('tip');
+  __shot.onImage((d) => { bg.src = d; });
+
+  let sx = 0, sy = 0, dragging = false;
+  const rectOf = (e) => ({
+    x: Math.min(sx, e.clientX), y: Math.min(sy, e.clientY),
+    width: Math.abs(e.clientX - sx), height: Math.abs(e.clientY - sy),
+  });
+  const draw = (r) => {
+    sel.style.display = 'block';
+    sel.style.left = r.x + 'px'; sel.style.top = r.y + 'px';
+    sel.style.width = r.width + 'px'; sel.style.height = r.height + 'px';
+    size.textContent = r.width + ' × ' + r.height;
+  };
+
+  addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    dragging = true; sx = e.clientX; sy = e.clientY;
+    dim.style.display = 'none';            // 交给选区那圈阴影去压暗，两层叠着会更黑
+    tip.style.display = 'none';
+    draw(rectOf(e));
+  });
+  addEventListener('mousemove', (e) => { if (dragging) draw(rectOf(e)); });
+  addEventListener('mouseup', (e) => {
+    if (!dragging) return;
+    dragging = false;
+    const r = rectOf(e);
+    // 太小的多半是「点了一下」而不是想截图，别把 1×1 的图塞给网页
+    if (r.width < 5 || r.height < 5) { __shot.cancel(); return; }
+    __shot.done(r);
+  });
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') __shot.cancel(); });
+  addEventListener('contextmenu', (e) => { e.preventDefault(); __shot.cancel(); });   // 右键也当取消
+</script>
+</html>

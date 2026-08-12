@@ -16,6 +16,7 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -61,6 +62,8 @@ public class MainActivity extends Activity {
     private static final int CAMERA_REQ = 1002;
     private static final String KEY = "server_url";
     private static final int NOTIFY_PERM_REQ = 1003;
+    private static final int MIC_PERM_REQ = 1004;
+    private PermissionRequest pendingMic = null;     // 等系统权限批下来再放行的那次网页请求
     private volatile boolean pageReady = false;      // 网页加载完才能执行 ntfGo()
     private String pendingNotifyLink = null;         // 通知点进来时要跳转的位置
     // 默认地址：固定公网网址（命名隧道，重启不变）；在家也可在 APP 内改成局域网 IP 提速
@@ -107,6 +110,33 @@ public class MainActivity extends Activity {
         });
 
         web.setWebChromeClient(new WebChromeClient() {
+            /* 网页要用麦克风（聊天发语音、语音转文字）。WebView 默认一律拒绝，
+               不接这个回调的话，网页那边只会收到一句「没拿到麦克风权限」。
+               两层权限要分清：这里是**网页向 WebView 要**，系统那层还得单独申请。 */
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        boolean wantMic = false;
+                        for (String r : request.getResources()) {
+                            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) wantMic = true;
+                        }
+                        if (!wantMic) { request.deny(); return; }   // 只放麦克风，别的一概不给
+                        try {
+                            if (android.os.Build.VERSION.SDK_INT >= 23
+                                    && checkSelfPermission("android.permission.RECORD_AUDIO")
+                                       != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                pendingMic = request;               // 批下来之后在回调里再 grant
+                                requestPermissions(new String[]{"android.permission.RECORD_AUDIO"},
+                                                   MIC_PERM_REQ);
+                                return;
+                            }
+                            request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+                        } catch (Exception e) { request.deny(); }
+                    }
+                });
+            }
+
             // 关键：让网页里的「选择文件」能唤起系统文件选择器
             @Override
             public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb,
@@ -325,6 +355,22 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) { }
     }
 
+    /** 系统麦克风权限的结果回来了：批了就把网页那次请求放行，拒了就明确拒掉
+     *  —— 挂着不回应的话，网页那边的录音会一直卡在「等权限」。 */
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(req, perms, results);
+        if (req != MIC_PERM_REQ || pendingMic == null) return;
+        PermissionRequest r = pendingMic;
+        pendingMic = null;
+        boolean ok = results != null && results.length > 0
+                && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        try {
+            if (ok) r.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+            else r.deny();
+        } catch (Exception ignored) { }
+    }
+
     /** 从通知的 Intent 里取出要跳转的位置，等网页就绪后再执行。 */
     private void takeNotifyLink(Intent intent) {
         if (intent == null) return;
@@ -387,6 +433,12 @@ public class MainActivity extends Activity {
         runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
     }
 
+    /** 更新包下载进度回网页：0~100 是百分比，-1 表示失败（壳自己会弹 Toast + 通知）。 */
+    private void updProgress(int pct) {
+        final String js = "window.__updProgress && window.__updProgress(" + pct + ")";
+        runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
+    }
+
     /** 读一个很小的伴随文件（ETag / Last-Modified）；没有或读不了都当没有。 */
     private static String readSmall(File f) {
         try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
@@ -437,6 +489,65 @@ public class MainActivity extends Activity {
                 Notifier.fetchAndNotify(MainActivity.this, false);
             } else {
                 NotifyReceiver.cancel(MainActivity.this);
+            }
+        }
+
+        /** 跳到本应用的系统设置页。
+
+         *  麦克风被拒过（尤其勾了「不再询问」）之后，再怎么 requestPermissions 系统都直接
+         *  回拒——只能人去设置里改。网页那边弹一句「去设置吗」，点确定就走这条，
+         *  省得用户自己在设置里翻应用列表。 */
+        @android.webkit.JavascriptInterface
+        public void openAppSettings() {
+            runOnUiThread(() -> {
+                try {
+                    Intent i = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                          Uri.fromParts("package", getPackageName(), null));
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "打不开设置页，请手动到「设置 → 应用 → 公考助手 → 权限」里开麦克风",
+                                   Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+
+        /** 真去开一次麦克风，看看到底卡在哪。
+
+         *  网页那边只能拿到一个笼统的 NotReadableError（「设备打不开」），到底是别的应用
+         *  占着、还是权限没真给、还是 WebView 自己的事，全靠猜。这里绕开 WebView 直接用
+         *  AudioRecord 试一下，把区别测出来：
+         *    ok     系统这层能录 → 那就是 WebView 那层的问题（重启应用往往就好）
+         *    busy   设备真被别人占着（通话、录音机、语音助手…）
+         *    denied 系统权限其实没给
+         *  只在**网页录音已经失败之后**调，那时 WebView 没有占着麦克风，不会互相打架。 */
+        @android.webkit.JavascriptInterface
+        public String micProbe() {
+            android.media.AudioRecord ar = null;
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 23
+                        && checkSelfPermission("android.permission.RECORD_AUDIO")
+                           != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    return "denied";
+                }
+                int min = android.media.AudioRecord.getMinBufferSize(
+                        16000, android.media.AudioFormat.CHANNEL_IN_MONO,
+                        android.media.AudioFormat.ENCODING_PCM_16BIT);
+                if (min <= 0) min = 4096;
+                ar = new android.media.AudioRecord(
+                        android.media.MediaRecorder.AudioSource.MIC, 16000,
+                        android.media.AudioFormat.CHANNEL_IN_MONO,
+                        android.media.AudioFormat.ENCODING_PCM_16BIT, min * 2);
+                if (ar.getState() != android.media.AudioRecord.STATE_INITIALIZED) return "denied";
+                ar.startRecording();
+                boolean going = ar.getRecordingState()
+                                == android.media.AudioRecord.RECORDSTATE_RECORDING;
+                ar.stop();
+                return going ? "ok" : "busy";
+            } catch (Exception e) {
+                return "err:" + e.getClass().getSimpleName();
+            } finally {
+                if (ar != null) { try { ar.release(); } catch (Exception ignored) {} }
             }
         }
 
@@ -533,29 +644,59 @@ public class MainActivity extends Activity {
             }
         }
 
-        /** 下载新版 APK 并唤起系统安装界面（不用再去浏览器点链接）。 */
+        /** 下载新版 APK 并唤起系统安装界面（不用再去浏览器点链接）。
+         *
+         *  下载少则十几秒、多则几分钟，期间用户多半已经切走了 —— 所以进度得走通知栏：
+         *  一条常驻通知带进度条，下好了变成「点这里安装」。App 还在前台时照旧直接弹安装界面，
+         *  但后台时系统会拦掉 startActivity，那条通知就是唯一的入口。 */
         @android.webkit.JavascriptInterface
-        public void updateApp(String url) {
+        public void updateApp(String url) { updateApp(url, ""); }
+
+        @android.webkit.JavascriptInterface
+        public void updateApp(String url, String ver) {
             new Thread(() -> {
                 try {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this,
                             "正在下载新版…", Toast.LENGTH_SHORT).show());
+                    Notifier.downloading(MainActivity.this, -1, 0, 0);
                     File dir = new File(getCacheDir(), "share");   // CamProvider 已开放这个目录
                     dir.mkdirs();
                     File out = new File(dir, "gongkao-update.apk");
+                    // 先下到 .part 再改名：中途断网/杀进程也不会在缓存里留下半份 APK，
+                    // 半份 APK 交给安装器只会得到一句「解析软件包时出现问题」。
+                    File tmp = new File(dir, "gongkao-update.apk.part");
                     HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
                     String cookie = CookieManager.getInstance().getCookie(url);
                     if (cookie != null) conn.setRequestProperty("Cookie", cookie);
                     conn.setConnectTimeout(15000);
                     conn.setReadTimeout(300000);
+                    int code = conn.getResponseCode();
+                    if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
+                    long total = conn.getContentLength();          // 没有就是 -1，画无限进度条
                     InputStream in = conn.getInputStream();
-                    java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+                    java.io.FileOutputStream fo = new java.io.FileOutputStream(tmp);
+                    byte[] buf = new byte[65536];
+                    long got = 0, lastAt = 0;
+                    int n, last = -2;
+                    while ((n = in.read(buf)) > 0) {
+                        fo.write(buf, 0, n);
+                        got += n;
+                        int pct = total > 0 ? (int) (got * 100 / total) : -1;
+                        long now = System.currentTimeMillis();
+                        // 通知栏刷太密会被系统限流（每秒十几条就开始丢），400ms 一次足够顺滑
+                        if ((pct != last || pct < 0) && now - lastAt >= 400) {
+                            last = pct; lastAt = now;
+                            Notifier.downloading(MainActivity.this, pct, got, total);
+                            updProgress(pct);
+                        }
+                    }
                     fo.close(); in.close(); conn.disconnect();
-                    if (out.length() < 10000) throw new Exception("下载不完整");
+                    if (tmp.length() < 10000) throw new Exception("下载不完整");
+                    if (out.exists() && !out.delete()) throw new Exception("旧安装包删不掉");
+                    if (!tmp.renameTo(out)) throw new Exception("保存失败");
                     final Uri apk = Uri.parse("content://" + CamProvider.AUTH + "/share/gongkao-update.apk");
+                    Notifier.downloadDone(MainActivity.this, apk, ver);
+                    updProgress(100);
                     runOnUiThread(() -> {
                         Intent i = new Intent(Intent.ACTION_VIEW);
                         i.setDataAndType(apk, "application/vnd.android.package-archive");
@@ -568,6 +709,8 @@ public class MainActivity extends Activity {
                         }
                     });
                 } catch (Exception e) {
+                    Notifier.downloadFailed(MainActivity.this, e.getMessage());
+                    updProgress(-1);
                     runOnUiThread(() -> Toast.makeText(MainActivity.this,
                             "更新失败：" + e.getMessage(), Toast.LENGTH_LONG).show());
                 }

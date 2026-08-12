@@ -546,19 +546,71 @@ $('#notes-msearch-input').addEventListener('input', e => {
 });
 
 /* ---- 动态流 ---- */
+/* 标签栏：**外面永远只占一行**。
+   标签攒到三四十个之后，全平铺就占掉半屏，还得拿眼睛在一堆 # 里找 —— 反而不如没有。
+   所以外面只留「全部 + 最常用的几个」，其余收进「更多 N」里的面板（带搜索）。
+
+   两条不能省的规矩：
+   · **选中的标签一定摆在外面**，哪怕它排不进常用 —— 否则筛完之后，界面上看不出
+     自己正按哪个标签在看，只能靠回想。
+   · 顺序由服务端给（常用优先、一样多就看最近用过，见 mods/notes.py），前端不再自己排：
+     两边各排一次，迟早不一致。 */
+const FEED_TAG_HOT = 6;          // 外面摆几个（连「全部」和「更多」正好一行）
+let feedTagsAll = [];            // 这个板块下的全部标签，[{tag, n}]
+let feedTagsOpen = false;        // 「更多」面板是不是开着
+
 async function loadFeedTags() {
   try {
     const d = await api('/api/notes/tags?board=' + encodeURIComponent(curNoteBoard));
-    $('#feed-tags').innerHTML = d.tags.length
-      ? `<button class="tagchip${curTag === '' ? ' active' : ''}" data-tag="">全部</button>` +
-        d.tags.map(t => `<button class="tagchip${curTag === t ? ' active' : ''}" data-tag="${esc(t)}"># ${esc(t)}</button>`).join('')
-      : '';
+    // items 是新口径（带条数和顺序）；老响应只有 tags，退回去也要能用
+    feedTagsAll = d.items || (d.tags || []).map(t => ({ tag: t, n: 0 }));
+    renderFeedTags();
   } catch (_) { /* 拉不到就先空着，下次进来或轮询会补上 */ }
 }
+function feedTagChip(t, n) {
+  return `<button class="tagchip${curTag === t ? ' active' : ''}" data-tag="${esc(t)}"># ${esc(t)}`
+    + (n > 1 ? `<i class="tagchip-n">${n}</i>` : '') + '</button>';
+}
+function renderFeedTags(q = '') {
+  const box = $('#feed-tags');
+  /* 手机端这一行平时是**横向滚动**（nowrap）的，面板要整行铺开就得让它临时换行。
+     用类名切，不用 :has() —— 安卓 WebView 的版本跟着系统走，不敢赌。 */
+  box.classList.toggle('tags-open', feedTagsOpen);
+  if (!feedTagsAll.length) { box.innerHTML = ''; return; }
+  const hot = feedTagsAll.slice(0, FEED_TAG_HOT);
+  // 选中的那个要是没排进常用，就把它挤进来（挤掉最后一个，行数不变）
+  if (curTag && !hot.some(x => x.tag === curTag)) {
+    const cur = feedTagsAll.find(x => x.tag === curTag);
+    if (cur) hot.splice(hot.length - 1, 1, cur);
+  }
+  const rest = feedTagsAll.length - hot.length;
+  const kw = q.trim();
+  const list = kw ? feedTagsAll.filter(x => x.tag.includes(kw)) : feedTagsAll;
+  box.innerHTML = `<button class="tagchip${curTag === '' ? ' active' : ''}" data-tag="">全部</button>`
+    + hot.map(x => feedTagChip(x.tag, x.n)).join('')
+    + (rest > 0 ? `<button type="button" class="tagchip tagchip-more${feedTagsOpen ? ' active' : ''}" data-tagmore="1">`
+        + (feedTagsOpen ? '收起 ▴' : `更多 ${rest} ▾`) + '</button>' : '')
+    + (feedTagsOpen ? `<div class="tagpanel">
+        <input id="feed-tagq" class="tagpanel-q" placeholder="搜标签…" autocomplete="off" value="${esc(kw)}">
+        <div class="tagpanel-list">${list.length
+          ? list.map(x => feedTagChip(x.tag, x.n)).join('')
+          : '<span class="tagpanel-none">没有匹配的标签</span>'}</div>
+      </div>` : '');
+  if (feedTagsOpen) {
+    const inp = $('#feed-tagq');
+    /* 每次重渲染都会换一个新 input，光标位置也就没了。搜的时候必须把它送回去，
+       不然打第二个字就跑到别处了。 */
+    inp.focus();
+    inp.setSelectionRange(kw.length, kw.length);
+    inp.addEventListener('input', () => renderFeedTags(inp.value));
+  }
+}
 $('#feed-tags').addEventListener('click', e => {
+  if (e.target.closest('[data-tagmore]')) { feedTagsOpen = !feedTagsOpen; renderFeedTags(); return; }
   const c = e.target.closest('[data-tag]'); if (!c) return;
   curTag = c.dataset.tag;
-  document.querySelectorAll('#feed-tags .tagchip').forEach(x => x.classList.toggle('active', x.dataset.tag === curTag));
+  feedTagsOpen = false;         // 挑完就收起来，别挡着下面的小记
+  renderFeedTags();
   loadFeed();
 });
 async function loadFeed() {

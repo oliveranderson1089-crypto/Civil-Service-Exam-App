@@ -93,3 +93,48 @@ test('标签解析：空输入 / 全是分隔符 → 不加空标签', (t) => {
   }
   assert.deepStrictEqual(h.plain('draft.tags'), [], '混进了空标签，界面上会显示一个「# 」');
 });
+
+
+/* 标签栏收纳（39 个标签堆成半屏那次改的）。三条死规矩：
+   外面只占一行 / 选中的一定在外面 / 顺序完全听服务端的。 */
+function tagBox(h, items, cur) {
+  h.run(`feedTagsAll = ${JSON.stringify(items)}; curTag = ${JSON.stringify(cur || '')};
+         feedTagsOpen = false; renderFeedTags();`);
+  return h.window.document.getElementById('feed-tags');
+}
+const MANY = Array.from({ length: 39 }, (_, i) => ({ tag: 't' + i, n: i < 5 ? 3 : 1 }));
+
+test('标签多了：外面只留「全部 + 常用几个 + 更多」', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const box = tagBox(h, MANY);
+  const chips = [...box.querySelectorAll('.tagchip')];
+  assert.strictEqual(chips.length, 8, '外面应当是 全部 + 6 个常用 + 更多，一行放得下');
+  assert.match(chips[chips.length - 1].textContent, /更多 33/, '剩下的要说清楚还有几个');
+  assert.strictEqual(box.querySelector('.tagpanel'), null, '面板默认不展开');
+});
+
+test('正在筛的那个标签，就算排不进常用也留在外面', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const box = tagBox(h, MANY, 't38');                    // 最冷门的那个
+  const out = [...box.querySelectorAll('.tagchip')].map(c => c.dataset.tag);
+  assert.ok(out.includes('t38'), '选中的标签被收进面板了 —— 界面上就看不出自己在按什么筛');
+  assert.strictEqual(box.querySelectorAll('.tagchip').length, 8, '挤进来不该多占一行');
+  assert.strictEqual(box.querySelector('.tagchip.active').dataset.tag, 't38');
+});
+
+test('展开「更多」能搜，搜不到就直说', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run(`feedTagsAll = ${JSON.stringify(MANY)}; curTag = ''; feedTagsOpen = true; renderFeedTags('t3');`);
+  const box = h.window.document.getElementById('feed-tags');
+  const inPanel = [...box.querySelectorAll('.tagpanel-list .tagchip')].map(c => c.dataset.tag);
+  assert.deepStrictEqual(inPanel, ['t3', 't30', 't31', 't32', 't33', 't34', 't35', 't36', 't37', 't38']);
+  h.run("renderFeedTags('没有这个标签');");
+  assert.ok(h.window.document.querySelector('.tagpanel-none'), '搜空了要给一句话，别只剩一个空框');
+});
+
+test('顺序完全按服务端给的来，前端不再自己排', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const box = tagBox(h, [{ tag: '乙', n: 1 }, { tag: '甲', n: 9 }, { tag: '丙', n: 5 }]);
+  const out = [...box.querySelectorAll('.tagchip')].map(c => c.dataset.tag);
+  assert.deepStrictEqual(out, ['', '乙', '甲', '丙'], '前端一旦自己排，就会和服务端的口径打架');
+});

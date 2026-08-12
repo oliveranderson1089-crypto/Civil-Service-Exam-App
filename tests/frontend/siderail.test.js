@@ -105,6 +105,30 @@ test('分组标题常驻，不跟着「哪个标签开着」忽隐忽现', (t) =
   assert.deepStrictEqual(names(), before, '进了二级页左栏又变了');
 });
 
+/* 顶栏的「首页 / 账户 / 后台」三个按钮被 style.css 收掉了，替代入口一律走「我的」。
+   手机端「我的」页里有「管理后台」那条，电脑端左栏当初漏了 —— 管理员在宽屏上
+   就完全没有后台入口（顶栏那个按钮是 display:none）。这两条守住它别再掉。 */
+test('管理后台：只有管理员的左栏有这一条', (t) => {
+  const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  const names = () => $$(h, '#siderail .sr-i i').map(b => b.textContent);
+  assert.ok(!names().includes('管理后台'), '普通用户的左栏不该出现后台入口');
+  h.run('ME = { is_admin: true }; tbRailFill();');
+  assert.ok(names().includes('管理后台'),
+    '管理员在电脑端左栏找不到后台 —— 顶栏那个「后台」按钮已被 CSS 收掉，这儿是唯一入口');
+});
+
+test('管理后台：ME 回来之后左栏会自己补画（左栏是在 ME 之前画的）', async (t) => {
+  const h = boot({ fetch: (url) => {
+    if (url.includes('/api/sections')) return { json: { sections: [], idiom_board: '' } };
+    if (url.includes('/api/me')) return { json: { username: 'a', role: 'admin', is_admin: true } };
+    return { json: {} };
+  } });
+  t.after(() => h.close());
+  await new Promise(r => setTimeout(r, 0));
+  assert.ok($$(h, '#siderail .sr-i i').map(b => b.textContent).includes('管理后台'),
+    'init() 拿到 ME 之后没重画左栏 —— 那一条永远出不来');
+});
+
 test('真·全屏的两页（阅读器 / 文档编辑器）左栏才撤', (t) => {
   const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
   // 测试里 init() 拉不到 /api/sections 就提前返回，goHome() 从没跑过、栈是空的，

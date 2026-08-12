@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 
 from core import BASE, get_db, log
 from mods.ai import vision_configured, vision_ocr
@@ -51,6 +51,18 @@ try:
         _CS_META = json.load(_f)
 except Exception:
     _CS_META = {"tiers": [], "boards": {}}
+
+
+@bp.get("/api/ai/img/<path:name>")
+def ai_img_get(name):
+    """把发给 AI 看过的那张原图读回来 —— 前端的附件缩略图要它。
+
+    只认 AI_IMG_DIR 下的文件（ai_img_path 会挡路径穿越），过期清掉的就 404，
+    前端那边显示成一个文件角标，不会碎图。"""
+    p = ai_img_path(name)
+    if not p:
+        return jsonify({"error": "图片已过期"}), 404
+    return send_file(p, max_age=86400)
 
 
 @bp.post("/api/ai/extract")

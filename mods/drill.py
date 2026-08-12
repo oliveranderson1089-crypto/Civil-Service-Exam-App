@@ -1141,13 +1141,26 @@ def drill_types():
     """题型清单 + 我在每个题型上的正确率和平均用时。弱的排前面 —— 该练哪个不用自己想。"""
     board = (request.args.get("board") or "").strip()
     level = (request.args.get("level") or "mid").strip()
+    src = (request.args.get("src") or "ai").strip()
     year_min = _year_arg(request.args.get("year_min"))
     if board not in DRILL_TYPES:
         return jsonify({"error": "这个板块没有专项练"}), 400
     db = get_db()
+    """做过没有、正确率多少，**得按这次会用到的难度去数**。
+
+    drill_log.level 记的是「这一场是什么难度」，真题题源的场次一律记 'real'
+    （真题不带难度标签），整场混着就记 'mix'（见 _session_level）。而真题模式下界面
+    把难度行藏了、drLevel 还停在 'mid' —— 原先死按 level=? 数，真题练了几十道
+    也一条都对不上：题型卡全写「没练过」，薄弱排序自然也全不动。
+    所以按题源换口径：AI 出题看当前难度档，真题看 'real'，混合两边都算；
+    'mix' 那种整场混着的场次三种口径都认，别把它丢了。"""
+    lvs = {level} if src == "ai" else {"real"} if src == "real" else {level, "real"}
+    lvs.add("mix")
+    ph = ",".join("?" * len(lvs))
     stat = {r["qtype"]: dict(r) for r in db.execute(
         "SELECT qtype, COUNT(*) n, SUM(correct) ok, AVG(seconds) sec FROM drill_log "
-        "WHERE user_id=? AND board=? AND level=? GROUP BY qtype", (uid(), board, level))}
+        f"WHERE user_id=? AND board=? AND level IN ({ph}) GROUP BY qtype",
+        (uid(), board, *sorted(lvs)))}
     # 题库里每个题型有多少道过了双模型核验（AI 题型才有）
     bank = {r["qtype"]: dict(r) for r in db.execute(
         "SELECT qtype, SUM(agree='1') ok, COUNT(*) c FROM drill_bank "
@@ -1175,11 +1188,14 @@ def drill_types():
                       # 这种就该明说「没有」，不该假装有。
                       "real_n": n_real,
                       "real_ok": n_real >= _REAL_SRC_MIN})
-    # 默认按**讲义目录顺序**（循序渐进）；练过之后，薄弱的（低于该难度预期得分率）才提到前面
-    exp = round(drill_coef(board, level) * 100)
+    # 默认按**讲义目录顺序**（循序渐进）；练过之后，薄弱的（低于该难度预期得分率）才提到前面。
+    # 真题模式没有难度档，预期得分率就取 'real'（= 考场真实基准），否则拿 mid 的线去卡真题成绩，
+    # 会把一批其实正常的题型判成薄弱。
+    exp_lv = "real" if src == "real" else level
+    exp = round(drill_coef(board, exp_lv) * 100)
     items.sort(key=lambda x: (0 if (x["acc"] is not None and x["acc"] < exp) else 1,
                               x["acc"] if x["acc"] is not None else 999, x["ord"]))
-    coef = drill_coef(board, level)
+    coef = drill_coef(board, exp_lv)
     # 门槛和板块级判定**由服务端给**：前端自己写死 5 的话，改门槛要同步三处，
     # 漏掉前端就会出现「卡片没置灰、点了却收到 404」。
     ok_types = sum(1 for t in DRILL_TYPES[board] if real_cnt.get(t[0], 0) >= _REAL_SRC_MIN)

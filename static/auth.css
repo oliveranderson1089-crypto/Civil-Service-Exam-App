@@ -1,0 +1,262 @@
+/* 登录 / 注册 / 找回密码 三页共用的外观：天光底 + 宣纸卡。
+ *
+ * 这三页原来各写一段 <style>，各自一块 135° 蓝渐变加一张白卡 —— 和进入应用后那套
+ * 按时刻连续变的启动屏完全脱节：用户每天见到的第一屏，反而是全应用最没设计的一屏。
+ * 现在底改成和启动屏同一张天（js/daylight.js 的 dlPaintAuth 按当前时刻画），
+ * 启动屏淡出落到登录页不换天。
+ *
+ * 颜色分两路：
+ *   · 底（天光/稿纸格/晨晕/星子/山脊/纸感）是 #dl-sky 里那五层，浓淡由脚本给；
+ *   · 卡片那几个颜色是 body 上的 --dl-* 变量，也由脚本给，本文件只负责用。
+ * 下面每个 --dl-* 都写了兜底值（晨光那一档）：脚本没跑起来时，仍是一张能看的登录页。
+ */
+:root {
+  --dl-ink: #20303f;
+  --dl-sub: #7c848f;
+  --dl-seal1: #35a3e2;
+  --dl-seal2: #1a6fb5;
+  --dl-sealsh: rgba(26, 111, 181, .3);
+  --dl-card: rgba(255, 255, 255, .82);
+  --dl-card-solid: #fdfaf5;
+  --dl-line: rgba(26, 111, 181, .14);
+  --dl-fld: rgba(255, 255, 255, .72);
+  --dl-fline: rgba(26, 111, 181, .18);
+  --dl-ring: rgba(53, 163, 226, .22);
+  --dl-shadow: 0 14px 40px rgba(10, 25, 45, .16);
+}
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  /* 注册页字段多，卡片可能比屏幕高：居中溢出时上半截会滚不到（flex 的老毛病）。
+     safe 认得的浏览器改成靠上，认不得的退回上一行的 center。 */
+  align-items: safe center;
+  justify-content: center;
+  padding: 24px 16px;
+  margin: 0;
+  color: var(--dl-ink);
+  background: #e8f0f8;
+}
+
+/* ── 天光底 ──────────────────────────────────────────────────────
+   fixed 而不是 absolute：注册页字段多，卡片会比屏幕高，底不能跟着滚走。
+   CSS 里这张静态的晨光底是兜底，脚本没跑起来时还在。 */
+#dl-sky {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, #fff4e0 0%, #fdf3e6 52%, #e8f0f8 100%);
+}
+.dl-layer { position: absolute; inset: 0; pointer-events: none; }
+#dl-grid, #dl-bloom, #dl-stars, #dl-hill, #dl-grain { opacity: 0; }
+#dl-hill svg { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 32%; }
+/* 纸感噪点：脚本画一小块 64×64 平铺（整屏 SVG 噪声在桌面版软件渲染下会卡死） */
+#dl-grain { mix-blend-mode: soft-light; background-repeat: repeat; background-size: 64px 64px; }
+
+/* 用户自己传的壁纸优先：传了就整个盖掉天光底（js/auth.js 加的 has-wall）。
+   蒙版是为了让输入框在任何一张图上都看得清。 */
+body.has-wall #dl-sky { display: none; }
+body.has-wall::before {
+  content: ""; position: fixed; inset: 0; z-index: 0;
+  background: var(--wall) center/cover no-repeat;
+}
+body.has-wall::after {
+  content: ""; position: fixed; inset: 0; z-index: 0;
+  background: rgba(10, 25, 45, var(--wall-dim, .55));
+}
+
+/* ── 卡片 ────────────────────────────────────────────────────────
+   .login-box 是登录页、.auth-box 是注册/找回页，两边都保留原类名：
+   注册关闭时 register.html 会用这几个类名重画整块内容。 */
+.login-box, .auth-box {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 356px;
+  background: var(--dl-card);
+  border: 1px solid var(--dl-line);
+  border-radius: 20px;
+  padding: 26px 24px 22px;
+  box-shadow: var(--dl-shadow);
+  /* 只糊卡片这一小块，不是整屏 —— 桌面版 WebKitGTK 是软件渲染，整屏模糊会拖住首帧 */
+  backdrop-filter: blur(16px) saturate(1.08);
+  -webkit-backdrop-filter: blur(16px) saturate(1.08);
+}
+/* 拿不到模糊的壳（旧 WebView）：半透明卡直接压在稿纸格上会花，换不透明的同色 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .login-box, .auth-box { background: var(--dl-card-solid); }
+}
+
+/* 方章。全屏就这一个实色块，颜色跟着时刻走（黄昏压一块死蓝会像贴上去的），
+   但始终在蓝色一族里 —— 离开蓝就不是这个应用的章了。 */
+.login-logo, .auth-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  margin: 0 auto 14px;
+  display: grid;
+  place-items: center;
+  font-size: 31px;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(150deg, var(--dl-seal1), var(--dl-seal2) 70%);
+  box-shadow: 0 10px 26px var(--dl-sealsh), inset 0 1px 0 rgba(255, 255, 255, .35);
+}
+
+.login-box h1, .auth-box h1 {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-align: center;
+  margin: 0 0 4px;
+  color: var(--dl-ink);
+}
+.login-box p.sub, .auth-box p.sub {
+  text-align: center;
+  color: var(--dl-sub);
+  font-size: 13px;
+  margin: 0 0 20px;
+}
+.login-box label, .auth-box label {
+  display: block;
+  font-size: 12.5px;
+  letter-spacing: .04em;
+  color: var(--dl-sub);
+  margin: 13px 0 5px;
+}
+
+.login-box input, .auth-box input, .auth-box select {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1.5px solid var(--dl-fline);
+  border-radius: 10px;
+  background: var(--dl-fld);
+  color: var(--dl-ink);
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .18s, box-shadow .18s;
+}
+.login-box input::placeholder, .auth-box input::placeholder { color: var(--dl-sub); opacity: .75; }
+/* 下拉框（注册页的密保问题）：原生外观在夜里的墨色卡上是一块系统浅灰，得自己画 */
+.auth-box select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 34px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dl-sub) 50%),
+                    linear-gradient(135deg, var(--dl-sub) 50%, transparent 50%);
+  background-position: right 16px center, right 11px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+/* 展开的选项列表是系统画的：夜里得告诉系统这是深色面，否则白底白字 */
+.auth-box select option { color: #20303f; background: #fff; }
+.login-box input:focus, .auth-box input:focus, .auth-box select:focus {
+  border-color: var(--dl-seal1);
+  box-shadow: 0 0 0 3px var(--dl-ring);
+}
+/* 浏览器自动填充会强推一块浅黄底 —— 夜色卡上就是一块荧光。
+   背景改不掉（UA 样式），但字色能定，再用一条永不结束的过渡把黄底拖在外面。 */
+.login-box input:-webkit-autofill, .auth-box input:-webkit-autofill {
+  -webkit-text-fill-color: var(--dl-ink);
+  transition: background-color 9999s ease-in-out 0s;
+}
+.login-box input { margin-bottom: 0; }
+
+/* 验证码：输入框和图片一行 */
+.cap-row { display: flex; gap: 10px; align-items: center; }
+.cap-row input { flex: 1; text-transform: uppercase; letter-spacing: 2px; }
+.cap-img {
+  height: 46px;
+  width: 130px;
+  border-radius: 10px;
+  border: 1.5px solid var(--dl-fline);
+  background: var(--dl-fld);
+  cursor: pointer;
+}
+/* 注册页的并排两栏（密码 / 确认密码） */
+.row2 { display: flex; gap: 10px; }
+.row2 > div { flex: 1; min-width: 0; }
+
+.login-box button[type="submit"], .primary-btn {
+  width: 100%;
+  padding: 12px;
+  margin-top: 20px;
+  border: none;
+  border-radius: 11px;
+  background: linear-gradient(150deg, var(--dl-seal1), var(--dl-seal2) 78%);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: .28em;
+  text-indent: .28em;
+  cursor: pointer;
+  box-shadow: 0 10px 24px var(--dl-sealsh);
+  transition: filter .18s, transform .06s;
+}
+.login-box button[type="submit"]:hover, .primary-btn:hover { filter: brightness(1.06); }
+.login-box button[type="submit"]:active, .primary-btn:active { transform: translateY(1px); }
+.primary-btn:disabled { opacity: .6; cursor: default; box-shadow: none; }
+.login-box button[type="submit"]:focus-visible, .primary-btn:focus-visible,
+.cap-img:focus-visible, .authlink:focus-visible, .tolink:focus-visible, .back:focus-visible {
+  outline: 2px solid var(--dl-seal1);
+  outline-offset: 2px;
+}
+
+/* 底部两个链接：注册是主动作（品牌色加粗），忘记密码是次要的 */
+.authrow { display: flex; justify-content: space-between; align-items: center; margin: 14px 2px 0; }
+.authlink { color: var(--dl-seal1); font-size: 13.5px; font-weight: 600; text-decoration: none; }
+.authlink.weak { color: var(--dl-sub); font-weight: 400; font-size: 13px; }
+.tolink, .back {
+  display: block;
+  text-align: center;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--dl-seal1);
+  text-decoration: none;
+}
+
+.err { color: #d0503f; font-size: 13px; text-align: center; min-height: 18px; margin: 8px 0 0; }
+.msg { font-size: 13px; text-align: center; min-height: 18px; margin: 8px 0 0; }
+.msg.err { color: #d0503f; }
+.msg.ok { color: #2b9e6b; }
+/* 找回密码第一步问出来的密保题 */
+.qbox {
+  background: var(--dl-fld);
+  border: 1px solid var(--dl-fline);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--dl-ink);
+  margin-top: 6px;
+}
+.hidden { display: none; }
+
+/* 落款。楷体，和启动屏那句引言同一支字 —— 这一行是两屏之间的接缝。 */
+.dl-quote {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  z-index: 1;
+  text-align: center;
+  padding: 0 28px;
+  font-family: "Kaiti SC", "STKaiti", "KaiTi", "楷体", serif;
+  font-size: 13.5px;
+  line-height: 1.9;
+  color: var(--dl-sub);
+  pointer-events: none;
+}
+/* 矮屏（注册页在小手机上）没有落款的位置，卡片要顶到底 */
+@media (max-height: 660px) {
+  .dl-quote { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-box input, .auth-box input, .auth-box select,
+  .login-box button[type="submit"], .primary-btn { transition: none; }
+}

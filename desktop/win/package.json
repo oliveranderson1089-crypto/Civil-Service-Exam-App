@@ -1,0 +1,73 @@
+{
+  "name": "gongkao-assistant",
+  "productName": "公考助手",
+  "version": "6.2.0",
+  "private": true,
+  "description": "公考助手 Windows 桌面版（Electron 壳，加载网页版）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "zip": "electron-builder --win zip",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.gongkao.app",
+    "productName": "公考助手",
+    "asar": true,
+    "directories": {
+      "output": "out",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "preload-shot.js",
+      "log.js",
+      "files.js",
+      "shot.js",
+      "error.html",
+      "titlebar.html",
+      "shot.html",
+      "server.html"
+    ],
+    "extraResources": [
+      {
+        "from": "../../static/icons",
+        "to": "icons",
+        "filter": [
+          "gk-*.png"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "gongkao-win.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "公考助手",
+      "artifactName": "gongkao-setup.${ext}"
+    }
+  }
+}

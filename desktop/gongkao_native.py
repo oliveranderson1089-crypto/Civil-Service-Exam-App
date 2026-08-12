@@ -589,11 +589,21 @@ class Gongkao(Gtk.Application):
         return False
 
     def on_permission(self, web, request):
-        """放行网页的通知权限请求（这样 Notification.requestPermission() 会成功）。"""
+        """放行网页要的两样权限：通知、麦克风。
+
+        通知：这样 Notification.requestPermission() 会成功。
+        麦克风：聊天发语音、语音转文字要用。**只放音频**——同一个请求类型也管摄像头，
+        这个应用没有用到摄像头的地方，不该顺手一起给。
+        """
         try:
             if isinstance(request, WebKit2.NotificationPermissionRequest):
                 request.allow()
                 return True
+            if isinstance(request, WebKit2.UserMediaPermissionRequest):
+                if request.get_property("is-for-audio-device"):
+                    request.allow()
+                    return True
+                return False
         except Exception:
             pass
         return False           # 其它权限（定位/摄像头等）保持默认

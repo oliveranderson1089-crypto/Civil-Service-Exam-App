@@ -145,4 +145,83 @@ public class Notifier {
         show(c, 999999, "公考助手 · 测试通知",
                 "如果你在通知栏看到这条，说明手机通知已经开好了。点一下会回到 App。", "");
     }
+
+    /* ================= 下载新版安装包的进度通知 =================
+       单开一个低优先级渠道：进度条几百毫秒刷一次，跟「学习提醒」共用渠道会一路响铃震动。 */
+    static final String CH_DL = "gongkao_download";
+    static final int ID_DL = 900001;                 // 固定 id：后一条覆盖前一条，不刷屏
+
+    static void ensureDlChannel(Context c) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null || nm.getNotificationChannel(CH_DL) != null) return;
+        NotificationChannel ch = new NotificationChannel(
+                CH_DL, "下载与更新", NotificationManager.IMPORTANCE_LOW);   // LOW = 安静地待在通知栏
+        ch.setDescription("下载新版安装包时，在通知栏显示进度");
+        ch.setShowBadge(false);
+        nm.createNotificationChannel(ch);
+    }
+
+    private static Notification.Builder dlBuilder(Context c, int icon) {
+        Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(c, CH_DL)
+                : new Notification.Builder(c);
+        return b.setSmallIcon(icon).setOnlyAlertOnce(true);
+    }
+
+    private static void post(Context c, Notification.Builder b) {
+        NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.notify(ID_DL, b.build());
+    }
+
+    static String mb(long n) {
+        if (n <= 0) return "";
+        if (n < 1024 * 1024) return (n / 1024) + " KB";
+        return String.format(java.util.Locale.US, "%.1f MB", n / 1024.0 / 1024.0);
+    }
+
+    /** 下载中。pct < 0 表示服务器没给 Content-Length，画无限进度条。 */
+    static void downloading(Context c, int pct, long got, long total) {
+        ensureDlChannel(c);
+        Notification.Builder b = dlBuilder(c, android.R.drawable.stat_sys_download)
+                .setContentTitle("公考助手 · 正在下载新版")
+                .setOngoing(true)                      // 下载中不许滑掉
+                .setAutoCancel(false);
+        if (pct >= 0) {
+            b.setProgress(100, pct, false);
+            b.setContentText(total > 0 ? pct + "%   " + mb(got) + " / " + mb(total) : pct + "%");
+        } else {
+            b.setProgress(0, 0, true);
+            b.setContentText(got > 0 ? "已下载 " + mb(got) : "正在连接…");
+        }
+        post(c, b);
+    }
+
+    /** 下好了：点通知就进系统安装界面（App 在后台时尤其需要——那时壳自己拉不起安装页）。 */
+    static void downloadDone(Context c, Uri apk, String ver) {
+        ensureDlChannel(c);
+        Intent i = new Intent(Intent.ACTION_VIEW);
+        i.setDataAndType(apk, "application/vnd.android.package-archive");
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent pi = PendingIntent.getActivity(c, 901, i, flags);
+
+        post(c, dlBuilder(c, R.drawable.ic_notify)
+                .setContentTitle("新版" + (ver == null || ver.isEmpty() ? "" : " " + ver) + "已下载完成")
+                .setContentText("点这里安装")
+                .setAutoCancel(true)
+                .setContentIntent(pi));
+    }
+
+    /** 下载失败：留在通知栏说明原因，别让用户以为还在下。 */
+    static void downloadFailed(Context c, String msg) {
+        ensureDlChannel(c);
+        String why = msg == null || msg.isEmpty() ? "网络中断" : msg;
+        post(c, dlBuilder(c, android.R.drawable.stat_sys_download_done)
+                .setContentTitle("新版下载失败")
+                .setContentText(why)
+                .setStyle(new Notification.BigTextStyle().bigText(why + "\n可以回到 App 里「我的 → 检查更新」重试。"))
+                .setAutoCancel(true));
+    }
 }

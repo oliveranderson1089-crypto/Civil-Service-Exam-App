@@ -137,7 +137,11 @@ function fabClamp() {
   if (!fab || !innerWidth || !innerHeight) return;      // 还没完成布局就先别动
   if (!fab.style.left && !fab.style.top) return;        // 没拖过 → 用 CSS 默认角落，不用管
   const r = fab.getBoundingClientRect();
-  const w = r.width || 50, h = r.height || 50;
+  /* 球正被藏起来时（body.pad-full / mk-open / viewer-full → display:none）rect 全是 0。
+     照着算就会把它「夹」到左上角 (4,4) **并存进 localStorage** —— 下次开应用球就贴在
+     左上角压着返回按钮，而且上次拖的位置永远回不来了。藏着的时候什么都别动。 */
+  if (!r.width || !r.height) return;
+  const w = r.width, h = r.height;
   const x = Math.min(Math.max(4, r.left), innerWidth - w - 4);
   const y = Math.min(Math.max(4, r.top), innerHeight - h - 4);
   if (Math.abs(x - r.left) < .5 && Math.abs(y - r.top) < .5) return;
@@ -176,6 +180,7 @@ function avoidFab() {
     .filter(p => p && !p.classList.contains('hidden') && !p.classList.contains('dk-inline'));
   document.body.classList.toggle('pad-full', open.some(p => p.classList.contains('dk-full')));
   if (!open.length || document.body.classList.contains('pad-full')) return;
+  if (!fab.getBoundingClientRect().width) return;   // 藏着的时候别按 0 尺寸算位置（同 fabClamp）
   for (const p of open) {
     const r = p.getBoundingClientRect(), f = fab.getBoundingClientRect();
     if (!(f.left < r.right && f.right > r.left && f.top < r.bottom && f.bottom > r.top)) continue;

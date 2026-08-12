@@ -23,7 +23,9 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from core import CFG, UPLOADS, get_db, log, uid, uname
+from core import CFG, DB, UPLOADS, get_db, log, open_db, uid, uname
+import aiclient
+from mods.ai import ai_chat
 from mods.files import (IMAGE_EXT, INLINE_EXT, OFFICE_EXT, _cacheable,
                         _extract_text, _no_script, _office_to_pdf, _remove_blob)
 
@@ -1104,14 +1106,58 @@ def _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size, dig
     return cur.lastrowid
 
 
-def _chat_send_file(db, frm, to, name, stored_name, size, mime, src_dir, digest=None, reply_to=None):
+VOICE_MAX_SECONDS = 300   # 一条语音最长多久（前端到点自动停，这里是最后一道闸）
+VOICE_EXT = {".webm": "audio/webm", ".ogg": "audio/ogg", ".m4a": "audio/mp4",
+             ".mp4": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}
+
+
+def _voice_body(dur, text=""):
+    """语音消息的 body。
+
+    chat_msgs 没有「时长」「转写文本」这两列，也不值得为它们加列：语音消息本身
+    就是一条文件消息，多出来的两样都是显示用的小数据，塞进本就空着的 body 里
+    （跟内容卡片一个路数），老数据和老客户端都不受影响。
+    """
+    return json.dumps({"dur": round(float(dur or 0), 1), "text": text or ""}, ensure_ascii=False)
+
+
+def _voice_of(r):
+    try:
+        d = json.loads(r["body"] or "{}")
+        return {"dur": float(d.get("dur") or 0), "text": str(d.get("text") or "")}
+    except Exception:
+        return {"dur": 0.0, "text": ""}       # 脏数据也要能画出气泡，音频本身还在
+
+
+def _voice_meta(f, path):
+    """收一段上传的录音：确认它像音频，量出真实时长。
+
+    时长以服务端 ffprobe 为准 —— 前端报的那个来自 MediaRecorder，Chrome 在
+    「录完立刻停」的片子上经常给出 Infinity 或 0，直接信它气泡上就是「0″」。
+    """
+    from mods.asr import audio_duration
+    ext = os.path.splitext(f.filename or "")[1].lower()
+    mime = (f.mimetype or "").lower()
+    if not mime.startswith("audio/") and ext not in VOICE_EXT:
+        return None, "这不像一段录音"
+    dur = audio_duration(path)
+    if dur > VOICE_MAX_SECONDS:
+        return None, "语音最长 %d 秒" % VOICE_MAX_SECONDS
+    return dur, ""
+
+
+def _chat_send_file(db, frm, to, name, stored_name, size, mime, src_dir, digest=None, reply_to=None,
+                    voice=None):
     ext = os.path.splitext(name)[1].lower()
     fid_to = _chat_copy_to_drive(db, to, name, src_dir, stored_name, ext, mime, size, digest)
-    kind = "image" if (mime or "").startswith("image/") or ext in (".jpg", ".jpeg", ".png", ".gif", ".webp") else "file"
+    kind = ("voice" if voice is not None else
+            "image" if (mime or "").startswith("image/") or ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")
+            else "file")
     cur = db.execute(
-        "INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,file_id,file_name,file_size,file_mime,reply_to) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
-        (frm, to, _direct_conv(db, frm, to), kind, fid_to, name, size, mime or "", reply_to or None))
+        "INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,body,file_id,file_name,file_size,file_mime,reply_to) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (frm, to, _direct_conv(db, frm, to), kind, _voice_body(voice), fid_to, name, size,
+         mime or "", reply_to or None))
     # 通知放到调用方 commit 之后（见 chat_send/drive_send），否则对方可能在提交前就来拉、扑空
     return cur.lastrowid
 
@@ -1216,8 +1262,12 @@ def _preview(r):
     if r["kind"] == "card":
         c = _card_of(r) or {}
         return ("[%s] %s" % (CARD_KINDS.get(c.get("kind"), ("内容",))[0], c.get("title") or ""))[:30]
-    if r["kind"] == "text":
-        return (r["body"] or "")[:30]
+    if r["kind"] in ("text", "ai"):
+        return (("AI 助手：" if r["kind"] == "ai" else "") + (r["body"] or ""))[:30]
+    if r["kind"] == "voice":
+        v = _voice_of(r)
+        # 转过文字的就把文字摆出来：列表上「[语音]」一行连着好几条，谁说了什么全看不出来
+        return ("[语音] " + (v["text"] or "%d″" % round(v["dur"])))[:30]
     return ("[图片]" if r["kind"] == "image" else "[文件] " + (r["file_name"] or ""))[:30]
 
 
@@ -1229,6 +1279,9 @@ def _msg_out(r, me, quoted=None):
     m = {"id": r["id"], "mine": r["from_uid"] == me, "kind": r["kind"],
          "body": r["body"] or "", "file_id": r["file_id"], "file_name": r["file_name"],
          "file_size": r["file_size"], "time": r["created_at"], "read": bool(r["read_at"])}
+    if r["kind"] == "voice":
+        v = _voice_of(r)
+        m["dur"], m["text"], m["body"] = v["dur"], v["text"], ""
     if r["kind"] == "card":
         m["card"] = _card_of(r)
         if not m["card"]:                 # 解不出来的老数据/脏数据，退化成文本，别让气泡空着
@@ -1251,6 +1304,85 @@ def _quote_of(db, r, me):
     # 走 _preview：文本 / 图片 / 文件 / 内容卡片的摘要口径只该有一份。
     # 原先这里自己写了一遍 if-else，加了卡片类型之后它就落进「[文件] 」那个分支了。
     return {"id": q["id"], "who": who, "text": _preview(q)}
+
+
+@bp.get("/api/chat/g/<int:cid>/checkin")
+def group_checkin_get(cid):
+    return jsonify(_checkin_state(cid))
+
+
+@bp.post("/api/chat/g/<int:cid>/checkin")
+def group_checkin_do(cid):
+    """今天打个卡。一人一天一条（主键去重），重复点不会多算。"""
+    db, me = get_db(), uid()
+    if not _is_member(db, cid, me):
+        return jsonify({"error": "不在这个小组里"}), 403
+    db.execute("INSERT OR IGNORE INTO chat_checkins(conv_id,user_id,day) "
+               "VALUES(?,?,date('now','localtime'))", (cid, me))
+    db.commit()
+    return jsonify(_checkin_state(cid))
+
+
+def _checkin_state(cid):
+    """今天这个组谁打过卡。给会话顶部那张条用（CM2）。"""
+    db, me = get_db(), uid()
+    if not _is_member(db, cid, me):
+        return {"total": 0, "done": [], "me": False}
+    rows = db.execute(
+        "SELECT u.id, u.username, u.avatar,"
+        " EXISTS(SELECT 1 FROM chat_checkins k WHERE k.conv_id=? AND k.user_id=u.id"
+        "        AND k.day=date('now','localtime')) done"
+        " FROM conv_members m JOIN users u ON u.id=m.user_id WHERE m.conv_id=? ORDER BY m.joined_at",
+        (cid, cid)).fetchall()
+    return {"total": len(rows),
+            "done": [{"id": r["id"], "username": r["username"],
+                      "avatar": ("/skin/%d/%s" % (r["id"], r["avatar"])) if r["avatar"] else "",
+                      "done": bool(r["done"])} for r in rows],
+            "me": any(r["done"] and r["id"] == me for r in rows)}
+
+
+@bp.get("/api/chat/info")
+def chat_info():
+    """一对一会话的信息页：传过的文件、发过的图、我的置顶/免打扰。
+
+    小组那份在 /api/chat/groups/<id> 里（那边还要带成员和公告）。分成两条是因为
+    小组多了成员/群主/公告这一整块，硬塞进同一个响应里两边都得写一堆 if。"""
+    try:
+        fid = int(request.args.get("id") or 0)
+    except ValueError:
+        fid = 0
+    if not fid:
+        return jsonify({"error": "缺少会话"}), 400
+    db, me = get_db(), uid()
+    cid = _direct_conv(db, me, fid, create=False)
+    return jsonify({"files": _conv_files(db, cid) if cid else [],
+                    "images": _conv_images(db, cid) if cid else [],
+                    "prefs": _conv_prefs(db, me, "u", fid)})
+
+
+@bp.patch("/api/chat/prefs")
+def chat_prefs_set():
+    """置顶 / 免打扰。body: {kind:'u'|'g', id, pinned?, muted?}。
+
+    只写传进来的那个字段 —— 前端两个开关是分开点的，整行覆盖会把另一个悄悄清掉。"""
+    d = request.get_json(silent=True) or {}
+    kind = "g" if d.get("kind") == "g" else "u"
+    try:
+        peer = int(d.get("id") or 0)
+    except (TypeError, ValueError):
+        peer = 0
+    if not peer:
+        return jsonify({"error": "缺少会话"}), 400
+    db, me = get_db(), uid()
+    db.execute("INSERT OR IGNORE INTO chat_prefs(user_id,kind,peer) VALUES(?,?,?)", (me, kind, peer))
+    for col in ("pinned", "muted"):
+        if col in d:
+            db.execute("UPDATE chat_prefs SET %s=? WHERE user_id=? AND kind=? AND peer=?" % col,
+                       (1 if d.get(col) else 0, me, kind, peer))
+    db.commit()
+    r = db.execute("SELECT pinned,muted FROM chat_prefs WHERE user_id=? AND kind=? AND peer=?",
+                   (me, kind, peer)).fetchone()
+    return jsonify({"pinned": bool(r["pinned"]), "muted": bool(r["muted"])})
 
 
 @bp.get("/api/chat/conversations")
@@ -1317,7 +1449,15 @@ def chat_convos():
                        "time": (m["created_at"] if m else ""), "unread": g["unread"],
                        "last_id": g["last_id"] or 0, "last_mine": False, "last_read": False,
                        "n_mem": g["n_mem"], "at": at})
-    convos.sort(key=lambda c: -(c["last_id"]))
+    # 置顶 / 免打扰：一次把这个人的偏好全取回来，按 (kind,peer) 贴到每一行上
+    prefs = {(r["kind"], r["peer"]): r for r in
+             db.execute("SELECT kind,peer,pinned,muted FROM chat_prefs WHERE user_id=?", (me,)).fetchall()}
+    for c in convos:
+        p = prefs.get(("g" if c.get("group") else "u", c["id"]))
+        c["pinned"] = bool(p and p["pinned"])
+        c["muted"] = bool(p and p["muted"])
+    # 置顶的排最前，其余按最后一条消息的时间倒序
+    convos.sort(key=lambda c: (0 if c["pinned"] else 1, -(c["last_id"])))
     sm = last.get(self_last)
     convos.insert(0, {"id": me, "username": "文件传输助手", "avatar": "", "self": True,
                       "preview": _preview(sm), "time": (sm["created_at"] if sm else ""),
@@ -1408,6 +1548,30 @@ def group_new():
     return jsonify({"id": cid, "name": name, "members": len(ids) + 1}), 201
 
 
+def _conv_prefs(db, me, kind, peer):
+    r = db.execute("SELECT pinned,muted FROM chat_prefs WHERE user_id=? AND kind=? AND peer=?",
+                   (me, kind, peer)).fetchone()
+    return {"pinned": bool(r and r["pinned"]), "muted": bool(r and r["muted"])}
+
+
+def _conv_files(db, cid, limit=20):
+    """这个会话里传过的文件（图片单独走 _conv_images，不混在一张列表里）。"""
+    rows = db.execute(
+        "SELECT m.id, m.file_name, m.file_size, m.created_at, u.username FROM chat_msgs m "
+        "LEFT JOIN users u ON u.id=m.from_uid "
+        "WHERE m.conv_id=? AND m.kind='file' AND m.recalled_at IS NULL "
+        "ORDER BY m.id DESC LIMIT ?", (cid, limit)).fetchall()
+    return [{"id": r["id"], "name": r["file_name"] or "", "size": r["file_size"] or 0,
+             "who": r["username"] or "", "time": r["created_at"]} for r in rows]
+
+
+def _conv_images(db, cid, limit=24):
+    rows = db.execute(
+        "SELECT id FROM chat_msgs WHERE conv_id=? AND kind='image' AND recalled_at IS NULL "
+        "ORDER BY id DESC LIMIT ?", (cid, limit)).fetchall()
+    return [{"id": r["id"], "url": "/api/chat/file/%d" % r["id"]} for r in rows]
+
+
 @bp.get("/api/chat/groups/<int:cid>")
 def group_info(cid):
     db, me = get_db(), uid()
@@ -1422,7 +1586,11 @@ def group_info(cid):
         "owner_id": c["owner_id"], "is_owner": c["owner_id"] == me,
         "members": [{"id": r["user_id"], "username": r["username"],
                      "avatar": ("/skin/%d/%s" % (r["user_id"], r["avatar"])) if r["avatar"] else "",
-                     "owner": r["user_id"] == c["owner_id"]} for r in rows]})
+                     "owner": r["user_id"] == c["owner_id"]} for r in rows],
+        # 信息栏要的三样：传过的文件、发过的图、我自己的置顶/免打扰。
+        # 一次给全，省得点开信息栏还要再打三个接口。
+        "files": _conv_files(db, cid), "images": _conv_images(db, cid),
+        "prefs": _conv_prefs(db, me, "g", cid)})
 
 
 @bp.patch("/api/chat/groups/<int:cid>")
@@ -1531,6 +1699,46 @@ def chat_msg_del(mid):
     return jsonify({"ok": True, "body": r["body"] if r["kind"] == "text" else ""})
 
 
+@bp.post("/api/chat/msg/<int:mid>/voicetext")
+def chat_voice_text(mid):
+    """把一条语音转成文字。
+
+    转写结果写回这条消息（body 里那个 text），所以**一条语音全会话只转一次**：
+    别人再点、自己换台设备再点，拿到的都是同一份，不会又去调一次识别接口。
+    识别引擎默认是关的，这条就只回 503——语音条本身照常能听。
+    """
+    from mods.asr import asr_configured, transcribe
+
+    db, me = get_db(), uid()
+    r = db.execute("SELECT * FROM chat_msgs WHERE id=?", (mid,)).fetchone()
+    inside = r and (me in (r["from_uid"], r["to_uid"])
+                    or (r["conv_id"] and _is_member(db, r["conv_id"], me)))
+    if not inside or r["recalled_at"]:
+        return jsonify({"error": "消息不存在"}), 404
+    if r["kind"] != "voice":
+        return jsonify({"error": "这条不是语音"}), 400
+    v = _voice_of(r)
+    if v["text"]:
+        return jsonify({"text": v["text"], "cached": True})
+    if not asr_configured():
+        return jsonify({"error": "语音转文字还没开启（管理员可在后台 → 语音识别 里配置）"}), 503
+    fr = db.execute("SELECT owner_id, stored_name FROM drive_files WHERE id=?",
+                    (r["file_id"],)).fetchone()
+    path = os.path.join(_drive_dir(fr["owner_id"]), fr["stored_name"]) if fr else ""
+    if not path or not os.path.exists(path):
+        return jsonify({"error": "这段录音的文件已经不在了"}), 404
+    try:
+        txt = transcribe(path)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
+    except Exception:
+        log.exception("聊天语音转文字失败 mid=%s", mid)
+        return jsonify({"error": "识别失败了，稍后再试"}), 502
+    db.execute("UPDATE chat_msgs SET body=? WHERE id=?", (_voice_body(v["dur"], txt), mid))
+    db.commit()
+    return jsonify({"text": txt})
+
+
 @bp.get("/api/chat/g/<int:cid>")
 def group_history(cid):
     """群消息。分页口径和一对一那条完全一样，只是按 conv_id 取。"""
@@ -1617,17 +1825,25 @@ def group_send(cid):
         db.execute("INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source,sha256) "
                    "VALUES(?,?,?,?,?,?,?,0,'chat',?)",
                    (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size, digest))
-        kind = "image" if (f.mimetype or "").startswith("image/") else "file"
+        dur = None
+        if request.form.get("voice") == "1":
+            dur, verr = _voice_meta(f, os.path.join(_drive_dir(me), stored))
+            if verr:
+                return jsonify({"error": verr}), 400
+        kind = ("voice" if dur is not None else
+                "image" if (f.mimetype or "").startswith("image/") else "file")
         # 群文件不给每个人各复制一份（人一多就是几十份盘）：消息引用发送方那一份，
         # chat_file 的鉴权已经是「你是这条消息所在会话的成员就放行」
         fid_row = db.execute("SELECT id FROM drive_files WHERE owner_id=? AND stored_name=? "
                              "ORDER BY id DESC LIMIT 1", (me, stored)).fetchone()
         mid = db.execute(
-            "INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,file_id,file_name,file_size,file_mime,reply_to) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (me, 0, cid, kind, fid_row["id"], f.filename, size, f.mimetype or "",
+            "INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,body,file_id,file_name,file_size,"
+            "file_mime,reply_to) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (me, 0, cid, kind, _voice_body(dur) if dur is not None else None,
+             fid_row["id"], f.filename, size, f.mimetype or "",
              _reply_to_conv(db, cid))).lastrowid
-        return _after(mid, "[图片]" if kind == "image" else "[文件] " + (f.filename or ""))
+        return _after(mid, "[语音]" if kind == "voice" else
+                      "[图片]" if kind == "image" else "[文件] " + (f.filename or ""))
 
     data = request.get_json(silent=True) or {}
     card = data.get("card")
@@ -1651,7 +1867,92 @@ def group_send(cid):
     # @提及：被点名的人单独给一条通知，别让他在几十条里自己找
     for u in _mentioned(db, cid, body, me):
         _chat_center_notify_group(db, u, cid, gname, "%s 在小组里 @ 了你" % myname, mid, at=True)
-    return _after(mid, body[:60])
+    resp = _after(mid, body[:60])
+    # @助手：AI 在群里当场回一条，全组都看得见（不是把人支到助手面板去私聊）
+    if _asks_bot(body):
+        _bot_reply_async(cid, me, myname, gname, body, peers)
+    return resp
+
+
+BOT_AT_RE = re.compile(r"@\s*(助手|小助手|AI\s*助手|AI|ai)(?![\w\u4e00-\u9fa5])")
+BOT_SYS = (
+    "你是这个备考学习小组里的 AI 助手，被 @ 到才说话。规矩："
+    "①直接给答案和理由，别客套、别复述问题；"
+    "②控制在 200 字以内，能一句说清就一句；"
+    "③公考相关（行测、申论、常识、时政）答到点子上，拿不准就直说拿不准，不要编；"
+    "④这是群聊，你看不到任何人的私人数据（错题本、收录、进度），别假装看得到。"
+)
+BOT_CTX_N = 8            # 带上最近几条当上下文：群里问「这个怎么算」全靠上文
+_BOT_BUSY = set()        # 正在回答的会话，一个群同时只跑一条，别被连问几句刷爆
+_BOT_LOCK = threading.Lock()
+
+
+def _asks_bot(body):
+    """这条消息是不是在叫 AI 助手。
+
+    后面必须跟非字母非汉字（或结尾），否则「@AIleen」「@助手长」这种也会被当成叫它。"""
+    return bool(BOT_AT_RE.search(body or ""))
+
+
+def _bot_reply_async(cid, asker_id, asker_name, gname, question, peers):
+    """AI 在群里答一条。
+
+    为什么开线程：模型要几秒到十几秒，而发消息这个请求必须立刻返回 ——
+    不然提问的人要等 AI 想完，自己那句话才出现在屏幕上。
+    线程里不能用 g 上那条连接（请求结束就关了），自己开一条、用完自己关。
+
+    答案落库成 kind='ai'、from_uid=0：不借用任何人的身份，所以谁看都不是「自己发的」，
+    也就不会在提问人那侧渲染成右边的绿气泡。"""
+    with _BOT_LOCK:
+        if cid in _BOT_BUSY:
+            return                      # 上一条还在答，这条就不排队了（答案马上到）
+        _BOT_BUSY.add(cid)
+
+    def run():
+        con = None
+        try:
+            con = open_db()
+            rows = con.execute(
+                "SELECT m.from_uid, m.kind, m.body, u.username FROM chat_msgs m "
+                "LEFT JOIN users u ON u.id=m.from_uid "
+                "WHERE m.conv_id=? AND m.kind IN ('text','ai') AND m.recalled_at IS NULL "
+                "ORDER BY m.id DESC LIMIT ?", (cid, BOT_CTX_N)).fetchall()
+            ctx = "\n".join(
+                ("AI 助手：" if r["kind"] == "ai" else ((r["username"] or "某人") + "："))
+                + (r["body"] or "")[:200]
+                for r in reversed(rows))
+            q = BOT_AT_RE.sub("", question).strip() or "（他只 @ 了你，没说别的）"
+            msgs = [{"role": "system", "content": BOT_SYS},
+                    {"role": "user", "content":
+                     "小组「%s」最近的对话：\n%s\n\n%s 刚才 @ 你问：%s" % (gname, ctx, asker_name, q)}]
+            try:
+                rep = (ai_chat(msgs, tier="fast", temperature=0.4, max_tokens=700) or "").strip()
+            except Exception as e:
+                # 答不出来也要落一条：群里 @ 了它却什么都不出现，看着像应用坏了
+                rep = "（没答上来：%s）" % aiclient.error_message(e)
+            if not rep:
+                rep = "（这次没生成出内容，再 @ 我一次试试）"
+            mid = con.execute(
+                "INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,body) VALUES(0,0,?,'ai',?)",
+                (cid, rep)).lastrowid
+            for u in set(list(peers) + [asker_id]):
+                con.execute("INSERT OR IGNORE INTO notifications(user_id,kind,dkey,title,body,link) "
+                            "VALUES(?,?,?,?,?,?)",
+                            (u, "chat", "chatg:%d:%d" % (cid, mid),
+                             "小组「%s」AI 助手回了一条" % gname, rep[:80], "chatgroup:%d" % cid))
+            con.commit()
+            for u in set(list(peers) + [asker_id]):
+                _notify_chat(u, {"type": "msg", "group": cid, "name": gname,
+                                 "preview": "AI 助手：" + rep[:50]})
+        except Exception:
+            log.exception("群里 @助手 回复失败（会话 %s）", cid)
+        finally:
+            if con:
+                con.close()
+            with _BOT_LOCK:
+                _BOT_BUSY.discard(cid)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def _mentioned(db, cid, body, me):
@@ -1728,7 +2029,11 @@ def chat_search():
             item = {"id": r["id"], "peer": peer, "group": False,
                     "peer_name": "文件传输助手" if peer == me else uname(db, peer)}
         item.update({"kind": r["kind"], "time": r["created_at"],
-                     "text": (r["body"] or "") if r["kind"] == "text" else (r["file_name"] or ""),
+                     # 语音的 body 是 JSON，直接摆出来是一串 {"dur":…}；转过文字就搜得到、
+                     # 也显示那段文字，没转过的只给个占位
+                     "text": (r["body"] or "") if r["kind"] == "text" else
+                             (_voice_of(r)["text"] or "[语音]") if r["kind"] == "voice" else
+                             (r["file_name"] or ""),
                      "file": r["kind"] not in ("text", "card")})
         out.append(item)
     return jsonify({"results": out, "q": q})
@@ -1764,15 +2069,23 @@ def chat_send(fid):
         db.execute("INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source,sha256) "
                    "VALUES(?,?,?,?,?,?,?,0,'chat',?)",
                    (me, "聊天文件", f.filename, stored, ext, f.mimetype or "", size, digest))
+        # 语音条也是一条文件消息（音频照样进云盘「聊天文件」，想存想转发都还在），
+        # 只是多带一个时长、在气泡里画成可播放的一条
+        dur = None
+        if request.form.get("voice") == "1":
+            dur, verr = _voice_meta(f, os.path.join(_drive_dir(me), stored))
+            if verr:
+                return jsonify({"error": verr}), 400
         mid = _chat_send_file(db, me, fid, f.filename, stored, size, f.mimetype or "", _drive_dir(me),
-                              digest, _reply_to(db, me, fid))
+                              digest, _reply_to(db, me, fid), voice=dur)
+        prev = "[语音]" if dur is not None else "[文件] " + (f.filename or "")
         myname = uname(db, me)
         if fid != me:                                 # 文件传输助手(自己)不给自己发通知
-            _chat_center_notify(db, fid, me, myname, "[文件] " + (f.filename or ""), mid or 0)
+            _chat_center_notify(db, fid, me, myname, prev, mid or 0)
         db.commit()
         _notify_chat(fid, {"type": "msg", "from": me, "name": myname,
-                           "preview": "[文件] " + (f.filename or "")})   # 提交后再秒推（跨设备同步）
-        return jsonify({"ok": True, "id": mid})
+                           "preview": prev})          # 提交后再秒推（跨设备同步）
+        return jsonify({"ok": True, "id": mid, "dur": dur})
     data = request.get_json(silent=True) or {}
     # 内容卡片：把应用里的一条（错题 / 古诗文 / 素材 / 小记 / 收录词）发过去，对方点开直达
     card = data.get("card")

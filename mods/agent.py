@@ -184,6 +184,40 @@ def _t_add_wq(args, db):
             {"type": "refresh", "what": "wrongq", "toast": "已加入错题本 📓"})
 
 
+def _pv_remember(args, db):
+    """确认弹窗里给用户看的：**原样**是这一句要被长期记住。
+    记忆是要跟着他每一轮对话走的，不能让人对着「确认记住？」盲点。"""
+    return (args.get("text") or "").strip()[:150]
+
+
+@tool("remember_fact",
+      ("把一件**关于这位用户的长期事实**记进长期记忆——之后每一轮对话都会自动带上。"
+       "当用户在聊天里透露了这类稳定信息时主动调用：考哪个岗位/哪场考试、考试时间、"
+       "长期的弱项与目标、他要求你以后怎么答（比如「解析写详细点」）。\n"
+       "**别记这些**：① 能查出来的数字（错题多少道、连续学习多少天——那些每次用查询工具现算，"
+       "记下来只会过期）；② 只在这一轮有用的话；③ 你自己的猜测。\n"
+       "一次只记一件事，写成一句完整的话（最多 200 字）。系统会让用户点头确认，他不点就不会记。"),
+      {"type": "object", "properties": {
+          "text": {"type": "string", "description": "要长期记住的那一句话，例如「目标是四川省考，2026 年 3 月笔试」"},
+          "_confirmed": {"type": "boolean",
+                         "description": "仅在用户已明确确认后才填 true；首次调用不要填，让系统先要确认"}},
+          "required": ["text"]}, kind="write", confirm=True, preview=_pv_remember)
+def _t_remember(args, db):
+    text = (args.get("text") or "").strip()[:200]
+    if not text:
+        return "没给要记住的内容。", None
+    u = uid()
+    if db.execute("SELECT 1 FROM ai_memories WHERE user_id=? AND text=?", (u, text)).fetchone():
+        return "这件事已经记过了，没重复记：%s" % text, None
+    now = datetime.now()
+    db.execute("INSERT INTO ai_memories(user_id,kind,text,source) VALUES(?,?,?,?)",
+               (u, "fact", text, "AI 从 %d 月 %d 日的对话里记下" % (now.month, now.day)))
+    db.commit()
+    n = db.execute("SELECT COUNT(*) FROM ai_memories WHERE user_id=?", (u,)).fetchone()[0]
+    return ("已记住：%s（共 %d 条长期记忆，用户随时能在「AI 记住的事」里看到并删掉）" % (text, n),
+            {"type": "refresh", "what": "memories", "toast": "已记住 🧠"})
+
+
 # ================================================================ 改 / 完成类（update）
 @tool("update_wrong_question",
       "补充或修改错题本里某道题的答案、板块、题型、解析。先用 list_wrong_questions 拿到题目 id 再调。",

@@ -174,7 +174,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     try {
       await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: +mv.dataset.acmproj }) });
       toast('已移动'); await loadAiHome();
-      if (!$('#aiv-project').classList.contains('hidden') && aiCurProject) openAiProject(aiCurProject.id);
+      if (aiCurProject) openAiProject(aiCurProject.id);   // 正只看某个项目时，刷完再回到那份筛选
     } catch (err) { toast(err.message, true); }
     return;
   }
@@ -203,7 +203,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
       await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'DELETE' });
     }
     await loadAiHome();
-    if (!$('#aiv-project').classList.contains('hidden') && aiCurProject) openAiProject(aiCurProject.id);
+    if (aiCurProject) openAiProject(aiCurProject.id);
   } catch (err) { toast(err.message, true); }
 });
 

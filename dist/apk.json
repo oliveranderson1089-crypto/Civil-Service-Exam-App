@@ -1,5 +1,5 @@
 {
-  "version_code": 22,
-  "version_name": "3.1",
-  "notes": "换用新版应用图标（墨底蓝章）；库/我的两页改版；启动屏随一天的时刻渐变。"
+  "version_code": 24,
+  "version_name": "3.3",
+  "notes": "修手机端录音打不开（补 MODIFY_AUDIO_SETTINGS 权限）；打不开时会实测麦克风，分清是被占用、没权限还是通道没接上。"
 }

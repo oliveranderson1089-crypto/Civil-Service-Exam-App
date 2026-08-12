@@ -501,6 +501,24 @@ async function dvSha256(file) {
 const dvUpKey = (file, folder) =>
   'dv:up:' + [file.name, file.size, file.lastModified, folder].join('|');
 
+/* 网络抖一下就重试。
+   隧道掉线是家常便饭（实测一天十几次，日志里是「Lost connection with the edge」），
+   传 100MB 要二十多个来回，中间必然撞上一次 —— 一片没传成就让整份失败，
+   等于大文件永远传不上去。分片是按序号落盘的，重传同一片幂等，所以退避重试是安全的。
+
+   只重试**网络层**的失败（fetch 抛 TypeError）。服务端明确拒绝的（会话不存在、
+   块号不合法、传的比说好的多、未登录）重试多少次都是同一个答案，直接抛出去。 */
+const DV_BACKOFF = [1000, 3000, 6000];
+const dvNetErr = (e) => e instanceof TypeError || /Failed to fetch|Load failed|NetworkError/i.test(e && e.message || '');
+async function dvRetry(fn) {
+  for (let t = 0; ; t++) {
+    try { return await fn(); } catch (e) {
+      if (t >= DV_BACKOFF.length || !dvNetErr(e)) throw e;
+      await new Promise(r => setTimeout(r, DV_BACKOFF[t]));
+    }
+  }
+}
+
 async function dvUploadChunked(file, folder, onProg) {
   const key = dvUpKey(file, folder);
   let id = lsGet(key), had = new Set();
@@ -520,13 +538,11 @@ async function dvUploadChunked(file, folder, onProg) {
   const n = Math.ceil(file.size / DV_CHUNK);
   for (let i = 0; i < n; i++) {
     const end = Math.min(file.size, (i + 1) * DV_CHUNK);
-    if (!had.has(i)) {
-      await api('/api/drive/chunk/' + id + '/' + i,
-                { method: 'POST', body: file.slice(i * DV_CHUNK, end) });
-    }
+    if (!had.has(i)) await dvRetry(() => api('/api/drive/chunk/' + id + '/' + i,
+                                             { method: 'POST', body: file.slice(i * DV_CHUNK, end) }));
     onProg(end);
   }
-  const row = await api('/api/drive/chunk/' + id + '/done', { method: 'POST' });
+  const row = await dvRetry(() => api('/api/drive/chunk/' + id + '/done', { method: 'POST' }));
   lsDel(key);                              // 传成了，别把死 id 留到下次
   return row;
 }

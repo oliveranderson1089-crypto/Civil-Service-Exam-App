@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>公考助手 · 打不开</title>
+<!-- 出错兜底页。
+     原则：上半屏说人话（连不上服务器 / 证书有问题 / 网页崩了，分开讲，不要一律「加载失败」），
+     下半屏给**原始错误**和自检结果，一键复制给能看懂的人。这页是本地文件，
+     网络断了照样打得开，所以不能引任何外部资源。 -->
+<style>
+  :root { --blue:#1a6fb5; --line:#e6e9ef; --ink:#20303f; --sub:#7c848f; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: #f6f7f9; color: var(--ink);
+    font: 15px/1.7 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center; padding: 28px;
+  }
+  .card {
+    width: 100%; max-width: 640px; background: #fff; border: 1px solid var(--line);
+    border-radius: 14px; box-shadow: 0 12px 32px rgba(16,24,40,.10); padding: 28px 30px;
+  }
+  h1 { font-size: 21px; margin: 0 0 8px; }
+  .lead { color: var(--sub); margin: 0 0 20px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 22px 0 6px; }
+  button {
+    font: inherit; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink); cursor: pointer;
+  }
+  button:hover { background: #f2f5f9; }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  button.primary:hover { filter: brightness(1.08); }
+  details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+  summary { cursor: pointer; color: var(--sub); }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 5px 8px 5px 0; vertical-align: top; }
+  th { color: var(--sub); font-weight: 400; white-space: nowrap; width: 92px; }
+  td { word-break: break-all; font-family: Consolas, "Courier New", monospace; }
+  .srv { margin-top: 14px; display: none; gap: 8px; }
+  .srv.on { display: flex; }
+  .srv input { flex: 1; font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; }
+  .srv input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,111,181,.16); }
+  .hint { color: var(--sub); font-size: 13px; margin-top: 10px; }
+</style>
+<div class="card">
+  <h1 id="title">打不开</h1>
+  <p class="lead" id="lead"></p>
+
+  <div class="row">
+    <button class="primary" onclick="__gkShell.retry()">重试</button>
+    <button onclick="copyDiag(this)">复制诊断信息</button>
+    <button onclick="__gkShell.openLogs()">打开日志文件夹</button>
+    <button onclick="document.querySelector('.srv').classList.toggle('on')">更换服务器地址</button>
+  </div>
+
+  <div class="srv">
+    <input id="srv" placeholder="http://192.168.1.5:8011">
+    <button class="primary" onclick="setServer()">保存并连接</button>
+  </div>
+  <p class="hint" id="hint"></p>
+
+  <details open>
+    <summary>技术细节（复制给排障的人）</summary>
+    <table id="tb"></table>
+  </details>
+</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const code = q.get('code') || '';
+  const desc = q.get('desc') || '';
+  const url = q.get('url') || '';
+
+  /* 错误码 → 人能懂的话。分类比文案漂亮重要：人要能据此知道下一步该找谁。 */
+  const KIND = {
+    '-105': ['连不上服务器', '域名解析不了。多半是这台电脑没网，或者 DNS 有问题。'],
+    '-106': ['这台电脑没有联网', '先检查 Wi-Fi / 网线，连上网再点「重试」。'],
+    '-102': ['服务器拒绝了连接', '地址和端口是通的，但那头没有服务在听 —— 服务端可能没启动。'],
+    '-109': ['到不了服务器', '网络能用，但这个地址不可达。检查是不是填错了内网地址。'],
+    '-118': ['连接超时', '一直连不上。服务端可能挂了，或者中间的隧道断了。'],
+    '-7': ['连接超时', '一直连不上。服务端可能挂了，或者中间的隧道断了。'],
+    '-21': ['网络刚切换过', '网络环境变了（比如切了 Wi-Fi）。点「重试」通常就好。'],
+    '-324': ['服务器没有返回内容', '连上了但没数据，服务端八成正在重启。'],
+    '-501': ['连接不安全', 'HTTPS 证书有问题，为安全起见没有继续。'],
+    'RENDER_GONE': ['网页崩了', '显示网页的进程意外退出。点「重试」重新加载；反复出现请把日志发出来。'],
+  };
+  const cert = (+code <= -200 && +code >= -299);
+  const k = KIND[code] || (cert
+    ? ['证书有问题', 'HTTPS 证书验证没通过（可能是证书过期，或者被中间设备拦截了）。']
+    : ['打不开', '加载网页时出错了。展开下面的技术细节看原始错误。']);
+  document.getElementById('title').textContent = k[0];
+  document.getElementById('lead').textContent = k[1];
+
+  const rows = { '错误码': code, '原始错误': desc, '目标地址': url };
+  function render(extra) {
+    Object.assign(rows, extra || {});
+    document.getElementById('tb').innerHTML = Object.entries(rows)
+      .map(([a, b]) => `<tr><th>${a}</th><td>${String(b == null ? '' : b)}</td></tr>`).join('');
+  }
+  render();
+
+  // 版本、地址来源、日志路径 + 自检（域名解析 → TCP → HTTP），都由主进程查
+  __gkShell.info().then(render);
+  __gkShell.diag().then(render);
+
+  function copyDiag(btn) {
+    __gkShell.copyDiag().then(() => {
+      btn.textContent = '已复制到剪贴板';
+      setTimeout(() => { btn.textContent = '复制诊断信息'; }, 2000);
+    });
+  }
+  function setServer() {
+    const v = document.getElementById('srv').value;
+    __gkShell.setServer(v).then((r) => {
+      if (!r.ok) document.getElementById('hint').textContent = r.msg;
+    });
+  }
+  document.getElementById('srv').value = url;
+</script>
+</html>

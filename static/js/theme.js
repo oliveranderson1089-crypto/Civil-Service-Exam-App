@@ -7,9 +7,9 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DL_ART, aiProjectId, aiShow, dlArtApply, dlArtAt, dlArtClock, dlArtDark,
-   dlArtHue, dlArtKey, dlArtMode, dlIsDesk, esc, loadAiHome, lsGet, lsSet,
-   openAiProject, renderAiProjects, toast */
+/* global $, DL_ART, aiSheetClose, aiSideClose, applyPush, avoidFab, dlArtApply, dlArtAt, dlArtClock,
+   dlArtDark, dlArtHue, dlArtKey, dlArtMode, dlIsDesk, esc, loadAiHome, lsGet, lsSet,
+   toast */
 
 /* ================= 主题：日间 / 夜间 / 跟随系统 ================= */
 const _themeMedia = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -195,18 +195,18 @@ document.addEventListener('click', e => {
 });
 artRenderPicker();
 
-/* ================= AI 面板分层返回（返回上一级而非直接关闭） ================= */
+/* ================= AI 面板的返回键 =================
+   改版后 AI 只剩两层：会话抽屉开着 → 先收抽屉；否则关面板。
+   （旧版有首页/项目/项目详情/会话四层，返回要一层层退 —— 那四个视图已经并成一栏了。） */
 function aiBack() {
   if ($('#ai-panel').classList.contains('hidden')) return false;
-  if (!$('#aiv-chat').classList.contains('hidden')) {
-    // 会话 → 所属项目详情（若有）或首页
-    if (aiProjectId && ($('#ai-panel')._projects || []).some(p => p.id === aiProjectId)) {
-      loadAiHome().then(() => openAiProject(aiProjectId));
-    } else { aiShow('home'); loadAiHome(); }
-    return true;
-  }
-  if (!$('#aiv-project').classList.contains('hidden')) { renderAiProjects(); aiShow('projects'); return true; }
-  if (!$('#aiv-projects').classList.contains('hidden')) { aiShow('home'); loadAiHome(); return true; }
+  if ($('#ai-panel').classList.contains('side-on')) { aiSideClose(); return true; }
+  if (!$('#ai-sheet').classList.contains('hidden')) { aiSheetClose(); return true; }
   $('#ai-panel').classList.add('hidden');
+  /* 关面板必须顺手收 body 上的 pad-full / --push-*：全屏停靠时它给 body 挂了 pad-full，
+     而那条类会把悬浮球 display:none。这条**返回键**路径原先只藏面板不收类，
+     于是用返回退出全屏 AI 之后，悬浮球就一直不见了，只能重开应用。 */
+  if (window.applyPush) applyPush();
+  if (window.avoidFab) avoidFab();
   return true;
 }

@@ -26,7 +26,9 @@ def tool(name, desc, params, kind="write", confirm=False, preview=None):
 
     kind: read（只查）| write（新增，可撤销）| update（改已有）|
           destructive（删除/覆盖，需确认）| navigate（跳前端页）
-    confirm: True 时破坏性操作要二次确认——没带 _confirmed 就先回确认请求，不真执行。
+    confirm: True 时要二次确认——没带 _confirmed 就先回确认请求，不真执行。
+             不只给删除用：写长期记忆也走它（AI 悄悄记错一条，之后每轮都拿它答，
+             比删错还难发现；让用户点一下头，记忆才配一直待在上下文里）。
     preview: 仅 confirm 类要给。(args, db) -> 一句话说清「要删的到底是哪一条」，
              进确认弹窗给用户看。没有它，删错题/删小记只能弹「确认删除这条内容？」，
              用户根本不知道是哪条，只能盲点确定。
@@ -58,7 +60,8 @@ TOOL_LABELS = {
     "update_wrong_question": "修改错题", "star_word": "收藏词条",
     "append_to_note": "追加到小记", "add_daily_task": "加每日任务",
     "complete_daily_task": "完成任务", "complete_plan_item": "完成计划项",
-    "star_classic": "收藏古诗文", "delete_entry": "删除收录的词",
+    "star_classic": "收藏古诗文", "remember_fact": "记住这件事",
+    "delete_entry": "删除收录的词",
     "delete_wrong_question": "删除错题", "delete_note": "删除小记",
 }
 
@@ -134,8 +137,11 @@ def exec_tool(name, args, db):
                 summary = t["preview"](args, db) or ""
             except Exception:
                 log.warning("确认预览生成失败：%s", name, exc_info=True)
-        return ("「%s」是删除类操作，需要用户确认后才能执行。请向用户复述将删除的内容并等待确认。" % name,
-                {"type": "confirm", "tool": name, "args": args,
+        ask = ("「%s」是删除类操作，需要用户确认后才能执行。请向用户复述将删除的内容并等待确认。"
+               if t["kind"] == "destructive" else
+               "「%s」要用户点头才生效。请向用户说清你打算做的是哪一件事，然后停下等他确认。")
+        return (ask % name,
+                {"type": "confirm", "tool": name, "args": args, "kind": t["kind"],
                  "label": tool_label(name), "summary": summary})
     return t["handler"](args, db)
 

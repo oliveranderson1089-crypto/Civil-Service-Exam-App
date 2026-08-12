@@ -41,3 +41,44 @@ test('没给 key 时「以后再说」不写 skipUpdate（比如网页版强提�
   D(h).querySelector('#upd-later').click();
   assert.strictEqual(h.run(`lsGet('skipUpdate')`), null, '没 key 却写了 skipUpdate');
 });
+
+/* ---- 桌面版更新检查：两个电脑端各拿各的包 ----
+   Linux 壳读 deb_*、Windows 壳读 win_*，服务端两套字段并存（老 Linux 壳只认 deb_*，
+   改名会让所有已装的客户端再也收不到更新提示）。挑错一边的后果很实在：
+   Windows 用户会被提示去下一个装不上的 .deb。 */
+const VER_API = {
+  sw: 'gongkao-v221',
+  deb_available: true, deb_code: 52, deb_name: '5.2', deb_notes: 'Linux 那版的说明',
+  deb_size: 1119988, deb_url: '/download/gongkao.deb',
+  win_available: true, win_code: 60, win_name: '6.0', win_notes: 'Windows 那版的说明',
+  win_size: 90000000, win_url: '/download/gongkao-setup.exe',
+};
+const bootShell = (plat) => boot({
+  window: { __desktop: true, __desktopVer: '5.1', __desktopPlat: plat },
+  fetch: (url) => (url.includes('/api/desktop/version') ? { json: VER_API } : {}),
+});
+
+test('Windows 壳拿 win_* 那一套（不是 deb）', async (t) => {
+  const h = bootShell('win'); t.after(() => h.close());
+  h.run(`lsDel('skipUpdate')`);
+  await h.run(`checkDesktopUpdate(true)`);
+  assert.strictEqual(D(h).querySelector('#upd-ver').textContent, 'v6.0', 'Windows 壳没拿 win_* 的版本号');
+  assert.ok(D(h).querySelector('#upd-notes').textContent.includes('Windows 那版的说明'),
+    '更新说明串到 Linux 那套去了');
+});
+
+test('Linux 壳照旧拿 deb_*（没有 __desktopPlat 也要认）', async (t) => {
+  const h = bootShell(undefined); t.after(() => h.close());
+  h.run(`lsDel('skipUpdate')`);
+  await h.run(`checkDesktopUpdate(true)`);
+  assert.strictEqual(D(h).querySelector('#upd-ver').textContent, 'v5.2', '老 Linux 壳的更新提示被改坏了');
+});
+
+test('「以后再说」的跳过标记按平台分开记', async (t) => {
+  const h = bootShell('win'); t.after(() => h.close());
+  h.run(`lsDel('skipUpdate')`);
+  await h.run(`checkDesktopUpdate(true)`);
+  D(h).querySelector('#upd-later').click();
+  assert.strictEqual(h.run(`lsGet('skipUpdate')`), 'win60',
+    '跳过标记没带平台，Windows 上说过「以后再说」会把 Linux 的更新也压掉');
+});

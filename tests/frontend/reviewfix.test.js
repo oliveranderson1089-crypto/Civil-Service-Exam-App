@@ -31,8 +31,10 @@ test('「继续」按钮和消息 id 在流式路径上真能拿到', (t) => {
   assert.equal(got.user_mid, 11);
   assert.equal(got.msg_id, 12);
   assert.equal(got.truncated, true);
-  // 而 renderAI 认 truncated 才会画「继续」
-  assert.match(SRC('aichat.js'), /m\.truncated && i === aiMsgs\.length - 1/);
+  // 而 renderAI 认 truncated 才会画「继续」（2026-08 改版后「最后一条」抽成了 last）
+  const src = SRC('aichat.js');
+  assert.match(src, /const last = i === aiMsgs\.length - 1/);
+  assert.match(src, /m\.truncated && last/);
 });
 
 test('群聊里也能发内容卡片（后端本来就收）', () => {

@@ -63,3 +63,37 @@ class TestAssetCache:
         for p in ("/js/app.bundle.js", "/style.css"):
             r = auth_client.get(p, headers={"Accept-Encoding": "gzip"})
             assert r.headers.get("Content-Encoding") == "gzip", f"{p} 该被 gzip 压缩"
+
+
+class TestAuthPageAssets:
+    """登录 / 注册 / 找回三页引用的东西，**没登录也得拿得到**。
+
+    这三页的外观从内联 <style> 挪进了 static/auth.css，底图由 js/daylight.js 画
+    （和启动屏同一张色表）。它们不在 _PUBLIC_EXACT 里的话，未登录访问一律 302 回
+    /login —— 页面照样出来，只是一堆没样式的裸标签，而且**服务端没有任何报错**。
+    这里从三页的 HTML 里读真实引用去验，别自己抄一份清单。
+    """
+
+    PAGES = ("login.html", "register.html", "forgot.html")
+
+    @staticmethod
+    def _refs(page):
+        html = (BASE / "static" / page).read_text(encoding="utf-8")
+        return (re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)
+                + re.findall(r'<script src="([^"]+)"', html))
+
+    def test_三页的样式和脚本未登录就能取到(self, client):
+        bad = []
+        for page in self.PAGES:
+            refs = self._refs(page)
+            assert refs, f"{page} 里一个 css/js 引用都没有？"
+            for ref in refs:
+                r = client.get("/" + ref.lstrip("/"))
+                if r.status_code != 200:
+                    bad.append(f"{page} 引的 /{ref} -> {r.status_code}（没登录拿不到）")
+        assert not bad, "登录页会变成没样式的裸标签：\n  " + "\n  ".join(bad)
+
+    def test_登录页那套资源会回源校验(self, client):
+        for p in ("/auth.css", "/js/daylight.js", "/js/auth.js"):
+            cc = client.get(p).headers.get("Cache-Control", "")
+            assert "no-cache" in cc, f"{p} 该 no-cache（URL 固定又没内容哈希），实际：{cc or '(无)'}"

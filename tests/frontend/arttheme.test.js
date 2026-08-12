@@ -642,3 +642,43 @@ test('JS 里也不许写死彩色渐变（KB_COVERS 就是从这漏的）', () =
     'JS 里写死了彩色渐变，主题压不过行内样式，开了主题它们会原样跳出来：\n    '
     + miss.join('\n    ') + '\n  颜色请搬进 style.css（留 var(--…) 兜底），或写进豁免表并说明理由。');
 });
+
+
+/* 字看不看得清，不能靠人挨个时刻去瞄：18 套主题 × 24 个时刻 = 432 屏。
+   这一条就是那 432 屏的替身。曾经漏掉的正是黄昏那一段 —— 卡片底和字色到点硬翻，
+   壁纸却是连续滑的，18~20 时那片底正好滑到和字差不多的一档，次要字只剩 1.2:1。 */
+test('每套主题、每个时刻，正文和次要字都不低于对比度下限', t => {
+  const h = boot(); t.after(() => h.close());
+  const win = h.window;
+  const RGB = c => {
+    const m = String(c).match(/rgba?\(([^)]+)\)/);
+    if (m) return m[1].split(',').slice(0, 3).map(Number);
+    let h = String(c).replace('#', '');
+    if (h.length === 3) h = h.split('').map(x => x + x).join('');
+    return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+  };
+  const lum = c => RGB(c).map(v => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const ratio = (a, b) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+  // 半透明的面（天光琉璃的玻璃卡）背后是壁纸，静态算不出真实底色，不参与判定
+  const solid = c => typeof c === 'string' && !/rgba|hsla/.test(c) && !isNaN(lum(c));
+  /* 推到纯黑/纯白还是不够的，就不算它的错 —— 那一刻的底色本身是中灰
+     （晨昏的天光琉璃就是，纯白压上去也只有 4.33:1），再推没有意义，
+     硬把字翻成反色反而会和这一刻其余按日/夜写死的颜色打架。 */
+  const maxed = c => { const [r, g, b] = RGB(c); return (r > 250 && g > 250 && b > 250) || (r < 5 && g < 5 && b < 5); };
+  const bad = [];
+  for (const k of Object.keys(win.DL_ART)) {
+    for (let h = 0; h < 24; h++) {
+      const v = win.dlGuardInk(win.dlArtAt(k, h));
+      const faces = [v.card, v.bg, v.bg2].filter(solid);
+      faces.forEach(f => {
+        if (ratio(v.text, f) < 4.4 && !maxed(v.text)) bad.push(`${win.DL_ART[k].name} ${h}时 正文 ${ratio(v.text, f).toFixed(2)}:1`);
+        if (ratio(v.muted, f) < 3.3 && !maxed(v.muted)) bad.push(`${win.DL_ART[k].name} ${h}时 次要 ${ratio(v.muted, f).toFixed(2)}:1`);
+      });
+    }
+  }
+  assert.deepStrictEqual(bad.slice(0, 8), [],
+    '这些时刻的字压在自己的底上看不清（dlGuardInk 没兜住）：\n    ' + bad.slice(0, 8).join('\n    '));
+});

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>服务器地址</title>
+<style>
+  :root { --blue:#1a6fb5; --line:#e6e9ef; --ink:#20303f; --sub:#7c848f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 22px 24px; background: #fff; color: var(--ink);
+         font: 14.5px/1.7 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  p.sub { color: var(--sub); margin: 0 0 16px; font-size: 13px; }
+  label { display: block; font-size: 13px; color: var(--sub); margin-bottom: 6px; }
+  input { width: 100%; font: inherit; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; }
+  input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,111,181,.16); }
+  .quick { display: flex; gap: 8px; margin: 10px 0 4px; flex-wrap: wrap; }
+  .quick button { font-size: 12.5px; padding: 5px 10px; border-radius: 999px;
+                  border: 1px solid var(--line); background: #f7f9fc; color: var(--sub); cursor: pointer; }
+  .quick button:hover { border-color: var(--blue); color: var(--blue); }
+  .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+  .row button { font: inherit; padding: 8px 18px; border-radius: 10px; border: 1px solid var(--line);
+                background: #fff; cursor: pointer; }
+  .row button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .note { background: #f7f9fc; border: 1px solid var(--line); border-radius: 10px;
+          padding: 10px 12px; font-size: 12.5px; color: var(--sub); margin-top: 14px; }
+  .err { color: #c0392b; font-size: 13px; min-height: 20px; margin-top: 8px; }
+</style>
+<h1>服务器地址</h1>
+<p class="sub">当前：<b id="cur">—</b></p>
+
+<label for="u">连到哪里</label>
+<input id="u" placeholder="http://192.168.1.5:8011">
+<div class="quick" id="quick">
+  <button onclick="fill('https://gk.gongkaopei2026.click')">公网隧道</button>
+  <button onclick="fill('http://127.0.0.1:8011')">本机</button>
+</div>
+<div class="err" id="err"></div>
+
+<div class="note">
+  同一个局域网里就填服务端那台机器的地址（<code>http://局域网 IP:8011</code>）：不走公网隧道，传大文件又快又不容易断。
+  换地址后要重新登录一次（登录状态是按地址分开存的）。保存后应用会重启。
+</div>
+
+<div class="row">
+  <button onclick="__gkShell.closeServer()">取消</button>
+  <button class="primary" onclick="save()">保存并重启</button>
+</div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  __gkShell.info().then((d) => {
+    $('cur').textContent = d.服务器; $('u').value = d.服务器; $('u').select();
+    // 局域网地址各人不同，不写死在这儿：手输过一次就记在本机 config.json 里，之后当快捷按钮出现
+    (d.最近地址 || []).forEach((u) => {
+      const b = document.createElement('button');
+      b.textContent = u.replace(/^https?:\/\//, '');
+      b.onclick = () => fill(u);
+      $('quick').appendChild(b);
+    });
+  });
+  const fill = (v) => { $('u').value = v; $('u').focus(); };
+  function save() {
+    __gkShell.setServer($('u').value).then((r) => { if (!r.ok) $('err').textContent = r.msg; });
+  }
+  addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') save();
+    if (e.key === 'Escape') __gkShell.closeServer();
+  });
+</script>
+</html>

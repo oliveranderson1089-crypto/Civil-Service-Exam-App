@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>公考助手</title>
+<!-- 窗口顶上那条白色细条：和网页顶栏同色、连在一起，看不出「网页套壳」的接缝。
+     Windows 的系统按钮（最小化/最大化/关闭）由 titleBarOverlay 画在这条的右端。
+     整条都是拖动区，双击最大化由系统自己处理。 -->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: #ffffff;
+    border-bottom: 1px solid #e6e9ef;
+    box-sizing: border-box;
+    -webkit-app-region: drag;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+</style>

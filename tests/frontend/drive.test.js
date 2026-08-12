@@ -542,3 +542,55 @@ test('CSS：可收缩那格 min-width:0、按钮那格 flex:0 0 auto', (t) => {
   assert.match(info, /min-width:\s*0/, '不写 min-width:0，flex 子项不会收缩，长文本照样撑破行');
   assert.match(acts, /flex:\s*0 0 auto/, '按钮那格要固定，否则会被挤没');
 });
+
+/* ---- 大文件分片上传：网络抖一下要能自己接上 ----
+   隧道掉线是常态（实测一天十几次），传 100MB 要二十多个来回，中间必然撞上一次。
+   一片没传成就让整份失败的话，大文件永远传不上去 —— 这正是 2026-08-12 那次
+   「上传 134MB 的 zip 失败」的成因。 */
+function bigFileHarness(failTimes) {
+  let left = failTimes;
+  const calls = [];
+  const h = boot({
+    fetch: (url, o) => {
+      calls.push(url);
+      if (/\/api\/drive\/chunk\/[a-z0-9]+\/\d+$/.test(url)) {
+        // 前 failTimes 次分片请求模拟「隧道断了」：fetch 在网络层失败抛的就是 TypeError
+        if (left-- > 0) return new TypeError('Failed to fetch');
+        return { json: { ok: true } };
+      }
+      if (url.includes('/chunk/init')) return { json: { upload_id: 'abc123', received: [] } };
+      if (url.includes('/done')) return { json: { id: 7, name: 'big.bin' } };
+      return { json: {} };
+    },
+  });
+  return { h, calls };
+}
+
+test('分片传到一半断网 → 退避重试，整份还是能传完', async (t) => {
+  const { h, calls } = bigFileHarness(2);      // 头两次分片请求失败
+  t.after(() => h.close());
+  const row = await h.run(`(async () => {
+    const f = new File([new Uint8Array(9 * 1024 * 1024)], 'big.bin');   // 9MB > 8MB → 走分片
+    return dvUploadChunked(f, '', () => {});
+  })()`);
+  assert.strictEqual(row.id, 7, '重试之后没能把整份传完');
+  const chunkCalls = calls.filter(u => /\/chunk\/abc123\/\d+$/.test(u));
+  assert.strictEqual(chunkCalls.length, 5, '9MB 该是 3 片 + 2 次重试 = 5 次请求，实际 ' + chunkCalls.length);
+});
+
+test('服务端明确拒绝（不是网络问题）就不该傻重试', async (t) => {
+  const h = boot({
+    fetch: (url) => {
+      if (url.includes('/chunk/init')) return { json: { upload_id: 'abc123', received: [] } };
+      if (/\/chunk\/[a-z0-9]+\/\d+$/.test(url)) return { status: 400, json: { error: '块号不合法' } };
+      return { json: {} };
+    },
+  });
+  t.after(() => h.close());
+  const err = await h.run(`(async () => {
+    const f = new File([new Uint8Array(9 * 1024 * 1024)], 'big.bin');
+    try { await dvUploadChunked(f, '', () => {}); return '没报错'; }
+    catch (e) { return e.message; }
+  })()`);
+  assert.strictEqual(err, '块号不合法', '服务端的拒绝理由被重试逻辑吞了：' + err);
+});

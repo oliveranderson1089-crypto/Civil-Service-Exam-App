@@ -71,3 +71,15 @@ test('宽度照抄当前视图，不在 CSS 里另抄一份对照表', () => {
   assert.match(css, /body\.has-crumb \.view\{padding-top/,
     '面包屑出现时视图没收掉上边距，会和面包屑挤成两行空白');
 });
+
+test('手机端聊天页不画面包屑：顶栏和会话顶栏已经把名字写过两遍了', (t) => {
+  const h = boot({ mobile: true }); t.after(() => h.close());
+  h.run("stack.length=0; stack.push({view:'me',title:'我的'},{view:'chat',title:'聊天'}," +
+    "{view:'chat',room:9,title:'某某'}); renderCrumb(stack[stack.length-1])");
+  assert.ok($(h, '#crumb').classList.contains('hidden'),
+    '手机端聊天页还在画面包屑 —— 同一句话说三遍，白占一整行');
+  // 别处照旧：路径深的地方它是有用的
+  h.run("stack.length=0; stack.push({view:'me',title:'我的'},{view:'kb',title:'知识库'}); " +
+    "renderCrumb(stack[stack.length-1])");
+  assert.ok(!$(h, '#crumb').classList.contains('hidden'), '把别处的面包屑也一起关掉了');
+});

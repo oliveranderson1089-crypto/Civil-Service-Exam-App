@@ -41,16 +41,18 @@ function drNeedYear() { return drSrc === 'real' ? drYear : 0; }
    两个方向都出过，所以缓存要连「按哪个年份拉的」一起记，对不上就重拉。 */
 async function loadDrillTypes() {
   const y = drNeedYear();
-  /* 缓存键必须**三样都带上**：板块换了、难度换了，响应内容都会变
-     （每个题型的正确率/做题数是按 level 统计的）。只比年份的话，
-     换板块会直接短路、把上一个板块的题型渲染出来。 */
-  const key = `${drBoard}|${drLevel}|${y}`;
+  /* 缓存键必须**四样都带上**：板块换了、难度换了、题源换了，响应内容都会变
+     （每个题型的正确率/做题数是按 level 统计的，而按哪些 level 统计又取决于题源）。
+     只比年份的话，换板块会直接短路、把上一个板块的题型渲染出来。 */
+  const key = `${drBoard}|${drLevel}|${y}|${drSrc}`;
   if (drTypesData && drTypesKey === key) { renderDrillTypes(); return; }
   const box = $('#dr-types');
   box.innerHTML = '<p class="empty">加载中…</p>';
   try {
     const yq = y ? `&year_min=${y}` : '';
-    const d = await api(`/api/drill/types?board=${encodeURIComponent(drBoard)}&level=${drLevel}${yq}`);
+    /* src 必须一起报给服务端：「练过没有 / 正确率多少」是按**这次会用到的难度**数的，
+       真题模式的场次记成 level='real'，不说清题源就会把真题练的成绩全漏掉（显示没练过）。 */
+    const d = await api(`/api/drill/types?board=${encodeURIComponent(drBoard)}&level=${drLevel}&src=${drSrc}${yq}`);
     drTypesData = d; drTypesKey = key;
     renderDrillTypes();
   } catch (e) { drTypesData = null; drTypesKey = ''; box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }

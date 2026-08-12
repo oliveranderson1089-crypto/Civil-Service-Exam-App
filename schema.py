@@ -1084,6 +1084,20 @@ def init_db():
             PRIMARY KEY(conv_id, user_id)
         );
         CREATE INDEX IF NOT EXISTS idx_cmem_user ON conv_members(user_id);
+        -- 会话偏好：置顶 / 免打扰。kind='u' 是好友（peer=好友的 user_id），'g' 是小组（peer=conv_id）。
+        -- 为什么不塞进 conv_members：一对一那半边的列表是从 friends 拼出来的，
+        -- 根本不查 conv_members —— 挂在那儿等于只有小组能置顶。
+        -- 小组打卡：CM2 那张「今天的打卡」条。一人一天一条，按天去重。
+        CREATE TABLE IF NOT EXISTS chat_checkins(
+            conv_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(conv_id, user_id, day)
+        );
+        CREATE TABLE IF NOT EXISTS chat_prefs(
+            user_id INTEGER NOT NULL, kind TEXT NOT NULL, peer INTEGER NOT NULL,
+            pinned INTEGER DEFAULT 0, muted INTEGER DEFAULT 0,
+            PRIMARY KEY(user_id, kind, peer)
+        );
     """)
     if "conv_id" not in _cols(con, "chat_msgs"):
         con.execute("ALTER TABLE chat_msgs ADD COLUMN conv_id INTEGER")

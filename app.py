@@ -29,6 +29,7 @@ from mods.aichat import bp as aichat_bp
 from mods.aisession import bp as aisession_bp
 from mods.aistats import bp as aistats_bp
 from mods.annots import bp as annots_bp
+from mods.asr import bp as asr_bp
 from mods.attach import bp as attach_bp
 from mods.auth import bp as auth_bp
 from mods.basics import bp as basics_bp
@@ -107,6 +108,7 @@ app.register_blueprint(aichat_bp)
 app.register_blueprint(aisession_bp)
 app.register_blueprint(aistats_bp)
 app.register_blueprint(annots_bp)
+app.register_blueprint(asr_bp)
 app.register_blueprint(attach_bp)
 app.register_blueprint(auth_bp)
 app.register_blueprint(basics_bp)
@@ -171,8 +173,12 @@ _PUBLIC_EXACT = {"/register", "/api/register", "/login", "/api/login",
                  "/forgot", "/api/forgot/question", "/api/forgot/reset",
                  "/api/sec_questions", "/api/captcha", "/api/register/status",
                  "/apk", "/download/gongkao.apk", "/deb", "/download/gongkao.deb",
+                 "/win", "/download/gongkao-setup.exe", "/download/gongkao-win.zip",
                  "/api/app/version", "/api/desktop/version",
-                 "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico"}
+                 "/style.css", "/manifest.webmanifest", "/sw.js", "/favicon.ico",
+                 # 登录三页的外观：天光底的样式和画它的脚本。没这三条，没登录的人
+                 # 拿不到 CSS/JS，登录页就是一堆没样式的裸标签（302 跳回 /login）。
+                 "/auth.css", "/js/daylight.js", "/js/auth.js"}
 
 
 def _is_public(path):
@@ -188,7 +194,10 @@ _NOSTORE = {"/", "/index.html", "/login", "/register", "/forgot", "/admin"}
 # 会变但可校验的资源：允许缓存，但每次带 ETag 回源校验（改了 200、没改 304）。
 # 比 no-store 省一整份下载，又绝不会发旧的 —— Cloudflare 也会照 no-cache 回源校验。
 # （/js/app.bundle.js 不在此列：它带内容哈希版本号，走 immutable 长缓存，见下方路由。）
-_REVALIDATE = {"/style.css", "/sw.js", "/manifest.webmanifest"}
+_REVALIDATE = {"/style.css", "/sw.js", "/manifest.webmanifest",
+               # 登录三页那套：URL 固定、没有内容哈希，只能靠 ETag 回源校验，
+               # 否则改了外观、老用户还顶着缓存里的旧样式
+               "/auth.css", "/js/daylight.js", "/js/auth.js"}
 
 
 @app.after_request

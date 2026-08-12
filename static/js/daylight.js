@@ -167,6 +167,61 @@ function dlPaintSplash(h) {
   return v;
 }
 
+/* 登录 / 注册 / 找回密码三页的天光底。**和启动屏是同一张色表、同一批层** ——
+   启动屏淡出后落到登录页，不该换一块天；反过来，登录成功跳进应用时也接得上。
+   这三页各有各的表单，共用的只有底和卡片那几个颜色，所以这里只做两件事：
+     · 把 #dl-sky 那五层画出来（层的位置和尺寸在 auth.css 里，这里只给"画什么、多浓"）；
+     · 把卡片要用的颜色写成 body 上的 --dl-* 变量，交给 auth.css 去用。
+   卡片颜色不再进锚点表：那张表还被 gen_appicon.py 和 desktop/gongkao_native.py 镜像着，
+   为一页表单往里加六个键，三处都得跟着改。这里改从 v.ink 的明暗推——夜里字是近白的，
+   就翻成墨色玻璃；白天就是半透明宣纸，并且带一点当时天光的冷暖（死白会像贴上去的）。 */
+function dlPaintAuth(h) {
+  const sky = document.getElementById('dl-sky');
+  if (!sky) return null;                      // 这一页没有天光底（比如后台页）
+  const v = dlAt(h == null ? dlNow() : h);
+  const set = (id, op, bg) => {
+    const e = document.getElementById(id);
+    if (!e) return;
+    e.style.opacity = op;
+    if (bg) e.style.backgroundImage = bg;
+  };
+  sky.style.backgroundImage = `linear-gradient(180deg,${v.sky[0]} 0%,${v.sky[1]} 52%,${v.sky[2]} 100%)`;
+  set('dl-grid', v.grid,
+    'repeating-linear-gradient(0deg,rgba(26,111,181,.055) 0 1px,transparent 1px 26px),'
+    + 'repeating-linear-gradient(90deg,rgba(26,111,181,.055) 0 1px,transparent 1px 26px)');
+  set('dl-bloom', v.bloom,
+    'radial-gradient(85% 30% at 50% 2%,rgba(252,190,96,.5),transparent 64%),'
+    + 'radial-gradient(52% 16% at 50% 3%,rgba(255,232,180,.7),transparent 70%)');
+  set('dl-stars', v.stars, DL_STARS);
+  set('dl-hill', v.hill);
+  set('dl-grain', v.grain * 0.5, dlGrain() || undefined);
+
+  /* 夜里（v.ink 是近白的）翻成墨色玻璃，白天是宣纸。判据用字色而不是时刻：
+     锚点表哪天调了，这里自己会跟上。 */
+  const dark = dlLum(v.ink) > 0.5;
+  const tint = dlRGB(v.sky[0]).map(c => Math.round(c + (255 - c) * 0.86));   // 白里掺一点当时的天光
+  const b = document.body;
+  const S = (k, val) => b.style.setProperty(k, val);
+  S('--dl-ink', v.ink);
+  S('--dl-sub', v.sub);
+  S('--dl-seal1', v.seal[0]);
+  S('--dl-seal2', v.seal[1]);
+  S('--dl-sealsh', dlRgba(v.seal[1], 0.3));
+  S('--dl-card', dark ? 'rgba(13,27,46,.62)' : `rgba(${tint.join(',')},.82)`);
+  /* 不支持 backdrop-filter 的壳（旧 WebView）拿不到模糊，半透明卡压在稿纸格上会花。
+     给它一个不透明的同色兜底，auth.css 用 @supports 挑。 */
+  S('--dl-card-solid', dark ? 'rgb(16,32,52)' : `rgb(${tint.join(',')})`);
+  S('--dl-line', dark ? 'rgba(150,190,235,.22)' : 'rgba(26,111,181,.14)');
+  S('--dl-fld', dark ? 'rgba(255,255,255,.07)' : 'rgba(255,255,255,.72)');
+  S('--dl-fline', dark ? 'rgba(150,190,235,.26)' : 'rgba(26,111,181,.18)');
+  S('--dl-ring', dlRgba(v.seal[0], 0.22));
+  S('--dl-shadow', dark ? '0 18px 46px rgba(0,10,25,.5)' : '0 14px 40px rgba(10,25,45,.16)');
+  /* 状态栏跟着天光走。安卓壳里这一条最显眼：不改的话，米白的晨光底顶着一条深蓝状态栏。 */
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', v.sky[0]);
+  return v;
+}
+
 /* 四套主题各自的启动屏。层的位置和尺寸仍在 CSS 里，这里只给"画什么、多浓"。
    共用的两件事：底色渐变 + 文字色，都取当前时刻那一档。 */
 function dlArtSplash(sp) {
@@ -1474,6 +1529,68 @@ function dlKbCovers(mode, v) {
   return R;
 }
 
+/* ---------------- 字一定要看得清：给字色兜一条对比度下限 ----------------
+
+   18 套主题 × 24 个时刻 = 432 屏，靠眼睛挨个看是看不完的，实测也确实漏了一大片：
+   黄昏那一段（18–20 时）**每一套主题**的次要字压在页面底色上只有 1.3~1.6:1 —— 基本等于隐形。
+
+   为什么偏偏是黄昏：卡片底和字色是「到点硬翻」的（见 DL_ART_SNAP，为的是别在中途撞成
+   中灰配中灰），而壁纸、天光这些**气氛色是连续滑的**。于是字已经翻成白天的墨色了，
+   身下那片底还在从夜色滑向日色，正好路过和墨色差不多的那一档 —— 两条线在黄昏交叉。
+   卡片上的字当时挡了一手（卡片自己也翻了），直接落在底色上的字（分组小标题、空状态、
+   卡片外的说明）就这么没了。
+
+   解法不改美术稿，只在**下发前**给字色兜底：算一下它压在卡片和底色上分别是多少，
+   哪边差就往哪边推（暗底推白、亮底推黑），推到够为止。够了就一个像素都不动 ——
+   绝大多数时刻本来就够，这条兜底只在交叉那两三个小时里起作用。 */
+const DL_MIN_TEXT = 4.5;      // 正文：WCAG AA
+const DL_MIN_MUTED = 3.4;     // 次要字（小一号、非关键信息）：够读，又不至于把层次推平
+
+function dlLum(c) {
+  return dlRGB(c).map(v => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  }).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0);
+}
+function dlRatio(a, b) {
+  const l1 = dlLum(a), l2 = dlLum(b);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+/* 把 ink 推到「压在 surfaces 里每一面上都不低于 min」。推的方向由**最差的那一面**定：
+   它比字亮就把字推黑，比字暗就把字推白。一步 6%，一路推到纯黑/纯白为止。
+
+   两处必须留神：
+   · 判据看的是**最差的那一面**（worst 取最小值），不是当前这一面 —— 卡片和底色一深一浅时，
+     只盯着一面推，会把另一面推垮，来回拉锯。
+   · 有些时刻是**推不到**的：晨昏那一档天光琉璃的底色正好是中灰，纯白压上去也只有 4.33:1。
+     这时候就把这一路上最好的那个交出去，别硬把字翻成反色 —— 那会和这一刻其余按日/夜
+     写死的颜色打架，比差 0.2 个对比度更难看。 */
+function dlInkFix(ink, surfaces, min) {
+  const worst = c => surfaces.reduce((m, s) => Math.min(m, dlRatio(c, s)), Infinity);
+  if (worst(ink) >= min) return ink;
+  const far = surfaces.reduce((m, s) => dlRatio(ink, s) < dlRatio(ink, m) ? s : m, surfaces[0]);
+  const pole = dlLum(far) > dlLum(ink) ? '#000000' : '#ffffff';
+  let best = ink;
+  for (let t = 0.06; t < 1.06; t += 0.06) {
+    const c = dlMixR(ink, pole, Math.min(1, t));
+    if (worst(c) > worst(best)) best = c;
+    if (worst(best) >= min) break;
+  }
+  return best;
+}
+/* 半透明的面（天光琉璃的玻璃卡）算不出真实底色 —— 它背后是壁纸。
+   这种就别拿它当参照，否则算出来的是个 NaN，一路把字色推成纯黑。 */
+function dlSolid(c) { return typeof c === 'string' && !/rgba|hsla/.test(c) && !isNaN(dlLum(c)); }
+
+function dlGuardInk(v) {
+  const faces = [v.card, v.bg, v.bg2].filter(dlSolid);
+  if (!faces.length) return v;
+  return Object.assign({}, v, {
+    text: dlInkFix(v.text, faces, DL_MIN_TEXT),
+    muted: dlInkFix(v.muted, faces, DL_MIN_MUTED),
+  });
+}
+
 /* 把当前主题刷到界面上。没选主题就把痕迹清干净（**必须清**：不清的话
    关掉主题后 body 上还挂着上一套的 inline 变量，看着像"关不掉"）。 */
 function dlArtApply() {
@@ -1499,7 +1616,7 @@ function dlArtApply() {
     if (el) { el.style.background = ''; el.style.backgroundImage = ''; const c = el.querySelector('canvas'); if (c) el.removeChild(c); }
     return null;
   }
-  const v = dlArtAt(mode, dlArtHour());
+  const v = dlGuardInk(dlArtAt(mode, dlArtHour()));
   DL_ART_VARS.forEach(k => { if (v[k]) b.style.setProperty('--' + k, v[k]); });
   b.style.setProperty('--blue-fill', v.fill);
   b.style.setProperty('--blue-d', v.fill);
@@ -1632,21 +1749,28 @@ function dlArtApply() {
 
 /* 自己起跑。启动屏那一下必须同步画完（脚本就贴在 #splash 后面），
    图标画完一次之后每 10 分钟对一次表 —— 这应用一开就是几小时，跨过黄昏得跟上。 */
-try { dlPaintSplash(); } catch (_) { /* 画不出来就是原来那张静态启动屏，不该拦住启动 */ }
+/* 登录/注册/找回三页没有启动屏，只有天光底（#dl-sky）。它们也**不套美术主题**：
+   主题是账号里的东西，登录前还不知道是谁；这一屏只该有一件事——把天光接上。 */
+const DL_AUTH = !!document.getElementById('dl-sky');
+try { if (DL_AUTH) dlPaintAuth(); else dlPaintSplash(); } catch (_) { /* 画不出来就是 CSS 里那张静态兜底底图，不该拦住启动 */ }
 /* 主题也要在第一帧就位。这里顺手把 .dark 也定了：等 theme.js 加载完再翻，
    中间那几十毫秒就是白底闪一下——主题开着的时候尤其刺眼。 */
 try {
-  dlArtApply();
-  const d = dlArtDark();
-  if (d !== null) document.body.classList.toggle('dark', d);
+  if (!DL_AUTH) {
+    dlArtApply();
+    const d = dlArtDark();
+    if (d !== null) document.body.classList.toggle('dark', d);
+  }
 } catch (_) { /* 主题是可选项，画不出来就退回默认外观 */ }
 try {
   dlFavicon();
   setInterval(() => {
     try { dlFavicon(); } catch (_) { /* 标签页图标而已 */ }
     // 跨过黄昏时主题也得跟上，顺带把 .dark 对一次表
+    // 登录页开着不动过了黄昏，底也得跟上（这三页没有主题那一路）
+    try { if (DL_AUTH) dlPaintAuth(); } catch (_) { /* 底没重画就还是上一档的天，不影响登录 */ }
     try {
-      if (dlArtMode()) {
+      if (!DL_AUTH && dlArtMode()) {
         dlArtApply();
         const dk = dlArtDark();
         if (dk !== null && window.applyTheme) window.applyTheme();
@@ -1662,6 +1786,7 @@ try {
      · 墨山那张山水是按窗口尺寸画的，窗口一变就得重画（别的主题是渐变，自己会跟）。 */
 let dlRz, dlWasDesk = dlIsDesk();
 addEventListener('resize', () => {
+  if (DL_AUTH) return;                    // 登录三页不套主题，没有要重刷的东西
   clearTimeout(dlRz);
   dlRz = setTimeout(() => {
     try {
@@ -1680,6 +1805,7 @@ addEventListener('resize', () => {
 
 window.dlAt = dlAt;
 window.dlPaintSplash = dlPaintSplash;
+window.dlPaintAuth = dlPaintAuth;   // 登录/注册/找回三页用（js/auth.js 里定时重画）
 window.dlFavicon = dlFavicon;
 window.DL_ART = DL_ART;
 window.dlArtAt = dlArtAt;
@@ -1690,3 +1816,4 @@ window.dlArtClock = dlArtClock;
 window.dlArtHue = dlArtHue;
 window.dlIsDesk = dlIsDesk;
 window.dlArtKey = dlArtKey;
+window.dlGuardInk = dlGuardInk;   // 测试要拿它核对每套主题每个时刻的对比度

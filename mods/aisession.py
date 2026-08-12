@@ -4,13 +4,14 @@
 """
 
 import json
+import re
 
 from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
 import aiclient
 from core import CFG, get_db, log, open_db, uid
 from mods.agent import _ai_agentic_or_error, ai_chat_agentic_stream
-from mods.agent_tools import TOOL_REGISTRY, exec_tool
+from mods.agent_tools import TOOL_REGISTRY, exec_tool, tool_label
 from mods.ai import vision_chat, vision_configured
 from mods.aichat import _user_stats
 from mods.attach import ai_img_path
@@ -70,7 +71,7 @@ def aichat_get(cid):
     c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
     if not c:
         return jsonify({"error": "未找到"}), 404
-    rows = db.execute("SELECT id, role, content, COALESCE(kind,'text') kind, meta FROM ai_msgs "
+    rows = db.execute("SELECT id, role, content, COALESCE(kind,'text') kind, meta, attach FROM ai_msgs "
                       "WHERE chat_id=? ORDER BY id", (cid,)).fetchall()
     msgs = []
     for r in rows:
@@ -80,6 +81,13 @@ def aichat_get(cid):
                 m["trace"] = json.loads(r["meta"] or "[]")
             except Exception:
                 m["trace"] = []
+        # 附件回传：前端要拿它画缩略图（原文 text 不回，白占带宽——那是给模型看的）
+        if r["attach"]:
+            try:
+                m["atts"] = [{"name": a.get("name") or "", "image": a.get("image") or ""}
+                             for a in (json.loads(r["attach"]) or [])]
+            except Exception:
+                m["atts"] = []
         msgs.append(m)
     return jsonify({"id": c["id"], "title": c["title"], "project_id": c["project_id"],
                     "tier": _tier(c), "msgs": msgs})
@@ -238,12 +246,31 @@ def _att_text(raw, limit=ATT_LIMIT):
 MEM_LIMIT = 20          # 一次最多带多少条记忆（够用了，多了反而喧宾夺主）
 
 
-def _memories(db, u):
-    """这个人的长期记忆，拼成给模型的一段。顺带记一次 hits（好让用户看到哪条真在起作用）。"""
-    rows = db.execute("SELECT id, text FROM ai_memories WHERE user_id=? ORDER BY id DESC LIMIT ?",
-                      (u, MEM_LIMIT)).fetchall()
+def _mem_grams(s):
+    """中文没有空格，切成二字片段来比对；标点顺手扔掉。"""
+    s = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", (s or "").lower())
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+def _memories(db, u, q=""):
+    """这个人的长期记忆，拼成给模型的一段。顺带记一次 hits（好让用户看到哪条真在起作用）。
+
+    没超过 MEM_LIMIT 条就全带上——长期记忆本来就大多「跟这轮无关但一直成立」
+    （「我考四川省考」不会因为这句没提就不成立），能全带就别挑。
+    超了才需要取舍：先看跟这轮问话沾不沾边，再看新旧。原先是死板的
+    `ORDER BY id DESC LIMIT 20`，记满之后一条天天用得上的老记忆会被新记忆挤出去，
+    而且永远回不来。
+    **不能按 hits 排**：hits 是「每轮给带进去的记忆都 +1」，本质是年龄，
+    照它排等于把最老的二十条钉死在上下文里，新记的一条永远进不去。
+    """
+    rows = db.execute("SELECT id, text FROM ai_memories WHERE user_id=? ORDER BY id DESC",
+                      (u,)).fetchall()
     if not rows:
         return ""
+    if len(rows) > MEM_LIMIT:
+        qg = _mem_grams(q)
+        rows = sorted(rows, key=lambda r: (-len(_mem_grams(r["text"]) & qg), -r["id"]))[:MEM_LIMIT]
+        rows.sort(key=lambda r: -r["id"])   # 挑完排回「新的在前」，每轮顺序才稳定
     try:
         db.execute("UPDATE ai_memories SET hits=hits+1 WHERE id IN (%s)"
                    % ",".join("?" * len(rows)), [r["id"] for r in rows])
@@ -323,6 +350,10 @@ def _build(cid, content, atts=None):
                   "完成计划用 complete_daily_task / complete_plan_item。这些改/删工具大多要 id —— 先用对应的"
                   "查询工具（list_wrong_questions / list_notes / get_daily_tasks / get_plan_today / search_classics）"
                   "拿到 id 再调。\n"
+                  "【记住这个人】用户透露了**长期有效**的事——考哪个岗位/哪场考试、考试时间、长期的弱项与"
+                  "目标、他要你以后怎么答（「解析写详细点」）——就用 remember_fact 记下来，以后每轮自动带上。"
+                  "但**能查出来的数字不要记**（错题多少道、坚持多少天：那些每次用查询工具现算，记下来只会过期），"
+                  "已经在【关于这位用户】里的也别重复记。系统会让用户点头确认，他不点就不会记。\n"
                   "【删除要确认】删除类（delete_entry / delete_wrong_question / delete_note）不可逆：除非用户这句话已"
                   "明确说了要删，否则**先不带 _confirmed 调用**——系统会让你确认，你就向用户复述「要删除的是 XX，确定吗？」"
                   "并停下等回答；等用户明确回「确定/删」，下一轮再带 _confirmed=true 调用真正删除。\n"
@@ -339,7 +370,7 @@ def _build(cid, content, atts=None):
     stats = _user_stats()
     if stats:
         sys_prompt += "\n\n" + stats
-    sys_prompt += _memories(db, uid())
+    sys_prompt += _memories(db, uid(), content)
     # kind='error' 的那几句是「本次回答失败」的占位，给用户留着看的，别回喂给模型。
     # 拉 80 条是**候选**，真正放多少由下面的预算决定 —— 原先是死板的 LIMIT 20：
     # 20 条闲聊才两千字，20 条里夹一篇附件就上万字，一边聊到第 21 轮就忘了开头，
@@ -624,11 +655,12 @@ def aichat_title(cid):
 
 @bp.post("/api/aichat/chats/<int:cid>/confirm")
 def aichat_confirm(cid):
-    """用户在前端点了「确认删除」后走这里：确定性地执行那次待确认的破坏性操作。
+    """用户在前端点了确认后走这里：确定性地执行那次待确认的操作
+    （删数据，或把一件事写进长期记忆）。
 
     不走「再发一句『确定』让模型自己重调」——那不可靠。前端把 AI 之前回的
     confirm 动作 {tool,args} 原样带回来，这里补 _confirmed 直接执行，只放行
-    确实注册为 confirm=True 的删除类工具（防止拿它绕过去调别的）。"""
+    确实注册为 confirm=True 的工具（防止拿它绕过去调别的）。"""
     data = request.get_json(silent=True) or {}
     tool = (data.get("tool") or "").strip()
     args = data.get("args") if isinstance(data.get("args"), dict) else {}
@@ -640,8 +672,10 @@ def aichat_confirm(cid):
     if not t or not t.get("confirm"):
         return jsonify({"error": "该操作无需确认或不存在"}), 400
     result, action = exec_tool(tool, dict(args, _confirmed=True), db)
-    # 把「确认 → 已执行」记进会话历史，让上下文连贯（下轮 AI 知道已经删了）
-    db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "user", "确认删除"))
+    # 把「确认 → 已执行」记进会话历史，让上下文连贯（下轮 AI 知道已经删了/已经记下了）。
+    # 这句按工具来，不能写死成「确认删除」——记忆也走这条确认路径。
+    db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)",
+               (cid, "user", "确认" + tool_label(tool)))
     db.execute("INSERT INTO ai_msgs(chat_id,role,content) VALUES(?,?,?)", (cid, "assistant", result))
     db.execute("UPDATE ai_chats SET updated_at=datetime('now','localtime') WHERE id=?", (cid,))
     db.commit()

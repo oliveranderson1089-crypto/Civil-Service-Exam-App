@@ -13,8 +13,21 @@ bp = Blueprint("aichat", __name__)
 
 @bp.get("/api/ai/status")
 def ai_status():
+    """前端的档位条要它：现在用的是哪个模型、今天一共调了多少次。
+
+    次数从 ai_calls 数（那张表没有 user_id，所以是**全应用**的量，不是某个人的）——
+    这个应用本来就是自用的，比起精确归属，"今天已经用掉多少"更值得摆出来。"""
+    today = 0
+    try:
+        db = get_db()
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ai_calls'").fetchone():
+            today = db.execute("SELECT COUNT(*) c FROM ai_calls "
+                               "WHERE ts >= date('now','localtime')").fetchone()["c"]
+    except Exception:
+        today = 0
     return jsonify({"configured": ai_configured(), "model": _ai_conf()["model"],
-                    "vision": vision_configured()})
+                    "model_pro": aiclient.conf("pro").get("model", ""),
+                    "today": today, "vision": vision_configured()})
 
 
 def _user_stats():

@@ -20,6 +20,7 @@ __t0
 __tabView
 __ttsEnd
 __ttsEvent
+__updProgress
 appBack
 checkUpdate
 fabClose

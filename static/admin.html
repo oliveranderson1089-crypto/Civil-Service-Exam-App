@@ -43,6 +43,13 @@
   .ai-msg2{font-size:13px;margin-top:10px;white-space:pre-wrap;line-height:1.6;}
   .ai-msg2.ok{color:#1f9d57;}
   .ai-msg2.err{color:#c0392b;}
+  /* ---- 语音识别 ---- */
+  .asr-engs{display:flex;flex-direction:column;gap:10px;margin-bottom:14px;}
+  .asr-engs label{display:grid;grid-template-columns:auto auto 1fr;align-items:baseline;gap:8px;
+    font-size:13.5px;padding:10px 12px;border:1.5px solid #e6e9ef;border-radius:10px;cursor:pointer;}
+  .asr-engs label:has(input:checked){border-color:var(--blue);background:rgba(26,111,181,.05);}
+  .asr-engs span{grid-column:2/4;font-size:12.5px;color:#667;line-height:1.6;}
+  .asr-part{border-top:1px solid var(--line);padding-top:13px;margin-bottom:6px;}
   /* ---- 服务管理 ---- */
   .svc-row{display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13.5px;}
   .svc-row:last-child{border-bottom:none;}
@@ -164,6 +171,7 @@
     <button class="atab" data-v="capacity">备份容量</button>
     <button class="atab" data-v="svc">服务</button>
     <button class="atab" data-v="ai">AI 设置</button>
+    <button class="atab" data-v="asr">语音识别</button>
     <button class="atab" data-v="reg">注册入口</button>
     <button class="atab" data-v="users">用户</button>
   </nav>
@@ -245,6 +253,37 @@
     </div>
     <div id="ai-msg" class="ai-msg2"></div>
     <div id="ai-chips"></div>
+  </div>
+</section>
+
+<section class="aview" id="v-asr">
+  <h2 class="view-title">语音识别</h2>
+  <div class="ai-cfg">
+    <p class="ai-tip"><b>不开也能用语音</b>：聊天里发语音条、听语音，都不需要这里的设置。
+      这里只决定「把语音转成文字」那一步——聊天里长按语音的「转文字」、以及在没有自带识别的
+      浏览器里用麦克风口述（桌面版、安卓 App、Firefox 都属于这一类）。</p>
+    <div class="asr-engs" id="asr-engs">
+      <label><input type="radio" name="asr-eng" value=""> <b>关闭</b><span>默认。转文字的入口会说明「管理员没开」。</span></label>
+      <label><input type="radio" name="asr-eng" value="zhipu"> <b>云端识别（智谱 GLM-ASR）</b><span>按量计费、快。Key 留空就借用「AI 设置」里那把视觉 Key（同是智谱）。改接口地址也能指向别家 OpenAI 兼容的转写接口。</span></label>
+      <label><input type="radio" name="asr-eng" value="whisper"> <b>本地 whisper.cpp</b><span>离线、免费、不外传，但吃 CPU：这台机器上一段话大概要几秒到十几秒。</span></label>
+    </div>
+    <div id="asr-cloud" class="asr-part hidden">
+      <label class="ai-f"><span>接口地址</span><input id="asr-base" type="text" placeholder="https://open.bigmodel.cn/api/paas/v4"></label>
+      <label class="ai-f"><span>模型</span><input id="asr-model" type="text" placeholder="glm-asr"></label>
+      <label class="ai-f"><span>API Key</span><input id="asr-key" type="password" placeholder="留空=沿用视觉 Key" autocomplete="off"></label>
+    </div>
+    <div id="asr-local" class="asr-part hidden">
+      <label class="ai-f"><span>可执行文件</span><input id="asr-bin" type="text" placeholder="whisper-cli（或完整路径）"></label>
+      <label class="ai-f"><span>模型文件</span><input id="asr-wmodel" type="text" placeholder="/path/to/ggml-medium.bin"></label>
+      <p class="ai-tip" style="margin:6px 0 0">装法：编译 whisper.cpp 得到 <b>whisper-cli</b>，再下一个 ggml 模型（中文建议 medium 起步），
+        把两个路径填上面。转码要用到 <b>ffmpeg</b>。</p>
+    </div>
+    <div class="ai-acts">
+      <button class="ubtn" id="asr-clearkey">清除 Key</button>
+      <button class="ubtn" id="asr-test">测试连通</button>
+      <button class="ubtn primary" id="asr-save">保存</button>
+    </div>
+    <div id="asr-msg" class="ai-msg2"></div>
   </div>
 </section>
 
@@ -599,6 +638,72 @@ async function loadOpLog() {
   } catch (_) {}
 }
 
+/* ---------------------------------------------------------------- 语音识别 */
+function asrMsg(t, ok) {
+  const m = $('#asr-msg');
+  m.textContent = t;
+  m.className = 'ai-msg2 ' + (ok === true ? 'ok' : ok === false ? 'err' : '');
+}
+/* 选了哪个引擎就只显示哪一组输入框：三组一起摆着，没人知道该填哪几格 */
+function asrPaint() {
+  const v = (document.querySelector('input[name="asr-eng"]:checked') || {}).value || '';
+  $('#asr-cloud').classList.toggle('hidden', v !== 'zhipu');
+  $('#asr-local').classList.toggle('hidden', v !== 'whisper');
+}
+async function loadASR() {
+  try {
+    const d = await (await fetch('/api/admin/asr', { cache: 'no-store' })).json();
+    const r = document.querySelector('input[name="asr-eng"][value="' + (d.engine || '') + '"]');
+    if (r) r.checked = true;
+    $('#asr-base').value = d.base || '';
+    $('#asr-model').value = d.model || '';
+    $('#asr-bin').value = d.whisper_bin || '';
+    $('#asr-wmodel').value = d.whisper_model || '';
+    $('#asr-key').placeholder = d.has_key ? '已设置 ●●●（留空=不改）'
+      : (d.borrow_vision ? '留空 = 沿用「AI 设置」里的视觉 Key' : '留空 = 不改');
+    asrPaint();
+    // 环境缺什么直接说，别等到用户录完一段才报错
+    const warn = [];
+    if (!d.ffmpeg) warn.push('服务器上没有 ffmpeg（转码要用，装：sudo apt install ffmpeg）');
+    if (d.engine === 'whisper' && !d.whisper_found) warn.push('找不到 whisper 可执行文件');
+    asrMsg(warn.length ? '⚠ ' + warn.join('；')
+      : (d.configured ? '✓ 已开启：' + (d.engine === 'whisper' ? '本地 whisper' : '云端识别')
+        : '当前关闭——聊天照样能发语音条，只是不能转文字'), warn.length ? false : d.configured);
+  } catch (e) { asrMsg('读不到设置：' + e.message, false); }
+}
+async function saveASR() {
+  const body = {
+    engine: (document.querySelector('input[name="asr-eng"]:checked') || {}).value || '',
+    base: $('#asr-base').value.trim(), model: $('#asr-model').value.trim(),
+    whisper_bin: $('#asr-bin').value.trim(), whisper_model: $('#asr-wmodel').value.trim(),
+  };
+  const k = $('#asr-key').value.trim(); if (k) body.key = k;
+  try {
+    const d = await (await fetch('/api/admin/asr', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    })).json();
+    $('#asr-key').value = '';
+    asrMsg(d.configured ? '已保存，语音转文字已开启' : '已保存（当前是关闭/未配置全）', !!d.configured);
+    loadASR();
+  } catch (e) { asrMsg('保存失败：' + e.message, false); }
+}
+$('#asr-engs').addEventListener('change', asrPaint);
+$('#asr-save').onclick = saveASR;
+$('#asr-clearkey').onclick = async () => {
+  try {
+    await fetch('/api/admin/asr', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clear_key: true }) });
+    asrMsg('已清除 Key', true); loadASR();
+  } catch (e) { asrMsg(e.message, false); }
+};
+$('#asr-test').onclick = async () => {
+  asrMsg('测试中…（先保存再测，测的是已保存的配置）');
+  try {
+    const d = await (await fetch('/api/admin/asr/test', { method: 'POST' })).json();
+    asrMsg(d.msg || (d.ok ? '通了' : '没通'), !!d.ok);
+  } catch (e) { asrMsg('测试失败：' + e.message, false); }
+};
+
 /* ---------------------------------------------------------------- 分栏切换 */
 /* 板块多了以后一页拉到底找不着东西。切换只管显示，数据仍在进页面时一次性拉齐——
    量都很小，换来的是切 tab 不用等。选中的 tab 记在 URL hash 里，刷新后还在原处。 */
@@ -619,6 +724,7 @@ document.querySelector('.anav').onclick = (e) => {
   await load();
   await loadAI();
   await loadReg();
+  await loadASR();
   await loadSvc();
 })();
 </script>

@@ -618,7 +618,9 @@
       <p class="acct-hint">装成独立应用更顺手：自己的图标、独立窗口、单独登录。</p>
       <a class="btn acct-btn" href="/apk" download="gongkao.apk"><span class="em-sw"><span class="em-e">📱</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.4" y="2.6" width="11.2" height="18.8" rx="2.4"/><path d="M10.4 18.6h3.2"/></svg></span></span> 安卓手机版（.apk）</a>
       <a class="btn acct-btn" href="/deb" download="gongkao.deb"><span class="em-sw"><span class="em-e">💻</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.6" width="17.2" height="11.4" rx="2"/><path d="M2 19.4h20"/></svg></span></span> 电脑桌面版（Linux .deb）</a>
-      <p class="acct-hint" style="margin-top:6px">桌面版装法：下载后 <code>sudo dpkg -i gongkao.deb</code>，或双击用「软件安装器」打开；装好在应用菜单搜「公考助手」。</p>
+      <a class="btn acct-btn" href="/win" download><span class="em-sw"><span class="em-e">🪟</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="4.4" width="17.2" height="15.2" rx="2"/><path d="M12 4.4v15.2M3.4 12h17.2"/></svg></span></span> 电脑桌面版（Windows）</a>
+      <p class="acct-hint" style="margin-top:6px">Linux 装法：下载后 <code>sudo dpkg -i gongkao.deb</code>，或双击用「软件安装器」打开；装好在应用菜单搜「公考助手」。</p>
+      <p class="acct-hint">Windows 装法：下载后双击安装（便携版则解压后运行里面的 exe）。首次运行系统可能提示「已保护你的电脑」，点「更多信息 → 仍要运行」即可——没买代码签名证书的正常表现。</p>
     </div>
 
     <div class="acct-sec hidden" id="acct-app" data-ag="客户端">
@@ -710,21 +712,23 @@
     <div class="dv-drop"><span><span class="em-sw"><span class="em-e">📥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 14.4V18a2 2 0 0 0 2 2h12.8a2 2 0 0 0 2-2v-3.6h-5l-1.4 2.4H10l-1.4-2.4z"/><path d="M12 3.6v8.2M8.6 8.6L12 12l3.4-3.4"/></svg></span></span> 松手上传到当前文件夹（支持整个文件夹）</span></div>
   </section>
 
-  <!-- ===== 聊天：会话/好友列表 ===== -->
-  <!-- ===== 聊天：微信/QQ 式双栏（左会话列表 + 右聊天窗），移动端切换单栏 ===== -->
+  <!-- ===== 聊天：三栏（会话列表 + 消息 + 常驻信息栏）=====
+       2026-08 改版（评审页方案 C1 + CM1/CM2）：
+       · 顶部三个标签（消息/好友/加好友）收成一行「消息 + 搜索 + ＋」——「加好友」是一年点几次的操作
+       · 右边多一栏信息栏：成员、公告、共享文件、图片、置顶/免打扰（以前全塞在标题栏的 ⋮ 里）
+       · 手机端会话顶栏回来了（旧版整条隐藏，进了群看不到人数、公告和搜索） -->
   <section id="view-chat" class="view hidden">
     <div id="chat-2pane">
       <aside id="chat-side">
-        <div class="ch-tabs" id="ch-tabs">
-          <button class="ch-tab active" data-cht="convos"><span class="em-sw"><span class="em-e">💬</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4A8 8 0 1 1 21 12z"/></svg></span></span> 消息</button>
-          <button class="ch-tab" data-cht="friends"><span class="em-sw"><span class="em-e">👥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.4A6 6 0 0 1 21 20"/></svg></span></span> 好友</button>
-          <button class="ch-tab" data-cht="add"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 加好友<span class="ch-reqbadge hidden" id="ch-reqbadge"></span></button>
+        <div class="ch-head">
+          <span class="ch-htitle">消息</span>
+          <button type="button" id="ch-searchbtn2" class="ch-hbtn" title="搜聊天记录">🔍</button>
+          <button type="button" id="ch-add-btn" class="ch-hbtn" title="加好友 / 新建小组"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
         </div>
         <div class="ch-searchbar" id="ch-searchbar">
           <input id="ch-msgsearch" placeholder="搜聊天记录、文件…" autocomplete="off">
           <button type="button" id="ch-msgsearch-x" class="ch-sx hidden" title="清空">✕</button>
         </div>
-        <button type="button" id="ch-newgroup" class="ch-newgroup">＋ 新建学习小组</button>
         <div id="ch-searchres" class="ch-pane hidden"></div>
         <div id="ch-convos" class="ch-pane"></div>
         <div id="ch-friends" class="ch-pane hidden"></div>
@@ -733,38 +737,49 @@
           <div id="ch-reqs"></div>
           <div id="ch-results"></div>
         </div>
+        <span class="ch-reqbadge hidden" id="ch-reqbadge"></span>
       </aside>
       <section id="chat-main">
         <div id="cr-peer" class="cr-peer hidden">
           <button id="cr-back" class="cr-back" title="返回列表">‹</button>
-          <span id="cr-peername"></span>
-          <button id="cr-info" class="cr-infobtn" title="会话信息">⋮</button>
+          <span id="cr-peerav" class="cr-peerav"></span>
+          <span class="cr-peerbox"><span id="cr-peername"></span><span id="cr-peersub" class="cr-peersub"></span></span>
+          <button id="cr-atjump" class="cr-hbtn hidden" title="跳到 @我 的那条">@ 我</button>
+          <button id="cr-searchbtn" class="cr-hbtn" title="搜这个会话">🔍</button>
+          <button id="cr-info" class="cr-hbtn" title="会话信息">ⓘ</button>
         </div>
+        <div id="cr-checkin" class="cr-checkin hidden"></div>
         <div id="cr-announce" class="cr-announce hidden"></div>
         <div id="cr-msgs" class="cr-msgs"></div>
-        <div id="cr-menu" class="cr-menu hidden"></div>
-        <div id="emoji-pan" class="emoji-pan hidden"></div>
-        <div id="cr-picker" class="cr-picker hidden"></div>
+        <div id="cr-selbar" class="cr-selbar hidden"></div>
         <div class="cr-input hidden" id="cr-input">
           <div id="cr-replybar" class="cr-replybar hidden"></div>
           <div class="input-tools">
             <label class="cr-attbtn" title="发文件/图片"><span class="em-sw"><span class="em-e">📎</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7-7l8.4-8.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></span></span><input type="file" id="cr-file" multiple hidden></label>
-            <button type="button" class="cr-attbtn" data-crcard="wrongq" title="发一道错题">📓</button>
-            <button type="button" class="cr-attbtn" data-crcard="classic" title="发一篇古诗文">📖</button>
-            <button type="button" class="cr-attbtn" data-crcard="sucai" title="发一条素材">📁</button>
-            <button type="button" class="cr-attbtn" data-crcard="note" title="发一条小记">🗒️</button>
+            <button type="button" class="cr-attbtn" id="cr-voice" title="按住说话"><span class="em-sw"><span class="em-e">🎤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
+            <button type="button" class="cr-attbtn" data-crcard="wrongq" title="发一道错题"><span class="em-sw"><span class="em-e">📓</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h11a1.5 1.5 0 0 1 1.5 1.5v14a1.5 1.5 0 0 1-1.5 1.5H6z"/><path d="M6 3.5A1.5 1.5 0 0 0 4.5 5v14A1.5 1.5 0 0 0 6 20.5"/><path d="M9 8h6M9 12h6"/></svg></span></span></button>
+            <button type="button" class="cr-attbtn" data-crcard="classic" title="发一篇古诗文"><span class="em-sw"><span class="em-e">📖</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5C10.5 5 8.5 4.5 4 4.5v13c4.5 0 6.5.5 8 2 1.5-1.5 3.5-2 8-2v-13c-4.5 0-6.5.5-8 2z"/><path d="M12 6.5v13"/></svg></span></span></button>
+            <button type="button" class="cr-attbtn" data-crcard="sucai" title="发一条素材"><span class="em-sw"><span class="em-e">📁</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span></span></button>
+            <button type="button" class="cr-attbtn" data-crcard="note" title="发一条小记"><span class="em-sw"><span class="em-e">🗒️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M9 12h6M9 16h4"/></svg></span></span></button>
+            <button type="button" class="cr-attbtn" id="cr-vsend" title="发一条语音"><span class="em-sw"><span class="em-e">🎙</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
+            <button type="button" class="cr-attbtn cr-askai" id="cr-askai" title="把这段丢给 AI 助手讲讲">🤖</button>
           </div>
           <div class="input-row">
-            <button type="button" class="input-mic" disabled title="语音输入（暂未开放）"><span class="em-sw"><span class="em-e">🎤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
+            <button type="button" class="input-mic" id="cr-mic2" title="按住说话"><span class="em-sw"><span class="em-e">🎤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
             <textarea id="cr-text" rows="1" placeholder="发消息…（可拖文件进来）"></textarea>
-            <button type="button" class="input-emoji" disabled title="表情（暂未开放）"><span class="em-sw"><span class="em-e">🙂</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M9 9.6h.01M15 9.6h.01"/><path d="M8.6 14c1.8 2 5 2 6.8 0"/></svg></span></span></button>
-            <button type="button" id="cr-plus" class="input-plus"><span class="em-sw"><span class="em-e">➕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
+            <button type="button" class="input-emoji" title="表情"><span class="em-sw"><span class="em-e">🙂</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M9 9.6h.01M15 9.6h.01"/><path d="M8.6 14c1.8 2 5 2 6.8 0"/></svg></span></span></button>
+            <button type="button" id="cr-plus" class="input-plus"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
             <button class="btn primary" id="cr-send">发送</button>
           </div>
           <div id="cr-count" class="cr-count hidden"></div>
         </div>
+        <!-- 手机端 ➕ 的工具面板：排在输入栏**后面**、同一列里，展开时把输入栏顶上去。
+             钉成 fixed 会盖住输入栏，➕ 压在面板底下就再也点不到（也就关不掉）。 -->
+        <div id="cr-sheet" class="ai-sheet hidden"><div class="ai-sheet-grid" id="cr-sheet-grid"></div></div>
         <div id="cr-empty" class="cr-empty"><span class="em-sw"><span class="em-e">💬</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3 1.2-4A8 8 0 1 1 21 12z"/></svg></span></span> 选一个会话，开始聊天</div>
       </section>
+      <!-- 常驻信息栏（窄屏自动收起，手机端是整页） -->
+      <aside id="chat-info" class="chat-info hidden"></aside>
     </div>
   </section>
 
@@ -1699,72 +1714,69 @@
   </div>
 </div>
 
-<!-- AI 助手对话面板 -->
-<div id="ai-panel" class="ai-panel dockable hidden dk-right">
-  <!-- 首页：新对话 / 项目 / 最近 -->
-  <div id="aiv-home" class="aiv">
-    <div class="ai-head">
-      <span class="ai-title">AI 助手</span>
-      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button><button class="ai-x ai-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button><button id="ai-close" class="ai-x" title="关闭"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
+<!-- AI 助手：一份组件、两种外壳（data-shell="dock" 侧栏 / "desk" 全屏工作台 / 手机端全屏）
+     原先这里是四个平级视图（首页 / 项目 / 项目详情 / 会话）轮流显示，换个会话要走两层；
+     现在会话列表变成一栏（桌面工作台常驻、侧栏与手机端作抽屉滑出），对话永远在中间那栏。 -->
+<div id="ai-panel" class="ai-panel dockable hidden dk-right" data-shell="dock">
+  <div id="ai-sidemask" class="ai-sidemask hidden"></div>
+  <aside id="ai-side" class="ai-side">
+    <div class="ais-head">
+      <button class="ais-new" id="aih-new"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新对话</button>
+      <button class="ai-x ais-close" id="ais-close" title="收起会话列表"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
-    <div class="aih-scroll">
-      <button class="aih-new" id="aih-new"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新对话</button>
-      <button class="aih-projects" id="aih-projects"><svg class="ai-folder" viewBox="0 0 48 48"><rect x="2" y="2" width="44" height="44" rx="13" fill="#5b6cf0"/><path fill="#7d8cf8" opacity=".5" d="M2 15C2 7.8 7.8 2 15 2h18c7.2 0 13 5.8 13 13v2H2z"/><rect x="11" y="11" width="11.5" height="11.5" rx="3.5" fill="#fff"/><rect x="25.5" y="11" width="11.5" height="11.5" rx="3.5" fill="#fff" opacity=".82"/><rect x="11" y="25.5" width="11.5" height="11.5" rx="3.5" fill="#fff" opacity=".82"/><circle cx="31.2" cy="31.2" r="5.8" fill="#ffd66b"/></svg> 项目 <span id="aih-pcount"></span><span class="aih-arr">›</span></button>
-      <button class="aih-projects" id="aih-mem" title="AI 记住的关于我的事">🧠 长期记忆<span class="aih-arr">›</span></button>
-      <div class="aih-searchbar"><input id="aih-search" placeholder="搜对话内容…" autocomplete="off"></div>
-      <div class="aih-sec" id="aih-sec">最近对话</div>
-      <div id="aih-recents"></div>
+    <div class="ais-search"><input id="aih-search" placeholder="搜对话内容…" autocomplete="off"></div>
+    <div class="ais-scroll" id="aih-recents"></div>
+    <div class="ais-foot">
+      <button class="ais-fbtn" id="aip-new" title="项目 = 一组对话 + 自定义指令"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新建项目</button>
+      <button class="ais-fbtn" id="aih-mem" title="AI 记住的关于我的事">🧠 长期记忆</button>
     </div>
-  </div>
-  <!-- 项目列表 -->
-  <div id="aiv-projects" class="aiv hidden">
-    <div class="ai-head">
-      <button class="ai-backbtn" data-aiback="home">‹</button>
-      <span class="ai-title">项目</span>
-      <button id="aip-new" class="ai-headbtn"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新建</button>
-      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button><button class="ai-x ai-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button><button class="ai-x" data-aiback="close"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
-    </div>
-    <div class="aih-scroll" id="aip-list"></div>
-  </div>
-  <!-- 项目详情：该项目下的对话 -->
-  <div id="aiv-project" class="aiv hidden">
-    <div class="ai-head">
-      <button class="ai-backbtn" data-aiback="projects">‹</button>
-      <span class="ai-title" id="aipd-title">项目</span>
-      <button id="aipd-new" class="ai-headbtn"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 新对话</button>
-      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button><button class="ai-x ai-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button><button class="ai-x" data-aiback="close"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
-    </div>
-    <div class="aih-scroll" id="aipd-chats"></div>
-  </div>
+  </aside>
 
-  <!-- 会话 -->
-  <div id="aiv-chat" class="aiv hidden">
+  <section class="ai-main" id="ai-main">
     <div class="ai-head">
-      <button class="ai-backbtn" data-aiback="home">‹</button>
-      <span class="ai-title" id="aic-title">新对话</span>
-      <span class="ai-tier" id="ai-tier" title="快=日常问答；深度=推理模型，复杂题目更稳"><button type="button" data-tier="fast" class="on">快</button><button type="button" data-tier="pro">深度</button></span>
-      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button><button class="ai-x ai-full" title="全屏 / 还原"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button><button class="ai-x" data-aiback="close"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
+      <button class="ai-x ai-sidebtn" id="ai-sidebtn" title="会话列表">☰</button>
+      <button class="ai-titlebtn" id="ai-titlebtn" title="切换会话">
+        <span class="ai-title" id="aic-title">新对话</span>
+        <span class="ai-sub" id="aic-sub"></span>
+      </button>
+      <button class="ai-x" id="ai-newbtn" title="新对话"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
+      <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button>
+      <button class="ai-x ai-full" title="全屏工作台 / 还原侧栏"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button>
+      <button id="ai-close" class="ai-x" title="关闭"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
     </div>
     <div id="ai-msgs" class="ai-msgs"></div>
-    <div id="ai-atts" class="ai-atts"></div>
+    <!-- 停止生成：钉在输入栏上方的固定件。旧版它是消息流里的一个块，往上翻就找不着了（AD8） -->
+    <div class="ai-stopbar"><button type="button" id="ai-stop" class="ai-stopbtn">■ 停止生成</button></div>
     <div class="ai-input" id="ai-input">
+      <div id="ai-atts" class="ai-atts"></div>
       <div class="input-tools">
         <button type="button" id="ai-tools" class="ai-attbtn" title="工具：点一下让 AI 做，或直接打开功能"><span class="em-sw"><span class="em-e">🧰</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="8" width="18.8" height="11.4" rx="2"/><path d="M2.6 12.4h18.8"/><path d="M8.6 8V6.2a2 2 0 0 1 2-2h2.8a2 2 0 0 1 2 2V8"/></svg></span></span></button>
         <button id="ai-attach" class="ai-attbtn" title="上传图片/文件"><span class="em-sw"><span class="em-e">📎</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5l-8.4 8.4a5 5 0 0 1-7-7l8.4-8.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg></span></span></button>
         <button type="button" class="ai-attbtn hw-open-btn" data-hw="ai-text" title="手写输入（写完自动转文字）"><span class="em-sw"><span class="em-e">✍️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.4h18"/><path d="M16.6 3.4a2 2 0 0 1 2.8 2.8L9 16.6l-3.6.8.8-3.6z"/></svg></span></span></button>
         <button type="button" class="ai-attbtn hidden" id="ai-shot" title="截图（可用手写笔圈选）"><span class="em-sw"><span class="em-e">📷</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6.5" width="19" height="13" rx="2.5"/><circle cx="12" cy="13" r="3.8"/><path d="M8.5 6.5l1.4-2.6h4.2l1.4 2.6"/></svg></span></span></button>
+        <button type="button" class="ai-attbtn" id="ai-voice" title="按住说话（转成文字填进输入框）"><span class="em-sw"><span class="em-e">🎤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
+        <span class="ai-tier" id="ai-tier" title="快=日常问答；深度=推理模型，复杂题目更稳">
+          <button type="button" data-tier="fast" class="on">快</button><button type="button" data-tier="pro">深度</button>
+          <span class="ai-tiernote" id="ai-tiernote"></span>
+        </span>
       </div>
       <div class="input-row">
-        <button type="button" class="input-mic" disabled title="语音输入（暂未开放）"><span class="em-sw"><span class="em-e">🎤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
+        <button type="button" class="input-mic" id="ai-mic2" title="按住说话"><span class="em-sw"><span class="em-e">🎤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.6" width="6" height="11.4" rx="3"/><path d="M5.6 11.4a6.4 6.4 0 0 0 12.8 0"/><path d="M12 17.8v3.6M9 21.4h6"/></svg></span></span></button>
         <textarea id="ai-text" rows="1" placeholder="问点什么…（可附图片/文件）"></textarea>
-        <button type="button" class="input-emoji" disabled title="表情（暂未开放）"><span class="em-sw"><span class="em-e">🙂</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M9 9.6h.01M15 9.6h.01"/><path d="M8.6 14c1.8 2 5 2 6.8 0"/></svg></span></span></button>
-        <button type="button" id="ai-plus" class="input-plus"><span class="em-sw"><span class="em-e">➕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
+        <button type="button" class="input-emoji" title="表情"><span class="em-sw"><span class="em-e">🙂</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M9 9.6h.01M15 9.6h.01"/><path d="M8.6 14c1.8 2 5 2 6.8 0"/></svg></span></span></button>
+        <button type="button" id="ai-plus" class="input-plus"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
         <button id="ai-send" class="ai-sendbtn">发送</button>
       </div>
     </div>
+    <!-- ➕ 的工具面板：排在输入栏后面、同一列里，展开时把输入栏顶上去（不是盖住它） -->
+    <div id="ai-sheet" class="ai-sheet hidden"><div class="ai-sheet-grid" id="ai-sheet-grid"></div></div>
     <input id="ai-attfile" type="file" accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.txt" hidden>
     <input id="ai-camfile" type="file" accept="image/*" capture="environment" hidden>
-  </div>
+  </section>
+
+  <!-- 右上下文栏：只在全屏工作台出现（窄屏自动收起）。
+       「AI 用了我哪些数据」是这个助手区别于通用聊天机器人的地方，值得常驻而不是折叠。 -->
+  <aside class="ai-ctx" id="ai-ctx"></aside>
 </div>
 
 <!-- AI 附件来源选择 -->
@@ -1787,6 +1799,18 @@
     <div id="ai-tool-list" class="ai-tool-list acm-list"></div>
   </div>
 </div>
+
+<!-- 聊天的三个浮层：选人/选内容框、长按菜单、表情面板。
+     它们**必须挂在 body 下**，不能放进 #chat-main —— 手机端没进会话时那个容器是
+     display:none，浮层跟着一起看不见：新建小组点了确定像没反应，直到你点开某个会话
+     它才"冒"出来（用户实拍反馈）。这三个本来就是 position:fixed 的全屏浮层，
+     不依赖容器定位。 -->
+<div id="cr-picker" class="cr-picker hidden"></div>
+<div id="cr-menu" class="cr-menu hidden"></div>
+<div id="emoji-pan" class="emoji-pan hidden"></div>
+
+<!-- 会话行的置顶/免打扰 + 好友与小组入口（右键 / 长按 / 右上角 ＋） -->
+<div id="ch-addmenu" class="ctxmenu hidden"></div>
 
 <!-- AI 对话操作菜单 -->
 <div id="ai-chatmenu" class="ctxmenu hidden">
@@ -2023,6 +2047,8 @@
      加文件时想清楚它该插在哪一段，别图省事往末尾追。 -->
 <script src="js/core.js"></script>
 <script src="js/articons.js"></script>
+<script src="js/convo.js"></script>
+<script src="js/voice.js"></script>
 <!-- 这两个是**被依赖的工具**，所以紧跟 core：做题倒计时、错题本联动，
      专项练/历年真题/巩固测试/题库四个刷题模块都调它们。顶层只定义函数、
      不绑事件，插在这儿不会打乱后面那 415 个绑定的先后。 -->

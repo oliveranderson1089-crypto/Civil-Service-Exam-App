@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 聊天发语音：网页里的录音（getUserMedia）要先有系统麦克风权限 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- WebView 底层开录音通道时要动音频设置（有的机型缺了它 getUserMedia 直接报
+         NotReadableError「设备打不开」，看起来就像被别的应用占着）。装机权限，不用运行时申请。 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- 手机通知栏推送：发通知 + 开机恢复定时拉取 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

@@ -13,7 +13,7 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, BOARD_FEATURES, SECTIONS, api, artIcon, basicsFeats, esc, goHome, lbView, meView,
+/* global $, BOARD_FEATURES, ME, SECTIONS, api, artIcon, basicsFeats, esc, goHome, lbView, meView,
    openBoardFeat, push, stack,
    openAccount, openChangkao, openChangshi, openChat, openCkBoard, openClassics,
    openDocqa, openDrafts, openDrill, openDrive, openDtest, openEssays, openExam,
@@ -106,6 +106,7 @@ const RAIL_ICON = {
   word: TB_SVG('<path d="M4 19.2A2.3 2.3 0 0 1 6.3 17H20"/><path d="M6.3 2.5H20v19H6.3A2.3 2.3 0 0 1 4 19.2V4.8a2.3 2.3 0 0 1 2.3-2.3z"/>'),
   note: TB_SVG('<path d="M20.2 12.2a6 6 0 0 0-8.5-8.5L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/>'),
   folder: TB_SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+  gear: TB_SVG('<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.06a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.06A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.06A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.06a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.06A1.7 1.7 0 0 0 19.4 15z"/>'),
 };
 
 const TAB_DEFS = [
@@ -209,7 +210,12 @@ const TAB_DEFS = [
       { name: '全国考情', icon: 'layers', go: () => openExam() },
       { name: '聊天', icon: 'word', go: () => openChat() },
       { name: '账户与外观', icon: 'target', go: () => openAccount() },
-    ],
+    ].concat(ME && ME.is_admin
+      /* 顶栏的「后台」按钮被 style.css 收掉了（一律走「我的」），手机端在「我的」页里有这一条，
+         电脑端左栏原来漏了 —— 管理员在宽屏上就完全找不到后台入口。ME 是 init 之后才有的，
+         所以 shell.js 拿到 ME 会再调一次 tbRailFill() 把这条补画出来。 */
+      ? [{ name: '管理后台', icon: 'gear', go: () => { location.href = '/admin'; } }]
+      : []),
   },
 ];
 

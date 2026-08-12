@@ -9,8 +9,8 @@
  */
 /* global $, ALL_BOARDS, BOARD_FEATURES, IC, IDIOM_BOARD, IS_MOBILE,
    Ink, KB, ME, SECTIONS, SECTION_EXTRA, SECTION_FEATURES,
-   aiBack, api, basicsFeats, c, chatConnect, closeSlideshow, dqPoll,
-   openBasicsCmp, openBasicsTree,
+   aiBack, api, avoidFab, basicsFeats, c, chatConnect, closeSlideshow, dqPoll,
+   openBasicsCmp, openBasicsTree, tbRailFill,
    esc, loadNotebook, loadSkin, matClose, matInited, mkInject,
    newDraft, openBoardKb, openChangkao, openChangshi, openChat, openCkBoard,
    openClassics, openDrill, openDrive, openExam, openFanwen, openFind, openGaikuo,
@@ -47,6 +47,9 @@ function render() {
   if (window.Ink && Ink.on) Ink.close();                  // 切视图退出批注模式（笔迹已按页面存好）
   // 离开阅读页必须退出全屏，否则状态栏一直藏着
   if (st.view !== 'viewer' && document.body.classList.contains('viewer-full')) setViewerFull(false);
+  /* 兜底：body.pad-full 会让悬浮球 display:none。只要没有面板真的全屏开着，就把它摘掉——
+     漏摘一次，悬浮球就一路消失到下次重开应用（返回键退全屏 AI 面板出过这个）。 */
+  if (document.body.classList.contains('pad-full') && window.avoidFab) avoidFab();
   // 离开「题目解析」就别再轮询进度了（dqPoll 是顶层 let，不挂在 window 上）
   if (st.view !== 'docqa' && dqPoll) { clearInterval(dqPoll); dqPoll = null; }
   /* 做题页的表跟着视图**暂停/继续**，不是停掉。
@@ -80,7 +83,10 @@ function renderCrumb(st) {
   // 过滤掉没标题的层之后再用过滤后的序号，遇到 push({view:'notebook'}) 这种空标题
   // 就会错位一格 —— 点当前这层反而退回上一层。
   const parts = stack.map((s2, i) => ({ i, t: s2.title || TITLES[s2.view] || '' })).filter(p => p.t);
-  const on = parts.length > 1;
+  /* 手机端的聊天页不画面包屑：顶栏已经有返回键和对方的名字，会话顶栏还写了一遍
+     （名字 + 人数 + 今天几人打卡），再来一行「公考助手 › 我的 › 聊天 › 某某」
+     就是同一句话说三遍，白占掉一整行屏幕。别处照旧 —— 路径深的地方它是有用的。 */
+  const on = parts.length > 1 && !(IS_MOBILE && st && st.view === 'chat');
   box.classList.toggle('hidden', !on);
   document.body.classList.toggle('has-crumb', on);
   if (!on) return;
@@ -161,6 +167,8 @@ async function init() {
   }
   loadSkin();                      // 头像 / 壁纸（不 await，别拖慢首屏）
   $('#admin-btn').classList.toggle('hidden', !ME.is_admin);
+  // 左栏在 tabs.js 顶层就画过一次，那会儿 ME 还没回来 —— 管理员的「管理后台」那条得补画
+  try { if (ME.is_admin && window.tbRailFill) tbRailFill(); } catch (_) { /* 左栏画不了不该拦住首屏 */ }
   $('#home-cards').innerHTML =
     SECTIONS.map(s => `
       <div class="home-card" data-go="sec:${esc(s.key)}">

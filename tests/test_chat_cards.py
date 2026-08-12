@@ -100,6 +100,79 @@ def test_同一条记忆不重复记(auth_client):
     assert len(n) == 1
 
 
+@pytest.fixture
+def clean_mem():
+    """记忆是跨测试留在库里的，挑选逻辑又跟条数有关——前后都清一遍，别互相污染。"""
+    _exec("DELETE FROM ai_memories")
+    yield
+    _exec("DELETE FROM ai_memories")
+
+
+def test_AI记住一件事要先经用户点头(auth_client, monkeypatch, clean_mem):
+    """AI 悄悄记错一条，之后**每一轮**都拿它答——比没记更难发现。所以必须停下来问一句。"""
+    from mods import aisession
+    from mods.agent_tools import exec_tool
+
+    def fake(messages, db, **kw):
+        # 假装模型调了 remember_fact：exec_tool 是真的，确认闸门也是真的
+        txt, action = exec_tool("remember_fact", {"text": "目标是四川省考，2026 年 3 月笔试"}, db)
+        return txt, ([action] if action else []), [], None
+
+    monkeypatch.setattr(aisession, "_ai_agentic_or_error", fake)
+    cid = auth_client.post("/api/aichat/chats", json={}).get_json()["id"]
+    d = auth_client.post("/api/aichat/chats/%d/send" % cid, json={"content": "我报的是四川省考"}).get_json()
+    a = d["actions"][0]
+    assert a["type"] == "confirm" and a["tool"] == "remember_fact"
+    assert "四川省考" in a["summary"], "确认框得让人看清要记的是哪一句"
+    assert a["kind"] == "write", "记忆随时能删，前端不该照删除那样说「不可撤销」"
+    assert not auth_client.get("/api/aichat/memories").get_json()["memories"], "没点头就先落库了"
+    auth_client.post("/api/aichat/chats/%d/confirm" % cid,
+                     json={"tool": "remember_fact", "args": a["args"]})
+    got = auth_client.get("/api/aichat/memories").get_json()["memories"]
+    assert len(got) == 1 and "四川省考" in got[0]["text"]
+    assert "AI" in (got[0]["source"] or ""), "得看得出这条是 AI 记的还是自己加的"
+
+
+def test_AI不重复记同一件事(auth_client, clean_mem):
+    auth_client.post("/api/aichat/memories", json={"text": "目标是四川省考"})
+    cid = auth_client.post("/api/aichat/chats", json={}).get_json()["id"]
+    for _ in range(2):
+        auth_client.post("/api/aichat/chats/%d/confirm" % cid,
+                         json={"tool": "remember_fact", "args": {"text": "目标是四川省考"}})
+    assert len(auth_client.get("/api/aichat/memories").get_json()["memories"]) == 1
+
+
+def test_记忆记满了也不会把常用的那条挤掉(auth_client, monkeypatch, clean_mem):
+    """老规矩是 `ORDER BY id DESC LIMIT 20`：记满之后，一条天天用得上的老记忆
+    会被新记忆挤出去，而且永远回不来。"""
+    from mods import aisession
+    seen = {}
+    monkeypatch.setattr(aisession, "_ai_agentic_or_error",
+                        lambda messages, db, **kw: (seen.update(sys=messages[0]["content"]),
+                                                    ("好", [], [], None))[1])
+    auth_client.post("/api/aichat/memories", json={"text": "资料分析是我最大的弱项，要多练速算"})
+    for i in range(25):     # 之后又记了一堆新的，把它压到第 26 位
+        auth_client.post("/api/aichat/memories", json={"text": "随手记的第 %d 件小事" % i})
+    cid = auth_client.post("/api/aichat/chats", json={}).get_json()["id"]
+    auth_client.post("/api/aichat/chats/%d/send" % cid, json={"content": "资料分析怎么提速"})
+    assert "最大的弱项" in seen["sys"], "跟这轮问的正相关，再老也得带上"
+    assert seen["sys"].count("随手记的第") <= aisession.MEM_LIMIT, "带上限就是带上限，别一次全灌进去"
+
+
+def test_没记满时一条都不挑掉(auth_client, monkeypatch, clean_mem):
+    """长期记忆大多是「跟这轮无关但一直成立」的（考四川省考不会因为这句没提就不成立），
+    条数没超就全带上，别自作聪明按相关度筛。"""
+    from mods import aisession
+    seen = {}
+    monkeypatch.setattr(aisession, "_ai_agentic_or_error",
+                        lambda messages, db, **kw: (seen.update(sys=messages[0]["content"]),
+                                                    ("好", [], [], None))[1])
+    auth_client.post("/api/aichat/memories", json={"text": "目标是四川省考，2026 年 3 月笔试"})
+    cid = auth_client.post("/api/aichat/chats", json={}).get_json()["id"]
+    auth_client.post("/api/aichat/chats/%d/send" % cid, json={"content": "背几个成语给我"})
+    assert "四川省考" in seen["sys"]
+
+
 def test_主动开场不调模型也能出(auth_client):
     d = auth_client.get("/api/aichat/opener").get_json()
     assert d["greet"] and len(d["chips"]) >= 2

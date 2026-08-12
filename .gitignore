@@ -37,3 +37,8 @@ desktop/build/
 node_modules/
 package-lock.json
 uploads/realfig/
+
+# Windows 安装包不进仓库：Electron 的包 ~100MB，和 deb(1MB)/apk(3MB) 不是一个量级，
+# 提交一次就永久留在 git 历史里。服务端是从文件系统发包的，不依赖 git。
+dist/gongkao-win.zip
+dist/gongkao-setup.exe

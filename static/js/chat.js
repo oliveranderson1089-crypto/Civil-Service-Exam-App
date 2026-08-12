@@ -8,9 +8,10 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, IS_MOBILE, ME, SKIN, anchorMenu, api, appConfirm, appPrompt, artEm,
-   back, c, clipFiles, composing, compressImage, dvIcon, esc,
-   fSize, growAndSync, init, lightbox, lsDel, lsGet, lsSet, preview, push, stack,
-   state, toast */
+   back, c, clipFiles, composing, compressImage, convoAvatar, convoLongPress, convoStick, dvIcon, esc,
+   fSize, growAndSync, init, lightbox, lsDel, lsGet, lsSet, mdToHtml, openAI, preview, push, stack,
+   state, toast, voiceAsrEnabled, voiceBubbleHtml, voiceRecord, voiceSupported,
+   voiceToText, voiceToggle, voiceWhyNot */
 
 /* ================= 聊天 ================= */
 let chTab = 'convos', crFid = 0, crGid = 0, crName = '', crLastId = 0, crPoll = 0;
@@ -26,7 +27,7 @@ function crShowEmpty() {
   const p2 = $('#chat-2pane'); if (p2) p2.classList.remove('show-room');
   $('#cr-peer').classList.add('hidden'); $('#cr-input').classList.add('hidden');
   $('#cr-empty').classList.remove('hidden'); $('#cr-msgs').innerHTML = '';
-  crRenderAnnounce('');
+  crRenderAnnounce(''); crInfoClose(); $('#cr-checkin').classList.add('hidden');
 }
 // 当前是否正开着和某人的聊天窗（桌面：选了会话；移动端：栈顶带 room）
 function crInRoom() {
@@ -34,15 +35,34 @@ function crInRoom() {
   if (st.view !== 'chat') return false;
   return IS_MOBILE ? !!st.room : (!!crFid || !!crGid);
 }
+/* 「消息 / 好友 / 加好友」三个平级标签收成一行标题 + ＋ 菜单：
+   加好友是一年点几次的操作，凭什么常年占掉顶部三分之一（CD7）。
+   chSwitch 保留（其它模块和测试都在调它），只是不再有标签栏这个外壳。 */
 function chSwitch(t) {
   chTab = t;
-  document.querySelectorAll('#ch-tabs .ch-tab').forEach(b => b.classList.toggle('active', b.dataset.cht === t));
   ['convos', 'friends', 'add'].forEach(x => $('#ch-' + x).classList.toggle('hidden', x !== t));
+  $('#ch-searchbar').classList.toggle('hidden', t !== 'convos');
+  const ttl = $('.ch-htitle');
+  if (ttl) ttl.textContent = t === 'convos' ? '消息' : (t === 'friends' ? '好友' : '加好友');
   if (t === 'convos') loadConvos();
   else if (t === 'friends') loadFriends();
   else loadAddFriend();
 }
-$('#ch-tabs').addEventListener('click', e => { const b = e.target.closest('[data-cht]'); if (b) chSwitch(b.dataset.cht); });
+$('#ch-add-btn').onclick = (e) => {
+  const box = $('#ch-addmenu');
+  box.innerHTML = `<div class="acm-list">
+    <button data-cha="group">${artEm('👥')} 新建学习小组</button>
+    <button data-cha="add">${artEm('＋')} 加好友</button>
+    <button data-cha="friends">${artEm('📇')} 好友列表</button>
+    <button data-cha="convos">${artEm('💬')} 回到消息</button></div>`;
+  anchorMenu(box, e.currentTarget);
+};
+$('#ch-addmenu').addEventListener('click', e => {
+  const b = e.target.closest('[data-cha]'); if (!b) return;
+  $('#ch-addmenu').classList.add('hidden');
+  if (b.dataset.cha === 'group') crNewGroup(); else chSwitch(b.dataset.cha);
+});
+$('#ch-searchbtn2').onclick = () => { $('#ch-msgsearch').focus(); };
 // 头像：有图就贴图，没图就用名字首字（微信/QQ 那种圆头像）
 function avHtml(url, name, cls) {
   const init = esc((name || '?').trim().slice(0, 1).toUpperCase() || '?');
@@ -55,17 +75,22 @@ async function loadConvos() {
   try {
     const d = await api('/api/chat/conversations');
     updateChatBadge(d.unread);
-    if (!d.conversations.length) { $('#ch-convos').innerHTML = '<p class="empty">还没有会话。去「好友」找人聊，或「' + artEm('＋') + ' 加好友」。</p>'; return; }
-    $('#ch-convos').innerHTML = d.conversations.map(c => `
-      <div class="ch-convo${c.self ? ' ch-self' : ''}" ${c.group ? `data-crg="${c.id}"` : `data-crf="${c.id}"`} data-crn="${esc(c.username)}">
-        ${c.self ? '<div class="ch-av ch-av-self">' + artEm('📁') + '</div>'
-    : c.group ? `<div class="ch-av ch-av-g">${esc((c.username || '组').slice(0, 1))}</div>`
-      : avHtml(c.avatar, c.username, 'ch-av')}
+    if (!d.conversations.length) { $('#ch-convos').innerHTML = '<p class="empty">还没有会话。点右上角 ' + artEm('＋') + ' 加好友或建个学习小组。</p>'; return; }
+    $('#ch-convos').innerHTML = d.conversations.map(c => {
+      const key = (c.group ? 'g' : 'u') + c.id;
+      const draft = (lsGet('crDraft:' + (c.group ? 'g' + c.id : String(c.id))) || '').trim();
+      const av = c.self ? convoAvatar('我', '', 'me') : convoAvatar(c.username, c.avatar, c.group ? 'group' : '');
+      return `<div class="ch-convo${c.self ? ' ch-self' : ''}${c.pinned ? ' ch-pinned' : ''}"
+        ${c.group ? `data-crg="${c.id}"` : `data-crf="${c.id}"`} data-crn="${esc(c.username)}"
+        data-ckey="${key}" data-cpin="${c.pinned ? 1 : 0}" data-cmute="${c.muted ? 1 : 0}">
+        ${av}
         <div class="ch-cmid">
-          <div class="ch-cn">${esc(c.username)}${c.group ? `<span class="ch-nmem">${c.n_mem}</span>` : ''}</div>
-          <div class="ch-cp">${c.at ? '<span class="ch-at">[有人@我]</span> ' : ''}${c.last_mine ? `<span class="ch-tick">${c.last_read ? artEm('✓') + artEm('✓') : artEm('✓')}</span> ` : ''}${esc(c.preview || '')}</div></div>
-        <div class="ch-cright"><div class="ch-ct">${esc((c.time || '').slice(5, 16))}</div>${c.unread ? `<span class="ch-un">${c.unread}</span>` : ''}</div>
-      </div>`).join('');
+          <div class="ch-cn"><span class="ch-cname">${esc(c.username)}</span>${c.group ? `<span class="ch-nmem">${c.n_mem}</span>` : ''}
+            ${c.pinned ? '<span class="ch-flag">置顶</span>' : ''}${c.muted ? '<span class="ch-flag ch-mute">🔕</span>' : ''}</div>
+          <div class="ch-cp">${c.at ? '<span class="ch-at">[有人@我]</span> ' : ''}${draft ? '<span class="ch-draft">[草稿]</span> ' : ''}${c.last_mine ? `<span class="ch-tick">${c.last_read ? artEm('✓') + artEm('✓') : artEm('✓')}</span> ` : ''}${esc(draft || c.preview || '')}</div></div>
+        <div class="ch-cright"><div class="ch-ct">${esc((c.time || '').slice(5, 16))}</div>${c.unread ? `<span class="ch-un${c.muted ? ' ch-un-mute' : ''}">${c.unread}</span>` : ''}</div>
+      </div>`;
+    }).join('');
   } catch (e) { $('#ch-convos').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
 }
 $('#ch-convos').addEventListener('click', e => {
@@ -73,10 +98,49 @@ $('#ch-convos').addEventListener('click', e => {
   if (g) { openGroup(+g.dataset.crg, g.dataset.crn); return; }
   const c = e.target.closest('[data-crf]'); if (c) openChatroom(+c.dataset.crf, c.dataset.crn);
 });
+/* 置顶 / 免打扰：桌面右键，手机长按。开关落在服务端（chat_prefs），换设备也还在。 */
+async function chRowMenu(row) {
+  if (!row || row.classList.contains('ch-self')) return;
+  const kind = row.dataset.crg ? 'g' : 'u';
+  const id = +(row.dataset.crg || row.dataset.crf);
+  const pinned = row.dataset.cpin === '1', muted = row.dataset.cmute === '1';
+  const box = $('#ch-addmenu');
+  box.innerHTML = `<div class="acm-list">
+    <button data-chp="pin">${pinned ? '取消置顶' : artEm('📌') + ' 置顶'}</button>
+    <button data-chp="mute">${muted ? '恢复提醒' : '🔕 消息免打扰'}</button></div>`;
+  box._ctx = { kind, id, pinned, muted };
+  anchorMenu(box, row);
+}
+$('#ch-addmenu').addEventListener('click', async e => {
+  const b = e.target.closest('[data-chp]'); if (!b) return;
+  const ctx = $('#ch-addmenu')._ctx; if (!ctx) return;
+  $('#ch-addmenu').classList.add('hidden');
+  const body = b.dataset.chp === 'pin' ? { pinned: !ctx.pinned } : { muted: !ctx.muted };
+  try {
+    await api('/api/chat/prefs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ kind: ctx.kind, id: ctx.id }, body)) });
+    loadConvos();
+  } catch (err) { toast(err.message, true); }
+});
+$('#ch-convos').addEventListener('contextmenu', e => {
+  const row = e.target.closest('.ch-convo'); if (!row) return;
+  e.preventDefault(); chRowMenu(row);
+});
+convoLongPress($('#ch-convos'), '.ch-convo', chRowMenu);
+/* 好友列表缓存。跨网络用（Cloudflare 隧道）时一次往返要 1~3 秒，本机同一个接口是 2.5 毫秒——
+   差的全是路上。所以凡是「点一下才去拉好友」的地方，先用上次的结果把界面填出来，
+   新数据回来再覆盖：慢的是网络，改不了；能改的是**别让人对着一个没反应的界面等**。 */
+let chFriendsCache = null;
+async function chGetFriends() {
+  const d = await api('/api/friends', { timeoutMs: 15000 });
+  chFriendsCache = d.friends || [];
+  return chFriendsCache;
+}
 async function loadFriends() {
   $('#ch-friends').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/friends');
+    chFriendsCache = d.friends || [];
     if (d.n_req) { $('#ch-reqbadge').textContent = d.n_req; $('#ch-reqbadge').classList.remove('hidden'); }
     else $('#ch-reqbadge').classList.add('hidden');
     if (!d.friends.length) { $('#ch-friends').innerHTML = '<p class="empty">还没有好友。点「' + artEm('＋') + ' 加好友」搜用户名或 ID 添加。</p>'; return; }
@@ -145,41 +209,87 @@ function openGroup(gid, name) {
   if ((stack[stack.length - 1] || {}).view !== 'chat') push({ view: 'chat', title: '聊天' });
   if (IS_MOBILE) push({ view: 'chat', room: 'g' + gid, title: crName });
   const p2 = $('#chat-2pane'); if (p2) p2.classList.add('show-room');
-  $('#cr-peername').textContent = crName;
+  crPaintPeer();
   $('#cr-peer').classList.remove('hidden');
   $('#cr-input').classList.remove('hidden');
   $('#cr-empty').classList.add('hidden');
+  $('#cr-text').placeholder = '发消息…（@助手 让 AI 在群里答）';
   $('#cr-msgs').innerHTML = '<p class="empty">加载中…</p>';
-  crLoad(true);
+  crLoad(true); crLoadCheckin();
   clearInterval(crPoll);
   crPoll = setInterval(() => { if (crInRoom()) crLoad(false); else clearInterval(crPoll); }, 10000);
+}
+/* 会话顶栏：头像 + 名字 + 一行副标题（群里是「N 人 · 今天几人打过卡」）。
+   旧版手机端把整条 .cr-peer 隐藏了，名字改由全局顶栏显示 —— 人数、公告、搜索、
+   信息入口跟着一起没了（CD1/CD2）。现在两端都留着。 */
+function crPaintPeer(sub) {
+  $('#cr-peerav').innerHTML = crGid ? convoAvatar(crName, '', 'group', 'sm')
+    : convoAvatar(crName, crFriendAvatar, crFid === (ME && ME.id) ? 'me' : '', 'sm');
+  $('#cr-peername').textContent = crName || '';
+  const s = sub || (crGid ? (crMembers.length ? crMembers.length + ' 人' : '') : '');
+  $('#cr-peersub').textContent = s;
+  $('#cr-peersub').classList.toggle('hidden', !s);
+}
+/* 勾好友的那个框（新建小组 / 拉人进组共用）。
+
+   **先开框，再拉数据**：以前是 `await /api/friends` 拿到列表才开框，隧道上就是
+   「点了确定，一两秒什么都不动」——用户只会以为没点上，接着再点一次。
+   有缓存就先把上次的名单填出来（秒开），新名单回来再覆盖；拉不到就在框里给「重试」，
+   而不是弹一句 toast 然后框也不出现。 */
+function crPickFriends(opt) {
+  const box = $('#cr-picker');
+  box.classList.remove('hidden');
+  const draw = (rows, state) => {
+    const list = rows === null
+      ? (state === 'err'
+        ? '<p class="cp-wait cp-err">读不到好友列表 <button type="button" id="cp-retry">重试</button></p>'
+        : '<p class="cp-wait"><i class="cr-spin"></i> 正在读好友列表…</p>')
+      : (rows.length
+        ? rows.map(f => `<label class="cp-item cp-check"><input type="checkbox" value="${f.id}"> <span class="t">${esc(f.username)}</span></label>`).join('')
+        : `<p class="cp-wait">${esc(opt.empty || '没有可选的好友')}</p>`);
+    box.innerHTML = `<div class="cp-box"><div class="cp-head">${esc(opt.title)}<button data-cpx>${artEm('✕')}</button></div>
+      <div class="cp-list">${list}</div>
+      <div class="mem-add"><button id="cp-ok"${rows && rows.length ? '' : ' disabled'}>${esc(opt.okText)}</button></div></div>`;
+    const ok = $('#cp-ok');
+    if (ok) ok.onclick = () => {
+      const ids = [...box.querySelectorAll('input:checked')].map(x => +x.value);
+      box.classList.add('hidden');
+      opt.onOk(ids);
+    };
+    const rt = $('#cp-retry');
+    if (rt) rt.onclick = () => { draw(null); pull(); };
+  };
+  const filter = (fr) => (opt.filter ? fr.filter(opt.filter) : fr);
+  /* 晚到的响应先确认窗口还在、框还开着：慢网络下（隧道 1~3 秒）用户完全可能
+     等不及就关了框、甚至退出了页面，那时候再去摸 DOM 只会抛一条无源的错。 */
+  const live = () => typeof document !== 'undefined' && !!(document && document.querySelector)
+    && !box.classList.contains('hidden');
+  const pull = () => chGetFriends()
+    .then(fr => { if (live()) draw(filter(fr)); })
+    .catch(() => { if (live()) draw(null, 'err'); });
+  draw(chFriendsCache ? filter(chFriendsCache) : null);   // 立刻出框：有缓存就直接是名单
+  pull();                                                 // 同时去拉最新的，回来覆盖
 }
 // 新建小组：从好友里勾人
 async function crNewGroup() {
   const name = await appPrompt('新建学习小组', '小组名，如：省考冲刺小组');
   if (!name || !name.trim()) return;
-  let fr = [];
-  try { fr = (await api('/api/friends')).friends || []; } catch (e) { toast(e.message, true); return; }
-  if (!fr.length) { toast('先加几个好友再建组', true); return; }
-  const box = $('#cr-picker');
-  box.classList.remove('hidden');
-  box.innerHTML = `<div class="cp-box"><div class="cp-head">拉谁进「${esc(name.trim())}」<button data-cpx>${artEm('✕')}</button></div>
-    <div class="cp-list">${fr.map(f => `<label class="cp-item cp-check"><input type="checkbox" value="${f.id}"> <span class="t">${esc(f.username)}</span></label>`).join('')}</div>
-    <div class="mem-add"><button id="cp-gok">创建小组</button></div></div>`;
-  $('#cp-gok').onclick = async () => {
-    const ids = [...box.querySelectorAll('input:checked')].map(x => +x.value);
-    box.classList.add('hidden');
-    try {
-      const d = await api('/api/chat/groups', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), members: ids })
-      });
-      await loadConvos();
-      openGroup(d.id, d.name);
-    } catch (e) { toast(e.message, true); }
-  };
+  const nm = name.trim();
+  crPickFriends({
+    title: '拉谁进「' + nm + '」', okText: '创建小组', empty: '还没有好友，先去加一个',
+    onOk: async (ids) => {
+      toast('正在创建…');
+      try {
+        const d = await api('/api/chat/groups', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: nm, members: ids })
+        });
+        await loadConvos();
+        openGroup(d.id, d.name);
+      } catch (e) { toast(e.message, true); }
+    }
+  });
 }
-$('#ch-newgroup').onclick = crNewGroup;
 
 // —— 打开某人的聊天窗（右栏）——
 function openChatroom(fid, name) {
@@ -188,14 +298,15 @@ function openChatroom(fid, name) {
   crFid = fid; crName = name; crLastId = 0;
   crFriendAvatar = ''; crMeAvatar = SKIN.avatar || ''; crLastTime = '';
   crHasMore = false; crFirstId = 0; crReadUpto = 0;
-  crClearReply(); crLoadDraft(crKey()); crRenderAnnounce('');
+  crClearReply(); crLoadDraft(crKey()); crRenderAnnounce(''); $('#cr-checkin').classList.add('hidden');
   if ((stack[stack.length - 1] || {}).view !== 'chat') push({ view: 'chat', title: '聊天' });
   if (IS_MOBILE) push({ view: 'chat', room: fid, title: name });   // 移动端压栈：back 能回列表
   const p2 = $('#chat-2pane'); if (p2) p2.classList.add('show-room');
-  $('#cr-peername').textContent = name || '';
+  crPaintPeer();
   $('#cr-peer').classList.remove('hidden');
   $('#cr-input').classList.remove('hidden');
   $('#cr-empty').classList.add('hidden');
+  $('#cr-text').placeholder = '发消息…（可拖文件进来）';
   $('#cr-msgs').innerHTML = '<p class="empty">加载中…</p>';
   crLoad(true);
   clearInterval(crPoll);
@@ -217,28 +328,45 @@ async function crLoad(first) {
     if (d.me_avatar) crMeAvatar = d.me_avatar;
     if (!crGid && !crName && d.friend) {   // 从通知点进来时没带名字，拿到后补上
       crName = d.friend;
-      $('#cr-peername').textContent = crName;
+      crPaintPeer();
       const top = stack[stack.length - 1] || {};
       if (IS_MOBILE && top.room) { top.title = crName; $('#top-title').textContent = crName; }
     }
     if (crGid) {                    // 群：名字、公告、成员都随消息一起回来
       crMembers = d.members || crMembers;
-      if (d.name) { crName = d.name; $('#cr-peername').textContent = d.name; }
+      if (d.name) { crName = d.name; }
+      crPaintPeer();
       crRenderAnnounce(d.announce);
     }
     const box = $('#cr-msgs');
     if (first) {
       box.innerHTML = '<div id="cr-more" class="cr-more"></div>';
       crLastTime = ''; crHasMore = !!d.has_more; crFirstId = 0; crReadUpto = 0;
+      crStick().seen();
     }
-    if (!d.messages.length && first) box.insertAdjacentHTML('beforeend', '<p class="empty">还没有消息，发一条打个招呼吧 👋</p>');
+    let fresh = 0;                 // 这一轮真正画上去的条数（去重后），给浮标上的数字用
+    if (!d.messages.length && first) {
+      // 群里顺带说一句 @助手 —— 不然没人知道 AI 能在群里答（功能藏着等于没有）
+      box.insertAdjacentHTML('beforeend', '<p class="empty">还没有消息，发一条打个招呼吧 👋'
+        + (crGid ? '<br><span class="cr-tiphint">打「@助手 …」可以让 AI 在群里当场回答，全组都看得见</span>' : '')
+        + '</p>');
+    }
+    /* 未读分割线：首屏时按「我上次读到哪」插一条红线，滚动停在它那儿而不是最底（CD5）。
+       水位取服务端给的 my_read（群）或第一条未读的前一条（一对一按 read_at 判）。 */
+    let unreadAt = 0;
+    if (first) {
+      const un = d.messages.filter(m => !m.mine && (crGid ? (d.my_read !== undefined && m.id > d.my_read) : !m.read_at_self));
+      if (un.length >= 2) unreadAt = un[0].id;
+    }
     if (d.messages.length) { const e = box.querySelector('.empty'); if (e) e.remove(); }
     for (const m of d.messages) {
       // 乐观气泡已经把自己发的那条画出来了（发送成功时就地转实），增量拉取会再带回同一条 ——
       // 认 id 去重，否则自己发的消息会显示两遍。
       if (box.querySelector('[data-mid="' + m.id + '"]')) { crLastId = Math.max(crLastId, m.id); continue; }
+      if (!m.mine) fresh++;        // 自己发的那条是乐观气泡转实，不算「新消息」
       crLastId = Math.max(crLastId, m.id);
       if (!crFirstId) crFirstId = m.id;
+      if (unreadAt && m.id === unreadAt) box.insertAdjacentHTML('beforeend', '<div class="cr-unread" id="cr-unread">以下是未读消息</div>');
       if (crShouldSep(crLastTime, m.time)) box.insertAdjacentHTML('beforeend', `<div class="cr-time">${esc(crTimeLabel(m.time))}</div>`);
       crLastTime = m.time || crLastTime;
       box.insertAdjacentHTML('beforeend', crMsgHtml(m));
@@ -246,36 +374,58 @@ async function crLoad(first) {
     crApplyRead(d.read_upto);
     crApplyRecalled(d.recalled);
     if (first) crRenderMore();
-    if (d.messages.length) crStickBottom(box, first);
+    if (d.messages.length) crStickBottom(box, first, fresh);
+    crPaintAtJump();
+    // 有未读线就停在线上（先滚到底再回到线，位置才准 —— 图片撑开高度是后来的事）
+    const uel = first && $('#cr-unread');
+    if (uel) setTimeout(() => uel.scrollIntoView({ block: 'center' }), 60);
   } catch (e) { if (first) $('#cr-msgs').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
   finally { crLoading = false; }
 }
-/* 滚到底。
-   滚一次不够：图片（哪怕是缩略图）、表格、字体都是**加载完才有高度**的，
-   那一刻内容会变长，刚才滚到的「底」就不再是底了 —— 表现就是「进来还得自己往下滑」。
-   所以：先滚一次，再等这一屏里还没加载完的图各自 load 之后补滚；
-   用户只要自己往上翻了（离底超过一屏的三分之一），立刻停手，别跟人抢滚动条。 */
-let crStickTimer = 0;
-function crStickBottom(box, strong) {
-  const jump = () => { box.scrollTop = box.scrollHeight; };
-  jump();
-  requestAnimationFrame(jump);
-  if (!strong) return;                 // 增量拉新只补一下；下面那套只在进房时用
-  clearTimeout(crStickTimer);
-  let stop = false;
-  const onScroll = () => {
-    if (box.scrollHeight - box.scrollTop - box.clientHeight > box.clientHeight / 3) stop = true;
-  };
-  box.addEventListener('scroll', onScroll, { passive: true });
-  const armed = [...box.querySelectorAll('img')].filter(im => !im.complete);
-  armed.forEach(im => {
-    const on = () => { if (!stop) jump(); };
-    im.addEventListener('load', on, { once: true });
-    im.addEventListener('error', on, { once: true });
-  });
-  // 兜底：图片可能一直不 load（断网/404），2 秒后收手，别一直挂着监听
-  crStickTimer = setTimeout(() => box.removeEventListener('scroll', onScroll), 2000);
+/* 滚动：走共用的滚动契约（js/convo.js）。
+   原先这里是「来了新消息就跳底」，跟 AI 那边是同一个毛病 —— 你正翻着上周的记录，
+   对方发一条，屏幕自己蹦到最新。现在只有贴着底时才跟，否则右下角出「↓ N 条新消息」。
+   进房（strong）仍然强制到底，并且等这一屏的图各自加载完再补滚（图片是加载完才有高度的）。 */
+function crStick() { return convoStick($('#cr-msgs'), $('#chat-main')); }
+/* box 照旧从外面传进来（测试拿假容器测的就是这一条契约），不写死 #cr-msgs */
+function crStickBottom(box, strong, n) {
+  const st = convoStick(box || $('#cr-msgs'), $('#chat-main'));
+  if (strong) st.toBottom(true);
+  else st.follow(n || 1);
 }
+/* ---- 今天的打卡（CM2）----
+   谁打了、我打没打、公告都在这一张条里。只有小组才有；一对一不出现。 */
+let crCheckin = { total: 0, done: 0, me: false, list: [] };
+async function crLoadCheckin() {
+  const bar = $('#cr-checkin');
+  if (!crGid) { crCheckin = { total: 0, done: 0, me: false, list: [] }; bar.classList.add('hidden'); return; }
+  try {
+    const d = await api('/api/chat/g/' + crGid + '/checkin');
+    crCheckin = { total: d.total, done: (d.done || []).filter(x => x.done).length, me: d.me, list: d.done || [] };
+    crPaintCheckin();
+    crPaintPeer(crCheckin.total + ' 人' + (crCheckin.done ? ' · 今天 ' + crCheckin.done + ' 人打过卡' : ''));
+  } catch (_) { bar.classList.add('hidden'); }   // 打卡拉不到不该挡住聊天本身
+}
+function crPaintCheckin() {
+  const bar = $('#cr-checkin');
+  if (!crGid || !crCheckin.total) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  bar.innerHTML = `<div class="cc-top"><b>今天的打卡</b><span>${crCheckin.done} / ${crCheckin.total} 已打</span></div>
+    <div class="cc-row">
+      ${crCheckin.list.map(m => m.done
+    ? convoAvatar(m.username, m.avatar, '', 'sm')
+    : `<span class="cv-av cv-sm cc-undone" title="${esc(m.username)} 还没打卡">?</span>`).join('')}
+      <button type="button" id="cc-do" class="cc-btn${crCheckin.me ? ' done' : ''}">${crCheckin.me ? '✅ 今天已打卡' : '✅ 打卡'}</button>
+    </div>`;
+}
+$('#cr-checkin').addEventListener('click', async e => {
+  if (!e.target.closest('#cc-do') || crCheckin.me) return;
+  try {
+    const d = await api('/api/chat/g/' + crGid + '/checkin', { method: 'POST' });
+    crCheckin = { total: d.total, done: (d.done || []).filter(x => x.done).length, me: d.me, list: d.done || [] };
+    crPaintCheckin(); toast('打卡成功，继续保持');
+  } catch (err) { toast(err.message, true); }
+});
 // 群公告：置顶一条，进组先看到规则
 function crRenderAnnounce(text) {
   const el = $('#cr-announce'); if (!el) return;
@@ -313,7 +463,19 @@ async function crLoadMore() {
   } catch (e) { toast(e.message, true); crRenderMore(); }
   crLoadingMore = false;
 }
-$('#cr-msgs').addEventListener('click', e => { if (e.target.closest('#cr-morebtn')) crLoadMore(); });
+$('#cr-msgs').addEventListener('click', e => {
+  if (!$('#cr-sheet').classList.contains('hidden')) crSheetClose();   // 点消息区＝收起面板
+  if (e.target.closest('#cr-morebtn')) { crLoadMore(); return; }
+  if (crSel) {                       // 多选态：点一条就是勾/取消，不触发打开卡片那些
+    const row = e.target.closest('.cr-row[data-mid]');
+    if (row) {
+      e.preventDefault(); e.stopPropagation();
+      const id = +row.dataset.mid;
+      if (crSel.has(id)) crSel.delete(id); else crSel.add(id);
+      crSelPaint();
+    }
+  }
+}, true);
 // 滚到顶自动接着加载（和按钮并存：手指甩上去的人不用再找按钮）
 $('#cr-msgs').addEventListener('scroll', () => { if ($('#cr-msgs').scrollTop < 40) crLoadMore(); }, { passive: true });
 
@@ -361,16 +523,24 @@ function crMsgHtml(m) {
   // **不加 loading="lazy"**：视口外的图不加载 → 高度算 0 → 「进来滚到底」滚到的是
   // 一个不含图片高度的假底，图片随后加载又把内容撑长，就成了「还得自己往下滑」。
   // 首屏只有 50 条、拿的又是缩略图，本来也不需要 lazy。
-  } else if (m.kind === 'image') inner = `<img class="cr-img" src="/api/chat/file/${m.file_id}?thumb=1" data-lbimg="/api/chat/file/${m.file_id}?inline=1">`;
+  } else if (m.kind === 'ai') {
+    /* AI 在群里答的那条（后端 kind='ai'、from_uid=0）。走完整 Markdown 渲染 ——
+       它的答案本来就带列表和加粗，用聊天那套「只认三样」的轻量渲染会糊成一坨。 */
+    inner = `<div class="cr-ai">${mdToHtml(m.body || '')}</div>`;
+  } else if (m.kind === 'voice') inner = voiceBubbleHtml(m);
+  else if (m.kind === 'image') inner = `<img class="cr-img" src="/api/chat/file/${m.file_id}?thumb=1" data-lbimg="/api/chat/file/${m.file_id}?inline=1">`;
   else if (m.kind === 'file') inner = `<a class="cr-file" href="/api/chat/file/${m.file_id}" download><span class="cr-fic">${dvIcon((m.file_name || '').split('.').pop())}</span><span class="cr-fmid"><span class="cr-fn">${esc(m.file_name || '文件')}</span><em>${fSize(m.file_size)}</em></span></a>`;
   else inner = crText(m.body);
   if (m.quote) {
     inner = `<div class="cr-quote" data-jump="${m.quote.id}"><b>${esc(m.quote.who)}</b>：${esc(m.quote.text)}</div>` + inner;
   }
-  const av = avHtml(m.mine ? crMeAvatar : crFriendAvatar,
-    m.mine ? '我' : (crGid ? (m.who || '?') : crName), 'cr-av');
+  const isAi = m.kind === 'ai';
+  const av = isAi ? convoAvatar('AI', '', 'ai', 'sm')
+    : convoAvatar(m.mine ? '我' : (crGid ? (m.who || '?') : crName),
+      m.mine ? crMeAvatar : crFriendAvatar, m.mine ? 'me' : '', 'sm');
   // 群里必须看得出是谁说的（一对一就没必要，两个人还署名很啰嗦）
-  const who = (crGid && !m.mine && m.who) ? `<div class="cr-who">${esc(m.who)}</div>` : '';
+  const who = isAi ? '<div class="cr-who cr-whoai">AI 助手</div>'
+    : ((crGid && !m.mine && m.who) ? `<div class="cr-who">${esc(m.who)}</div>` : '');
   // 自己的消息带一行状态：发送中 → 已送达 → 已读（对方那侧一读，crApplyRead 就地翻牌）
   const meta = m.mine
     ? `<div class="cr-meta">${m.pending ? '<i class="cr-spin"></i> 发送中' : (m.read ? '✓✓ 已读' : '✓ 已送达')}</div>` : '';
@@ -417,6 +587,19 @@ function crTimeLabel(t) {
   return t.slice(5, 10).replace('-', '月') + '日 ' + hm;
 }
 $('#cr-msgs').addEventListener('click', e => { const im = e.target.closest('[data-lbimg]'); if (im) lightbox(im.dataset.lbimg); });
+
+/* ---- 语音条：点一下放，再点停；进度画在气泡自己身上 ---- */
+function crVoiceState(key, st, ratio) {
+  const el = $('#cr-msgs').querySelector('.cr-voice[data-voice="' + key + '"]');
+  if (!el) return;                                   // 翻页翻走了/被撤回了，忽略
+  el.classList.toggle('playing', st === 'play' || st === 'progress');
+  const bar = el.querySelector('.cr-vbar i');
+  if (bar) bar.style.width = (st === 'stop' ? 0 : Math.round((ratio || 0) * 100)) + '%';
+}
+$('#cr-msgs').addEventListener('click', e => {
+  const v = e.target.closest('.cr-voice'); if (!v) return;
+  voiceToggle(v.dataset.voice, v.dataset.vurl, crVoiceState);
+});
 let crSending = false;      // 发送锁：文件那条路一次只跑一批
 const CHAT_MAX = 4000;      // 和后端 social.py CHAT_MAX 一致
 let crTmpSeq = 0;
@@ -470,10 +653,17 @@ function crOpenMenu(row, x, y) {
   crMenuMid = mid;
   const mine = row.classList.contains('mine');
   const isText = !!row.querySelector('.cr-bubble.text');
+  const isVoice = !!row.querySelector('.cr-bubble.voice');
   const items = [];
   items.push('<button data-cm="quote">↩︎ 引用</button>');
+  // 转过的不再给这一项：文字已经贴在气泡下面了，再点也是同一份
+  if (isVoice && !row.querySelector('.cr-vtext')) items.push('<button data-cm="voicetext">📝 转文字</button>');
   if (isText) items.push('<button data-cm="copy">📋 复制</button>');
+  items.push('<button data-cm="forward">➡ 转发</button>');
+  if (isText && crGid) items.push('<button data-cm="askgroup">🤖 群里问助手</button>');
+  if (isText) items.push('<button data-cm="askai">🤖 私下问 AI</button>');
   if (isText) items.push('<button data-cm="wrongq">📓 存进错题本</button>');
+  items.push('<button data-cm="multi">☑ 多选</button>');
   if (mine) items.push('<button data-cm="recall" class="danger">↺ 撤回</button>');
   const el = $('#cr-menu');
   el.innerHTML = items.join('');
@@ -522,6 +712,14 @@ $('#cr-menu').addEventListener('click', async e => {
     catch (_) { toast('这个浏览器不让复制，长按选中吧', true); }
   } else if (b.dataset.cm === 'quote') {
     crSetReply(mid, row.classList.contains('mine') ? '我' : crName, text);
+  } else if (b.dataset.cm === 'voicetext') {
+    const bx = row.querySelector('.cr-voice');
+    if (bx) bx.classList.add('busy');
+    try {
+      const d = await api('/api/chat/msg/' + mid + '/voicetext', { method: 'POST' });
+      if (bx) bx.insertAdjacentHTML('afterend', '<div class="cr-vtext">' + esc(d.text || '') + '</div>');
+    } catch (err) { toast(err.message, true); }
+    if (bx) bx.classList.remove('busy');
   } else if (b.dataset.cm === 'recall') {
     try {
       const d = await api('/api/chat/msg/' + mid, { method: 'DELETE' });
@@ -537,7 +735,95 @@ $('#cr-menu').addEventListener('click', async e => {
       });
       toast('已存进错题本');
     } catch (err) { toast(err.message, true); }
+  } else if (b.dataset.cm === 'askgroup') {
+    // 在群里问：把原文带上，AI 的答案会作为一条消息发回群里，所有人都看得见（F10）
+    crMentionBot('关于这条：「' + text.slice(0, 120) + '」');
+  } else if (b.dataset.cm === 'askai') {
+    // 私下问：跳到助手面板，答案只有自己看得到
+    openAI('帮我讲讲这条：\n\n' + text);
+  } else if (b.dataset.cm === 'forward') {
+    crForward([mid]);
+  } else if (b.dataset.cm === 'multi') {
+    crSelStart(mid);
   }
+});
+
+/* ---- 转发 / 多选转发（F8）----
+   多选时消息行左侧长出一个勾选框，底部一条操作栏；转发是「挑一个会话再发过去」。 */
+let crSel = null;   // null=没在多选；Set=选中的 mid
+function crSelStart(mid) {
+  crSel = new Set(mid ? [mid] : []);
+  $('#cr-msgs').classList.add('sel-on');
+  crSelPaint();
+}
+function crSelEnd() {
+  crSel = null;
+  $('#cr-msgs').classList.remove('sel-on');
+  $('#cr-msgs').querySelectorAll('.cr-row.picked').forEach(r => r.classList.remove('picked'));
+  $('#cr-selbar').classList.add('hidden');
+}
+function crSelPaint() {
+  if (!crSel) return;
+  $('#cr-msgs').querySelectorAll('.cr-row[data-mid]').forEach(r =>
+    r.classList.toggle('picked', crSel.has(+r.dataset.mid)));
+  const bar = $('#cr-selbar');
+  bar.classList.remove('hidden');
+  bar.innerHTML = `<span>已选 ${crSel.size} 条</span>
+    <button type="button" data-sel="forward" ${crSel.size ? '' : 'disabled'}>➡ 转发</button>
+    <button type="button" data-sel="copy" ${crSel.size ? '' : 'disabled'}>📋 复制</button>
+    <button type="button" data-sel="cancel">取消</button>`;
+}
+$('#cr-selbar').addEventListener('click', async e => {
+  const b = e.target.closest('[data-sel]'); if (!b || !crSel) return;
+  const ids = [...crSel];
+  if (b.dataset.sel === 'cancel') { crSelEnd(); return; }
+  if (b.dataset.sel === 'copy') {
+    const txt = ids.map(id => {
+      const r = $('#cr-msgs').querySelector('[data-mid="' + id + '"] .cr-bubble');
+      return r ? r.innerText.trim() : '';
+    }).filter(Boolean).join('\n');
+    try { await navigator.clipboard.writeText(txt); toast('已复制 ' + ids.length + ' 条'); }
+    catch (_) { toast('这个浏览器不让复制', true); }
+    crSelEnd(); return;
+  }
+  crForward(ids); crSelEnd();
+});
+/* 转发：先挑会话，再把这几条的正文按原顺序发过去。
+   合并成一条发，而不是一条条刷屏 —— 十几条聊天记录逐条推过去，对面收到的是一片轰炸。 */
+async function crForward(ids) {
+  // 同样是先开框再拉：会话列表也要走一次网络（隧道上 1~3 秒）
+  const box = $('#cr-picker');
+  box.classList.remove('hidden');
+  box._fwd = ids;
+  const head = `<div class="cp-head">转发到<button data-cpx>${artEm('✕')}</button></div>`;
+  box.innerHTML = `<div class="cp-box">${head}<div class="cp-list"><p class="cp-wait"><i class="cr-spin"></i> 正在读会话列表…</p></div></div>`;
+  try {
+    const convos = (await api('/api/chat/conversations', { timeoutMs: 15000 })).conversations || [];
+    if (box.classList.contains('hidden')) return;          // 等的时候用户已经关了
+    box.querySelector('.cp-list').innerHTML = convos.map(c =>
+      `<button class="cp-item" data-fwd="${c.group ? 'g' : 'u'}:${c.id}">
+        <span class="t">${esc(c.username)}</span></button>`).join('');
+  } catch (e) {
+    const list = box.querySelector('.cp-list');
+    if (list) list.innerHTML = '<p class="cp-wait cp-err">' + esc(e.message) + '</p>';
+  }
+}
+$('#cr-picker').addEventListener('click', async e => {
+  const b = e.target.closest('[data-fwd]'); if (!b) return;
+  const ids = $('#cr-picker')._fwd || [];
+  $('#cr-picker').classList.add('hidden');
+  const txt = ids.map(id => {
+    const r = $('#cr-msgs').querySelector('[data-mid="' + id + '"] .cr-bubble');
+    return r ? r.innerText.trim() : '';
+  }).filter(Boolean).join('\n');
+  if (!txt) { toast('这几条没有可转发的正文', true); return; }
+  const [kind, pid] = b.dataset.fwd.split(':');
+  const url = kind === 'g' ? '/api/chat/g/' + pid : '/api/chat/' + pid;
+  try {
+    await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: '[转发的聊天记录]\n' + txt }) });
+    toast('已转发');
+  } catch (err) { toast(err.message, true); }
 });
 
 /* ---- 引用回复 ---- */
@@ -560,40 +846,88 @@ function crSetReply(mid, who, text) {
 function crClearReply() { crReplyTo = 0; $('#cr-replybar').classList.add('hidden'); }
 $('#cr-replybar').addEventListener('click', e => { if (e.target.closest('[data-replycancel]')) crClearReply(); });
 
-/* ---- 会话信息：群显示成员/公告/退出，一对一显示共享过的文件 ---- */
+/* ---- 会话信息栏（C1 的第三栏）----
+   成员、公告、共享文件、图片、置顶/免打扰 —— 旧版这些全塞在标题栏的 ⋮ 菜单里（CD2）。
+   桌面端它是常驻的一栏（窄屏自动收起，点 ⓘ 展开），手机端是盖满一屏的信息页。 */
+function crInfoOpen() {
+  $('#chat-info').classList.remove('hidden');
+  $('#chat-2pane').classList.add('info-on');
+  crOpenInfo();
+}
+function crInfoClose() {
+  $('#chat-info').classList.add('hidden');
+  $('#chat-2pane').classList.remove('info-on');
+}
+function crInfoToggle() {
+  if ($('#chat-info').classList.contains('hidden')) crInfoOpen(); else crInfoClose();
+}
+function crInfoHead(title) {
+  return `<div class="ci-head"><b>${esc(title)}</b><button type="button" id="ci-x" title="收起">✕</button></div>`;
+}
+function crFileRow(f) {
+  return `<a class="ci-file" href="/api/chat/file/${f.id}" target="_blank" rel="noopener">
+    <span class="fi">${artEm('📄')}</span><span class="ci-fm"><b>${esc(f.name)}</b>
+    <em>${esc(f.who || '')} · ${esc((f.time || '').slice(5, 16))}</em></span></a>`;
+}
+function crImgGrid(imgs) {
+  if (!imgs || !imgs.length) return '<p class="ci-empty">还没有图片。</p>';
+  return '<div class="ci-imgs">' + imgs.map(i =>
+    `<img src="${i.url}" data-lb="${i.url}" alt="">`).join('') + '</div>';
+}
 async function crOpenInfo() {
   if (!crGid && !crFid) return;
-  const box = $('#cr-picker');
-  box.classList.remove('hidden');
-  box.innerHTML = `<div class="cp-box"><div class="cp-head">会话信息<button data-cpx>${artEm('✕')}</button></div>
-    <div class="cp-list"><p class="empty">加载中…</p></div></div>`;
-  const list = box.querySelector('.cp-list');
-  if (!crGid) {     // 一对一：把互相发过的文件聚到一处（文件传输助手用久了最需要这个）
-    try {
-      const d = await api('/api/chat/search?q=.&with=' + crFid);
-      const files = (d.results || []).filter(r => r.file);
-      list.innerHTML = `<p class="mem-tip">和 ${esc(crName)} 的会话</p>` + (files.length
-        ? files.map(f => `<div class="ai-mem"><div class="c"><div class="t">${artEm('📄')} ${esc(f.text)}</div>
-            <div class="s">${esc((f.time || '').slice(0, 16))}</div></div></div>`).join('')
-        : '<p class="empty">还没有互发过文件。</p>');
-    } catch (e) { list.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
-    return;
-  }
+  const box = $('#chat-info');
+  box.innerHTML = crInfoHead('会话信息') + '<p class="ci-empty">加载中…</p>';
   try {
-    const g = await api('/api/chat/groups/' + crGid);
-    crMembers = g.members || [];
-    list.innerHTML = `
-      <p class="mem-tip">${esc(g.name)} · ${g.members.length} 人</p>
-      <div class="ai-mem"><div class="c"><div class="t">${artEm('📌')} ${esc(g.announce || '还没有群公告')}</div>
-        ${g.is_owner ? '<div class="s"><span class="cr-reedit" data-gedit="announce">改公告</span> · <span class="cr-reedit" data-gedit="name">改组名</span></div>' : ''}
-      </div></div>
-      ${g.members.map(m => `<div class="ai-mem"><div class="c"><div class="t">${esc(m.username)}${m.owner ? ' <span class="ch-tag">群主</span>' : ''}</div></div>
-        ${(g.is_owner && !m.owner) ? `<button class="x" data-gkick="${m.id}">${artEm('✕')}</button>` : ''}</div>`).join('')}
-      <div class="mem-add"><button id="cr-ginvite">＋ 拉好友进来</button>
-        <button id="cr-gleave" class="danger">${g.is_owner ? '解散小组' : '退出小组'}</button></div>`;
-  } catch (e) { list.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+    if (crGid) {
+      const g = await api('/api/chat/groups/' + crGid);
+      crMembers = g.members || [];
+      crPaintPeer(crMembers.length + ' 人' + (crCheckin.done ? ' · 今天 ' + crCheckin.done + ' 人打过卡' : ''));
+      box.innerHTML = crInfoHead(g.name) + `
+        <div class="ci-grp"><div class="ci-lbl">成员 · ${g.members.length}</div>
+          <div class="ci-mems">${g.members.map(m => `<div class="ci-mem" data-gm="${m.id}">
+            ${convoAvatar(m.username, m.avatar, '', 'sm')}<span>${esc(m.username)}</span>
+            ${m.owner ? '<i>群主</i>' : ''}
+            ${(g.is_owner && !m.owner) ? `<button class="ci-kick" data-gkick="${m.id}" title="移出小组">✕</button>` : ''}
+          </div>`).join('')}
+          <button class="ci-mem ci-add" id="cr-ginvite">${convoAvatar('＋', '', '', 'sm')}<span>邀请</span></button></div></div>
+        <div class="ci-grp"><div class="ci-lbl">公告</div>
+          <p class="ci-ann">${esc(g.announce || '还没有群公告')}</p>
+          ${g.is_owner ? '<div class="ci-edit"><button data-gedit="announce">改公告</button><button data-gedit="name">改组名</button></div>' : ''}</div>
+        <div class="ci-grp"><div class="ci-lbl">共享文件 · ${g.files.length}</div>
+          ${g.files.length ? g.files.map(crFileRow).join('') : '<p class="ci-empty">还没传过文件。</p>'}</div>
+        <div class="ci-grp"><div class="ci-lbl">图片</div>${crImgGrid(g.images)}</div>
+        ${crPrefRows(g.prefs)}
+        <div class="ci-grp"><button class="ci-danger" id="cr-gleave">${g.is_owner ? '解散小组' : '退出小组'}</button></div>`;
+      return;
+    }
+    const d = await api('/api/chat/info?id=' + crFid);
+    box.innerHTML = crInfoHead(crName || '会话') + `
+      <div class="ci-grp"><div class="ci-lbl">共享文件 · ${d.files.length}</div>
+        ${d.files.length ? d.files.map(crFileRow).join('') : '<p class="ci-empty">还没有互发过文件。</p>'}</div>
+      <div class="ci-grp"><div class="ci-lbl">图片</div>${crImgGrid(d.images)}</div>
+      ${crPrefRows(d.prefs)}`;
+  } catch (e) { box.innerHTML = crInfoHead('会话信息') + '<p class="ci-empty">' + esc(e.message) + '</p>'; }
 }
-$('#cr-picker').addEventListener('click', async e => {
+function crPrefRows(p) {
+  p = p || {};
+  return `<div class="ci-grp">
+    <label class="ci-sw"><span>置顶会话</span><input type="checkbox" data-pref="pinned"${p.pinned ? ' checked' : ''}><i></i></label>
+    <label class="ci-sw"><span>消息免打扰</span><input type="checkbox" data-pref="muted"${p.muted ? ' checked' : ''}><i></i></label>
+  </div>`;
+}
+$('#chat-info').addEventListener('change', async e => {
+  const c = e.target.closest('[data-pref]'); if (!c) return;
+  try {
+    await api('/api/chat/prefs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: crGid ? 'g' : 'u', id: crGid || crFid, [c.dataset.pref]: c.checked }) });
+    loadConvos();
+  } catch (err) { toast(err.message, true); c.checked = !c.checked; }
+});
+$('#chat-info').addEventListener('click', async e => {
+  if (e.target.closest('#ci-x')) { crInfoClose(); return; }
+  const img = e.target.closest('[data-lb]');
+  if (img) { lightbox(img.dataset.lb); return; }
   const ed = e.target.closest('[data-gedit]');
   if (ed) {
     const isName = ed.dataset.gedit === 'name';
@@ -604,8 +938,7 @@ $('#cr-picker').addEventListener('click', async e => {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isName ? { name: v } : { announce: v })
       });
-      $('#cr-picker').classList.add('hidden');
-      crLoad(true); loadConvos();
+      crLoad(true); loadConvos(); crOpenInfo();
     } catch (err) { toast(err.message, true); }
     return;
   }
@@ -616,39 +949,163 @@ $('#cr-picker').addEventListener('click', async e => {
     catch (err) { toast(err.message, true); }
     return;
   }
-  if (e.target.closest('#cr-gleave')) {
-    if (!(await appConfirm('确定要退出这个小组吗？'))) return;
-    try {
-      await api('/api/chat/groups/' + crGid + '/members/' + (ME ? ME.id : 0), { method: 'DELETE' });
-      $('#cr-picker').classList.add('hidden');
-      crShowEmpty(); if (IS_MOBILE) back();
-      loadConvos();
-    } catch (err) { toast(err.message, true); }
-    return;
-  }
-  if (e.target.closest('#cr-ginvite')) {
-    let fr = [];
-    try { fr = (await api('/api/friends')).friends || []; } catch (err) { toast(err.message, true); return; }
-    const inside = new Set(crMembers.map(m => m.id));
-    const out = fr.filter(f => !inside.has(f.id));
-    if (!out.length) { toast('好友都已经在组里了'); return; }
-    const box = $('#cr-picker');
-    box.innerHTML = `<div class="cp-box"><div class="cp-head">拉谁进来<button data-cpx>${artEm('✕')}</button></div>
-      <div class="cp-list">${out.map(f => `<label class="cp-item cp-check"><input type="checkbox" value="${f.id}"> <span class="t">${esc(f.username)}</span></label>`).join('')}</div>
-      <div class="mem-add"><button id="cp-iok">加入小组</button></div></div>`;
-    $('#cp-iok').onclick = async () => {
-      const ids = [...box.querySelectorAll('input:checked')].map(x => +x.value);
-      box.classList.add('hidden');
+  if (e.target.closest('#cr-gleave')) { crLeaveGroup(); return; }
+  if (e.target.closest('#cr-ginvite')) { crInviteMembers(); return; }
+});
+/* 退组 / 拉人：信息栏那两颗按钮的实现（成员选择还是复用 #cr-picker 那个弹层） */
+async function crLeaveGroup() {
+  if (!(await appConfirm('确定要退出这个小组吗？'))) return;
+  try {
+    await api('/api/chat/groups/' + crGid + '/members/' + (ME ? ME.id : 0), { method: 'DELETE' });
+    crInfoClose(); crShowEmpty(); if (IS_MOBILE) back();
+    loadConvos();
+  } catch (err) { toast(err.message, true); }
+}
+function crInviteMembers() {
+  const inside = new Set(crMembers.map(m => m.id));
+  crPickFriends({
+    title: '拉谁进来', okText: '加入小组', empty: '好友都已经在组里了',
+    filter: (f) => !inside.has(f.id),
+    onOk: async (ids) => {
+      if (!ids.length) return;
+      toast('正在拉人…');
       try {
         await api('/api/chat/groups/' + crGid + '/members', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ members: ids })
         });
-        toast('已拉进来'); crLoad(true);
+        toast('已拉进来'); crLoad(true); crOpenInfo();
       } catch (err) { toast(err.message, true); }
-    };
-  }
+    }
+  });
+}
+$('#cr-info').onclick = crInfoToggle;
+$('#cr-searchbtn').onclick = () => { $('#ch-msgsearch').focus(); $('#ch-msgsearch').select(); };
+/* 「@ 我」跳转（F9）：群里被点名那条往往已经被后面的消息顶上去了。
+   按钮只在这一屏真有 @我 时才出现 —— 没有就不显示，不摆一颗按不动的（AD10 的教训）。 */
+function crPaintAtJump() {
+  const btn = $('#cr-atjump'); if (!btn) return;
+  const hits = $('#cr-msgs').querySelectorAll('.cr-atme');
+  btn.classList.toggle('hidden', !hits.length);
+  btn._last = hits.length ? hits[hits.length - 1] : null;
+}
+$('#cr-atjump').onclick = () => {
+  const el = $('#cr-atjump')._last; if (!el) return;
+  const row = el.closest('.cr-row');
+  (row || el).scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (row) { row.classList.add('cr-hl'); setTimeout(() => row.classList.remove('cr-hl'), 1500); }
+};
+
+/* 手机端 ➕：页内的一块面板（和 AI 那边同一套），不跟输入法抢地方。 */
+const CR_SHEET_ITEMS = [
+  { ic: '🖼', name: '相册', go: () => { const f = $('#cr-file'); f.accept = 'image/*'; f.click(); } },
+  { ic: '📄', name: '文件', go: () => { const f = $('#cr-file'); f.accept = ''; f.click(); } },
+  { ic: '📓', name: '错题', go: () => crPickCard('wrongq') },
+  { ic: '📖', name: '古诗文', go: () => crPickCard('classic') },
+  { ic: '📁', name: '素材', go: () => crPickCard('sucai') },
+  { ic: '🗒️', name: '小记', go: () => crPickCard('note') },
+  { ic: '🤖', name: () => (crGid ? '群里问助手' : '问 AI'), go: () => crAskAi() },
+  { ic: 'ⓘ', name: '会话信息', go: () => crInfoOpen() },
+];
+function crSheetOpen() {
+  $('#cr-sheet-grid').innerHTML = CR_SHEET_ITEMS.map((it, i) =>
+    `<button class="ai-g4" data-csh="${i}"><em>${artEm(it.ic)}</em>${esc(typeof it.name === 'function' ? it.name() : it.name)}</button>`).join('');
+  $('#cr-sheet').classList.remove('hidden');
+  $('#cr-plus').classList.add('on');      // ＋ 转 45° 变成 ✕：同一颗按钮既开又关
+  crStick().follow(0);
+}
+function crSheetClose() {
+  $('#cr-sheet').classList.add('hidden');
+  $('#cr-plus').classList.remove('on');
+}
+$('#cr-plus').onclick = () => { if ($('#cr-sheet').classList.contains('hidden')) crSheetOpen(); else crSheetClose(); };
+$('#cr-sheet').addEventListener('click', e => {
+  const b = e.target.closest('[data-csh]'); if (!b) return;
+  crSheetClose();
+  const it = CR_SHEET_ITEMS[+b.dataset.csh]; if (it) it.go();
 });
-$('#cr-info').onclick = crOpenInfo;
+$('#cr-text').addEventListener('focus', crSheetClose);
+/* 🤖：群里就是「在群里问助手」—— 往输入框插一个 @助手，答案发回群里，所有人都看得见；
+   一对一没有「群里」可言，还是打开助手面板私下问。 */
+function crAskAi() {
+  if (crGid) { crMentionBot(); return; }
+  const t = ($('#cr-text').value || '').trim();
+  openAI(t ? t : '');            // 输入框里打了一半的问题直接带过去
+}
+function crMentionBot(prefix) {
+  const ta = $('#cr-text');
+  const cur = ta.value || '';
+  if (!/^@助手\s/.test(cur)) ta.value = '@助手 ' + (prefix ? prefix + '\n' : '') + cur;
+  else if (prefix) ta.value = '@助手 ' + prefix + '\n' + cur.replace(/^@助手\s*/, '');
+  ta.focus();
+  try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch (_) { /* 老 WebView 不给设光标 */ }
+  crGrow();
+}
+$('#cr-askai').onclick = crAskAi;
+/* 两颗麦克风，分工不同（都在输入区，别混）：
+     #cr-mic2  输入行那颗（微信里语音键的位置）→ **发一条语音消息**
+     #cr-voice 工具行那颗                      → 说话转文字填进输入框
+   转文字优先用浏览器自带识别；没有（桌面壳 WebKit、安卓 WebView、Firefox）就退到
+   服务端识别，两条都没有才把这颗藏起来 —— 摆一颗按不动的最差。
+   发语音条不依赖识别引擎，只要这个环境能录音就一直在。 */
+function crVoiceAvail() {
+  const live = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  // 转文字这颗：有自带识别就一定能用；没有的话只要这个环境能录音就先留着，
+  // 点下去才去问服务端开没开（开着直接录，没开给一句能照做的提示）
+  const b = $('#cr-voice'); if (b) b.classList.toggle('no-speech', !(live || voiceSupported()));
+  ['#cr-mic2', '#cr-vsend'].forEach(sel => {
+    const m = $(sel); if (m) m.classList.toggle('no-speech', !voiceSupported());
+  });
+}
+crVoiceAvail();
+let crRec = null, crRecOn = false;
+/* 录一段传服务端识别（没有浏览器自带识别时走这条），文字填进输入框、不自动发 */
+async function crVoiceByServer() {
+  const rec = await voiceRecord({ tip: '正在录音，说完点「完成」转成文字' });
+  if (!rec) return;
+  const base = $('#cr-text').value;
+  try {
+    const txt = await voiceToText(rec.blob, rec.ext);
+    $('#cr-text').value = base + (base ? ' ' : '') + txt;
+    if (!txt) toast('没识别出内容');
+  } catch (e) { toast(e.message, true); }
+  crGrow();
+}
+async function crVoiceToggle() {
+  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!R) {
+    if (voiceSupported() && await voiceAsrEnabled()) { crVoiceByServer(); return; }
+    toast(voiceSupported() ? '语音转文字还没开启（管理员可在后台 → 语音识别 里配置）'
+      : (voiceWhyNot() || '这个浏览器不支持语音输入'), true);
+    return;
+  }
+  if (crRecOn) { try { crRec.stop(); } catch (_) { /* 已经停了 */ } return; }
+  crRec = new R();
+  crRec.lang = 'zh-CN'; crRec.interimResults = true; crRec.continuous = true;
+  const base = $('#cr-text').value;
+  crRec.onresult = (ev) => {
+    let txt = '';
+    for (let i = 0; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
+    $('#cr-text').value = (base ? base + ' ' : '') + txt;
+    crGrow();
+  };
+  crRec.onend = () => { crRecOn = false; crVoicePaint(); };
+  crRec.onerror = (ev) => { crRecOn = false; crVoicePaint(); if (ev.error !== 'aborted') toast('没听清（' + ev.error + '）', true); };
+  try { crRec.start(); crRecOn = true; crVoicePaint(); toast('在听了，说完再点一下'); }
+  catch (_) { toast('麦克风没打开', true); }
+}
+function crVoicePaint() {
+  const b = $('#cr-voice'); if (b) b.classList.toggle('rec', crRecOn);
+}
+$('#cr-voice').onclick = crVoiceToggle;
+/* 发语音有两个入口：输入行那颗麦克风（手机端）和工具行的 🎙（电脑端 ——
+   .input-mic 在桌面是 display:none，工具都在工具行） */
+function crVoiceSend() {
+  if (!crFid && !crGid) { toast('先选一个会话'); return; }
+  voiceRecord({ tip: '正在录音，说完点「完成」发出去' }).then(rec => { if (rec) crSendVoice(rec); });
+}
+$('#cr-mic2').onclick = crVoiceSend;
+$('#cr-mic2').title = '发语音（按一下开始，说完点完成）';
+const crVs = $('#cr-vsend'); if (crVs) crVs.onclick = crVoiceSend;
 
 /* ---- 内容卡片：把应用里的一条发给好友（这是这个聊天区别于微信的地方）----
    各功能的列表接口字段不一样，所以每种给一个「怎么拉、怎么取标题」的适配；
@@ -697,7 +1154,7 @@ $('#cr-picker').addEventListener('click', async e => {
   const tid = 'tmp' + (++crTmpSeq);
   const e0 = box.querySelector('.empty'); if (e0) e0.remove();
   box.insertAdjacentHTML('beforeend', crMsgHtml({ mine: true, kind: 'card', card: card, tmp: tid, pending: true }));
-  box.scrollTop = box.scrollHeight;
+  crStick().toBottom(false);
   const row = box.querySelector('[data-tmp="' + tid + '"]');
   try {
     const d = await api(crUrl(), {
@@ -844,7 +1301,7 @@ async function crSendOne(t, retryRow, replyTo) {
   const e0 = box.querySelector('.empty'); if (e0) e0.remove();
   const q = replyTo ? crQuotePreview(replyTo) : null;
   box.insertAdjacentHTML('beforeend', crMsgHtml({ mine: true, kind: 'text', body: t, tmp: tid, pending: true, quote: q }));
-  box.scrollTop = box.scrollHeight;
+  crStick().toBottom(false);
   const row = box.querySelector('[data-tmp="' + tid + '"]');
   if (row && replyTo) row.dataset.replyto = replyTo;
   try {
@@ -892,6 +1349,23 @@ async function crSendFiles(files) {
   crSending = false;
   crLoad(false);
 }
+/* ---- 发语音 ----
+   走的还是文件那条通道（multipart），只是多带 voice=1 和时长：后端据此把这条
+   存成 kind='voice'，音频本身照样进云盘「聊天文件」，想转发想下载都还在。 */
+async function crSendVoice(rec) {
+  if (crSending) return;
+  crSending = true;
+  const fd = new FormData();
+  fd.append('file', rec.blob, 'voice' + (rec.ext || '.webm'));
+  fd.append('voice', '1');
+  fd.append('dur', String(rec.dur || 0));
+  if (crReplyTo) fd.append('reply_to', String(crReplyTo));
+  try { await api(crUrl(), { method: 'POST', body: fd }); crClearReply(); }
+  catch (err) { toast(err.message, true); }
+  crSending = false;
+  crLoad(false);
+}
+
 // 拖文件进聊天窗口直接发（浏览器；桌面壳走 __onDropFiles）
 (function () {
   const el = $('#chat-main'); if (!el) return;

@@ -137,18 +137,31 @@ def note_counts():
 @bp.get("/api/notes/tags")
 def note_tags():
     board = (request.args.get("board") or "").strip()
-    sql = "SELECT tags FROM notes WHERE user_id=?"
+    sql = "SELECT id, tags FROM notes WHERE user_id=?"
     args = [uid()]
     if board:
         sql += " AND board=?"
         args.append(board)
-    seen, out = set(), []
+    seen, out, cnt, last = set(), [], {}, {}
     for r in get_db().execute(sql, args).fetchall():
         for t in _jl(r, "tags"):
+            cnt[t] = cnt.get(t, 0) + 1
+            last[t] = max(last.get(t, 0), r["id"])
             if t not in seen:
                 seen.add(t)
                 out.append(t)
-    return jsonify({"tags": out})
+    """items 比 tags 多两样东西：**用了多少条**，以及**按「常用 + 最近」排好的顺序**。
+
+    标签攒到三四十个之后，一行行平铺在顶上就没法用了（占掉半屏，还得拿眼睛找）。
+    前端据此只把前几个摆在外面、其余收进「更多」。
+
+    排序为什么要带上「最近」：实测这个库里 39 个标签有 34 个只用过一次 —— 只按条数排，
+    那 34 个就退化成**建库顺序**（也就是最老的排最前），正好是最没用的一头。
+    所以条数相同就看最近一次用在哪条小记上，手头正在写的那批自然浮上来。
+    排序放服务端做：同一份口径前后端各排一次，迟早会不一致。"""
+    items = sorted(({"tag": t, "n": cnt[t], "last": last[t]} for t in out),
+                   key=lambda x: (-x["n"], -x["last"]))
+    return jsonify({"tags": out, "items": items})
 
 
 @bp.get("/api/notes/<int:nid>/img/<int:idx>")
