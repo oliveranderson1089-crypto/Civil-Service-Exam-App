@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, appPrompt, artEm, back, c, esc, push, rqPractice, toast */
+/* global $, api, appConfirm, appPrompt, artEm, back, c, errMsg, esc, push, rqPractice,
+   toast, uiError */
 
 /* ================= 错题本 ================= */
 const WQ_BOARDS = ['常识判断', '资料分析', '判断推理', '数量关系', '政治理论', '言语理解与表达', '申论'];
@@ -40,7 +41,7 @@ async function loadWrongq() {
   if (wqState.board) url += '&board=' + encodeURIComponent(wqState.board);
   if (wqState.q) url += '&q=' + encodeURIComponent(wqState.q);
   if (wqState.star) url += '&star=1';
-  try { const d = await api(url); wqState.pages = d.pages; renderWq(d.items, d.total); } catch (e) { toast(e.message, true); }
+  try { const d = await api(url); wqState.pages = d.pages; renderWq(d.items, d.total); } catch (e) { toast(errMsg(e), true); }
 }
 function renderWq(items, total) {
   const box = $('#wq-list');
@@ -69,7 +70,7 @@ $('#wq-list').addEventListener('click', async e => {
   const s = e.target.closest('[data-wqstar]');
   if (s) {
     const id = s.dataset.wqstar; const on = !s.classList.contains('on');
-    try { await api('/api/wrongq/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) }); s.classList.toggle('on', on); s.textContent = on ? '★' : '☆'; if (wqState.star && !on) loadWrongq(); } catch (err) { toast(err.message, true); }
+    try { await api('/api/wrongq/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) }); s.classList.toggle('on', on); s.textContent = on ? '★' : '☆'; if (wqState.star && !on) loadWrongq(); } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const card = e.target.closest('.wq-item'); if (card) openWqDetail(+card.dataset.id);
@@ -96,7 +97,7 @@ async function wqOcrFill(file) {
     const d = await api('/api/ocr', { method: 'POST', body: fd });
     if (d.text) { const cur = $('#wqa-q').value.trim(); $('#wqa-q').value = cur ? cur + '\n' + d.text : d.text; toast('已识别，可修正'); }
     else toast('没识别到文字，可手动输入', true);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#wqa-cam').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) wqOcrFill(f); });
 $('#wqa-img').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) wqOcrFill(f); });
@@ -108,7 +109,7 @@ $('#wqa-go').onclick = async () => {
   if (wqImgFile) fd.append('image', wqImgFile);
   $('#wqa-go').disabled = true; $('#wqa-go').textContent = 'AI 分析中…（约十几秒）';
   try { const w = await api('/api/wrongq', { method: 'POST', body: fd }); toast('已收录'); back(); openWqDetail(w.id); }
-  catch (e) { toast(e.message, true); $('#wqa-go').disabled = false; $('#wqa-go').textContent = '🤖 AI 分析并收录'; }
+  catch (e) { toast(errMsg(e), true); $('#wqa-go').disabled = false; $('#wqa-go').textContent = '🤖 AI 分析并收录'; }
 };
 
 /* 错题详情 */
@@ -122,7 +123,7 @@ async function wqSave(body) {
 async function openWqDetail(id) {
   push({ view: 'wqdetail' });
   $('#wqd-wrap').innerHTML = '<p class="empty">加载中…</p>';
-  try { wqData = await api('/api/wrongq/' + id); renderWqDetail(); } catch (e) { $('#wqd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  try { wqData = await api('/api/wrongq/' + id); renderWqDetail(); } catch (e) { $('#wqd-wrap').innerHTML = uiError(e); }
 }
 /* fld 传了就带一个「✏️ 改」——错题本原先只有笔记能改，题干答案抠错一个字
    就只能删了重记（而删掉会连带把这题的收录状态、来源一起丢掉）。 */
@@ -174,18 +175,18 @@ function renderWqDetail() {
 $('#wqd-wrap').addEventListener('click', async e => {
   if (e.target.closest('#wqd-star')) {
     const on = !wqData.starred;
-    try { await api('/api/wrongq/' + wqData.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) }); wqData.starred = on; renderWqDetail(); } catch (err) { toast(err.message, true); } return;
+    try { await api('/api/wrongq/' + wqData.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) }); wqData.starred = on; renderWqDetail(); } catch (err) { toast(errMsg(err), true); } return;
   }
   if (e.target.closest('#wqd-savenote')) {
     const note = $('#wqd-note').value;
-    try { await api('/api/wrongq/' + wqData.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) }); wqData.note = note; toast('已保存'); } catch (err) { toast(err.message, true); } return;
+    try { await api('/api/wrongq/' + wqData.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) }); wqData.note = note; toast('已保存'); } catch (err) { toast(errMsg(err), true); } return;
   }
   if (e.target.closest('#wqd-savecat')) {
     const body = { board: $('#wqd-board').value, qtype: $('#wqd-type').value.trim() };
     try {
       wqData = await wqSave(body);
       toast('已保存'); renderWqDetail(); loadWqBoards();     // 板块变了，左边的分类计数要跟着变
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     return;
   }
   /* 逐字段编辑：题干、答案、知识点…原先只有笔记能改，其余字段抠错一个字
@@ -198,7 +199,7 @@ $('#wqd-wrap').addEventListener('click', async e => {
     const v = await appPrompt('修改' + name, '留空表示清掉这一段', wqData[fld] || '');
     if (v === null) return;
     try { wqData = await wqSave({ [fld]: v }); toast('已保存'); renderWqDetail(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { toast(errMsg(err), true); }
     return;
   }
   if (e.target.closest('#wqd-redo')) {
@@ -211,10 +212,10 @@ $('#wqd-wrap').addEventListener('click', async e => {
   const rb = e.target.closest('#wqd-reanalyze');
   if (rb) {
     rb.disabled = true; rb.textContent = '分析中…';
-    try { wqData = await api('/api/wrongq/' + wqData.id + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); renderWqDetail(); toast('已更新'); } catch (err) { toast(err.message, true); rb.disabled = false; rb.textContent = '🤖 重新分析'; } return;
+    try { wqData = await api('/api/wrongq/' + wqData.id + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); renderWqDetail(); toast('已更新'); } catch (err) { toast(errMsg(err), true); rb.disabled = false; rb.textContent = '🤖 重新分析'; } return;
   }
   if (e.target.closest('#wqd-del')) {
     if (!(await appConfirm('删除这道错题？'))) return;
-    try { await api('/api/wrongq/' + wqData.id, { method: 'DELETE' }); toast('已删除'); back(); loadWrongq(); loadWqBoards(); } catch (err) { toast(err.message, true); } return;
+    try { await api('/api/wrongq/' + wqData.id, { method: 'DELETE' }); toast('已删除'); back(); loadWrongq(); loadWqBoards(); } catch (err) { toast(errMsg(err), true); } return;
   }
 });

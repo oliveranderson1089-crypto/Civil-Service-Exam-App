@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, artEm, back, c, esc, push, toast */
+/* global $, api, appConfirm, artEm, back, c, errMsg, esc, push, toast, uiError */
 
 /* ============= 小题训练：找点 + 写点 =============
    归纳概括 / 综合分析 / 提出对策，难点是同一个：从材料里把要点找出来。
@@ -46,7 +46,7 @@ async function loadFindTypes() {
       + '<button class="chip tiny on" data-fdd="">🎲 随机</button>'
       + fdDoctypes.map(x => `<button class="chip tiny" data-fdd="${esc(x.k)}" title="${x.min}~${x.max} 字">${esc(x.k)}</button>`).join('');
     fdSyncDoctypes();
-  } catch (e) { $('#fd-types').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { $('#fd-types').innerHTML = uiError(e); }
 }
 function fdSyncDoctypes() {   // 只有选中「贯彻执行」时才显示文种选择条
   $('#fd-doctypes').classList.toggle('hidden', fdType() !== 'guanche');
@@ -163,7 +163,7 @@ async function loadFindList() {
     box.innerHTML = items.length ? items.map(x => fdPaperCard(x)).join('')
       : '<p class="empty">还没有题。上面点「出一道」，或上传一份真题。</p>';
     fdSyncBatchBar();
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 $('#fd-done').addEventListener('click', e => {
   const c = e.target.closest('[data-fdp]'); if (c) openFindRun(+c.dataset.fdp);   // 一键重练
@@ -188,7 +188,7 @@ async function fdDelPaper(id) {
   try {
     await api('/api/find/paper/' + id, { method: 'DELETE' });
     fdSel.delete(id); toast('已删除'); loadFindList(); loadFindTypes();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 async function fdBatchDel() {
   if (!fdSel.size) { toast('先勾选要删的题', true); return; }
@@ -200,7 +200,7 @@ async function fdBatchDel() {
     });
     toast(`已删除 ${r.deleted} 道`); fdSel.clear(); fdManage = false;
     loadFindList(); loadFindTypes();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function fdSyncBatchBar() {
   const bar = $('#fd-batchbar');
@@ -224,7 +224,7 @@ $('#fd-gen').onclick = async () => {
     });
     $('#fd-msg').textContent = '';
     openFindRun(d.id); loadFindList(); loadFindTypes();
-  } catch (e) { toast(e.message, true); $('#fd-msg').textContent = ''; }
+  } catch (e) { toast(errMsg(e), true); $('#fd-msg').textContent = ''; }
   b.disabled = false; b.textContent = '✍️ 出一道';
 };
 $('#fd-up').onclick = () => $('#fd-file').click();
@@ -239,7 +239,7 @@ $('#fd-file').onchange = async () => {
     $('#fd-msg').textContent = '';
     toast(`识别出 ${d.made.length} 道可练的小题` + (d.skipped.length ? `（${d.skipped.join('、')} 不属于找点训练，已跳过）` : ''));
     loadFindList(); loadFindTypes();
-  } catch (e) { toast(e.message, true); $('#fd-msg').textContent = ''; }
+  } catch (e) { toast(errMsg(e), true); $('#fd-msg').textContent = ''; }
   $('#fd-file').value = '';
 };
 
@@ -254,7 +254,7 @@ async function openFindRun(pid) {
     fdPaper = await api('/api/find/paper/' + pid);
     fdAnswer = localStorage.getItem('fd-draft-' + pid) || '';   // 上次没写完的草稿
     frRender();
-  } catch (e) { $('#fr-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { $('#fr-head').innerHTML = uiError(e); }
 }
 
 // 步骤条：走到过的步骤可以点回去。没有这个，第一步一交就永远回不去了 ——
@@ -517,7 +517,7 @@ async function frDoCheck() {
     fdCheck = r;
     frMat();
     frFoot();
-  } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = old; }
+  } catch (e) { toast(errMsg(e), true); b.disabled = false; b.textContent = old; }
 }
 $('#fr-foot').addEventListener('click', e => {
   const g = e.target.closest('[data-fsgo]');    // 点一下跳到原文那句
@@ -553,7 +553,7 @@ async function frDoGrade() {
     try { localStorage.removeItem('fd-draft-' + fdPaper.id); } catch (_) { /* 交了就不留草稿 */ }
     frRender();
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = '交给我批'; }
+  } catch (e) { toast(errMsg(e), true); b.disabled = false; b.textContent = '交给我批'; }
 }
 
 // 第三步的页签内容。材料不在这儿 —— 它单独占着 #fr-mat（切到「材料原文」时才显示）。
@@ -591,7 +591,7 @@ $('#fr-foot').addEventListener('click', async e => {
     const d = await api(`/api/find/paper/${fdPaper.id}/reference`, { method: 'POST' });
     fdGrade.reference = d.reference; fdGrade.ref_words = d.ref_words;
     frRender(); toast(`参考答案已生成（${d.ref_words} 字）`);
-  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '🔄 生成参考答案'; }
+  } catch (err) { toast(errMsg(err), true); b.disabled = false; b.textContent = '🔄 生成参考答案'; }
 });
 // 批改结果的两块 HTML，做题页和「做题记录」详情共用
 function frScoreHtml(g) {
@@ -639,7 +639,7 @@ async function frDelRec(rid) {
     const card = document.querySelector(`[data-frrec="${rid}"]`);
     if (card) card.remove();
     toast('已删除');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function frRecListClick(e) {
   const del = e.target.closest('[data-frdel]');
@@ -657,7 +657,7 @@ async function openFindRecs(paperId) {
     const d = await api('/api/find/records' + (paperId ? '?paper_id=' + paperId : ''));
     box.innerHTML = d.items.length ? d.items.map(x => frRecCard(x)).join('')
       : '<p class="empty">还没练过题。做完一道就会留在这里。</p>';
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 $('#frr-list').addEventListener('click', frRecListClick);
 
@@ -671,7 +671,7 @@ async function openFindWrong() {
     const d = await api('/api/find/records?wrong=1');
     box.innerHTML = d.items.length ? d.items.map(x => frRecCard(x, { wrong: true })).join('')
       : '<p class="empty">还没有错题。没拿满分的作答会按时间留在这里，方便按顺序复习。</p>';
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 $('#fdw-list').addEventListener('click', frRecListClick);
 
@@ -702,7 +702,7 @@ async function openFindRec(rid) {
     fdRecTab = 'find';
     frRecRender();
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  } catch (e) { $('#frd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { $('#frd-head').innerHTML = uiError(e); }
 }
 
 function frRecRender() {
@@ -777,5 +777,5 @@ $('#frd-body').addEventListener('click', async e => {
     const d = await api(`/api/find/paper/${fdRec.paper_id}/reference`, { method: 'POST' });
     fdRec.reference = d.reference; fdRec.ref_words = d.ref_words;
     frRecRender(); toast(`参考答案已生成（${d.ref_words} 字）`);
-  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = '🔄 生成参考答案'; }
+  } catch (err) { toast(errMsg(err), true); b.disabled = false; b.textContent = '🔄 生成参考答案'; }
 });

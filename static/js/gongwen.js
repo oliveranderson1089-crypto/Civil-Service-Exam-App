@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, artEm, esc, push, toast */
+/* global $, api, appConfirm, artEm, errMsg, esc, push, toast, uiError */
 
 /* ============= 应用文 · 应用文上位词（公文规范上位表述，按场景归类） ============= */
 function gwCard(it) {
@@ -28,7 +28,7 @@ async function loadGongwen(q) {
     const d = await api('/api/gongwen' + (q ? '?q=' + encodeURIComponent(q) : ''));
     if (!d.items.length) { $('#gw-list').innerHTML = '<p class="empty">没有匹配的场景，换个词试试～</p>'; return; }
     $('#gw-list').innerHTML = d.items.map(gwCard).join('');
-  } catch (e) { $('#gw-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#gw-list').innerHTML = uiError(e); }
 }
 function openGongwen() { push({ view: 'gongwen', title: '应用文上位词' }); $('#gw-in').value = ''; $('#gw-q').value = ''; loadGongwen(); }
 let gwTimer = null;
@@ -46,12 +46,12 @@ $('#gw-ask').onclick = async () => {
     toast('已归纳并收录到最前面');
     await loadGongwen();
     $('#gw-list').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   $('#gw-ask').disabled = false; $('#gw-ask').textContent = 'AI 归纳';
 };
 $('#gw-list').addEventListener('click', async e => {
   const d = e.target.closest('[data-gwdel]'); if (!d) return;
   if (!(await appConfirm('删除这条 AI 归纳的场景？'))) return;
   try { await api('/api/gongwen/' + d.dataset.gwdel, { method: 'DELETE' }); loadGongwen($('#gw-q').value.trim()); }
-  catch (err) { toast(err.message, true); }
+  catch (err) { toast(errMsg(err), true); }
 });

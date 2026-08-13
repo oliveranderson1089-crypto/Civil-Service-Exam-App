@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, emKey, esc, fmtDay, mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, emKey, errMsg, esc, fmtDay, mdToHtml, push, stack, toast,
+   uiError */
 
 /* ================= 人民时评·申论范文（每日抓人民日报评论版） ================= */
 let fwBoard = '', fwData = null;
@@ -41,7 +42,7 @@ async function loadFanwen() {
         ${it.pullquote ? `<div class="fw-pull">${esc(it.pullquote)}</div>` : ''}
         <div class="fw-meta">${it.author ? esc(it.author) + ' · ' : ''}约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">' + artEm("✓") + ' 已有 AI 拆解</span>' : ''}</div>
       </div>`).join('');
-  } catch (e) { $('#fw-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#fw-list').innerHTML = uiError(e, () => loadFanwen()); }
 }
 $('#fw-tabs').addEventListener('click', e => {
   const c = e.target.closest('[data-fwb]'); if (!c) return;
@@ -53,7 +54,7 @@ $('#fw-refresh').onclick = async () => {
     const d = await api('/api/fanwen/refresh', { method: 'POST' });
     $('#fw-msg').textContent = d.msg || (d.added > 0 ? `新增 ${d.added} 篇` : '今天暂无更新');
     if (d.added > 0) { fwBoard = ''; loadFanwen(); }
-  } catch (e) { $('#fw-msg').textContent = ''; toast(e.message, true); }
+  } catch (e) { $('#fw-msg').textContent = ''; toast(errMsg(e), true); }
   b.disabled = false;
   setTimeout(() => { $('#fw-msg').textContent = ''; }, 5000);
 };
@@ -66,7 +67,7 @@ $('#fw-list').addEventListener('click', async e => {
       s.textContent = r.starred ? '★' : '☆'; s.classList.toggle('on', r.starred);
       toast(r.starred ? '已收藏' : '已取消收藏');
       if (fwBoard === 'star') loadFanwen();
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     s.disabled = false; return;
   }
   const c = e.target.closest('[data-fw]'); if (c) openFanwenItem(+c.dataset.fw);
@@ -79,7 +80,7 @@ async function openFanwenItem(id) {
     stack[stack.length - 1].title = fwData.title;
     $('#top-title').textContent = fwData.title;
     renderFanwen();
-  } catch (e) { $('#fw-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#fw-wrap').innerHTML = uiError(e); }
 }
 let fwReadMode = 'plain';        // plain=纯读；annotated=对照精读（AI 批注跟在每段后）
 function renderFanwen() {
@@ -122,7 +123,7 @@ $('#fw-wrap').addEventListener('click', async e => {
       try {
         const d = await api('/api/fanwen/' + fwData.id + '/annotate', { method: 'POST' });
         fwData.annotations = d.notes || {};
-      } catch (err) { toast(err.message, true); mt.disabled = false; mt.textContent = '对照精读'; return; }
+      } catch (err) { toast(errMsg(err), true); mt.disabled = false; mt.textContent = '对照精读'; return; }
     }
     fwReadMode = mode; renderFanwen(); return;
   }
@@ -135,7 +136,7 @@ $('#fw-wrap').addEventListener('click', async e => {
       body: JSON.stringify({ force: g.id === 'fw-regen' })
     });
     fwData.analysis = d.content; renderFanwen(); toast('已生成');
-  } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 范文拆解'; }
+  } catch (err) { toast(errMsg(err), true); g.disabled = false; g.textContent = '🤖 生成 AI 范文拆解'; }
 });
 
 // #8：AI 解读/拆解都很长，挡着正文。点它的标题可折叠收起（政策解读 / 范文拆解通用）

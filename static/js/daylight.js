@@ -1003,6 +1003,77 @@ function dlArtMode() {
   const m = dlLs(dlArtKey(), ''), T = DL_ART[m];
   return (T && !!T.desk === dlIsDesk()) ? m : '';
 }
+
+/* ================= 默认外观也跟着天光走（M4）=================
+   这套按时刻取色的东西一直只服务启动屏和登录页；越过登录之后，除非你主动去
+   「外观」里挑一套美术主题，界面就是一张没有立场的白纸。工具造好了，没接到主路上。
+
+   这里把它接上，但**幅度压到几乎看不见**：饱和度 2–4%，只动页面底色和卡片底，
+   字色、品牌蓝、语义色一律不碰。效果是「这个应用记得现在几点」，
+   而不是「界面在变色」—— 后者会干扰读题。
+
+   三条边界：
+   · 开了美术主题 → 什么都不做。那时颜色归主题管，两套插值打架就成了泥。
+   · 夜间 → 什么都不做。夜色本身就是「夜」这一档，再压一层暖调只会发脏。
+   · 用户关掉（外观 › 跟随天光）→ 清干净，回到写死的 #f4f6f9。
+
+   底色和卡片底的每一档都验过对比度：--muted 压上去最低 5.04:1、正文 15.66:1，
+   都在 AA 之上（验算见 tests/frontend/cssbudget.test.js 那条 --muted 断言的同一套算法）。 */
+const DL_TINT = [
+  { h: 5, bg: '#f1f4f9', card: '#ffffff' },   // 拂晓：偏冷青
+  { h: 8, bg: '#f3f5f8', card: '#ffffff' },   // 晨
+  { h: 13, bg: '#f4f6f9', card: '#ffffff' },  // 昼：就是原来那个值，正午不偏
+  { h: 17, bg: '#f7f5f1', card: '#fffefc' },  // 午后：一丝暖
+  { h: 19, bg: '#f8f3ec', card: '#fffdf9' },  // 昏：全天最暖的一档
+  { h: 21, bg: '#f4f2f3', card: '#fffeff' },  // 暮：暖退回中性
+  { h: 23, bg: '#f0f2f7', card: '#ffffff' },  // 夜：转冷
+];
+function dlTintAt(h) {
+  h = ((h % 24) + 24) % 24;
+  let i = DL_TINT.length - 1;
+  for (let k = 0; k < DL_TINT.length; k++) if (h >= DL_TINT[k].h) i = k;
+  const a = DL_TINT[i], b = DL_TINT[(i + 1) % DL_TINT.length];
+  const span = ((b.h - a.h) + 24) % 24 || 24;
+  const t = Math.min(1, Math.max(0, (((h - a.h) + 24) % 24) / span));
+  return { bg: dlMix(a.bg, b.bg, t), card: dlMix(a.card, b.card, t) };
+}
+function dlTintOn() { return dlLs('dayTint', '1') !== '0'; }
+/* 写在 **:root** 上，不是 body 上 —— 这一层要和美术主题分开：
+     · 美术主题写 body 的 inline 变量（dlArtApply），
+     · 天光底写 :root 的 inline 变量。
+   body 比 :root 离用到变量的元素更近，所以主题一开就自然盖过天光，
+   两边不用互相判断、也不用抢着清对方的痕迹。夜间同理：body.dark 那条 CSS 规则
+   本来就重定义了 --bg / --card，压在 :root 的 inline 值之上。
+   （早先写在 body 上，结果和「换回默认要把痕迹清干净」那条测试打架 —— 那条测试
+   守的是真出过的 bug：主题关不掉。分层之后两件事各归各的。） */
+function dlTintApply() {
+  const r = document.documentElement;
+  if (!r || !document.body) return;
+  const off = !dlTintOn() || dlArtMode() || document.body.classList.contains('dark');
+  if (off) {
+    r.style.removeProperty('--bg');
+    r.style.removeProperty('--card');
+    document.body.classList.remove('day-tint');
+    return;
+  }
+  const v = dlTintAt(dlNow());
+  r.style.setProperty('--bg', v.bg);
+  r.style.setProperty('--card', v.card);
+  document.body.classList.add('day-tint');
+}
+window.dlTintApply = dlTintApply;
+window.dlTintOn = dlTintOn;
+
+/* 图标风格：'line'（默认，描边 SVG）/ 'emoji'（平台彩色字形）。
+   和主题**分开记**：这两套字形本来就都在 DOM 里（.em-sw），以前露哪一套却绑在
+   「有没有开美术主题」上，等于想要一套统一的单色图标就得连配色一起换。
+   放在 daylight.js 而不是 theme.js：theme.js 是后面才加载的，晚一拍就是
+   满屏 emoji 闪一下再变成线条。 */
+function dlIconsApply() {
+  if (!document.body) return;
+  document.body.classList.toggle('icons-emoji', dlLs('icons', 'line') === 'emoji');
+}
+window.dlIconsApply = dlIconsApply;
 function dlArtClock() { return dlLs('artClock', '1') !== '0'; }
 
 /* 主题该按哪个时刻取色：
@@ -1544,7 +1615,13 @@ function dlKbCovers(mode, v) {
    哪边差就往哪边推（暗底推白、亮底推黑），推到够为止。够了就一个像素都不动 ——
    绝大多数时刻本来就够，这条兜底只在交叉那两三个小时里起作用。 */
 const DL_MIN_TEXT = 4.5;      // 正文：WCAG AA
-const DL_MIN_MUTED = 3.4;     // 次要字（小一号、非关键信息）：够读，又不至于把层次推平
+/* 次要字原来是 3.4：「够读，又不至于把层次推平」。这个判断的前提是它只承载
+   非关键信息，但实际上 --muted 扛的是每条列表的说明行、每个分组标题、
+   首页那三行小字 —— 12.5px 的正文，AA 对它的要求就是 4.5，不是大字的 3。
+   默认外观那一支已经提到 5.21（style.css 的 --muted），主题这边不跟上，
+   就变成「开了主题反而更看不清」。
+   层次靠字号和字重拉，不该靠让字看不清来拉。 */
+const DL_MIN_MUTED = 4.5;
 
 function dlLum(c) {
   return dlRGB(c).map(v => {
@@ -1757,9 +1834,12 @@ try { if (DL_AUTH) dlPaintAuth(); else dlPaintSplash(); } catch (_) { /* 画不�
    中间那几十毫秒就是白底闪一下——主题开着的时候尤其刺眼。 */
 try {
   if (!DL_AUTH) {
+    dlIconsApply();          // 必须和主题同一帧：晚一拍就是图标闪一下
     dlArtApply();
     const d = dlArtDark();
     if (d !== null) document.body.classList.toggle('dark', d);
+    // 天光底要排在最后：它得先知道「是不是夜间」「有没有开主题」才决定要不要上色
+    dlTintApply();
   }
 } catch (_) { /* 主题是可选项，画不出来就退回默认外观 */ }
 try {
@@ -1776,6 +1856,8 @@ try {
         if (dk !== null && window.applyTheme) window.applyTheme();
         else if (dk !== null) document.body.classList.toggle('dark', dk);
       }
+      // 没开主题的默认外观也要跟上：不跟的话跨过黄昏底色停在上一档
+      if (!DL_AUTH) dlTintApply();
     } catch (_) { /* 同上 */ }
   }, 600000);
 } catch (_) { /* 没有 canvas 就算了 */ }

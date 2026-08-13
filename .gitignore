@@ -12,6 +12,9 @@ app.db-wal
 app.db-shm
 app.db-journal
 config.json
+# 异地备份的仓库地址和密钥（restic）。backup.env.example 是模板、可以上传，
+# 填好的 backup.env 里是 R2/B2 的 access key，绝不能进公开仓库。
+backup.env
 
 # 导出/临时文件
 *.pdf

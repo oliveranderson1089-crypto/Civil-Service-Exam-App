@@ -13,8 +13,9 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, api, esc, tbSetReview, openChangshi, openDtest, openFanwen, openGaikuo, openNews,
-   openPlanLog, openRealq, openReview, openSucai, openTasks, openVideos, push */
+/* global $, api, esc, openChangshi, openDtest, openFanwen, openGaikuo, openNews,
+   openPlanLog, openRealq, openReview, openSucai, openTasks, openVideos, push, srRightFill,
+   srRightOn, tbSetReview, uiError */
 
 let tdData = null;
 let tdAt = 0;            // 上次拉取时刻：回首页很频繁（每次 back 都算），别每次都打接口
@@ -83,7 +84,7 @@ function tdTodo(d, review) {
       <div class="td-empty">今天没有待办。<button class="td-link" data-td="tasks">去排今天的任务</button></div>`;
   }
   return `<div class="td-h">待办</div><div class="td-rows">` + rows.map(r =>
-    `<div class="td-row" data-td="${r.go}">
+    `<div class="td-row" data-td="${r.go}" tabindex="0" role="button">
       <span class="td-dot td-${r.dot}"></span><span class="td-name">${esc(r.name)}</span>
       <span class="td-badge${r.quiet ? ' quiet' : ''}">${esc(String(r.badge))}</span>
     </div>`).join('') + '</div>';
@@ -97,7 +98,7 @@ function tdUpdates(d) {
       <div class="td-empty">今天还没有新内容进来。</div>`;
   }
   return `<div class="td-h">今日更新</div><div class="td-ups">` + d.updates.map(u =>
-    `<div class="td-up" data-td="up:${esc(u.go)}">
+    `<div class="td-up" data-td="up:${esc(u.go)}" tabindex="0" role="button">
       <span class="td-up-n">${esc(u.name)}</span><span class="td-up-c">+${u.n} 条</span>
     </div>`).join('') + '</div>';
 }
@@ -107,7 +108,7 @@ function tdLast(d) {
   const l = d.last;
   const rate = l.total ? Math.round(l.correct * 100 / l.total) : 0;
   return `<div class="td-h">上次练习</div>
-    <div class="td-rows"><div class="td-row" data-td="realq">
+    <div class="td-rows"><div class="td-row" data-td="realq" tabindex="0" role="button">
       <span class="td-dot td-b"></span>
       <span class="td-name">${esc(l.scope)}</span>
       <span class="td-badge quiet">${l.correct}/${l.total} · ${rate}%</span>
@@ -125,11 +126,22 @@ function tdRender(d, review) {
     td.classList.toggle('hidden', !on);
     if (on) td.innerHTML = `距${esc(d.exam.name)} <b>${d.exam.days_left}</b> 天`;
   }
+  /* 宽屏三栏时，待办和今日更新住在右侧随手栏里（js/tabs.js），中间就不再写一遍 ——
+     两栏并排显示同样三行，看着像出了 bug。中间只留「此刻做什么」：
+     完成度、主行动、上次练到哪。窄屏一切照旧。 */
+  const side = window.srRightOn ? srRightOn() : false;
   $('#today-body').innerHTML =
     `<div class="td-date">${esc(d.date)} ${esc(d.weekday)}</div>${days}`
-    + tdHero(d) + tdCta(d) + tdTodo(d, review) + tdUpdates(d) + tdLast(d)
+    + tdHero(d) + tdCta(d)
+    + (side ? '' : tdTodo(d, review) + tdUpdates(d))
+    + tdLast(d)
     + `<button class="td-all" data-td="allfeats">全部功能 ›</button>`;
 }
+/* 拖窗口跨过 1360 时要重画（那两段在中间和随手栏之间搬家）。
+   用存下来的这一份，不重新打接口。 */
+let tdReview = 0;
+function tdRepaint() { if (tdData) tdRender(tdData, tdReview); }
+window.tdRepaint = tdRepaint;
 
 async function tdLoad(force) {
   if (!force && tdData && Date.now() - tdAt < 20000) return;   // 每次 back 回首页都会调，别把接口打穿
@@ -141,16 +153,25 @@ async function tdLoad(force) {
       api('/api/today'),
       api('/api/review/today?count=1').catch(() => ({ count: 0 })),
     ]);
-    tdData = d; tdAt = Date.now();
     // 左栏「今日复习」的角标用的就是这一份，不再单独拉一次
     if (window.tbSetReview) tbSetReview(rv.count || 0);
-    tdRender(d, rv.count || 0);
+    tdReview = rv.count || 0;
+    /* **先画成了，才认这份数据。** 反过来写（先 tdData = d 再画）的话，
+       一份缺字段的响应会被记下来，而 tdRepaint 是在 try 外头被调的
+       （切视图 / 拖窗口都会触发），下一次重画就把异常抛到 render() 里，
+       整个壳当场停住。画不出来就当没拉到，走下面的出错态。 */
+    tdRender(d, tdReview);
+    tdData = d; tdAt = Date.now();
   } catch (e) {
-    box.innerHTML = `<div class="td-empty">${esc(e.message || '加载失败')}
-      <button class="td-link" data-td="retry">重试</button></div>`;
+    box.innerHTML = uiError(e, () => tdLoad(true));
   }
+  // 右侧随手栏（宽屏）读的是同一份，拉完顺手喂一次。
+  // 顺序不能反：先喂随手栏（它会挂上 has-rrail 并回调 tdRepaint），首页那两段才知道该不该画
+  if (window.srRightFill) srRightFill();
 }
 window.tdLoad = tdLoad;
+// 右侧随手栏要读今天这一份，别再拉一次接口
+window.tdGet = () => tdData;
 
 $('#today-body').addEventListener('click', e => {
   const t = e.target.closest('[data-td]'); if (!t) return;

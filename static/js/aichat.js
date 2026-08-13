@@ -13,11 +13,11 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, CAN_ABORT, IS_MOBILE, anchorMenu, api, appConfirm, appPrompt, applyPush, artEm,
-   avoidFab, composing, convoAvatar, convoStick, createDock, esc, growAndSync, loadClassics,
-   loadDaily, loadEntries, loadFeed, loadPlan, loadWrongq, lsGet, lsSet, mdToHtml, navHomeCard,
-   openAiChatMenu, stack, toast, voiceAsrEnabled, voiceRecord, voiceSupported,
-   voiceToText, voiceWhyNot */
+/* global $, anchorMenu, api, appConfirm, applyPush, appPrompt, artEm, avoidFab, CAN_ABORT,
+   composing, convoAvatar, convoStick, createDock, errMsg, esc, growAndSync, IS_MOBILE,
+   loadClassics, loadDaily, loadEntries, loadFeed, loadPlan, loadWrongq, lsGet, lsSet,
+   mdToHtml, navHomeCard, openAiChatMenu, stack, toast, uiError, voiceAsrEnabled,
+   voiceRecord, voiceSupported, voiceToText, voiceWhyNot */
 
 /* ================= AI 助手 ================= */
 let aiMsgs = [], aiBusy = false, aiChatId = null, aiProjectId = null;
@@ -99,7 +99,7 @@ async function aiOpenChat(id) {
     renderAiTier();
     aiSetTitle(d.title || '对话');
     aiSideClose(true); aiStick().seen(); renderAI(); renderAiList();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 /* 标题下面那行小字说清「哪个档位、第几轮、这轮多久」——
    旧版档位是标题栏里 11.5px 的小胶囊，切了什么、慢在哪都看不出来（AD12）。 */
@@ -127,7 +127,7 @@ async function loadAiHome() {
     $('#ai-panel')._chats = d.chats;
     renderAiList();
     aiSetSub();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 /* 会话按时间分组（今天 / 昨天 / 近 7 天 / 更早），置顶的单独一组排最上，项目在最前面。
    旧版是一张不分组的长列表，翻旧对话只能一路滚（AD11）。 */
@@ -448,7 +448,7 @@ async function aiHandleAttach(file) {
     aiAtts.push({ name: d.name || file.name, text: d.text || '', image: d.image || '' });
     renderAiAtts();
     toast(d.image ? '已附加，发送时 AI 会直接看这张图' : '已附加，发送时 AI 会读取其内容');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#ai-attfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
 $('#ai-camfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
@@ -658,7 +658,7 @@ async function aiSend() {
     try {
       const d = await api('/api/aichat/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: aiProjectId || null, tier: aiTier }) });
       aiChatId = d.id;
-    } catch (e) { toast(e.message, true); return; }
+    } catch (e) { toast(errMsg(e), true); return; }
   }
   aiMsgs.push({ role: 'user', content: shown, atts: atts });
   aiStick().seen();              // 自己发的这条，一定要看得见（哪怕刚才翻在半山腰）
@@ -775,7 +775,7 @@ async function aiConfirm(a) {
     aiMsgs.push({ role: 'assistant', content: d.reply || (del ? '已删除。' : '已完成。') });
     aiNewCount++; renderAI();
     aiRunActions(d.actions);   // 跑它带回的 refresh（刷新对应列表）
-  } catch (e) { toast(e.message || (del ? '删除失败' : '没执行成功'), true); }
+  } catch (e) { toast(errMsg(e) || (del ? '删除失败' : '没执行成功'), true); }
 }
 function aiGrow() { growAndSync('#ai-text', '#ai-input'); }
 // 输入框可拖高（**仅桌面**）：顶边加一条把手，拖动改高度。最小约 3 行、最高半屏，记住上次高度。
@@ -852,7 +852,7 @@ $('#ai-msgs').addEventListener('click', async e => {
       });
       toast('已新开一条分支对话');
       await loadAiHome(); aiOpenChat(d.id);
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
   }
 });
 /* 重答 / 改问：先让服务端把历史退回到那一轮之前，再用（新的或原来的）问题正常重发。
@@ -875,7 +875,7 @@ async function aiRetry(newContent, msgId) {
     $('#ai-text').value = d.content || '';
     renderAI();
     aiSend();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 /* ---- 长期记忆：AI 记住的关于我的事，可查可删 ----
    记忆最怕悄悄记错还一直用，所以来源和「被用过几次」都摆出来。 */
@@ -894,14 +894,14 @@ async function openAiMemories() {
           <div class="s">${esc(m.source || '')}${m.hits ? ' · 已用 ' + m.hits + ' 次' : ''}</div></div>
           <button class="x" data-memdel="${m.id}">✕</button></div>`).join('')
         : '<p class="empty">还没有记住任何事。</p>');
-  } catch (e) { box.querySelector('.cp-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { box.querySelector('.cp-list').innerHTML = uiError(e); }
 }
 $('#ai-memsheet').addEventListener('click', async e => {
   if (e.target.closest('[data-memx]') || e.target.id === 'ai-memsheet') { $('#ai-memsheet').classList.add('hidden'); return; }
   const del = e.target.closest('[data-memdel]');
   if (del) {
     try { await api('/api/aichat/memories/' + del.dataset.memdel, { method: 'DELETE' }); openAiMemories(); aiLoadCtxMems(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { toast(errMsg(err), true); }
     return;
   }
   if (e.target.closest('#mem-addbtn')) {
@@ -911,7 +911,7 @@ $('#ai-memsheet').addEventListener('click', async e => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v })
       });
       openAiMemories(); aiLoadCtxMems();
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
   }
 });
 $('#aih-mem').onclick = openAiMemories;
@@ -936,7 +936,7 @@ async function aiExport() {
     fd.append('tags', JSON.stringify(['AI对话']));
     await api('/api/notes', { method: 'POST', body: fd });
     toast('已存进小记');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 /* 首轮结束后让模型给会话起个名（原先是把用户第一句话切前 24 字）。 */
@@ -982,7 +982,7 @@ async function aiSaveTier() {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tier: aiTier })
     });
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 }
 $('#ai-tier').addEventListener('click', e => {
   const b = e.target.closest('[data-tier]'); if (!b || aiBusy) return;
@@ -1017,7 +1017,7 @@ async function aiVoiceByServer() {
     if (!txt) toast('没识别出内容');
   } catch (e) {
     $('#ai-text').value = base;
-    toast(e.message, true);
+    toast(errMsg(e), true);
   }
   aiGrow();
   $('#ai-text').focus();
@@ -1073,7 +1073,7 @@ $('#aip-new').onclick = async () => {
   try {
     await api('/api/aichat/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), instructions: (ins || '').trim() }) });
     await loadAiHome();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 $('#ai-panel').addEventListener('click', async e => {
   if (e.target.closest('#ai-stop')) { aiStop(); return; }
@@ -1090,7 +1090,7 @@ $('#ai-panel').addEventListener('click', async e => {
   if (pdel) {
     e.stopPropagation();
     if (!(await appConfirm('删除这个项目？（对话会保留，只是不再归组）'))) return;
-    try { await api('/api/aichat/projects/' + pdel.dataset.aipdel, { method: 'DELETE' }); await loadAiHome(); } catch (err) { toast(err.message, true); }
+    try { await api('/api/aichat/projects/' + pdel.dataset.aipdel, { method: 'DELETE' }); await loadAiHome(); } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const chat = e.target.closest('[data-aichat]');

@@ -7,12 +7,11 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, ME, api, appConfirm, esc, openChangkao,
-   openChangshi, openChat, openChatroom, openCkBoard, openClassics, openCsBoard,
-   openDrafts, openEssays, openFind, openGaikuo, openGongwen, openIdiom, openNews,
-   openPartyDict, openPolicyDocs, openQuiz, openReview, openShenlun, openSucai,
-   openTasks, openThBoard, openTheory, openWorks, openWrongq, push,
-   tkSwitch, toast */
+/* global $, api, appConfirm, errMsg, esc, ME, openChangkao, openChangshi, openChat,
+   openChatroom, openCkBoard, openClassics, openCsBoard, openDrafts, openEssays, openFind,
+   openGaikuo, openGongwen, openIdiom, openNews, openPartyDict, openPolicyDocs, openQuiz,
+   openReview, openShenlun, openSucai, openTasks, openThBoard, openTheory, openWorks,
+   openWrongq, push, tkSwitch, toast, uiError */
 
 /* ================= 消息中心：有新内容就提醒，点开直达对应位置 ================= */
 const NTF_ICON = {
@@ -74,7 +73,7 @@ async function loadNotify() {
         </div>
         ${it.read ? '' : '<span class="ntf-new"></span>'}
       </div>`).join('') : '<p class="empty">暂时没有新消息。内容库每天早上更新后会出现在这里。</p>';
-  } catch (e) { $('#ntf-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#ntf-list').innerHTML = uiError(e); }
 }
 $('#ntf-list').addEventListener('click', async e => {
   const n = e.target.closest('[data-ntf]'); if (!n) return;
@@ -88,12 +87,12 @@ $('#ntf-list').addEventListener('click', async e => {
 });
 $('#ntf-readall').onclick = async () => {
   try { await api('/api/notifications/read_all', { method: 'POST' }); loadNotify(); }
-  catch (e) { toast(e.message, true); }
+  catch (e) { toast(errMsg(e), true); }
 };
 $('#ntf-clear').onclick = async () => {
   if (!(await appConfirm('清理所有已读消息？'))) return;
   try { await api('/api/notifications', { method: 'DELETE' }); loadNotify(); }
-  catch (e) { toast(e.message, true); }
+  catch (e) { toast(errMsg(e), true); }
 };
 
 function setNtfDot(n) {

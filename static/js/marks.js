@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IS_MOBILE, NW_KIND, api, artEm, c, esc, lsGet, lsSet, push, stack, toast */
+/* global $, api, artEm, c, errMsg, esc, IS_MOBILE, lsGet, lsSet, NW_KIND, push, stack,
+   toast */
 
 /* ================= 通用「划重点」（悬浮球 → 🖍） =================
    任何模块的正文都能划：不重渲染页面，而是直接在**已经渲染好的 DOM 里**找到那些句子、就地包一层 <mark>。
@@ -202,7 +203,7 @@ async function markPage(force) {
     mkWatch();          // 这一屏的正文一旦被换掉，结果条自己收（见 mkSyncBar）
     toast('划出 ' + n + ' 处重点' + (d.cached ? '（缓存）' : ''));
   } catch (e) {
-    toast(e.message, true);
+    toast(errMsg(e), true);
     if (btn) { btn.disabled = false; btn.textContent = '🖍 帮我划重点'; }
   }
 }

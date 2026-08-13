@@ -10,7 +10,9 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, PL_MOD_COLOR, api, appConfirm, artEm, dtMaterial, esc, lsGet, lsSet, push, qtFmt, qtTotalStart, qtTotalStop, toast, wqlBtnHtml, wqlMark, wqlOpen, wqlRefreshBtns, wqlScan */
+/* global $, api, appConfirm, artEm, dtMaterial, errMsg, esc, lsGet, lsSet, PL_MOD_COLOR,
+   push, qtFmt, qtTotalStart, qtTotalStop, toast, uiError, wqlBtnHtml, wqlMark, wqlOpen,
+   wqlRefreshBtns, wqlScan */
 
 /* ---------------- 每日巩固测试（按当天学的内容 AI 出小测） ---------------- */
 $('#dt-open').onclick = () => openDtest();
@@ -82,7 +84,7 @@ async function loadDtest() {
     }
     renderDtest();
     dtScanWq();
-  } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#dt-body').innerHTML = uiError(e); }
 }
 function bindBar() {
   const rec = $('#dt-records'); if (rec) rec.onclick = openDtRecords;
@@ -214,7 +216,7 @@ async function dtRecord() {
   try {
     const ans = {}; dtItems.forEach((_, i) => ans[i] = dtChosen[i] || '');
     return await api('/api/dtest/grade', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: ans }) });
-  } catch (e) { toast(e.message, true); return null; }
+  } catch (e) { toast(errMsg(e), true); return null; }
 }
 async function dtSubmit() {   // 测试模式交卷
   const un = dtItems.findIndex((_, i) => !dtChosen[i]);
@@ -276,7 +278,7 @@ async function openDtRecords() {
       : '<p class="empty">还没有测试记录。做一次巩固测试，交卷后就会留档。</p>';
     $('#dt-body').innerHTML = `<div class="dtr-top"><button class="pl-link-btn" id="dt-back">‹ 返回测试</button><b>测试记录</b></div>${list}`;
     $('#dt-back').onclick = loadDtest;
-  } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#dt-body').innerHTML = uiError(e); }
 }
 async function openDtRecord(rid) {
   $('#dt-body').innerHTML = '<p class="empty">加载中…</p>';
@@ -294,7 +296,7 @@ async function openDtRecord(rid) {
     $('#dt-body').innerHTML = `<div class="dtr-top"><button class="pl-link-btn" id="dt-back2">‹ 返回记录</button>
       <b>${esc((d.created_at || '').slice(5, 16))} · 得分 ${d.score}/${d.total}</b></div><div class="dt-list">${qs}</div>`;
     $('#dt-back2').onclick = openDtRecords;
-  } catch (e) { $('#dt-body').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#dt-body').innerHTML = uiError(e); }
 }
 $('#dt-body').addEventListener('click', e => {
   const r = e.target.closest('[data-dtrec]'); if (r) openDtRecord(+r.dataset.dtrec);

@@ -23,6 +23,15 @@ STATIC = os.path.join(BASE, "static")
 UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
 CONFIG = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
 
+# waitress 线程池大小 = **并发上限**，不是「快慢」的旋钮：WSGI 下一条 SSE 连接
+# 占住一个线程直到断开（聊天推送最长 300 秒、AI 流式一轮几十秒），池子空了之后
+# 所有请求排队，而且日志里一个字都没有。
+#
+# 住在 core 而不是 app.py：app.py 启动时要拿它开服务，mods/capacity.py 要拿它
+# 当分母算占用率。放 app.py 的话 capacity 得反向 import app —— 那就把
+# 「app.py → mods/* → core.py」这条单向依赖绕成环了。
+THREADS = int(os.environ.get("GONGKAO_THREADS", "64"))
+
 # ---------------------------------------------------------------- 板块结构
 SECTIONS = [
     {"key": "xingce", "name": "行测", "icon": "测", "desc": "行政职业能力测验",
@@ -51,12 +60,19 @@ def _write_cfg(cfg):
 
     直接覆写的话，写到一半断电就留下半个 JSON——下次启动 secret_key 读不出来，
     全员登出、配置被重置。rename 在同一文件系统上是原子的：要么旧的，要么新的。
+
+    权限锁 600：这文件里是明文的 ai_key / vision_key / smtp_pass，还有 secret_key
+    ——secret_key 泄漏等于任何人都能伪造会话 cookie。必须在 replace **之前**改，
+    因为权限跟着 inode 走：先 rename 再 chmod 的话，中间那一瞬文件是按 umask 建的
+    （这台机器上是 664，组可读）。手工 chmod 过一次也不够——后台每存一次 AI 设置
+    都会走到这儿重建临时文件，权限又会被 umask 打回去。
     """
     tmp = CONFIG + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
         f.flush()
         os.fsync(f.fileno())
+    os.chmod(tmp, 0o600)
     os.replace(tmp, CONFIG)
 
 

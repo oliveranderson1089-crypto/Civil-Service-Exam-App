@@ -36,8 +36,13 @@ function boot(opts = {}) {
      写死一份清单迟早跟 index.html 走散，所以直接从它里面读。
      正则要允许标签带属性：早加载的那个（data-early）也得算进来，
      漏掉它就是在测一个没有启动屏配色的应用。 */
-  const srcs = [...html.matchAll(/<script src="(js\/[^"]+)"[^>]*><\/script>/g)].map(m => m[1]);
+  let srcs = [...html.matchAll(/<script src="(js\/[^"]+)"[^>]*><\/script>/g)].map(m => m[1]);
   if (!srcs.length) throw new Error('index.html 里没找到 js/*.js —— 拆分结构变了？');
+  /* opts.only：只加载一部分脚本。给「只有首屏包时应用能不能起来」那条测试用——
+     线上 core 是同步的、rest 是 defer 的，中间那一段时间里页面就是这个样子。
+     不给这个选项的话，那种「core 顶层用了 rest 里的函数」的错永远测不出来，
+     只会在手机上白屏一次。 */
+  if (opts.only) srcs = srcs.filter(f => opts.only.includes(f));
   const js = srcs.map(f => `//# ${f}\n` + fs.readFileSync(path.join(ROOT, 'static', f), 'utf8')).join('\n;\n');
   const dom = new JSDOM(html, {
     // 默认 localhost；opts.url 可换成局域网 http 直连那种「不安全上下文」，

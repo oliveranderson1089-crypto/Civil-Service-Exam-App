@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, artEm, back, composing, esc, loadDaily, loadShared, ntfGo, push, toast */
+/* global $, api, appConfirm, artEm, back, composing, errMsg, esc, loadDaily, loadShared,
+   ntfGo, push, toast, uiError */
 
 /* ============= 任务清单（每日任务 + 互监待办） ============= */
 function openTasks() { push({ view: 'tasks', title: '任务清单' }); tkSwitch('plan'); }
@@ -118,14 +119,14 @@ $('#pl-road').addEventListener('click', async e => {
       });
       toast('40 天冲刺已开启，去让规划助手排今天的计划');
       loadPlan();
-    } catch (er) { toast(er.message, true); }
+    } catch (er) { toast(errMsg(er), true); }
     return;
   }
   if (e.target.closest('#plr-stop')) {
     if (!await appConfirm('结束这轮 40 天冲刺？已排的计划不会删，只是规划助手不再按路线图排任务。',
       { title: '结束冲刺', okText: '结束' })) return;
     try { await api('/api/plan/roadmap', { method: 'DELETE' }); toast('已结束'); loadPlan(); }
-    catch (er) { toast(er.message, true); }
+    catch (er) { toast(errMsg(er), true); }
   }
 });
 
@@ -139,7 +140,7 @@ async function loadPlan() {
     $('#pl-setup').classList.toggle('hidden', has);
     $('#pl-main').classList.toggle('hidden', !has);
     if (!has) await fillPlanExams();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 async function fillPlanExams() {
   try {
@@ -214,7 +215,7 @@ async function plSave() {
     plEditing = false; plFormBase = null;
     toast('已保存');
     return true;
-  } catch (e) { toast(e.message, true); return false; }
+  } catch (e) { toast(errMsg(e), true); return false; }
 }
 $('#pl-save').onclick = async () => { if (await plSave()) loadPlan(); };
 $('#pl-edit').onclick = async () => {
@@ -249,7 +250,7 @@ $('#pl-gen').onclick = async () => {
     plProfile = d.profile;
     renderPlan(d);
     toast('已排好 ' + d.total + ' 条');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   b.disabled = false; b.textContent = '✨ 让规划助手排今天的计划';
 };
 $('#pl-add').onclick = async () => {
@@ -257,7 +258,7 @@ $('#pl-add').onclick = async () => {
   try {
     await api('/api/plan/item', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) });
     $('#pl-in').value = ''; loadPlan();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 $('#pl-in').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') $('#pl-add').click(); });
 $('#pl-list').addEventListener('click', async e => {
@@ -268,7 +269,7 @@ $('#pl-list').addEventListener('click', async e => {
     e.stopPropagation();
     if (!(await appConfirm('删除这条计划？'))) return;
     try { await api('/api/plan/' + del.dataset.pldel, { method: 'DELETE' }); loadPlan(); }
-    catch (er) { toast(er.message, true); }
+    catch (er) { toast(errMsg(er), true); }
     return;
   }
   const it = e.target.closest('[data-pl]'); if (!it) return;
@@ -278,7 +279,7 @@ $('#pl-list').addEventListener('click', async e => {
   try {
     const d = await api('/api/plan/' + it.dataset.pl + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     if (typeof d.done === 'boolean' && d.done !== !was) { plSetDone(it, d.done); plRecalcProg(); }
-  } catch (er) { plSetDone(it, was); plRecalcProg(); toast(er.message, true); }
+  } catch (er) { plSetDone(it, was); plRecalcProg(); toast(errMsg(er), true); }
 });
 function plSetDone(it, on) {
   it.classList.toggle('done', on);
@@ -333,14 +334,14 @@ async function loadPlanLog() {
         ${arch}
       </div>`;
     }).join('');
-  } catch (e) { $('#plh-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#plh-list').innerHTML = uiError(e); }
 }
 $('#plh-list').addEventListener('click', async e => {
   const r = e.target.closest('[data-restore]'); if (!r) return;
   e.preventDefault();
   if (!(await appConfirm('把这一版恢复成今天的计划？当前这版会先存进历史。'))) return;
   try { await api('/api/plan/restore/' + r.dataset.restore, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); toast('已恢复'); loadPlanLog(); }
-  catch (er) { toast(er.message, true); }
+  catch (er) { toast(errMsg(er), true); }
 });
 $('#plh-analyze-btn').onclick = plhAnalyze;
 async function plhAnalyze() {
@@ -357,6 +358,6 @@ async function plhAnalyze() {
       ${sec('✅ 坚持得不错', d.keep, 'keep')}
       ${sec('⚠️ 被冷落 / 长期没安排', d.neglected, 'neg')}
       ${sec('👉 接下来建议', d.suggestions, 'sug')}`;
-  } catch (e) { box.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { box.innerHTML = uiError(e); }
   btn.disabled = false;
 }

@@ -7,7 +7,9 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DESKTOP_VER, IS_DESKTOP, KB, api, appConfirm, appPrompt, artEm, back, clipFiles, copyText, esc, lsDel, lsGet, lsSet, openViewerUrl, push, stack, toast */
+/* global $, api, appConfirm, appPrompt, artEm, back, clipFiles, copyText, DESKTOP_VER,
+   errMsg, esc, IS_DESKTOP, KB, lsDel, lsGet, lsSet, openViewerUrl, push, stack, toast,
+   uiError */
 
 /* ================= 云盘 ================= */
 let dvFolder = '';
@@ -105,7 +107,7 @@ async function loadTrash() {
     $('#dv-list').innerHTML = d.items.length
       ? d.items.map(dvTrashRow).join('')
       : '<p class="empty">回收站是空的。删掉的东西会先放这儿 ' + d.days + ' 天，可以反悔。</p>';
-  } catch (e) { $('#dv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#dv-list').innerHTML = uiError(e); }
 }
 
 $('#dv-trash').onclick = () => {
@@ -142,7 +144,7 @@ async function loadDrive() {
     }
     $('#dv-list').classList.toggle('grid', dvGrid);
     $('#dv-list').innerHTML = d.items.map(dvRow).join('');
-  } catch (e) { $('#dv-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#dv-list').innerHTML = uiError(e); }
 }
 
 /* 进目录 = 往导航栈压一层，于是全局「返回」自然是退到**上一级目录**，
@@ -177,14 +179,14 @@ $('#dv-list').addEventListener('click', async e => {
   const back = e.target.closest('[data-dvrestore]');
   if (back) {
     try { await api('/api/drive/trash/' + back.dataset.dvrestore + '/restore', { method: 'POST' }); toast('已恢复'); loadTrash(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { toast(errMsg(err), true); }
     return;
   }
   const purge = e.target.closest('[data-dvpurge]');
   if (purge) {
     if (!(await appConfirm('彻底删除？这一步之后就找不回来了。'))) return;
     try { await api('/api/drive/trash/' + purge.dataset.dvpurge, { method: 'DELETE' }); loadTrash(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { toast(errMsg(err), true); }
     return;
   }
   const pick = e.target.closest('[data-dvpick]');
@@ -235,12 +237,12 @@ async function dvShare(id) {
     const ok = await copyText(url);     // 桌面壳里 navigator.clipboard 是被拒的，copyText 有兜底
     await appPrompt(ok ? '链接已复制（有效期至 ' + (d.expires_at || '').slice(0, 10) + '）'
                        : '复制不了，手动选中下面这行', '', url);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 $('#dv-share-list').onclick = async () => {
   let d;
-  try { d = await api('/api/drive/shares'); } catch (e) { toast(e.message, true); return; }
+  try { d = await api('/api/drive/shares'); } catch (e) { toast(errMsg(e), true); return; }
   const el = $('#mat-share-sheet');
   el.innerHTML = `<div class="ns-mask" data-sheet-close></div><div class="ns-panel">
     <div class="ns-handle"></div><div class="ns-title">我分享出去的链接</div>
@@ -256,7 +258,7 @@ $('#dv-share-list').onclick = async () => {
   el.querySelectorAll('[data-dvunshare]').forEach(b => {
     b.onclick = async () => {
       try { await api('/api/drive/shares/' + b.dataset.dvunshare, { method: 'DELETE' }); toast('已撤销'); close(); }
-      catch (err) { toast(err.message, true); }
+      catch (err) { toast(errMsg(err), true); }
     };
   });
 };
@@ -296,7 +298,7 @@ async function dvRename(id, cur) {
     await api('/api/drive/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ name: name.trim() }) });
     loadDrive();
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 }
 
 function dvBatchBar() {
@@ -311,7 +313,7 @@ $('#dv-bdel').onclick = async () => {
   for (const id of [...dvSel]) {
     // 别把原因吞掉：只报个数字的话，用户既不知道是哪一项、也不知道为什么（见 docs/README-full.md 第 1 条）
     try { await api('/api/drive/' + id, { method: 'DELETE' }); }
-    catch (err) { fail++; toast(err.message, true); }
+    catch (err) { fail++; toast(errMsg(err), true); }
   }
   toast(fail ? '删除完成，' + fail + ' 项失败' : '已删除', fail > 0);
   loadDrive();
@@ -326,7 +328,7 @@ $('#dv-move').onclick = async () => {
       await api('/api/drive/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({ folder: dest }) });
       ok++;
-    } catch (err) { fail++; toast(err.message, true); }
+    } catch (err) { fail++; toast(errMsg(err), true); }
   }
   toast(fail ? '移动 ' + ok + ' 项，失败 ' + fail + ' 项' : '已移动 ' + ok + ' 项', fail > 0 && !ok);
   loadDrive();
@@ -362,7 +364,7 @@ async function dvPaste() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ folder: dvFolder }) });
       ok++;
-    } catch (err) { fail++; toast(err.message, true); }
+    } catch (err) { fail++; toast(errMsg(err), true); }
   }
   toast(fail ? '粘贴 ' + ok + ' 项，失败 ' + fail + ' 项' : '已粘贴 ' + ok + ' 项', fail > 0 && !ok);
   loadDrive();
@@ -442,7 +444,7 @@ $('#dv-menu').addEventListener('click', async e => {
     case 'dvm-del':
       if (await appConfirm('删除这个？（会先进回收站）')) {
         try { await api('/api/drive/' + id, { method: 'DELETE' }); loadDrive(); }
-        catch (err) { toast(err.message, true); }
+        catch (err) { toast(errMsg(err), true); }
       }
       break;
   }
@@ -715,7 +717,7 @@ $('#dv-newfolder').onclick = async () => {
   const name = await appPrompt('新建文件夹', '', '');
   if (!name || !name.trim()) return;
   try { await api('/api/drive/folder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), parent: dvFolder }) }); loadDrive(); }
-  catch (err) { toast(err.message, true); }
+  catch (err) { toast(errMsg(err), true); }
 };
 async function driveSend(fid) {
   try {
@@ -725,7 +727,7 @@ async function driveSend(fid) {
     if (!pick) return;
     await api('/api/drive/' + fid + '/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: pick }) });
     toast('已发送');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 // 选好友（复用小记那种底部面板）
 function pickFriend(friends, title) {

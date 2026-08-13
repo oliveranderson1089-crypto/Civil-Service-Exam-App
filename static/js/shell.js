@@ -109,6 +109,25 @@ $('#crumb').addEventListener('click', e => {
   stack = stack.slice(0, i + 1);
   render();
 });
+/* 用 <div> 当按钮的那些行（首页待办、标签页列表、库/我的的条目…）——
+   它们的点击是委托在容器上的（data-td / data-tbi），所以用 div 很自然，
+   代价是**键盘完全够不着**：实测首页 10 个可点元素里有 8 个 Tab 跳不到。
+   模板里已经补了 tabindex="0" role="button"，这里补上另一半：
+   role=button 的语义约定就是回车和空格等于点击。
+
+   一个监听管全站，不用每个渲染函数各绑一次。
+   空格要 preventDefault：不拦的话按下去先滚一屏，再跳转。 */
+addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const el = e.target;
+  if (!el || el.getAttribute('role') !== 'button') return;
+  // 原生按钮和链接浏览器自己会处理，别按两次
+  if (el.tagName === 'BUTTON' || el.tagName === 'A') return;
+  e.preventDefault();
+  el.click();
+});
+
 function push(state) { stack.push(state); render(); }
 function back() { if (stack.length > 1) { stack.pop(); render(); } }
 function goHome() { stack = [{ view: 'home' }]; render(); if (window.refreshNtfDot) refreshNtfDot(); }

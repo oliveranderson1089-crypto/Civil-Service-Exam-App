@@ -7,7 +7,9 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, appPrompt, artEm, c, draft, esc, padCur, padDraftId, padInit, padInited, padMode, padOnView, padOpen, padRebuild, padSave, padSetData, padStatus, push, toast */
+/* global $, api, appConfirm, appPrompt, artEm, c, draft, errMsg, esc, padCur, padDraftId,
+   padInit, padInited, padMode, padOnView, padOpen, padRebuild, padSave, padSetData,
+   padStatus, push, toast */
 
 /* ---------- 草稿本：错题本里，平时打草稿用（多本 / 云端保存 / 手机电脑同步） ---------- */
 function openDrafts() { push({ view: 'drafts' }); loadDrafts(); }
@@ -27,7 +29,7 @@ async function loadDrafts() {
           </div>
         </div>
       </div>`).join('');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#dr-list').addEventListener('click', async e => {
   const del = e.target.closest('.dr-del');
@@ -35,7 +37,7 @@ $('#dr-list').addEventListener('click', async e => {
     e.stopPropagation();
     if (!await appConfirm('删除这本草稿？删了就找不回来了。', { title: '草稿本', okText: '删除' })) return;
     try { await api('/api/drafts/' + del.dataset.del, { method: 'DELETE' }); toast('已删除'); loadDrafts(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { toast(errMsg(err), true); }
     return;
   }
   const c = e.target.closest('.dr-card');
@@ -50,7 +52,7 @@ $('#dr-fab').onclick = async () => {
       body: JSON.stringify({ title: t }),
     });
     openDraft(d.id);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 async function openDraft(id) {
   try {
@@ -63,7 +65,7 @@ async function openDraft(id) {
     $('#pad-doc').classList.remove('hidden');
     padStatus('已保存');
     padOpen();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#pad-name').onclick = async () => {
   if (padMode !== 'draft') return;
@@ -76,7 +78,7 @@ $('#pad-name').onclick = async () => {
     });
     $('#pad-title').textContent = t.trim() || '未命名草稿';
     toast('已改名');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 $('#wq-drafts').onclick = openDrafts;
 /* 对外钩子放在最后才挂：顶层 function 声明会自动成为 window 属性，

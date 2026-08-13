@@ -4,13 +4,49 @@
    走变量的话，daylight.js 的 dlGuardInk 会在下发前把它顶到对比度下限之上。 */
 :root{
   --blue:#1a6fb5; --blue-d:#155a93; --bg:#f4f6f9; --card:#fff;
-  --line:#e6e9ef; --text:#222; --muted:#8a93a3; --gold:#f0a500;
+  /* --muted 原来是 #8a93a3：白卡上 3.1:1、页底上 2.86:1，都低于 AA 对正文的 4.5:1。
+     它是全站用得最多的颜色（320 处：每条列表的说明行、每个分组标题、首页那三行小字），
+     所以这一个值就决定了「大部分文字读不读得清」。
+     #5f6875 是往下压到刚过线又不显脏的那一档：白卡 5.64:1、页底 5.21:1。
+     夜间那支（#9aa4b2，见 body.dark）本来就有 6.84:1，不用动。 */
+  --line:#e6e9ef; --text:#222; --muted:#5f6875; --gold:#f0a500;
   /* --blue 夜间要提亮才当得了深底上的文字色，可它同时又是实心按钮的底色——
      底色一提亮，上面的白字就掉到 2.9:1。拆成两支：文字用 --blue，填充用
      --blue-fill（两个模式都是这个深蓝，白字稳定在 5.3:1）。 */
   --blue-fill:#1a6fb5;
   --bg2:#f6f7f9; --teal:#0f766e;   /* 这两个原本只以 var(--bg2,#f6f7f9) 的兜底值存在，从没定义过，夜间自然翻不过来 */
   --radius:14px; --shadow:0 1px 3px rgba(20,40,80,.06),0 6px 20px rgba(20,40,80,.05);
+}
+
+/* ===== 尺度 token（P3）=====
+   点过一遍现状：字号 43 种、圆角 26 种、阴影 129 种、z-index 41 个。
+   不是「太多不好看」的问题 —— 是**没有一把尺子**，所以每加一处就现挑一个近似值，
+   十八套美术主题各自再偏一点，最后没人说得清「卡片的圆角是多少」。
+
+   这里先把尺子立起来。存量不做大迁移（风险远大于收益），规矩是：
+   **新代码一律取这些变量，旧值只减不增** —— 后者由 tests/frontend/cssbudget.test.js 卡着。
+
+   字阶取的是现在真正在用的那几档（11 / 12.5 / 14 / 15.5 / 18 / 22 / 28），
+   不是另立一套：立新的等于让存量全部变成「不合规」，那条棘轮就永远是红的。 */
+:root{
+  /* 字阶：脚注 / 次要 / 正文 / 强调 / 小标题 / 标题 / 大标题 */
+  --fs-xs:11px; --fs-sm:12.5px; --fs-md:14px; --fs-lg:15.5px;
+  --fs-xl:18px; --fs-2xl:22px; --fs-3xl:28px;
+  /* 圆角：贴边 / 控件 / 卡片 / 胶囊 */
+  --r-xs:4px; --r-sm:8px; --r-md:12px; --r-pill:999px;
+  /* 阴影三档：贴地（列表行）/ 浮起（卡片）/ 弹层（模态、菜单） */
+  --sh-1:0 1px 2px rgba(20,40,80,.06);
+  --sh-2:0 1px 3px rgba(20,40,80,.06),0 6px 20px rgba(20,40,80,.05);
+  --sh-3:0 8px 30px rgba(20,40,80,.16);
+  /* 层级：只有六层。写数字之前先问它属于哪一层 */
+  --z-base:0; --z-sticky:10; --z-rail:40; --z-fab:50; --z-bar:60; --z-modal:80;
+  /* 间距：4 的倍数 */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
+}
+body.dark{
+  --sh-1:0 1px 2px rgba(0,0,0,.3);
+  --sh-2:0 2px 10px rgba(0,0,0,.35);
+  --sh-3:0 10px 34px rgba(0,0,0,.5);
 }
 /* ===== 对话界面的颜色 token（K1）=====
    AI 助手和聊天这两块以前是全站唯一没跟上视觉系统的：面板头部写死
@@ -83,6 +119,28 @@ body.dark{
 .cv-av.has-img{background-size:cover;background-position:center;color:transparent;}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
+
+/* ---- 键盘焦点环 ----
+   浏览器本来就给 <button> 画环，但画的是 auto/1px/近黑：压在深色左栏项和
+   实心蓝 CTA 上几乎看不见，夜间更是没有。这里换成一枚**两层**的环：
+   内圈用底色描一道，外圈才是品牌蓝 —— 这样无论落在白卡、深蓝按钮还是夜间底上，
+   总有一层能和背景分开。
+
+   只认 :focus-visible（键盘/辅助设备），鼠标点按钮不会出现，
+   所以那 39 处输入框的 outline:none 不用动：它们是 :focus 态的规则，
+   这条是 :focus-visible 的，各管各的。 */
+:focus-visible{
+  outline:2px solid var(--blue);
+  outline-offset:2px;
+  box-shadow:0 0 0 2px var(--card);
+  border-radius:3px;
+}
+/* 贴边的两个地方不能往外画环，会被裁掉：标签栏在屏幕最底，左栏项贴着左缘 */
+.tabbar .tb:focus-visible,.siderail .sr-i:focus-visible,.siderail .sr-t:focus-visible,
+.siderail .sr-g-h:focus-visible{outline-offset:-2px;box-shadow:none;}
+@media (prefers-reduced-motion:no-preference){
+  :focus-visible{transition:outline-color .12s;}
+}
 body{
   font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",
     "Noto Sans CJK SC","Hiragino Sans GB",sans-serif;
@@ -105,7 +163,14 @@ main{max-width:none;margin:0;padding:0;}
 .topbar-actions{position:absolute;top:max(14px,env(safe-area-inset-top));right:14px;
   display:flex;gap:8px;}
 .logout{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;
-  font-size:13px;padding:5px 12px;border-radius:20px;cursor:pointer;}
+  font-size:13px;padding:5px 12px;border-radius:20px;cursor:pointer;
+  /* 实测 41×31，够不着 44。只在窄屏（手指）撑高，桌面（鼠标）保持紧凑 —— 见下一条规则 */
+  }
+@media(max-width:760px){
+  /* 撑的是**可点区域**不是外观：min-height 让按钮长高，里面的字仍然居中，看上去没变 */
+  .logout,.navbtn,.tb-search{min-height:44px;}
+  .tb-search{min-width:44px;justify-content:center;}
+}
 .logout:hover{background:rgba(255,255,255,.3);}
 
 /* 账号设置 */
@@ -133,6 +198,22 @@ main{max-width:none;margin:0;padding:0;}
 }
 .stats b{display:block;font-size:20px;line-height:1.1;}
 .stats span{font-size:11px;opacity:.85;}
+
+/* ---- 列表容器的空 / 出错两态（core.js 的 uiEmpty / uiError）----
+   加载中那一态本来就有（tabviews.js 的 TV_SK 骨架屏）。这两态以前是缺的：
+   接口一挂就是一整片空白，看不出是「还没来」「本来没有」还是「坏了」。
+   出错那条给的是**重试**，不是让人去刷新整个应用。 */
+.ui-state{display:flex;flex-direction:column;align-items:center;gap:10px;
+  padding:38px 24px;text-align:center;font-size:14px;color:var(--muted);line-height:1.7;}
+.ui-state-t{max-width:30em;}
+.ui-state-go{border:1.5px solid var(--line);background:var(--card);color:var(--blue);
+  border-radius:20px;padding:7px 18px;font-size:13.5px;font-family:inherit;cursor:pointer;}
+.ui-state-go:hover{border-color:var(--blue);}
+/* 出错不用整块红：一条竖线足够把「坏了」和「没有」分开，
+   满屏红底会把一次网络抖动说得像数据丢了 */
+.ui-err{border-left:3px solid #c0392b;background:var(--bg2);border-radius:0 10px 10px 0;
+  align-items:flex-start;text-align:left;padding:18px 20px;}
+body.dark .ui-err{border-left-color:#e8776a;}
 
 /* 卡片 */
 .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);
@@ -478,6 +559,15 @@ main{max-width:none;margin:0;padding:0;}
   border-radius:5px;padding:1px 8px;}
 .pd-body{font-size:14.5px;line-height:1.75;color:#39414d;text-align:justify;}
 .pd-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;}
+/* 「加载更多」——词典和素材都分页发了（整份 375KB / 226KB 一次下完，公网要多等一秒）。
+   做成整行的虚线按钮：它是列表的收尾，不是浮在卡片上的操作。 */
+.pd-more,.sc-more{display:block;width:100%;margin-top:4px;font-size:13.5px;
+  border:1px dashed var(--line);background:transparent;color:#5a6270;
+  border-radius:11px;padding:11px;cursor:pointer;font-family:inherit;transition:.15s;
+  -webkit-tap-highlight-color:transparent;}
+.pd-more:hover,.sc-more:hover{border-color:var(--blue);color:var(--blue);}
+.pd-more:disabled,.sc-more:disabled{opacity:.6;cursor:default;}
+body.dark .pd-more,body.dark .sc-more{color:#c4cdda;}
 .pd-recite-btn{font-size:13px;border:1px solid var(--blue);color:var(--blue);background:#fff;
   border-radius:999px;padding:6px 14px;cursor:pointer;font-family:inherit;transition:.15s;
   -webkit-tap-highlight-color:transparent;}
@@ -667,11 +757,9 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
 
 /* 小记 */
 #view-notes{position:relative;padding:0;}
-/* 浮动新建按钮 */
-.fab{position:fixed;right:20px;bottom:calc(22px + env(safe-area-inset-bottom));width:54px;height:54px;
-  border-radius:50%;background:var(--blue-fill);color:#fff;border:none;font-size:30px;line-height:54px;
-  box-shadow:0 6px 18px rgba(26,111,181,.45);cursor:pointer;z-index:30;}
-.fab:hover{background:var(--blue-d);}
+/* 浮动新建按钮的样式在下面「悬浮工具球」那一段（搜 .fab-main）。
+   这里原本还有一条 .fab{...54px...bottom:22px...}，被那一段整条覆盖，从来没生效过 ——
+   2026-08-13 删掉，免得下次改悬浮球的人改错地方。 */
 
 /* 板块占位（建设中） */
 .placeholder-box{text-align:center;padding:60px 24px;color:var(--muted);}
@@ -1699,6 +1787,9 @@ body.dark .wd-ui{background:#141b29;border-left-color:#33507a;}
   padding:11px 6px;font-size:13.5px;cursor:pointer;font-family:inherit;color:#5a6270;
   -webkit-tap-highlight-color:transparent;}
 .theme-opt.on{border-color:var(--blue);color:var(--blue);background:#eef4fb;font-weight:700;}
+/* 「图标风格」在美术主题开着时让位：主题自带一册图标，这两格说了不算。
+   灰掉而不是藏起来 —— 藏了就没人知道有这个开关，也就不知道关掉主题能拿回来。 */
+.theme-row.art-taken{opacity:.5;pointer-events:none;}
 body.dark .theme-opt{background:#141b29;color:#aeb7c6;}
 body.dark .theme-opt.on{background:#1c2a45;color:#7fb0ff;border-color:#3a6ad0;}
 .xy-kw{font-size:12px;font-weight:600;color:#b23b2e;background:#f7e6e3;border-radius:6px;padding:2px 9px;}
@@ -2652,9 +2743,13 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
 /* ================= 悬浮工具球（点一下扇出 AI / 草稿纸） ================= */
 .fab{position:fixed;right:16px;bottom:calc(86px + env(safe-area-inset-bottom));z-index:76;
   width:50px;height:50px;-webkit-tap-highlight-color:transparent;}
+/* 悬浮球原来是 linear-gradient(135deg,#7a5cc0,#5b8def) —— 全站唯一用紫的地方，
+   而且写死、不跟主题。展开的四个胶囊同理（橙 / 青 / violet 各一套渐变）。
+   收成品牌色实心：它是「新建」，是个动作按钮，不该比页面上任何内容都抢眼。
+   美术主题会用 --art-fab 接管它（见 dlArtApply 的 fab()），所以这里带兜底。 */
 .fab-main{position:absolute;inset:0;width:50px;height:50px;border-radius:50%;border:none;cursor:pointer;
-  background:linear-gradient(135deg,#7a5cc0,#5b8def);color:#fff;font-size:20px;font-weight:800;
-  box-shadow:0 5px 16px rgba(90,92,192,.45);transition:transform .22s;display:grid;place-items:center;}
+  background:var(--art-fab,var(--blue-fill));color:#fff;font-size:20px;font-weight:800;
+  box-shadow:0 5px 16px rgba(20,40,80,.28);transition:transform .22s;display:grid;place-items:center;}
 .fab-main svg{width:22px;height:22px;}
 .fab-main:active{transform:scale(.94);}
 .fab.open .fab-main{transform:rotate(135deg);}
@@ -2663,11 +2758,15 @@ body.dark .plr-q{background:rgba(44,143,214,.14);}
 .fab-act{position:absolute;left:3px;top:3px;height:42px;min-width:44px;border-radius:21px;border:none;
   cursor:pointer;display:flex;align-items:center;gap:8px;padding:0 15px 0 12px;
   font-size:18px;font-weight:800;color:#fff;white-space:nowrap;
-  background:linear-gradient(135deg,#5b8def,#2c8fd6);box-shadow:0 4px 14px rgba(30,80,160,.4);
+  background:var(--art-fab,var(--blue-fill));box-shadow:0 4px 14px rgba(20,40,80,.26);
   opacity:0;transform:scale(.4);pointer-events:none;transition:transform .22s cubic-bezier(.2,1.4,.4,1),opacity .18s;}
-#fab-pad{background:linear-gradient(135deg,#f0a500,#e07b39);box-shadow:0 4px 14px rgba(224,123,57,.42);}
-#fab-shot{background:linear-gradient(135deg,#38bdf8,#0ea5e9);box-shadow:0 4px 14px rgba(14,165,233,.4);}
-#fab-ink{background:linear-gradient(135deg,#a78bfa,#7c5cff);box-shadow:0 4px 14px rgba(124,92,255,.4);}
+/* 三个工具靠**图标**区分，不靠三种渐变：底一律是卡片色，图标各带各的颜色。
+   原来一列展开是紫、橙、青、violet 四个渐变叠在一起，比它们要打开的功能还显眼。 */
+#fab-pad,#fab-shot,#fab-ink{background:var(--card);color:var(--text);
+  box-shadow:0 4px 14px rgba(20,40,80,.2);border:1px solid var(--line);}
+#fab-pad svg{color:var(--gold);}
+#fab-shot svg{color:var(--blue);}
+#fab-ink svg{color:var(--teal);}
 .fab-act i{font-style:normal;font-size:13px;font-weight:600;letter-spacing:.5px;}
 .fab-act[hidden]{display:none!important;}   /* hidden 属性要能真隐藏 → 手机端不显示截图 */
 .fab.open .fab-act{opacity:1;pointer-events:auto;}
@@ -2797,6 +2896,10 @@ body.dark .wq-tools .btn,body.dark .pl-link-btn{color:#cfd5e0;}
 .pgbar{position:fixed;right:14px;bottom:200px;z-index:60;
   display:none;flex-direction:column;gap:8px;}
 body.has-pen .pgbar{display:flex;}          /* 只有电脑端才出现 */
+/* 滚不动的页面上四个箭头全是死的（js/pager.js 的 pgSync 挂这个类）。
+   淡出而不是 display:none —— 内容一多它得能马上回来，不该有一下跳动。 */
+.pgbar.pg-idle{opacity:0;pointer-events:none;}
+.pgbar{transition:opacity .18s;}
 .pgbtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);
   background:var(--card);color:var(--text);font-size:16px;cursor:pointer;
   box-shadow:var(--shadow);display:grid;place-items:center;opacity:.82;transition:.15s;}
@@ -2804,8 +2907,10 @@ body.has-pen .pgbar{display:flex;}          /* 只有电脑端才出现 */
 .pgbtn:active{transform:scale(.94);}
 .pgbtn.top{font-size:14px;}
 body.dark .pgbtn{background:#1b2231;border-color:#2f3a4d;}
-/* 有停靠面板时让开（跟着 --push-r 走） */
-.pgbar{right:calc(14px + var(--push-r,0px));}
+/* 有停靠面板时让开（跟着 --push-r 走）。
+   随手栏也占着右边 250px，翻页条得再往左让一个栏宽，否则正压在它上面。 */
+body{--rrail-w:0px;}
+.pgbar{right:calc(14px + var(--push-r,0px) + var(--rrail-w));}
 @media(max-width:900px){body.has-pen .pgbar{display:none;}}
 .pgbtn svg{width:20px;height:20px;}
 /* 真题卷：拖文件进来上传（PDF/Word/图片都行） */
@@ -3668,18 +3773,25 @@ body.dark .ms-frow{background:#1a2233;color:#cfd5e0;}
 .cd-ai.cd-collapsed > .cd-sec-b,.cd-ai.cd-collapsed > .cd-ai-regen{display:none;}
 
 /* ---------------- 历年真题 ---------------- */
-.rq-hero{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:2px 0 10px;}
+/* 四格锁死一行，在 390 宽的屏上每格只剩 88px：「可做真题」的数字被切成半个字。
+   auto-fit 让它在窄屏自己折成两行两列 —— 折行比横滚好，横滚的那一半没人会去滑。 */
+.rq-hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin:2px 0 10px;}
 .rq-stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 6px;text-align:center;}
 .rq-stat b{display:block;font-size:20px;line-height:1.2;}
 .rq-stat span{font-size:11px;color:var(--muted);}
 .rq-stat.due b{color:#e8590c;}
 .rq-bar{height:6px;border-radius:4px;background:var(--line);overflow:hidden;margin-bottom:6px;}
-.rq-bar i{display:block;height:100%;background:linear-gradient(90deg,#4c6ef5,#22b8cf);}
+.rq-bar i{display:block;height:100%;background:var(--blue-fill);}
 .rq-hint{font-size:12px;color:var(--muted);margin:6px 0 12px;line-height:1.6;}
 .rq-go{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px;}
-.rq-big{border:0;border-radius:14px;padding:14px;text-align:left;cursor:pointer;color:#fff;
-  background:linear-gradient(135deg,#4c6ef5,#22b8cf);}
-.rq-big.alt{background:linear-gradient(135deg,#7048e8,#e8590c);}
+/* 主次靠**实心 / 描边**分，不靠两套渐变。
+   原来是蓝青渐变 + 紫橙渐变：紫橙那张和全站任何一处颜色都不搭，而两张都是重色块，
+   看不出哪个才是主行动。这一版早就为美术主题写好了（原 body.art-on .rq-big），
+   只是没在默认外观下生效 —— 现在提上来当基准，主题那边的 !important 覆盖也就不用了。 */
+.rq-big{border:0;border-radius:14px;padding:14px;text-align:left;cursor:pointer;
+  background:var(--blue-fill);color:#fff;}
+.rq-big.alt{background:transparent;color:var(--text);
+  box-shadow:inset 0 0 0 1.5px var(--line);}
 .rq-big b{display:block;font-size:16px;margin-bottom:3px;}
 .rq-big span{font-size:12px;opacity:.9;}
 .rq-sec{font-weight:700;margin:16px 0 8px;}
@@ -4232,23 +4344,28 @@ body.has-tabs{--tabh:calc(54px + env(safe-area-inset-bottom));}
    没有标签栏时就是系统安全区；有标签栏时整条栏本身已经含了安全区，直接取 --tabh，
    免得两头各加一次 env() 把浮条顶到半空。 */
 body.has-tabs{--botsafe:var(--tabh);}
-body.has-tabs main{padding-bottom:var(--tabh);}
+/* padding-bottom 见下面「悬浮工具球」那一段：除了标签栏还要让开悬浮球 */
 
 .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:46;display:flex;
   background:var(--card);border-top:1px solid var(--line);
   padding:4px 2px calc(4px + env(safe-area-inset-bottom));
   box-shadow:0 -2px 14px rgba(20,40,80,.06);}
-.tabbar .tb{flex:1;min-width:0;background:none;border:none;cursor:pointer;padding:3px 2px;
-  display:flex;flex-direction:column;align-items:center;gap:2px;
+/* 每格实测 77×43，短边差一点点到 44（iOS/Android 都按 44 算最小触控目标）。
+   padding 从 3 提到 5、字号从 10.5 提到 11 —— 高度到 48，标签也不再是全站最小的字。 */
+.tabbar .tb{flex:1;min-width:0;background:none;border:none;cursor:pointer;padding:5px 2px;
+  display:flex;flex-direction:column;align-items:center;gap:2px;min-height:44px;
   color:var(--muted);font-family:inherit;-webkit-tap-highlight-color:transparent;}
 .tabbar .tb svg{width:22px;height:22px;}
-.tabbar .tb i{font-style:normal;font-size:10.5px;line-height:1.2;}
+.tabbar .tb i{font-style:normal;font-size:11px;line-height:1.2;}
 .tabbar .tb.on{color:var(--blue);}
 .tabbar .tb.on i{font-weight:600;}
 .tabbar .tb:active{opacity:.6;}
 
 /* 悬浮工具球让开标签栏（原来贴在 bottom:86px，会正压在「积累」上面） */
 body.has-tabs .fab{bottom:calc(var(--tabh) + 14px);}
+/* 球是 fixed 的，不占位，所以列表最后一条会被它压掉一角（首页「上次练习」实测被压）。
+   给正文底部再留一个球的高度 + 呼吸位 —— 让位的是留白，不是内容。 */
+body.has-tabs main{padding-bottom:calc(var(--tabh) + 78px);}
 
 /* 标签页里的分组标题与条目（条目复用 .board-card 的底色/圆角/夜间配色，只加内部排版） */
 .tab-gh{font-size:12.5px;color:var(--muted);letter-spacing:.04em;margin:20px 2px 8px;}
@@ -4466,6 +4583,64 @@ body.dark .lb-gold{background:#332a12;color:#d9bb6a;}
   body.has-rail #view-home,body.has-rail #view-tab,body.has-rail #view-allfeats{
     max-width:940px;margin:0 auto;padding:22px 26px 60px;}
 }
+
+/* ================= 右侧「随手栏」（界面重构 P5） =================
+   填的是原来的死区：1920 宽下内容列右边空着 296px。
+   ≥1360 才出现 —— 左栏 206 + 内容列 + 它 250 都摆得下才划算，
+   再窄就会把内容列挤到不好读，那时宁可让右边空着。
+   和左栏一样用 fixed（理由见上面那段：动 DOM 结构的风险大于收益）。 */
+.siderail-r{display:none;}
+@media(min-width:1360px){
+  body.has-rrail .siderail-r{
+    position:fixed;right:0;top:var(--topbar-h,56px);bottom:0;width:250px;z-index:39;
+    display:flex;flex-direction:column;gap:1px;overflow-y:auto;
+    padding:14px 12px 24px;background:var(--card);border-left:1px solid var(--line);}
+  body.has-rrail .siderail-r.hidden,.siderail-r:empty{display:none;}
+  /* 让 --rrail-w 生效：正文的右留白由它和翻页条那 58px 一起算（见 .pgbar 那一段），
+     免得两条规则各写各的、谁后写谁赢 */
+  body.has-rrail{--rrail-w:250px;}
+  body.has-rrail:not(.has-pen) main{padding-right:250px;}
+  /* 内容列的居中要按**剩下的那块**算，不是按整个窗口 —— 不然三栏一上，
+     中间那栏看着是偏左的（左栏 206、右栏 250，差 44px 肉眼看得出来） */
+  body.has-rail.has-rrail #view-home,body.has-rail.has-rrail #view-tab,
+  body.has-rail.has-rrail #view-allfeats{max-width:900px;}
+}
+.srr-h{font-size:11.5px;color:var(--muted);letter-spacing:.08em;padding:14px 8px 6px;}
+.srr-h:first-child{padding-top:0;}
+.srr-row{display:flex;align-items:center;gap:8px;width:100%;border:none;background:none;
+  font-family:inherit;font-size:13px;color:var(--text);text-align:left;
+  padding:8px;border-radius:8px;cursor:pointer;}
+.srr-row:hover{background:var(--bg2);}
+.srr-n{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.srr-v{flex:0 0 auto;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+  color:var(--muted);font-variant-numeric:tabular-nums;}
+body.dark .siderail-r{background:#1a2233;border-left-color:#2a3345;}
+body.dark .srr-row{color:#cfd5e0;}
+body.dark .srr-row:hover{background:#1f2838;}
+
+/* ================= 宽屏：内容列改卡片网格（界面重构 P5） =================
+   940px 的单列里，一条「资料分析 …… 86% ›」是 888px 宽：标题在最左、成绩在最右，
+   中间七百多像素空白，眼睛要横扫整屏才能把两头连起来。900 高的窗口只装得下九条。
+
+   换成 minmax(280px,1fr) 的网格之后，行宽降到 ~300，标题和数字落进同一个视线，
+   同样高度装二十四条。**只在 ≥1100 生效** —— 再窄排两列每格就不到 280 了，
+   反而不如单列。手机端一行 CSS 都不受影响。 */
+@media(min-width:1100px){
+  body.has-rail #view-tab .board-grid,
+  body.has-rail #view-tab .tv-rows{
+    grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+    display:grid;gap:10px;}
+  /* .tv-rows 原来是一叠共用一张卡的行（互相之间只有一条分隔线），
+     拆进网格之后每格得是独立的一张卡，否则分隔线会横在格与格之间 */
+  body.has-rail #view-tab .tv-rows{background:none;box-shadow:none;border-radius:0;}
+  body.has-rail #view-tab .tv-rows .tv-row{
+    background:var(--card);border-radius:12px;box-shadow:var(--shadow);padding:13px 14px;}
+  body.has-rail #view-tab .tv-rows .tv-row+.tv-row{border-top:none;}
+  /* 完成度环那张卡是这一页的抬头，不进网格 */
+  body.has-rail #view-tab .td-hero{grid-column:1/-1;}
+  body.dark #view-tab .tv-rows{background:none;box-shadow:none;}
+  body.dark #view-tab .tv-rows .tv-row{background:#1a2233;}
+}
 .siderail .sr-t{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border:none;
   border-radius:9px;background:none;cursor:pointer;color:var(--text);font-family:inherit;font-size:14.5px;}
 .siderail .sr-t svg{width:19px;height:19px;flex:0 0 auto;}
@@ -4534,7 +4709,8 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
    所以这不是某几页的事，是全局给它留一条道：正文右边空出 58px，浮条正好停在那条道里。
    viewer-full（阅读器全屏）除外——那一屏本来就是要铺满的，它自己把 padding 清零了。 */
 @media(min-width:761px){
-  body.has-pen:not(.viewer-full) main{padding-right:58px;}
+  /* 翻页条那条道（58px）之外，还得加上随手栏的宽度 —— 两者都在右边 */
+  body.has-pen:not(.viewer-full) main{padding-right:calc(58px + var(--rrail-w));}
 }
 
 
@@ -4610,11 +4786,28 @@ body.dark .logout:hover,body.dark .navbtn:hover{background:#1f2838;color:var(--b
 body.dark .tb-search{background:#1b2231;border-color:#2a3345;}
 body.dark .tb-search kbd{background:#141b29;border-color:#2a3345;}
 
-/* ---- 左栏两级：分组标题（= 标签页）+ 组内快捷条目（直达） ---- */
-.sr-g-h{font-size:11.5px;color:var(--muted);letter-spacing:.08em;padding:12px 12px 5px;cursor:pointer;}
+/* ---- 左栏两级：分组标题（= 标签页）+ 组内快捷条目（直达） ----
+   五组只展开一组（P5）：全铺开是 20+ 项，1440 高的窗口进来就得滚。
+   收起来的组仍然可点，所以折叠没藏功能，只是把此刻用不到的十几行收走。 */
+.sr-g-h{display:flex;align-items:center;gap:6px;width:100%;border:none;background:none;
+  font-family:inherit;font-size:11.5px;color:var(--muted);letter-spacing:.08em;
+  padding:12px 12px 5px;cursor:pointer;text-align:left;}
+.sr-g-h i{font-style:normal;flex:1;min-width:0;}
 .sr-g-h:first-child{padding-top:2px;}
 .sr-g-h:hover{color:var(--blue);}
 .sr-g-h.on{color:var(--blue);font-weight:600;}
+.sr-chev{width:13px;height:13px;flex:0 0 auto;opacity:.6;
+  transform:rotate(0deg);transition:transform .16s;}
+.sr-g-h[aria-expanded="true"] .sr-chev{transform:rotate(90deg);}
+.sr-g-h:hover .sr-chev{opacity:1;}
+.sr-solo{padding-left:12px;}
+/* 组内那几项：收起来的时候整块不占位。用 display 而不是 max-height 动画 ——
+   条目数各组不同（3～6 条），一个写死的 max-height 要么animation 卡顿要么截断。 */
+.sr-g{display:none;flex-direction:column;gap:2px;}
+.sr-g.open{display:flex;}
+/* 组收起来时，组内的角标要冒到组头上：「今日复习还有 23 条」不该跟着一起藏起来 */
+.sr-bd-g{margin-left:auto;}
+.sr-g-h[aria-expanded="true"] .sr-bd-g{display:none;}
 .siderail .sr-i{display:flex;align-items:center;gap:9px;width:100%;padding:7px 12px;border:none;
   border-radius:9px;background:none;cursor:pointer;color:var(--text);font-family:inherit;font-size:13.5px;
   text-align:left;}
@@ -4753,7 +4946,15 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
 @media(min-width:761px){
   /* 电脑：左侧竖栏 + 右侧内容。不包 wrapper —— 账户页底下是一排平铺的卡片，
      包一层要动 DOM，用显式列定位效果一样。 */
-  #view-account{display:grid;grid-template-columns:170px minmax(0,1fr);gap:26px;
+  /* 只给**列**间距，不给行间距。
+     下面 .acct-nav 用了 grid-row:1/span 99 让左栏贯穿整列（sticky 需要一个够高的
+     容纳块才走得动），而 span 99 是实打实地开了 99 行 —— 行是空的没错，
+     可 gap 是加在**每两行之间**的：98 × 26px = 2548px 的纯空白挂在页面底下，
+     滚到「退出登录」之后还能再滚两屏半。（2026-08-13 实测 3573 的文档高里
+     只有 1085 是内容。）
+     行距本来就由 .acct-sec 自己的 margin-bottom:13px 管着，这里给 0 不影响排版。 */
+  #view-account{display:grid;grid-template-columns:170px minmax(0,1fr);
+    column-gap:26px;row-gap:0;
     align-items:start;max-width:940px;}
   #view-account>*:not(.acct-nav){grid-column:2;}
   .acct-nav{grid-column:1;grid-row:1 / span 99;position:sticky;top:calc(var(--topbar-h,56px) + 22px);
@@ -5096,9 +5297,7 @@ body.art-hue .fab-act{color:#fff!important;}
 /* 二 · 真题页那两个大按钮：去掉渐变，改「主实心 + 次描边」。
    渐变按钮是这套界面里唯一还在用渐变的地方，主次关系用实心/描边表达更齐。
    同一条也管住那根进度条。 */
-body.art-on .rq-big{background:var(--blue-fill)!important;color:#fff!important;}
-body.art-on .rq-big.alt{background:transparent!important;color:var(--text)!important;
-  box-shadow:inset 0 0 0 1.5px var(--line)!important;}
+/* .rq-big 的实心/描边现在是默认样式（见上面），主题不用再覆盖一遍 */
 body.art-on .rq-fill{background:var(--blue)!important;}
 
 /* 三 · 常识板块那七个字块。
@@ -5364,15 +5563,39 @@ body.art-garden .topbar,body.art-gardendesk .topbar{
   box-shadow:0 2px 0 var(--art-seal),0 3px 0 var(--line);border-bottom:none;}
 body.art-garden .tabbar{border-top:2px solid var(--art-seal);}
 
+/* 这里原本加过一道「每套主题的身份锚」：顶栏下沿 2px 的本主题印色，
+   想解决的是「深夜各套主题底色收敛、分不出用的是哪一套」（评审问题 08）。
+   2026-08-13 撤掉，两个原因，都比那个问题严重：
+
+   · 它顺手写了 body.art-on .topbar{position:relative}，把上面那条
+     .topbar{position:sticky} 顶掉了（body.art-on 特指度更高）—— 一开主题顶栏就
+     跟着页面滚走，左栏还钉在 top:56px，看着像整条导航栏从顶上掉下来了。
+     那正是第 327 行注释里写着「原来 static，会跟着页面一起滚走」的老毛病。
+   · 印色是各主题自己的颜色，在番茄红那几套上就是一条贯穿全屏的红线 ——
+     第一眼读到的是「出错了」，不是「这是哪套主题」。
+
+   问题 08 本身仍然成立，但换一个载体：记号该待在内容里（像宣纸那套右下角的朱印），
+   不该横在顶栏上。 */
+
 /* ---- 界面里那些彩色 emoji（js/articons.js 的 artEm）----
-   两套字形都在 DOM 里：没开主题露 emoji（外观分毫不变），开了主题露线描 SVG。
+   两套字形都在 DOM 里，露哪一套由 body 上的类决定。
    SVG 走 currentColor，跟的是所在按钮的文字色 —— 主题换到哪它跟到哪，不用逐处配色。
-   inline-grid + 1em 见方：它嵌在按钮文字里，不能像 .hc-em 那样按 44px 的方块来摆。 */
+   inline-grid + 1em 见方：它嵌在按钮文字里，不能像 .hc-em 那样按 44px 的方块来摆。
+
+   **默认露 SVG。** 原来是「默认 emoji、开了美术主题才换线描」——等于想要一套统一的
+   单色图标，就必须连配色一起换掉。而彩色 emoji 是平台字形：同一屏里它和顶栏、标签栏
+   那些描边 SVG 不是一种语言，谁也压不住谁。默认走线描之后，emoji 退成一个选项
+   （外观 › 图标风格 → body.icons-emoji，见 daylight.js 的 dlIconsApply）。
+
+   art-on 那一对放在最后：美术主题自带一册图标（articons.js），
+   这时候不该再让「我选了 emoji」把它顶回去。 */
 .em-sw{display:inline-grid;place-items:center;width:1.15em;height:1.15em;
   vertical-align:-.18em;flex:0 0 auto;}
-.em-sw .em-e{display:grid;place-items:center;line-height:1;}
-.em-sw .em-s{display:none;}
+.em-sw .em-e{display:none;}
+.em-sw .em-s{display:grid;place-items:center;}
 .em-sw .em-s svg{width:1.06em;height:1.06em;display:block;}
+body.icons-emoji .em-sw .em-e{display:grid;place-items:center;line-height:1;}
+body.icons-emoji .em-sw .em-s{display:none;}
 body.art-on .em-sw .em-e{display:none;}
 body.art-on .em-sw .em-s{display:grid;}
 
@@ -5857,3 +6080,35 @@ body.mobile-ui .cr-input .input-tools{display:none !important;}
 body.mobile-ui .input-plus{transition:transform .18s ease;}
 body.mobile-ui .input-plus.on{transform:rotate(45deg);color:var(--blue);}
 @media (prefers-reduced-motion:reduce){body.mobile-ui .input-plus{transition:none;}}
+
+/* ---- 语义色的夜间配对（P3）----
+   通盘查过一遍：写死颜色 670 个，但配对写 body.dark 的覆盖率其实很高，
+   真正在夜里掉到 AA 线下、又没人管的只有下面这几处。它们都是**语义色**
+   （危险红 / 未读红 / 强调蓝 / 次要灰），共同点是当初写的时候只想着白底。
+
+   夜卡底是 #151b27。实测：
+     #c0392b 3.17 → #e8776a 5.98 ✓
+     #dc2626 3.57 → #f0796a 6.28 ✓
+     #e23b2e 4.02 → #f07a6d 6.33 ✓
+     #4c6ef5 3.99 → #8aa2f7 7.05 ✓
+     #6b7484 3.66 → #98a2b3 6.69 ✓ */
+body.dark .cr-infobtn{color:#98a2b3;}
+body.dark .cr-unread{color:#f07a6d;}
+body.dark .rq-score b{color:#8aa2f7;}
+body.dark .yl-cell.req b{color:#f0796a;}
+body.dark .mem-add button.danger,
+body.dark .ai-step.bad .n,
+body.dark .ai-stopbtn:hover,
+body.dark .ci-danger,
+body.dark .cp-wait.cp-err,
+body.dark .ai-mem .x:hover{color:#e8776a;}
+
+/* 成语页的「筛」按钮（问题 10）：平时是一枚放大镜，点开才露出输入框。
+   和它上面那个「查外部词典」的输入框区分开 —— 两个一样的框摆一起谁也认不出哪个是哪个。 */
+.tb-filter{width:38px;height:38px;flex:0 0 auto;display:grid;place-items:center;
+  border:1.5px solid var(--line);border-radius:9px;background:var(--card);
+  color:var(--muted);cursor:pointer;}
+.tb-filter svg{width:17px;height:17px;}
+.tb-filter:hover{border-color:var(--blue);color:var(--blue);}
+.tb-filter.on{border-color:var(--blue);color:var(--blue);background:var(--bg2);}
+body.dark .tb-filter{background:#1a2233;border-color:#2a3345;}

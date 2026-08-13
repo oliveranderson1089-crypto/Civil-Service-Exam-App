@@ -8,7 +8,9 @@
  * 一眼能对着算），错项逐条列。原卷解析仍然保留，折叠起来给想看原文的人。
  *
  */
-/* global $, api, appConfirm, artEm, back, esc, push, qsClear, qsRender, qtFmt, qtStart, qtStop, qtTotalStart, qtTotalStop, toast, wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
+/* global $, api, appConfirm, artEm, back, errMsg, esc, push, qsClear, qsRender, qtFmt,
+   qtStart, qtStop, qtTotalStart, qtTotalStop, toast, uiError, wqlBtnHtml, wqlOpen,
+   wqlRefreshBtns, wqlScan */
 
 let rqOv = null, rqItems = [], rqIdx = 0, rqAns = {}, rqSec = {};
 let rqRates = {};   // 考点 → 近 30 天正确率（跟出题一起回来，见 mods/realq.py 的 _qtype_rates）
@@ -37,7 +39,7 @@ async function openRealq() {
   try {
     rqOv = await api('/api/real/overview');
     renderRealqHome();
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 
 function renderRealqHome() {
@@ -122,7 +124,7 @@ async function openRealPapers() {
           <span>${p.c} 道可做${p.done ? ` · 已做 ${p.done}` : ''}</span>
           <i style="width:${Math.round(100 * p.done / p.c)}%"></i>
         </button>`).join('')}`;
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 
 function rqPmHint() {
@@ -184,7 +186,7 @@ async function rqStart(body, title) {
       $('#rq-total').className = 'q-total hidden';
     }
     rqRender();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 /* 右栏的「本题相关」：这个考点你最近练得怎么样。
@@ -384,7 +386,7 @@ async function rqFinish() {
     // 服务端刚把做错的题收进了错题本，状态要重新拉一遍，否则逐题回顾里那些按钮
     // 会全显示成「未收」，点一下才发现早就在里面了。成绩已经画出来了，这步不用挡着。
     rqScanWq();
-  } catch (e) { rqDone = false; toast(e.message, true); }
+  } catch (e) { rqDone = false; toast(errMsg(e), true); }
 }
 
 /* 模考交卷后的逐题回顾：模考过程中一直没给答案，全部答案和解析都在这儿一次性给。 */
@@ -445,7 +447,7 @@ async function loadRealRecords() {
           · 用时 ${qtFmt(r.seconds || 0)}</div>
         <span class="drr-go">回看 ›</span></div>`;
     }).join('');
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 
 $('#rqr-list').addEventListener('click', e => {
@@ -471,7 +473,7 @@ async function openRealRecord(rid) {
       // 只删回看记录，作答流水不动 —— 说清楚，否则会被当成「把这次练习一笔勾销」
       if (!(await appConfirm('删除这条回看记录？做题进度和正确率统计不受影响。'))) return;
       try { await api('/api/real/record/' + rid, { method: 'DELETE' }); toast('已删除'); back(); loadRealRecords(); }
-      catch (err) { toast(err.message, true); }
+      catch (err) { toast(errMsg(err), true); }
     };
     box.innerHTML = d.items.map((it, i) => {
       const over = it.seconds > (it.sec || 60);
@@ -496,7 +498,7 @@ async function openRealRecord(rid) {
     // 不 await —— 记录内容先出来，按钮状态随后补上。
     wqlScan('realq', { keys: rqRecItems.map(x => String(x.id)) })
       .then(() => wqlRefreshBtns('#rqd-body'));
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 
 /* 回看页的错题按钮：内容从这条记录的**快照数据**里取，不从 DOM 里抠。

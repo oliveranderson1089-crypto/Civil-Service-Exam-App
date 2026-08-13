@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, deskMsg, esc, fmtDay, push, toast */
+/* global $, api, artEm, c, deskMsg, errMsg, esc, fmtDay, push, toast, uiError */
 
 /* ============= 每日新闻视频（抓 → AI 按公考价值筛 → 只留最值得看的）=============
    信源全是**白名单里的官方媒体**：央视网（新闻联播/焦点访谈/东方时空/今日关注/环球视线，
@@ -79,7 +79,7 @@ async function loadVideos() {
       if (im.complete && im.naturalWidth) im.classList.add('vd-loaded');
       else im.addEventListener('load', () => im.classList.add('vd-loaded'), { once: true });
     });
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 $('#vd-tabs').addEventListener('click', e => {
   const c = e.target.closest('[data-vdb]'); if (!c) return;
@@ -106,7 +106,7 @@ $('#vd-list').addEventListener('click', async e => {
       s.classList.toggle('on', r.starred);
       toast(r.starred ? '已收藏（可当申论素材）' : '已取消收藏');
       if (vdBoard === 'star') loadVideos();
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     s.disabled = false;
   }
 });
@@ -128,7 +128,7 @@ $('#vd-refresh').onclick = async () => {
         }
       } catch (_) { clearInterval(vdPoll); vdPoll = 0; b.disabled = false; }
     }, 3000);
-  } catch (e) { toast(e.message, true); b.disabled = false; $('#vd-msg').textContent = ''; }
+  } catch (e) { toast(errMsg(e), true); b.disabled = false; $('#vd-msg').textContent = ''; }
 };
 
 /* ---------------- APP 内播放器 ----------------
@@ -171,7 +171,7 @@ function vpFmt(s) {
 async function playVideo(id) {
   let d;
   try { d = await api('/api/videos/' + id + '/play'); }
-  catch (e) { toast(e.message, true); return; }
+  catch (e) { toast(errMsg(e), true); return; }
 
   if (d.mode === 'external') {                   // 放不了就老实跳出去，别假装能放
     toast(d.note || '这条只能在浏览器里看');
@@ -306,7 +306,7 @@ function vpMedia(wrap, d) {
           spin.classList.add('hidden');
           toast('这条流加载失败了，可以点「在浏览器里打开」', true);
         });
-      }).catch(e => { spin.classList.add('hidden'); toast(e.message, true); });
+      }).catch(e => { spin.classList.add('hidden'); toast(errMsg(e), true); });
       return;
     }
     showActive();

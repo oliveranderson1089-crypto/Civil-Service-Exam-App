@@ -7,11 +7,11 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IS_MOBILE, ME, SKIN, anchorMenu, api, appConfirm, appPrompt, artEm,
-   back, c, clipFiles, composing, compressImage, convoAvatar, convoLongPress, convoStick, dvIcon, esc,
-   fSize, growAndSync, init, lightbox, lsDel, lsGet, lsSet, mdToHtml, openAI, preview, push, stack,
-   state, toast, voiceAsrEnabled, voiceBubbleHtml, voiceRecord, voiceSupported,
-   voiceToText, voiceToggle, voiceWhyNot */
+/* global $, anchorMenu, api, appConfirm, appPrompt, artEm, back, c, clipFiles, composing,
+   compressImage, convoAvatar, convoLongPress, convoStick, dvIcon, errMsg, esc, fSize,
+   growAndSync, init, IS_MOBILE, lightbox, lsDel, lsGet, lsSet, mdToHtml, ME, openAI,
+   preview, push, SKIN, stack, state, toast, uiError, voiceAsrEnabled, voiceBubbleHtml,
+   voiceRecord, voiceSupported, voiceToggle, voiceToText, voiceWhyNot */
 
 /* ================= 聊天 ================= */
 let chTab = 'convos', crFid = 0, crGid = 0, crName = '', crLastId = 0, crPoll = 0;
@@ -91,7 +91,7 @@ async function loadConvos() {
         <div class="ch-cright"><div class="ch-ct">${esc((c.time || '').slice(5, 16))}</div>${c.unread ? `<span class="ch-un${c.muted ? ' ch-un-mute' : ''}">${c.unread}</span>` : ''}</div>
       </div>`;
     }).join('');
-  } catch (e) { $('#ch-convos').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#ch-convos').innerHTML = uiError(e); }
 }
 $('#ch-convos').addEventListener('click', e => {
   const g = e.target.closest('[data-crg]');
@@ -120,7 +120,7 @@ $('#ch-addmenu').addEventListener('click', async e => {
     await api('/api/chat/prefs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ kind: ctx.kind, id: ctx.id }, body)) });
     loadConvos();
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 });
 $('#ch-convos').addEventListener('contextmenu', e => {
   const row = e.target.closest('.ch-convo'); if (!row) return;
@@ -150,11 +150,11 @@ async function loadFriends() {
         <div class="ch-cn">${esc(f.username)}</div>
         <button class="ch-chat" data-crf="${f.id}" data-crn="${esc(f.username)}">聊天</button>
         <button class="ch-fdel" data-fdel="${f.id}" title="删除好友">${artEm('✕')}</button></div>`).join('');
-  } catch (e) { $('#ch-friends').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#ch-friends').innerHTML = uiError(e); }
 }
 $('#ch-friends').addEventListener('click', async e => {
   const del = e.target.closest('[data-fdel]');
-  if (del) { if (await appConfirm('删除这个好友？')) { try { await api('/api/friends/' + del.dataset.fdel, { method: 'DELETE' }); loadFriends(); } catch (err) { toast(err.message, true); } } return; }
+  if (del) { if (await appConfirm('删除这个好友？')) { try { await api('/api/friends/' + del.dataset.fdel, { method: 'DELETE' }); loadFriends(); } catch (err) { toast(errMsg(err), true); } } return; }
   const c = e.target.closest('[data-crf]'); if (c) openChatroom(+c.dataset.crf, c.dataset.crn);
 });
 async function loadAddFriend() {
@@ -184,13 +184,13 @@ async function chDoSearch() {
         : u.state === 'sent' ? '<span class="ch-tag">已发送</span>'
           : `<button class="btn tiny primary" data-add="${u.id}">加好友</button>`}</div>`).join('')
       : '<p class="empty">没找到这个用户。</p>';
-  } catch (e) { $('#ch-results').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#ch-results').innerHTML = uiError(e); }
 }
 $('#ch-add').addEventListener('click', async e => {
   const add = e.target.closest('[data-add]');
-  if (add) { try { const r = await api('/api/friends/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: +add.dataset.add }) }); toast(r.friend ? '已成为好友' : '好友请求已发送'); chDoSearch(); } catch (err) { toast(err.message, true); } return; }
+  if (add) { try { const r = await api('/api/friends/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: +add.dataset.add }) }); toast(r.friend ? '已成为好友' : '好友请求已发送'); chDoSearch(); } catch (err) { toast(errMsg(err), true); } return; }
   const req = e.target.closest('[data-req]');
-  if (req) { try { await api('/api/friends/requests/' + req.dataset.req, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: req.dataset.ra }) }); loadAddFriend(); } catch (err) { toast(err.message, true); } }
+  if (req) { try { await api('/api/friends/requests/' + req.dataset.req, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: req.dataset.ra }) }); loadAddFriend(); } catch (err) { toast(errMsg(err), true); } }
 });
 
 /* ---- 小组（群聊）----
@@ -286,7 +286,7 @@ async function crNewGroup() {
         });
         await loadConvos();
         openGroup(d.id, d.name);
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { toast(errMsg(e), true); }
     }
   });
 }
@@ -379,7 +379,7 @@ async function crLoad(first) {
     // 有未读线就停在线上（先滚到底再回到线，位置才准 —— 图片撑开高度是后来的事）
     const uel = first && $('#cr-unread');
     if (uel) setTimeout(() => uel.scrollIntoView({ block: 'center' }), 60);
-  } catch (e) { if (first) $('#cr-msgs').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { if (first) $('#cr-msgs').innerHTML = uiError(e); }
   finally { crLoading = false; }
 }
 /* 滚动：走共用的滚动契约（js/convo.js）。
@@ -424,7 +424,7 @@ $('#cr-checkin').addEventListener('click', async e => {
     const d = await api('/api/chat/g/' + crGid + '/checkin', { method: 'POST' });
     crCheckin = { total: d.total, done: (d.done || []).filter(x => x.done).length, me: d.me, list: d.done || [] };
     crPaintCheckin(); toast('打卡成功，继续保持');
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 });
 // 群公告：置顶一条，进组先看到规则
 function crRenderAnnounce(text) {
@@ -460,7 +460,7 @@ async function crLoadMore() {
       box.scrollTop = t0 + (box.scrollHeight - h0);
     }
     crRenderMore();
-  } catch (e) { toast(e.message, true); crRenderMore(); }
+  } catch (e) { toast(errMsg(e), true); crRenderMore(); }
   crLoadingMore = false;
 }
 $('#cr-msgs').addEventListener('click', e => {
@@ -718,14 +718,14 @@ $('#cr-menu').addEventListener('click', async e => {
     try {
       const d = await api('/api/chat/msg/' + mid + '/voicetext', { method: 'POST' });
       if (bx) bx.insertAdjacentHTML('afterend', '<div class="cr-vtext">' + esc(d.text || '') + '</div>');
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     if (bx) bx.classList.remove('busy');
   } else if (b.dataset.cm === 'recall') {
     try {
       const d = await api('/api/chat/msg/' + mid, { method: 'DELETE' });
       row.outerHTML = crMsgHtml({ id: mid, mine: true, recalled: true, body: d.body || '' });
       loadConvos();
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
   } else if (b.dataset.cm === 'wrongq') {
     // 别人发来的题一键收进自己的错题本（复用错题本的新增接口）
     try {
@@ -734,7 +734,7 @@ $('#cr-menu').addEventListener('click', async e => {
         body: JSON.stringify({ question: text, board: '', qtype: '' })
       });
       toast('已存进错题本');
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
   } else if (b.dataset.cm === 'askgroup') {
     // 在群里问：把原文带上，AI 的答案会作为一条消息发回群里，所有人都看得见（F10）
     crMentionBot('关于这条：「' + text.slice(0, 120) + '」');
@@ -823,7 +823,7 @@ $('#cr-picker').addEventListener('click', async e => {
     await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body: '[转发的聊天记录]\n' + txt }) });
     toast('已转发');
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 });
 
 /* ---- 引用回复 ---- */
@@ -922,7 +922,7 @@ $('#chat-info').addEventListener('change', async e => {
     await api('/api/chat/prefs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: crGid ? 'g' : 'u', id: crGid || crFid, [c.dataset.pref]: c.checked }) });
     loadConvos();
-  } catch (err) { toast(err.message, true); c.checked = !c.checked; }
+  } catch (err) { toast(errMsg(err), true); c.checked = !c.checked; }
 });
 $('#chat-info').addEventListener('click', async e => {
   if (e.target.closest('#ci-x')) { crInfoClose(); return; }
@@ -939,14 +939,14 @@ $('#chat-info').addEventListener('click', async e => {
         body: JSON.stringify(isName ? { name: v } : { announce: v })
       });
       crLoad(true); loadConvos(); crOpenInfo();
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const kick = e.target.closest('[data-gkick]');
   if (kick) {
     if (!(await appConfirm('把这个成员移出小组？'))) return;
     try { await api('/api/chat/groups/' + crGid + '/members/' + kick.dataset.gkick, { method: 'DELETE' }); crOpenInfo(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { toast(errMsg(err), true); }
     return;
   }
   if (e.target.closest('#cr-gleave')) { crLeaveGroup(); return; }
@@ -959,7 +959,7 @@ async function crLeaveGroup() {
     await api('/api/chat/groups/' + crGid + '/members/' + (ME ? ME.id : 0), { method: 'DELETE' });
     crInfoClose(); crShowEmpty(); if (IS_MOBILE) back();
     loadConvos();
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 }
 function crInviteMembers() {
   const inside = new Set(crMembers.map(m => m.id));
@@ -974,7 +974,7 @@ function crInviteMembers() {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ members: ids })
         });
         toast('已拉进来'); crLoad(true); crOpenInfo();
-      } catch (err) { toast(err.message, true); }
+      } catch (err) { toast(errMsg(err), true); }
     }
   });
 }
@@ -1067,7 +1067,7 @@ async function crVoiceByServer() {
     const txt = await voiceToText(rec.blob, rec.ext);
     $('#cr-text').value = base + (base ? ' ' : '') + txt;
     if (!txt) toast('没识别出内容');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   crGrow();
 }
 async function crVoiceToggle() {
@@ -1143,7 +1143,7 @@ async function crPickCard(kind) {
       `<button class="cp-item" data-cpick="${encodeURIComponent(JSON.stringify({ kind: kind, id: x.id, title: x.title.slice(0, 120), sub: (x.sub || '').slice(0, 60) }))}">
         <span class="t">${esc(x.title.slice(0, 60))}</span>${x.sub ? `<span class="s">${esc(x.sub.slice(0, 40))}</span>` : ''}
       </button>`).join('') : `<p class="empty">${esc(meta.name)}里还没有内容。</p>`;
-  } catch (e) { box.querySelector('.cp-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { box.querySelector('.cp-list').innerHTML = uiError(e); }
 }
 $('#cr-picker').addEventListener('click', async e => {
   if (e.target.closest('[data-cpx]') || e.target.id === 'cr-picker') { $('#cr-picker').classList.add('hidden'); return; }
@@ -1167,7 +1167,7 @@ $('#cr-picker').addEventListener('click', async e => {
       const mt = row.querySelector('.cr-meta'); if (mt) mt.textContent = '✓ 已送达';
     }
     loadConvos();
-  } catch (err) { toast(err.message, true); if (row) row.remove(); }
+  } catch (err) { toast(errMsg(err), true); if (row) row.remove(); }
 });
 // 点卡片 → 跳到应用里那一条（跟自己点进去是同一条路）
 $('#cr-msgs').addEventListener('click', e => {
@@ -1235,7 +1235,7 @@ function chDoMsgSearch() {
           <div class="ch-sh"><span>${esc(r.peer_name)}</span><span>${esc((r.time || '').slice(5, 16))}</span></div>
           <div class="ch-sb">${r.file ? '📄 ' : ''}${chMark(r.text, q)}</div>
         </div>`).join('') : '<p class="empty">没找到「' + esc(q) + '」。</p>';
-    } catch (e) { $('#ch-searchres').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+    } catch (e) { $('#ch-searchres').innerHTML = uiError(e); }
   }, 220);      // 打字防抖：别每敲一个字就查一次
 }
 // 命中处加高亮。先转义再插标签，关键词本身也要转义后再找位置
@@ -1318,7 +1318,7 @@ async function crSendOne(t, retryRow, replyTo) {
     }
     loadConvos();      // 会话列表的摘要跟着更新（在双栏里看得见）
   } catch (e) {
-    if (!row) { toast(e.message, true); return; }
+    if (!row) { toast(errMsg(e), true); return; }
     row.dataset.text = t;
     const b = row.querySelector('.cr-bubble'); if (b) { b.classList.remove('sending'); b.classList.add('failed'); }
     const mt = row.querySelector('.cr-meta');
@@ -1361,7 +1361,7 @@ async function crSendVoice(rec) {
   fd.append('dur', String(rec.dur || 0));
   if (crReplyTo) fd.append('reply_to', String(crReplyTo));
   try { await api(crUrl(), { method: 'POST', body: fd }); crClearReply(); }
-  catch (err) { toast(err.message, true); }
+  catch (err) { toast(errMsg(err), true); }
   crSending = false;
   crLoad(false);
 }

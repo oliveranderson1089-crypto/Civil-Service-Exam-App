@@ -15,13 +15,14 @@ backup.sh 每天 03:30 跑得挺好（VACUUM INTO + integrity_check + 14 天滚�
 删文件的能力**不放这儿**。手工快照该留哪几个是人的判断（它们是历次改造前的保命点），
 所以只报告 + 给命令，跟内容质检同一条规矩。
 """
+import json
 import os
 import shutil
 import time
 
 from flask import Blueprint, jsonify
 
-from core import BASE, DB, UPLOADS, get_db, log
+from core import BASE, DB, THREADS, UPLOADS, get_db, log
 
 bp = Blueprint("capacity", __name__)
 
@@ -88,6 +89,28 @@ def _backup_info():
     return info
 
 
+def _offsite_info():
+    """异地副本的状态。读 backup.sh 写下的 offsite.json，不在这儿调 restic。
+
+    为什么不直接问 restic：那要连网、要仓库密码、慢的时候好几秒，而后台是个
+    每次打开都要刷的页面。备份脚本每天跑完就把结论写进文件，这里只负责念出来——
+    和「产出健康」不去问 systemd、只问库里有没有新东西，是同一个思路。
+
+    文件不存在 = 备份脚本还是改造前的老版本（或者从没跑过），这也要说出来，
+    不能默认成「没配异地」——那是两件事。
+    """
+    p = os.path.join(BACKUP_DEST, "offsite.json")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {"state": "unknown", "note": "备份脚本还没写过异地状态（可能是改造前的旧版本，或从未跑过）",
+                "at": "", "snapshots": None, "repo_bytes": None}
+    return {"state": d.get("state") or "unknown", "note": d.get("note") or "",
+            "at": d.get("at") or "", "snapshots": d.get("snapshots"),
+            "repo_bytes": d.get("repo_bytes")}
+
+
 def _manual_snaps():
     """项目根上的 app.db.bak.*：历次改造前手动留的保命点。
 
@@ -107,6 +130,38 @@ def _manual_snaps():
         log.debug("列手工快照失败", exc_info=True)
     out.sort(key=lambda x: x["at"], reverse=True)
     return out
+
+
+def _concurrency():
+    """服务并发：线程池被占掉多少。
+
+    这块盯的是一个**撞上去不报错、只是整站变慢**的天花板。WSGI 的模型是
+    一条连接一个阻塞线程，而这个应用有两种长连接：
+      · 聊天 SSE —— 页面开着就占一个，最长活 300 秒后浏览器重连
+      · AI 流式  —— 一轮回答从头占到尾，深度档能占几十秒
+    池子空了之后新请求全排队，日志里一个字都没有，你只会觉得「今天有点卡」。
+    所以要有个刻度：占了多少 / 一共多少 / 剩多少。
+
+    两个计数各自问对应的模块要（它们本来就为自己的用途维护着这些数），
+    这里不自己数 —— 数据只有一个来源，才不会两边慢慢走散。
+    """
+    try:
+        from mods.social import listener_count
+        chat = listener_count()
+    except Exception:
+        log.debug("读聊天连接数失败", exc_info=True)
+        chat = 0
+    try:
+        from mods.aisession import streaming_count
+        ai = streaming_count()
+    except Exception:
+        log.debug("读 AI 流式数失败", exc_info=True)
+        ai = 0
+    held = chat + ai
+    total = THREADS      # 分母从 core 拿，别在这儿再写一个 64：写两处迟早走散
+    return {"chat_sse": chat, "ai_stream": ai, "held": held, "total": total,
+            "free": max(0, total - held),
+            "pct": round(held * 100.0 / total, 1) if total else 0.0}
 
 
 def _stuck_tasks(db):
@@ -146,6 +201,7 @@ def snapshot(db):
     else:
         # 只有这部分要扫盘，缓存的就是它
         bk = _backup_info()
+        off = _offsite_info()
         snaps = _manual_snaps()
         sizes = _sizes()
         try:
@@ -154,14 +210,17 @@ def snapshot(db):
                     "pct": round(du.used * 100.0 / du.total, 1) if du.total else 0}
         except OSError:
             disk = {"total": 0, "used": 0, "free": 0, "pct": 0}
-        out = {"backup": bk, "manual_snaps": snaps, "sizes": sizes, "disk": disk,
+        out = {"backup": bk, "offsite": off, "manual_snaps": snaps, "sizes": sizes, "disk": disk,
                "manual_bytes": sum(s["bytes"] for s in snaps),
                "scanned_at": time.strftime("%H:%M:%S")}
         _cache.update(at=now, data=out)
-    # 任务状态每次都查（便宜，而且它正是要看「此刻」的东西）
+    # 这两样每次都查（便宜，而且它们正是要看「此刻」的东西）。
+    # 尤其并发数**绝不能进上面那个 5 分钟缓存** —— 缓存一个「此刻占了几个线程」
+    # 等于永远在报五分钟前的天气，池子见底的那一刻恰恰看不见。
     stuck, recent = _stuck_tasks(db)
     out["stuck_tasks"] = stuck
     out["tasks_7d"] = recent
+    out["conc"] = _concurrency()
     return out
 
 
@@ -178,9 +237,35 @@ def _states(out):
         lag = (time.mktime(time.strptime(today, "%Y-%m-%d"))
                - time.mktime(time.strptime(last, "%Y-%m-%d"))) / 86400
         bk = "ok" if lag <= 1 else ("warn" if lag <= 3 else "bad")
+    # 异地：**没配置绝不给绿灯**。本地备份天天成功、灯是绿的，但数据仍然只有一份，
+    # 这正是「看起来一切正常」最危险的那种状态。所以没配 = 黄灯，一直提醒着。
+    # 推送失败 / 陈旧 = 红灯，因为那意味着你以为有异地、实际没有。
+    off = out.get("offsite") or {}
+    # or "unknown"：拿不到 state（空字典、字段缺失）属于「不知道」，
+    # 不是「推送失败」。红灯要留给真的出了事，否则狼来了喊多了就没人看了。
+    ost = off.get("state") or "unknown"
+    if ost == "ok":
+        # 有异地也要看新不新：超过 3 天没推成功，跟没有差不多。
+        oat = (off.get("at") or "")[:10]
+        try:
+            lag = (time.mktime(time.strptime(today, "%Y-%m-%d"))
+                   - time.mktime(time.strptime(oat, "%Y-%m-%d"))) / 86400
+            offsite = "ok" if lag <= 1 else ("warn" if lag <= 3 else "bad")
+        except ValueError:
+            offsite = "warn"
+    elif ost in ("off", "unknown"):
+        offsite = "warn"                # 没配 / 不知道 —— 数据只有一份
+    else:
+        offsite = "bad"                 # running（上次卡住了）或 bad
     pct = out["disk"]["pct"]
     disk = "bad" if pct >= 92 else ("warn" if pct >= 85 else "ok")
-    return {"backup": bk, "disk": disk,
+    # 并发的阈值给得比磁盘早：磁盘满了会报错、看得见，线程池满了只是变慢，
+    # 等它到 90% 才提醒就已经晚了 —— 那时候人已经在骂「这破网站又卡了」。
+    # 用 get 兜底：snapshot 里任何一格取数失败，都只该让那一格没结论，
+    # 不该把整个 /api/admin/capacity 打成 500 —— 后台这一屏正是出事时要看的。
+    cp = (out.get("conc") or {}).get("pct")
+    conc = "unknown" if cp is None else ("bad" if cp >= 85 else ("warn" if cp >= 60 else "ok"))
+    return {"backup": bk, "offsite": offsite, "disk": disk, "conc": conc,
             "tasks": "warn" if out["stuck_tasks"] else "ok"}
 
 

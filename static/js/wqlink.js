@@ -9,7 +9,7 @@
  * 前端自己算的话两边差一个标点就对不上，表现是收过的题显示成没收过、
  * 再点一次又收出第二条。
  */
-/* global $, WQ_BOARDS, api, appConfirm, artEm, esc, toast */
+/* global $, api, appConfirm, artEm, errMsg, esc, toast, WQ_BOARDS */
 
 /* 板块清单用错题本那一份（js/wrongq.js 的 WQ_BOARDS）——这儿再抄一遍的话，
    加一个板块就得改两处，漏改的表现是：同一条错题，从刷题端打开选不到那个板块、
@@ -120,7 +120,7 @@ function _wqlEnsure() {
         await wqlRemove(_wqlCtx.kind, _wqlCtx.key);
         toast('已移出错题本');
         const cb = _wqlCtx.onChange; wqlClose(); if (cb) cb();
-      } catch (err) { toast(err.message, true); }
+      } catch (err) { toast(errMsg(err), true); }
     }
   });
   return _wqlSheet;
@@ -152,7 +152,7 @@ async function _wqlSave() {
     box[c.key] = { id, starred: body.starred, note: body.note };
     toast('已保存到错题本');
     const cb = c.onChange; wqlClose(); if (cb) cb();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 function wqlClose() {

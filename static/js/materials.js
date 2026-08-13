@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, ALL_BOARDS, Ink, KB, api, appConfirm, appPrompt, artEm, c, copyText, esc, fmtSize, hl, inkHere, kbPrompt, openMatMenu, push, toast */
+/* global $, ALL_BOARDS, api, appConfirm, appPrompt, artEm, c, copyText, errMsg, esc,
+   fmtSize, hl, Ink, inkHere, KB, kbPrompt, openMatMenu, push, toast */
 
 /* ================= 资料库 ================= */
 const EXT_ICON = {
@@ -99,7 +100,7 @@ async function loadMaterials() {
           <button class="iconbtn mat-more" data-act="menu" title="更多操作">⋮</button>
         </div>
       </div>`).join('');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#mat-list').addEventListener('click', async e => {
   const item = e.target.closest('.mat-item'); if (!item) return;
@@ -120,15 +121,15 @@ $('#mat-list').addEventListener('click', async e => {
       const v = await kbPrompt('重命名文档', cur);
       if (v && v !== cur) {
         try { await api('/api/materials/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) }); toast('已重命名'); loadMaterials(); }
-        catch (err) { toast(err.message, true); }
+        catch (err) { toast(errMsg(err), true); }
       }
     } else if (act.dataset.act === 'dup') {
       try { await api('/api/materials/' + id + '/duplicate', { method: 'POST' }); toast('已复制一份'); loadMaterials(); }
-      catch (err) { toast(err.message, true); }
+      catch (err) { toast(errMsg(err), true); }
     } else if (act.dataset.act === 'del') {
       if (!(await appConfirm('删除这个资料？'))) return;
       try { await api('/api/materials/' + id, { method: 'DELETE' }); toast('已删除'); loadMaterials(); }
-      catch (err) { toast(err.message, true); }
+      catch (err) { toast(errMsg(err), true); }
     }
     return;
   }
@@ -634,5 +635,5 @@ $('#mat-camfile').addEventListener('change', async e => {
   fd.append('title', '拍照 ' + new Date().toLocaleString('zh-CN', { hour12: false }).slice(5, 16));
   toast('上传中…');
   try { await api('/api/materials', { method: 'POST', body: fd }); toast('已上传'); loadMaterials(); }
-  catch (err) { toast(err.message, true); }
+  catch (err) { toast(errMsg(err), true); }
 });

@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, emKey, esc, isDocHeading, mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, emKey, errMsg, esc, isDocHeading, mdToHtml, push, stack, toast,
+   uiError */
 
 /* ================= 时政要文库（重要文件全文 + AI 政策解读） ================= */
 let polyData = null;
@@ -25,7 +26,7 @@ async function openPolicyDocs() {
         <div class="poly-meta">全文约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">' + artEm("✓") + ' 已有 AI 解读</span>' : ''}</div>
       </div>`;
     }).join('');
-  } catch (e) { $('#poly-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#poly-list').innerHTML = uiError(e); }
 }
 $('#poly-list').addEventListener('click', e => {
   const c = e.target.closest('[data-poly]'); if (c) openPolicyDoc(+c.dataset.poly);
@@ -37,7 +38,7 @@ async function openPolicyDoc(id) {
     const d = await api('/api/policydocs/' + id); polyData = d;
     stack[stack.length - 1].title = d.title; $('#top-title').textContent = d.title;
     renderPolicyDoc();
-  } catch (e) { $('#poly-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#poly-wrap').innerHTML = uiError(e); }
 }
 function renderPolicyDoc() {
   const d = polyData;
@@ -64,5 +65,5 @@ $('#poly-wrap').addEventListener('click', async e => {
   try {
     const d = await api('/api/policydocs/' + polyData.id + '/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: g.id === 'poly-regen' }) });
     polyData.interpretation = d.content; renderPolicyDoc(); toast('已生成');
-  } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 政策解读'; }
+  } catch (err) { toast(errMsg(err), true); g.disabled = false; g.textContent = '🤖 生成 AI 政策解读'; }
 });

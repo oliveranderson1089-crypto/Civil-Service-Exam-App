@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, emKey, esc, push */
+/* global $, api, c, emKey, esc, push, uiError */
 
 /* ============= 常识积累（7板块 · 考情 + 高频考点） ============= */
 const CS_COLOR = { '人文常识': '#b23b2e', '科技常识': '#2b6fd6', '法律常识': '#8c2f24', '地理常识': '#0f766e', '经济常识': '#c2671f', '公文常识': '#7a5cc0', '管理常识': '#5a6b85' };
@@ -37,7 +37,7 @@ async function openChangshi() {
           <div class="hc-name">${esc(b.name)}</div>
           <div class="hc-desc">${b.topics} 个专题 · ${b.count} 条考点</div>
         </div>`).join('')}</div>`).join('');
-  } catch (e) { $('#cs-tiers').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#cs-tiers').innerHTML = uiError(e, () => openChangshi()); }
 }
 $('#cs-tiers').addEventListener('click', e => {
   const c = e.target.closest('[data-csb]'); if (c) openCsBoard(c.dataset.csb);
@@ -73,7 +73,7 @@ async function loadCsBoard() {
           <span class="cs-date">${esc(it.date || '')}${it.source === '新法跟踪' ? ' · 新法跟踪' : ''}</span></div>
         <div class="sc-body">${emKey(it.content)}</div>
       </div>`).join('');
-  } catch (e) { $('#cs-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#cs-list').innerHTML = uiError(e); }
 }
 $('#cs-topics').addEventListener('click', e => {
   const c = e.target.closest('[data-cst]'); if (!c) return;

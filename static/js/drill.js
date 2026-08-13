@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DT_L, api, artEm, back, c, dtMaterial, esc, push, qsClear, qsRender, qtStart, qtStop, toast, wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
+/* global $, api, artEm, back, c, DT_L, dtMaterial, errMsg, esc, push, qsClear, qsRender,
+   qtStart, qtStop, toast, uiError, wqlBtnHtml, wqlOpen, wqlRefreshBtns, wqlScan */
 
 /* ============= 专项练（行测六大板块）=============
    资料分析 / 判断推理 / 数量关系 —— 题型固定、有套路、拼速度，**题由程序生成**，答案由构造保证。
@@ -55,7 +56,7 @@ async function loadDrillTypes() {
     const d = await api(`/api/drill/types?board=${encodeURIComponent(drBoard)}&level=${drLevel}&src=${drSrc}${yq}`);
     drTypesData = d; drTypesKey = key;
     renderDrillTypes();
-  } catch (e) { drTypesData = null; drTypesKey = ''; box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { drTypesData = null; drTypesKey = ''; box.innerHTML = uiError(e); }
 }
 function renderDrillTypes() {
   const box = $('#dr-types');
@@ -115,7 +116,7 @@ function renderDrillTypes() {
   } catch (e) {
     // renderDrillTypes 现在会被题源点击直接调用，那条路上抛异常就是未捕获，
     // 表现为卡片停在旧内容、没有任何提示
-    box.innerHTML = `<p class="empty">${esc(e.message)}</p>`;
+    box.innerHTML = uiError(e);
   }
 }
 function drCoefTip() {
@@ -204,7 +205,7 @@ async function drStart(type) {
     push({ view: 'drillrun', title: (type || '混合') + ' · 专项练' });
     drRender();
     drScanWq();          // 按钮状态不挡首屏（见 drScanWq）
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 function drRender() {
@@ -382,7 +383,7 @@ async function drResult() {
     $('#dr-back').onclick = () => { back(); loadDrillTypes(); };
     // 交卷时服务端把做错的题收进了错题本，按钮状态得重新拉一遍（成绩已经画出来了，不用挡着）
     drScanWq();
-  } catch (e) { $('#dr-body').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { $('#dr-body').innerHTML = uiError(e); }
 }
 
 /* ---- 做题记录：做过的都留着，可以回看每一题（不是做完就丢） ---- */
@@ -406,7 +407,7 @@ async function openDrillRecs() {
         </div>
       </div>`;
     }).join('') : '<p class="empty">还没做过题。</p>';
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 $('#drr-list').addEventListener('click', e => {
   const c = e.target.closest('[data-drrec]'); if (c) openDrillRec(+c.dataset.drrec);
@@ -439,5 +440,5 @@ async function openDrillRec(rid) {
           ${it.explain ? ' · ' + esc(it.explain) : ''}</div>
       </div>`;
     }).join('');
-  } catch (e) { $('#drd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { $('#drd-head').innerHTML = uiError(e); }
 }

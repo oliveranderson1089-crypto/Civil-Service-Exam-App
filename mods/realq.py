@@ -15,6 +15,7 @@
 import json
 import os
 import re
+import threading
 from datetime import datetime, timedelta
 
 from flask import Blueprint, abort, jsonify, request, send_file
@@ -76,20 +77,32 @@ def _pub(r, exam=False, figs=None):
     return d
 
 
-@bp.get("/api/real/overview")
-def real_overview():
-    """真题库有什么、我练到哪了。"""
-    db = get_db()
-    u = uid()
+# 题库侧的统计（总题量、各模块题量、各题型分布）**跟谁在看无关**，而算一次要 43 毫秒：
+# 那三条都得扫全表再建临时 B 树（qtype 取值是 COALESCE(q.qtype, e.qtype) 这种跨表表达式，
+# 没有索引能吃得下）。而真题是**死的**——考完就不会再有新题，一天也变不了一次。
+# 所以按题库版本缓存下来，只有导入新题 / 核验状态变了才重算。
+# 版本键本身 0.3 毫秒，比它省下的 43 毫秒便宜两个数量级。
+_STAT_LOCK = threading.Lock()
+_STAT_CACHE = {"ver": None, "data": None}
+
+
+def _bank_version(db):
+    """题库指纹：题数、最大题号、过了核验的解析数。任一变化都说明能发的题变了。"""
+    return tuple(db.execute(
+        "SELECT (SELECT COUNT(*) FROM real_questions), (SELECT MAX(id) FROM real_questions), "
+        "       (SELECT COUNT(*) FROM real_explains WHERE agree=1)").fetchone())
+
+
+def bank_stats(db):
+    """总题量 / 各模块题量 / 各题型题量。同一份题库只算一次。"""
+    ver = _bank_version(db)
+    with _STAT_LOCK:
+        if _STAT_CACHE["ver"] == ver:
+            return _STAT_CACHE["data"]
     tot = db.execute("SELECT COUNT(*) c %s WHERE %s" % (_JOIN, SERVABLE)).fetchone()["c"]
-    mine = db.execute(
-        "SELECT COUNT(DISTINCT qid) c, SUM(correct) ok, COUNT(*) n "
-        "FROM real_attempts WHERE user_id=?", (u,)).fetchone()
-    mods = [dict(r) for r in db.execute(
-        "SELECT q.module, COUNT(*) c, "
-        "  (SELECT COUNT(DISTINCT a.qid) FROM real_attempts a JOIN real_questions q2 ON q2.id=a.qid "
-        "   WHERE a.user_id=? AND q2.module=q.module) done "
-        "%s WHERE %s GROUP BY q.module ORDER BY c DESC" % (_JOIN, SERVABLE), (u,))]
+    mods = [{"module": r["module"], "c": r["c"]} for r in db.execute(
+        "SELECT q.module, COUNT(*) c %s WHERE %s GROUP BY q.module ORDER BY c DESC"
+        % (_JOIN, SERVABLE))]
     types = [dict(r) for r in db.execute(
         # GROUP BY 里不能写别名 qtype —— 和 q.qtype / e.qtype 撞名，SQLite 直接报 ambiguous
         "SELECT q.module, COALESCE(NULLIF(q.qtype,''), e.qtype, '') qtype, COUNT(*) c "
@@ -98,11 +111,33 @@ def real_overview():
         # 按题量降序，不按模块名 —— 按模块名排的话空模块（''）会顶到最前面，
         # 一屏全是只有一两道题的零碎题型，真正能刷的大类反而看不见
         "ORDER BY c DESC" % (_JOIN, SERVABLE))]
+    data = {"total": tot, "modules": mods, "types": types}
+    with _STAT_LOCK:
+        _STAT_CACHE.update(ver=ver, data=data)
+    return data
+
+
+@bp.get("/api/real/overview")
+def real_overview():
+    """真题库有什么、我练到哪了。"""
+    db = get_db()
+    u = uid()
+    stats = bank_stats(db)
+    mine = db.execute(
+        "SELECT COUNT(DISTINCT qid) c, SUM(correct) ok, COUNT(*) n "
+        "FROM real_attempts WHERE user_id=?", (u,)).fetchone()
+    # 各模块做了多少道：**一次 GROUP BY 查完**。原先是给每个模块挂一条相关子查询，
+    # 模块有几个就重扫几遍 real_attempts，白花十几毫秒。
+    done = dict(db.execute(
+        "SELECT q.module, COUNT(DISTINCT a.qid) done FROM real_attempts a "
+        "JOIN real_questions q ON q.id=a.qid WHERE a.user_id=? GROUP BY q.module",
+        (u,)).fetchall())
+    mods = [dict(m, done=done.get(m["module"], 0)) for m in stats["modules"]]
     due = db.execute("SELECT COUNT(*) c FROM review_state WHERE user_id=? AND kind='realq' "
                      "AND next_due<=date('now','localtime')", (u,)).fetchone()["c"]
-    return jsonify({"total": tot, "done": mine["c"] or 0, "attempts": mine["n"] or 0,
+    return jsonify({"total": stats["total"], "done": mine["c"] or 0, "attempts": mine["n"] or 0,
                     "correct": mine["ok"] or 0, "due": due,
-                    "modules": mods, "types": types})
+                    "modules": mods, "types": stats["types"]})
 
 
 @bp.get("/api/real/papers")

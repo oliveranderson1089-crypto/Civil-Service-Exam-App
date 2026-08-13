@@ -9,7 +9,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, artEm, composing, esc, toast */
+/* global $, api, appConfirm, artEm, composing, errMsg, esc, toast, uiError */
 async function loadDaily() {
   $('#tk-daily-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
@@ -21,7 +21,7 @@ async function loadDaily() {
         <span class="tk-text">${esc(it.text)}</span>
         <button class="tk-del" data-tddel="${it.id}">${artEm('🗑')}</button>
       </div>`).join('') : '<p class="empty">还没有每日任务，下面加一条吧～</p>';
-  } catch (e) { $('#tk-daily-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#tk-daily-list').innerHTML = uiError(e); }
 }
 function tdSetDone(it, on) {
   it.classList.toggle('done', on);
@@ -35,7 +35,7 @@ function tdRecalcProg() {
 }
 $('#tk-daily-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-tddel]');
-  if (del) { e.stopPropagation(); if (!(await appConfirm('删除这个每日任务？'))) return; try { await api('/api/daily_tasks/templates/' + del.dataset.tddel, { method: 'DELETE' }); loadDaily(); } catch (er) { toast(er.message, true); } return; }
+  if (del) { e.stopPropagation(); if (!(await appConfirm('删除这个每日任务？'))) return; try { await api('/api/daily_tasks/templates/' + del.dataset.tddel, { method: 'DELETE' }); loadDaily(); } catch (er) { toast(errMsg(er), true); } return; }
   const it = e.target.closest('[data-td]'); if (!it) return;
   // 乐观更新：立刻翻勾 + 更新进度，后台再发请求；失败翻回来。不整表重渲 → 不卡顿、不回顶
   const was = it.classList.contains('done');
@@ -43,10 +43,10 @@ $('#tk-daily-list').addEventListener('click', async e => {
   try {
     const d = await api('/api/daily_tasks/' + it.dataset.td + '/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     if (typeof d.done === 'boolean' && d.done !== !was) { tdSetDone(it, d.done); tdRecalcProg(); }
-  } catch (er) { tdSetDone(it, was); tdRecalcProg(); toast(er.message, true); }
+  } catch (er) { tdSetDone(it, was); tdRecalcProg(); toast(errMsg(er), true); }
 });
 $('#tk-daily-add').onclick = async () => {
   const v = $('#tk-daily-in').value.trim(); if (!v) return;
-  try { await api('/api/daily_tasks/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-daily-in').value = ''; loadDaily(); } catch (e) { toast(e.message, true); }
+  try { await api('/api/daily_tasks/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-daily-in').value = ''; loadDaily(); } catch (e) { toast(errMsg(e), true); }
 };
 $('#tk-daily-in').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') $('#tk-daily-add').click(); });

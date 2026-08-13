@@ -18,7 +18,7 @@ from reportlab.platypus import (HRFlowable, Paragraph, SimpleDocTemplate,
 from core import _truthy, get_db, uid
 from mods.ai import _ai_call_or_error
 from mods.classics import _ensure_classic_freq
-from mods.pdfkit import PDF_FONT, ensure_pdf_font
+from mods.pdfkit import ensure_pdf_font
 
 bp = Blueprint("classics_lookup", __name__)
 
@@ -158,8 +158,7 @@ def _classics_query(category, q, star, ids):
 
 
 def build_classics_pdf(rows, opts):
-    ensure_pdf_font()
-    f = PDF_FONT
+    f = ensure_pdf_font()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
                             topMargin=16 * mm, bottomMargin=16 * mm, title="古诗文积累")

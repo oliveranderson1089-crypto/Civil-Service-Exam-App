@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, aiHandleAttach, api, artEm, c, deskMsg, loadMaterials, openAI, push, qnAddImgs, qnOpen, stack, toast */
+/* global $, aiHandleAttach, api, artEm, c, deskMsg, errMsg, loadMaterials, openAI, push,
+   qnAddImgs, qnOpen, stack, toast */
 
 /* ================= AI：截图 / 粘贴图片 / 手写输入 =================
    识图必须走智谱 GLM-4.6V —— 实测 DeepSeek 的 API 直接拒收图片
@@ -185,6 +186,6 @@ async function uploadShot(file) {
     await api('/api/materials', { method: 'POST', body: fd });
     toast('已存到资料库（未分类）');
     if ((stack[stack.length - 1] || {}).view === 'materials') loadMaterials();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 shotBind();

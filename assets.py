@@ -1,4 +1,4 @@
-"""前端静态资源打包 —— 把 index.html 里那串 <script src="js/*.js"> 合成 1 个 bundle。
+"""前端静态资源打包 —— 把 index.html 里那串 <script src="js/*.js"> 合成 2 个 bundle。
 
 重构把前端从 15 个 js 拆成了 56 个，index.html 于是排了 56 个同步阻塞的
 <script>。手机端（尤其走 Cloudflare 隧道 + 代理时）要为此发 56 个请求、每个都
@@ -21,6 +21,38 @@ from pathlib import Path
 
 from core import STATIC
 
+# ---------------------------------------------------------------- 首屏清单
+# 打成一个包解决的是**请求数**，没解决**字节数**：手机冷启动要先下完整包、
+# 再解析 1.1MB 的 JS，才轮到「今日」那几个数字出现（走隧道时更明显）。
+# 所以再切一刀：首屏必需的进 core、其余进 rest（defer，DOM 解析完再执行）。
+#
+# 清单是**显式**写在这儿的，不是自动算的 —— 自动算要么过松（线上白屏），
+# 要么过严（等于没拆）。但它必须和真实依赖对得上，所以
+# tests/frontend/bundle_split.test.js 会做两件事盯着它：
+#   ① 只加载 core 包，启动要能走完，不许抛 ReferenceError
+#   ② core 里任何文件的**顶层同步代码**都不许引用 rest 里定义的符号
+# 加了新 js 之后测试挂了，先想清楚它到底要不要进首屏，再改这份清单。
+#
+# 判据是「加载那一刻会不会被同步求值」，不是「重不重要」：
+# 挂 onclick、写进路由表的引用都是延后执行的，等用户点的时候 rest 早到了。
+# chat.js(80K) / aichat.js(61K) / find.js(43K) / drive.js(37K) 都属于这一类。
+CORE_FILES = [
+    "js/core.js",         # 地基：$ / api / esc，人人都用
+    "js/articons.js",     # 图标册：外壳第一帧就要画
+    "js/qtimer.js",
+    "js/shell.js",        # 外壳：启动屏、面包屑、返回栈
+    "js/materials.js", "js/entries.js", "js/classics.js", "js/basics.js",
+    "js/topbar.js", "js/video.js", "js/news.js", "js/gongwen.js",
+    "js/yylib.js", "js/yyerr.js", "js/drill.js", "js/write.js",
+    "js/changkao.js", "js/theory.js", "js/works.js", "js/changshi.js",
+    "js/policydocs.js", "js/fanwen.js", "js/partydict.js",
+    "js/theme.js",        # 主题：晚一拍就是肉眼可见的闪一下
+    "js/notifications.js", "js/quizdetail.js", "js/ink.js", "js/dock.js",
+    "js/matpanel.js", "js/desktop.js",
+    "js/tabs.js", "js/tabviews.js",   # 常驻导航
+    "js/today.js",        # 首屏仪表盘，末尾 tdLoad() 是整个启动的最后一步
+]
+
 # 只认「js/xxx.js」这种相对 src，且整行就一个 script 标签（index.html 末尾那 56 行就是）
 _SCRIPT_RE = re.compile(r'[ \t]*<script src="(js/[^"]+\.js)"></script>[ \t]*\n?')
 # style.css 也挂内容指纹。它本来靠固定 URL + no-cache 回源校验，链路上（Cloudflare 隧道、
@@ -29,7 +61,10 @@ _SCRIPT_RE = re.compile(r'[ \t]*<script src="(js/[^"]+\.js)"></script>[ \t]*\n?'
 _CSS_RE = re.compile(r'href="style\.css(?:\?[^"]*)?"')
 
 _LOCK = threading.Lock()
-_CACHE = {"mtime": None, "js": b"", "js_gz": b"", "etag": "", "html": ""}
+# 两个包各自一份内容哈希：改了 rest 不该让 core 的长缓存失效，反之亦然。
+_CACHE = {"mtime": None, "html": "",
+          "core": {"js": b"", "gz": b"", "etag": ""},
+          "rest": {"js": b"", "gz": b"", "etag": ""}}
 
 
 def _newest_mtime(paths):
@@ -57,8 +92,34 @@ def _check_tags_at_end(html):
             "要早加载就给那个标签加 data-early 之类的属性绕开打包。" % (m.start(), last_dom))
 
 
+def _split(srcs):
+    """按 CORE_FILES 把脚本清单切成 (core, rest)，**两边都保持 index.html 里的原次序**。
+
+    次序不能动：拼接的语义是「同一段 classic 脚本按序连起来」，顶层 let/const
+    走的是全局词法环境，谁先谁后决定了谁看得见谁。
+    清单里写了但 index.html 里没有的（删了某个 js 却忘了改清单），这里直接忽略——
+    真正会出事的是反过来，那由测试盯着。
+    """
+    core = [s for s in srcs if s in CORE_FILES]
+    rest = [s for s in srcs if s not in CORE_FILES]
+    if not core:
+        raise RuntimeError("core 包一个文件都没有：CORE_FILES 和 index.html 对不上了")
+    return core, rest
+
+
+def _pack(srcs):
+    """把一组 js 拼成 (bytes, gzip, etag)。"""
+    parts = []
+    for src in srcs:
+        # 每个文件前补 `\n;`：万一某文件结尾漏了分号，也不会和下一个文件首行黏成一句
+        parts.append(f"\n;/* ==== {src} ==== */\n")
+        parts.append((Path(STATIC) / src).read_text(encoding="utf-8"))
+    js = "".join(parts).encode("utf-8")
+    return js, gzip.compress(js, 6), "b" + hashlib.sha1(js).hexdigest()[:16]
+
+
 def _rebuild():
-    """读 index.html + 56 个 js，拼 bundle、算哈希、压 gzip、把标签换成一个 bundle 标签。"""
+    """读 index.html + 71 个 js，拼成 core / rest 两个 bundle，把标签换成两个标签。"""
     idx = Path(STATIC) / "index.html"
     html = idx.read_text(encoding="utf-8")
     srcs = _SCRIPT_RE.findall(html)
@@ -69,29 +130,32 @@ def _rebuild():
     css = Path(STATIC) / "style.css"
     mtime = _newest_mtime([idx, *files] + ([css] if css.exists() else []))
 
-    parts = []
-    for src, f in zip(srcs, files):
-        # 每个文件前补 `\n;`：万一某文件结尾漏了分号，也不会和下一个文件首行黏成一句
-        parts.append(f"\n;/* ==== {src} ==== */\n")
-        parts.append(f.read_text(encoding="utf-8"))
-    js = "".join(parts).encode("utf-8")
-    etag = 'b' + hashlib.sha1(js).hexdigest()[:16]
+    core_srcs, rest_srcs = _split(srcs)
+    cjs, cgz, cetag = _pack(core_srcs)
+    rjs, rgz, retag = _pack(rest_srcs) if rest_srcs else (b"", b"", "")
 
-    # 56 个标签整体换成一个：第一个标签的位置放 bundle 标签，其余删掉
-    one = f'<script src="/js/app.bundle.js?v={etag}"></script>\n'
+    # 所有标签整体换成两个：第一个标签的位置放它俩，其余删掉。
+    # rest 用 defer —— 它保证「在 core 之后、在 DOMContentLoaded 之前」执行：
+    #   · 在 core 之后 → rest 里的顶层代码能看见 core 定义的东西
+    #   · 在 DOMContentLoaded 之前 → 用户能点之前它已经就位
+    # 不能用 async：async 不保证顺序，rest 可能先于 core 执行，那就全炸了。
+    tags = f'<script src="/js/app.bundle.js?v={cetag}"></script>\n'
+    if rest_srcs:
+        tags += f'<script src="/js/app.rest.js?v={retag}" defer></script>\n'
     seen = [0]
 
     def _repl(_m):
         seen[0] += 1
-        return one if seen[0] == 1 else ""
+        return tags if seen[0] == 1 else ""
 
     html_b = _SCRIPT_RE.sub(_repl, html)
     if css.exists():
         cssv = hashlib.sha1(css.read_bytes()).hexdigest()[:16]
         html_b = _CSS_RE.sub(f'href="style.css?v={cssv}"', html_b)
 
-    _CACHE.update(mtime=mtime, js=js, js_gz=gzip.compress(js, 6),
-                  etag='"' + etag + '"', html=html_b)
+    _CACHE.update(mtime=mtime, html=html_b,
+                  core={"js": cjs, "gz": cgz, "etag": '"' + cetag + '"'},
+                  rest={"js": rjs, "gz": rgz, "etag": '"' + retag + '"' if retag else ""})
 
 
 def _ensure_fresh():
@@ -109,14 +173,15 @@ def _ensure_fresh():
                 _rebuild()
 
 
-def bundle():
-    """返回 (js_bytes, js_gzip_bytes, etag)。"""
+def bundle(which="core"):
+    """返回 (js_bytes, js_gzip_bytes, etag)。which 取 "core" 或 "rest"。"""
     _ensure_fresh()
-    return _CACHE["js"], _CACHE["js_gz"], _CACHE["etag"]
+    c = _CACHE[which]
+    return c["js"], c["gz"], c["etag"]
 
 
 def index_html():
-    """返回把脚本标签合成一个 bundle 标签后的 index.html 文本；打包失败会抛异常。"""
+    """返回把脚本标签换成两个 bundle 标签后的 index.html 文本；打包失败会抛异常。"""
     _ensure_fresh()
     return _CACHE["html"]
 

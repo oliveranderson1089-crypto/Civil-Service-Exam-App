@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, back, emKey, esc, push, refreshReviewBadge, toast */
+/* global $, api, artEm, back, emKey, errMsg, esc, push, refreshReviewBadge, toast */
 
 /* ============= 今日复习（艾宾浩斯遗忘曲线） ============= */
 const RV_KIND = { entry: '成语词语', wrongq: '错题', classic: '古诗文', gushi: '古诗', yy: '应用文错例' };
@@ -44,7 +44,7 @@ $('#rv-limtog').onclick = async () => {
     try {
       const d = await api('/api/review/limits');
       rvLim = d.limits; rvPool = d.due; rvLimRender();
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { toast(errMsg(e), true); }
   }
 };
 $('#rv-limsave').onclick = async () => {
@@ -59,7 +59,7 @@ $('#rv-limsave').onclick = async () => {
     $('#rv-lim').classList.add('hidden');
     toast('已保存，今天按新的量出');
     loadReview();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   b.disabled = false;
 };
 
@@ -81,7 +81,7 @@ async function loadReview() {
     // 默认停在第一个有内容的板块
     if (!(g[rvGroup] > 0)) rvGroup = ['word', 'daily', 'gushi', 'wrongq', 'yy'].find(k => g[k] > 0) || 'word';
     rvSelect(rvGroup);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function rvSelect(group) {
   rvGroup = group;
@@ -171,7 +171,7 @@ async function rvAnswer(result) {
   const it = rvQueue.shift(); if (!it) return;
   try {
     await api('/api/review/done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: it.kind, id: it.id, result }) });
-  } catch (e) { toast(e.message, true); rvQueue.unshift(it); return; }
+  } catch (e) { toast(errMsg(e), true); rvQueue.unshift(it); return; }
   if (result === 'forget') { it.stage = 0; rvQueue.push(it); }   // 忘记：今日重现（排到队尾）
   else {
     rvDoneN++;

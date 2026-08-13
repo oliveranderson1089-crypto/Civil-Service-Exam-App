@@ -31,5 +31,29 @@ function pgInit() {
   };
   // 长按/右键「回到顶部」= 直接返回上一页，省得回顶再去点返回
   $('#pg-top').oncontextmenu = (e) => { e.preventDefault(); back(); };
+  pgSync();
 }
+
+/* 页面根本滚不动的时候把这一条收起来。
+   它是给手写笔用的（笔没有滚轮），所以**不能**做成「滚动时才淡入」——
+   那样第一下就没得点。但「这一页只有半屏内容、右边却常驻四个翻页箭头」
+   同样说不过去：四个按钮全是死的，还占着右边一条道。
+   判据就是一句：滚不动就收起来。 */
+function pgSync() {
+  const bar = $('#pgbar'); if (!bar) return;
+  const el = document.scrollingElement || document.documentElement;
+  const can = el.scrollHeight > el.clientHeight + 40;
+  bar.classList.toggle('pg-idle', !can);
+  document.body.classList.toggle('has-pgbar', can && !IS_MOBILE);
+}
+window.pgSync = pgSync;
+/* 内容是异步来的，高度会变好几次；滚动和改窗口也都要重算。
+   rAF 合并一下，别一秒算几百遍。 */
+let pgRaf = 0;
+const pgQueue = () => {
+  if (pgRaf) return;
+  pgRaf = requestAnimationFrame(() => { pgRaf = 0; pgSync(); });
+};
+addEventListener('scroll', pgQueue, { passive: true });
+addEventListener('resize', pgQueue);
 pgInit();

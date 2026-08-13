@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, OFFICE_EXT, _svg, anchorMenu, api, appConfirm, artEm, back, c, composing, esc, fmtSize, iconFor, openAI, openSearch, openViewerUrl, push, stack, toast */
+/* global $, _svg, anchorMenu, api, appConfirm, artEm, back, c, composing, errMsg, esc,
+   fmtSize, IC, iconFor, OFFICE_EXT, openAI, openSearch, openViewerUrl, push, stack, toast */
 
 /* ================= 知识库（笔记本 + 文档块编辑器） ================= */
 const ICON_CHEVRON = _svg('<polyline points="9 18 15 12 9 6"/>');
@@ -47,7 +48,7 @@ async function loadNotebooks() {
         <div class="kb-card-name">${esc(nb.name)}</div>
         <div class="kb-card-sub">${nb.doc_count} 篇文档</div>
       </div>`).join('');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#kb-list').addEventListener('click', e => {
   const c = e.target.closest('[data-nb]'); if (!c) return;
@@ -92,7 +93,7 @@ $('#nb-save').onclick = async () => {
       toast('已创建'); $('#nb-modal').classList.add('hidden');
       openNotebook(nb.id);
     }
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 $('#nb-del').onclick = async () => {
   if (!nbEditId) return;
@@ -102,7 +103,7 @@ $('#nb-del').onclick = async () => {
     toast('已删除'); $('#nb-modal').classList.add('hidden');
     if (stack[stack.length - 1].view === 'notebook') back();
     loadNotebooks();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 
 /* ---- 知识库详情（目录树） ---- */
@@ -112,7 +113,7 @@ async function loadNotebook(id) {
     const d = await api('/api/kb/notebooks/' + id);
     KB.nb = d.notebook; KB.tree = d.tree;
     renderNotebook();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function renderNotebook() {
   const nb = KB.nb;
@@ -188,7 +189,7 @@ $('#kb-sheet').addEventListener('click', async e => {
     if (kbSheetParent) KB.openGroups[kbSheetParent] = true;
     await loadNotebook(KB.nb.id);
     if (t === 'doc') openDoc(node.id);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 });
 
 /* 节点菜单：重命名 / 新建子项 / 删除 */
@@ -210,12 +211,12 @@ $('#node-menu').addEventListener('click', async e => {
   if (!n) return;
   if (act === 'rename') {
     const v = await kbPrompt('重命名', n.title);
-    if (v) { try { await api('/api/kb/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) }); loadNotebook(KB.nb.id); } catch (e) { toast(e.message, true); } }
+    if (v) { try { await api('/api/kb/nodes/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v }) }); loadNotebook(KB.nb.id); } catch (e) { toast(errMsg(e), true); } }
   } else if (act === 'add') { KB.openGroups[id] = true; openKbSheet(id); }
   else if (act === 'open') { openDoc(id); }
   else if (act === 'del') {
     if (!(await appConfirm('删除「' + (n.title || '该项') + '」' + (n.type === 'group' ? '及其下所有内容' : '') + '？不可恢复'))) return;
-    try { await api('/api/kb/nodes/' + id, { method: 'DELETE' }); toast('已删除'); loadNotebook(KB.nb.id); } catch (e) { toast(e.message, true); }
+    try { await api('/api/kb/nodes/' + id, { method: 'DELETE' }); toast('已删除'); loadNotebook(KB.nb.id); } catch (e) { toast(errMsg(e), true); }
   }
 });
 
@@ -270,7 +271,7 @@ async function openDoc(id) {
     renderDoc();
     pushHistory();
     setTimeout(() => focusBlock(blocks[0].id), 70);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function renderDoc() {
   $('#doc-blocks').innerHTML = DOC.blocks.map(blockHtml).join('');
@@ -383,7 +384,7 @@ async function saveDoc() {
     if (_docSaveFailed) { _docSaveFailed = false; toast('已重新保存'); }   // 网回来了，让人安心
   } catch (e) {
     // 这是**自动**保存（改完 900ms 触发），原先是空 catch：网一断，用户接着往下写，
-    // 全程以为存着，其实一个字都没上去。项目里手动保存都会 toast(err.message, true)，
+    // 全程以为存着，其实一个字都没上去。项目里手动保存都会 toast(errMsg(err), true)，
     // 自动保存更该说 —— 只是不能每 900ms 弹一次，所以只在「由成功转为失败」时说一次。
     console.warn('[文档] 自动保存失败：%s', (e && e.message) || e);
     if (!_docSaveFailed) {
@@ -530,9 +531,9 @@ async function uploadDocAsset(file, preferImage) {
     : newBlock('file', { stored: d.stored, name: d.name, ext: d.ext, size: d.size, url: d.url, viewable: d.viewable });
   insertAfterCur(blk); toast('已插入');
 }
-$('#doc-imgfile').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) try { await uploadDocAsset(f, true); } catch (err) { toast(err.message, true); } });
-$('#doc-camfile').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) try { await uploadDocAsset(f, true); } catch (err) { toast(err.message, true); } });
-$('#doc-attfile').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) try { await uploadDocAsset(f, false); } catch (err) { toast(err.message, true); } });
+$('#doc-imgfile').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) try { await uploadDocAsset(f, true); } catch (err) { toast(errMsg(err), true); } });
+$('#doc-camfile').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) try { await uploadDocAsset(f, true); } catch (err) { toast(errMsg(err), true); } });
+$('#doc-attfile').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (f) try { await uploadDocAsset(f, false); } catch (err) { toast(errMsg(err), true); } });
 function openDocFile(b) {
   const d = b.data || {};
   if (!d.viewable) { const a = document.createElement('a'); a.href = d.url + '?dl=1'; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); return; }

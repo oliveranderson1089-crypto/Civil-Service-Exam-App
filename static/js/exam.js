@@ -3,7 +3,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, esc, fmtDay, mdSafeHref, push, toast */
+/* global $, api, artEm, errMsg, esc, fmtDay, mdSafeHref, push, toast, uiError */
 
 /* ============= 全国考情 ============= */
 // 'follow' = 只看关注的省（默认）。它不是一个真的地区，是「我关注的那几个 + 全国性的」。
@@ -42,7 +42,7 @@ async function loadExam() {
   let d;
   try {
     d = await api('/api/exam/notices?' + qs.toString());
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; return; }
+  } catch (e) { box.innerHTML = uiError(e); return; }
   exFollow = d.follow || [];
   exRegions = d.regions || [];
 
@@ -127,7 +127,7 @@ $('#ex-follow').onclick = () => {
       });
       exFollow = picks; exRegion = 'follow';
       toast(picks.length ? '已关注 ' + picks.join('、') : '已清空关注地区');
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { toast(errMsg(e), true); }
     await loadExam();      // await 掉，否则调用方以为存完了、列表其实还在重画
   };
 };
@@ -155,7 +155,7 @@ $('#ex-refresh').onclick = async () => {
         }
       } catch (_) { clearInterval(exPoll); exPoll = 0; b.disabled = false; }
     }, 3000);
-  } catch (e) { toast(e.message, true); b.disabled = false; loadExam(); }
+  } catch (e) { toast(errMsg(e), true); b.disabled = false; loadExam(); }
 };
 
 /* 桌面壳里 target="_blank" 是死的（WebKit 把新窗口请求吞掉）。desktop.js 有个全局拦截

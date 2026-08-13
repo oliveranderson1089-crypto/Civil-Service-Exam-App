@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DT_L, api, artEm, c, dtMaterial, emKey, esc, push, toast */
+/* global $, api, artEm, c, DT_L, dtMaterial, emKey, errMsg, esc, push, toast */
 
 /* ============= 题库（四川省考卷面 · 练习模式） ============= */
 let qz = { set: null, qs: [], idx: 0 };
@@ -21,7 +21,7 @@ $('#qz-list').addEventListener('click', async e => {
     if (firstUndone > 0) qz.idx = firstUndone;
     push({ view: 'quizrun', title: d.name });
     renderQuiz();
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 });
 function renderQuiz() {
   const q = qz.qs[qz.idx];
@@ -128,6 +128,6 @@ $('#qzr-wrap').addEventListener('click', async e => {
           toast('这题没能自动收进错题本，可到错题本手动加', true);
         }
       }
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
   }
 });

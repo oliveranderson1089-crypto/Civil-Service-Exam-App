@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, artEm, c, emKey, esc, fmtDay, inkRekey, push, render, toast */
+/* global $, api, appConfirm, artEm, c, emKey, errMsg, esc, fmtDay, inkRekey, push, render,
+   toast, uiError */
 
 /* ============= 成文：把素材真正写成一篇大作文 ============= */
 let wrTab = 'daily', wrCur = null, wrPoll = 0, wrApp = false;
@@ -80,7 +81,7 @@ async function loadWrDays() {
         <div class="wr-day-m"><span class="wr-n">素材 ${x.n} 条（衔接 ${x.nl}）</span></div>
         <button class="btn tiny primary" data-wgen="${x.date}">${artEm('✍️')} 写</button>
       </div>`).join('');
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 
 // 应用文·每日成文：AI 每天出一道应用文题（自动挑文种 + 贴热点情景），写范文 + 逐段批注
@@ -106,7 +107,7 @@ async function loadYyDays() {
         <div class="wr-day-m"><span class="wr-n">今日文种：${esc(x.doctype)} · ${esc(band(x))}${x.scene ? ' · ' + esc(x.scene) : ''}</span></div>
         <button class="btn tiny primary" data-wgen="${x.date}">${artEm('✍️')} 写</button>
       </div>`).join('');
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 
 $('#wr-days').addEventListener('click', async e => {
@@ -129,7 +130,7 @@ $('#wr-days').addEventListener('click', async e => {
       });
       openWrited(d.id);
       loadWrDays();
-    } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = label; }
+    } catch (err) { toast(errMsg(err), true); g.disabled = false; g.textContent = label; }
     return;
   }
   const c = e.target.closest('[data-weid]');
@@ -144,7 +145,7 @@ $('#wr-backfill').onclick = async () => {
   try {
     const d = await api(wrApp ? '/api/write/yingyong/backfill' : '/api/write/backfill', { method: 'POST' });
     wrWatch(d.task);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 
 function wrWatch(tid) {
@@ -189,7 +190,7 @@ async function loadWrCompose() {
       </div>`).join('')
       : (app ? '<p class="empty">还没出过。点上面的按钮，AI 出一道综合应用大题并写范文。</p>'
              : '<p class="empty">还没写过。点上面的按钮，AI 会自己选题写一篇。</p>');
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 $('#wr-cplist').addEventListener('click', e => {
   const c = e.target.closest('[data-weid]'); if (c) openWrited(+c.dataset.weid);
@@ -203,7 +204,7 @@ $('#wr-gen-cp').onclick = async () => {
       body: JSON.stringify({ force: true }),
     });
     openWrited(d.id); loadWrCompose();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   b.disabled = false;
 };
 
@@ -217,7 +218,7 @@ const YY_POS_LABEL = { small: '小题位', medium: '中题位', large: '大题�
 
 async function loadWrGw() {
   if (!gwSpec) {
-    try { gwSpec = await api('/api/write/gwspec'); } catch (e) { toast(e.message, true); return; }
+    try { gwSpec = await api('/api/write/gwspec'); } catch (e) { toast(errMsg(e), true); return; }
   }
   $('#yy-types').innerHTML = gwSpec.doctypes.map(d =>
     `<button class="chip${d.k === gwType ? ' active' : ''}" data-gwt="${esc(d.k)}">${esc(d.k)}</button>`).join('');
@@ -251,7 +252,7 @@ async function loadYyMine() {
       </div>`;
     }).join('')
       : '<p class="empty">还没写过。上面写的每一篇都会留在这儿，返回后随时点开。</p>';
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 function gwFmt() {
   const d = gwSpec.doctypes.find(x => x.k === gwType); if (!d) return;
@@ -294,7 +295,7 @@ async function loadYyCats() {
             </div>
           </div>`).join('')}
       </div>`).join('');
-  } catch (e) { box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 
 $('#yy-batch').onclick = async () => {
@@ -302,7 +303,7 @@ $('#yy-batch').onclick = async () => {
   try {
     const d = await api('/api/write/yingyong/batch', { method: 'POST' });
     yyWatch(d.task);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 function yyWatch(tid) {
   clearInterval(yyPoll);
@@ -345,7 +346,7 @@ async function openRealFan(id) {
       <div class="rf-ans"><b>参考答案</b>${esc(d.content || '').split('\n')
         .filter(x => x.trim()).map(x => `<p>${esc(x.trim())}</p>`).join('')}</div>
       ${d.note ? `<div class="ye-why">${artEm('💡')} ${esc(d.note)}</div>` : ''}`;
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 }
 
 function yyPaneClick(e) {
@@ -382,7 +383,7 @@ async function yyDel(btn) {
   try {
     await api('/api/write/' + btn.dataset.yydel, { method: 'DELETE' });
     loadYyMine(); toast('删了');
-  } catch (e) { toast(e.message, true); btn.disabled = false; }
+  } catch (e) { toast(errMsg(e), true); btn.disabled = false; }
 }
 $('#wr-yycat').addEventListener('click', yyPaneClick);       // 文种大全：点提纲/范文打开
 $('#wr-yywrite').addEventListener('click', yyPaneClick);     // 自选成文：文种/表单/生成 + 我写过的
@@ -400,7 +401,7 @@ $('#yy-go').onclick = async () => {
     });
     // 列表当场刷掉（返回时 render 只管显隐、不重拉内容），返回就看得见刚写的这篇在最上面
     openWrited(d.id); loadYyMine(); loadYyCats();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   b.disabled = false; b.textContent = '✍️ 写这一篇';
 };
 
@@ -418,7 +419,7 @@ async function openWrited(id) {
   } catch (e) {
     // 没加载出来就把工具条收掉：wrCur 还是 null，这时点「编辑」会读 null.title 直接炸
     $('#wd-acts').classList.add('hidden');
-    $('#wd-head').innerHTML = `<p class="empty">${esc(e.message)}</p>`;
+    $('#wd-head').innerHTML = uiError(e);
   }
 }
 // 应用文范文排版：首行标题不重复（头部已显示）、称谓顶格、落款机关+日期右对齐，其余正常段落
@@ -591,7 +592,7 @@ $('#wd-ed-save').onclick = async () => {
     });
     wdEdit(false); toast('改好了');
     loadYyMine();      // 标题/字数改了，「我写过的」那张卡也要跟着变（返回时不会重拉）
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   b.disabled = false; b.textContent = '💾 保存';
 };
 $('#wd-align').onclick = async () => {
@@ -605,27 +606,30 @@ $('#wd-align').onclick = async () => {
     const log = d.align_log || [];
     wrCur = d; renderWrited();
     toast(log.length ? '对好了：' + log.join('；') : '本来就对得上，没改动');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   b.disabled = false; b.textContent = '🧭 对齐提纲';
 };
 
 /* ============= 议论文 · 素材积累 / 衔接表达（与微信 08:00 推送同源） ============= */
-let scKind = '全部';
+let scKind = '全部', scOffset = 0, scLastDate = '';
+const SC_PAGE = 120;   // 一屏取多少条。整份 226KB 一次发完，进页面就得等它下完
 const SC_COLOR = { '人物事例': '#b23b2e', '具体事例': '#0f766e', '理论论据': '#7a5cc0', '衔接表达': '#c2671f' };
-async function loadSucai() {
+/* more=true 是「加载更多」：接着往后取并追加。日期分组头靠 scLastDate 跨页接续——
+   不提到函数外的话，第二页的第一条会重复打一个已经出现过的日期头。 */
+async function loadSucai(more) {
   document.querySelectorAll('#sc-kinds .chip').forEach(x => x.classList.toggle('active', x.dataset.sk === scKind));
-  $('#sc-list').innerHTML = '<p class="empty">加载中…</p>';
+  if (!more) { scOffset = 0; scLastDate = ''; $('#sc-list').innerHTML = '<p class="empty">加载中…</p>'; }
   try {
-    const d = await api('/api/sucai?kind=' + encodeURIComponent(scKind));
+    const d = await api('/api/sucai?kind=' + encodeURIComponent(scKind)
+      + '&limit=' + SC_PAGE + '&offset=' + scOffset);
     document.querySelectorAll('#sc-kinds .chip').forEach(x => {
       if (x.dataset.sk === '全部') return;
       const n = d.counts[x.dataset.sk]; x.textContent = x.dataset.sk + (n ? ' ' + n : '');
     });
-    if (!d.items.length) { $('#sc-list').innerHTML = '<p class="empty">还没有素材，每天 08:00 自动生成～</p>'; return; }
-    let lastDate = '';
-    $('#sc-list').innerHTML = d.items.map(it => {
-      const head = it.date !== lastDate ? `<div class="sc-day">${artEm('🗓')} ${fmtDay(it.date)}</div>` : '';
-      lastDate = it.date;
+    if (!more && !d.items.length) { $('#sc-list').innerHTML = '<p class="empty">还没有素材，每天 08:00 自动生成～</p>'; return; }
+    const html = d.items.map(it => {
+      const head = it.date !== scLastDate ? `<div class="sc-day">${artEm('🗓')} ${fmtDay(it.date)}</div>` : '';
+      scLastDate = it.date;
       const col = SC_COLOR[it.kind] || '#666';
       const isLj = it.kind === '衔接表达';
       const exHtml = it.example
@@ -638,10 +642,23 @@ async function loadSucai() {
         <div class="sc-body">${emKey(it.content)}</div>
         ${exHtml}
       </div>`;
-    }).join('');
-  } catch (e) { $('#sc-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+    }).join('') + (d.more ? '<button class="sc-exbtn sc-more" data-scmore="1">加载更多素材</button>' : '');
+    if (more) {
+      const btn = $('#sc-list').querySelector('.sc-more');
+      if (btn) btn.remove();
+      $('#sc-list').insertAdjacentHTML('beforeend', html);
+    } else {
+      $('#sc-list').innerHTML = html;
+    }
+    scOffset += d.items.length;
+  } catch (e) {
+    if (more) { const btn = $('#sc-list').querySelector('.sc-more'); if (btn) { btn.disabled = false; btn.textContent = '加载更多素材'; } }
+    else { $('#sc-list').innerHTML = uiError(e); }
+  }
 }
 $('#sc-list').addEventListener('click', async e => {
+  const more = e.target.closest('[data-scmore]');
+  if (more) { more.disabled = true; more.textContent = '加载中…'; loadSucai(true); return; }
   const b = e.target.closest('[data-scex]'); if (!b) return;
   const force = b.dataset.force === '1';
   const label = b.textContent;
@@ -659,7 +676,7 @@ $('#sc-list').addEventListener('click', async e => {
       b.outerHTML = `<div class="sc-exwrap"><div class="sc-ex"><b>例句</b> ${esc(d.example)}</div>
         <button class="sc-exbtn regen" data-scex="${b.dataset.scex}" data-force="1">${artEm('🔄')} 换个例句</button></div>`;
     }
-  } catch (err) { toast(err.message, true); b.disabled = false; b.textContent = label; }
+  } catch (err) { toast(errMsg(err), true); b.disabled = false; b.textContent = label; }
 });
 function openSucai(kind) {
   scKind = kind || '全部';

@@ -47,6 +47,63 @@ const api = (u, o) => {
     throw e;
   });
 };
+/* ---- 异常 → 给人看的一句话 ----
+   全项目 192 处写的是 toast(e.message, true)。于是接口或渲染一出岔子，
+   用户看到的是「Cannot read properties of undefined (reading 'length')」——
+   英文、技术黑话，而且不告诉他此刻能做什么。（2026-08-13 实机复现两次。）
+
+   这里按**这条 message 是不是写给人看的**分两类：
+   · 我们自己抛的（api() 里那几句、后端 error 字段）本来就是中文，原样放行；
+   · 运行时异常（TypeError / ReferenceError / …）是 bug 不是状况，对用户只说
+     「这一步没能完成」，原文进 console.error 留给排查 —— 丢掉原文就没法查了。
+
+   断网单独认一条：fetch 断网抛的是 TypeError: Failed to fetch，
+   它归到第二类会变成「已记录」，而用户其实只要连上网就好了。 */
+function errMsg(e, fallback) {
+  const dflt = fallback || '没能完成，再试一次';
+  if (!e) return dflt;
+  const m = String(e.message || e);
+  if (/failed to fetch|networkerror|load failed/i.test(m)) return '网络没连上，检查一下网络再试';
+  if (e instanceof TypeError || e instanceof ReferenceError
+      || e instanceof RangeError || e instanceof SyntaxError) {
+    try { console.error('[ui]', e); } catch (_) { /* 没有 console 就算了 */ }
+    return fallback || '这一步没能完成，刷新一下再试（详情已记到控制台）';
+  }
+  return m || dflt;
+}
+window.errMsg = errMsg;
+
+/* 列表容器的三态。以前只有「加载中」是设计过的（tabviews.js 的 TV_SK 骨架屏），
+   空和出错各写各的，多数地方干脆什么都不画 —— 于是接口一挂就是一整片空白，
+   分不清「还没加载完」「本来就没有」和「坏了」。
+
+   出错那一态**一定要带重试**：没有重试的错误提示等于让人去刷新整个应用。
+
+   这两个函数返回的是 HTML 字符串（和全项目其余渲染一致，直接塞 innerHTML）。
+   按钮的回调存在一张只增不复用的表里：复用下标的话，一个重画频繁的列表
+   会让旧按钮指到别人的回调上 —— 那种错最难查。一次错误渲染一个闭包，量可以忽略。 */
+const _uiActs = new Map();
+let _uiSeq = 0;
+function _uiAct(fn) { const k = 'a' + (++_uiSeq); _uiActs.set(k, fn); return k; }
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-uigo]');
+  if (!b) return;
+  const fn = _uiActs.get(b.dataset.uigo);
+  if (fn) fn();
+});
+function uiEmpty(text, actText, fn) {
+  return `<div class="ui-state ui-empty"><span class="ui-state-t">${esc(text)}</span>`
+    + (actText && fn ? `<button class="ui-state-go" data-uigo="${_uiAct(fn)}">${esc(actText)}</button>` : '')
+    + '</div>';
+}
+function uiError(err, fn) {
+  return `<div class="ui-state ui-err"><span class="ui-state-t">${esc(errMsg(err))}</span>`
+    + (fn ? `<button class="ui-state-go" data-uigo="${_uiAct(fn)}">重试</button>` : '')
+    + '</div>';
+}
+window.uiEmpty = uiEmpty;
+window.uiError = uiError;
+
 /* 中文输入法正在组字时，回车是「确认候选词」，不是「提交」。
    所有回车处理都必须先问一句 composing(e)，否则 fcitx/搜狗打中文时会被打断，
    表现就是「只打得出英文字母、候选框弹不出来」。 */

@@ -7,7 +7,13 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, AI_FOLDER, ALL_BOARDS, DESKTOP_VER, ME, aiCurProject, anchorMenu, api, appConfirm, appPrompt, artEm, chSwitch, chTab, crInRoom, crLoad, esc, fabClamp, init, inkHere, loadAiHome, loadCsBoard, loadDrive, loadEntries, loadFanwen, loadFeed, loadFeedTags, loadGaikuo, loadGongwen, loadMaterials, loadNews, loadNotebooks, loadPartyDict, loadPlanLog, loadReview, loadShared, loadSucai, loadVideos, loadWrongq, lsGet, lsSet, matBoard, matCustomBoards, matPickMembers, openAI, openAiProject, padToggle, push, qnOpen, refreshChatBadge, shotAsk, stack, toast, wrSwitch, wrTab */
+/* global $, AI_FOLDER, aiCurProject, ALL_BOARDS, anchorMenu, api, appConfirm, appPrompt,
+   artEm, chSwitch, chTab, crInRoom, crLoad, DESKTOP_VER, errMsg, esc, fabClamp, init,
+   inkHere, loadAiHome, loadCsBoard, loadDrive, loadEntries, loadFanwen, loadFeed,
+   loadFeedTags, loadGaikuo, loadGongwen, loadMaterials, loadNews, loadNotebooks,
+   loadPartyDict, loadPlanLog, loadReview, loadShared, loadSucai, loadVideos, loadWrongq,
+   lsGet, lsSet, matBoard, matCustomBoards, matPickMembers, ME, openAI, openAiProject,
+   padToggle, push, qnOpen, refreshChatBadge, shotAsk, stack, toast, wrSwitch, wrTab */
 
 /* ============= 多端自动同步：数据变了自动刷新当前视图，无需手动更新 ============= */
 let _syncToken = null, _syncBusy = false;
@@ -175,7 +181,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
       await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: +mv.dataset.acmproj }) });
       toast('已移动'); await loadAiHome();
       if (aiCurProject) openAiProject(aiCurProject.id);   // 正只看某个项目时，刷完再回到那份筛选
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const b = e.target.closest('[data-acm]');
@@ -204,7 +210,7 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     }
     await loadAiHome();
     if (aiCurProject) openAiProject(aiCurProject.id);
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 });
 
 /* 悬浮工具球：点一下在四周扇出「AI / 草稿纸」；按住可拖到任意位置（位置记忆） */
@@ -307,7 +313,7 @@ $('#mat-menu').addEventListener('click', async e => {
       });
       toast(r.n ? ('已共享给 ' + r.n + ' 位队友') : '已取消共享');
       loadMaterials();
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const b = e.target.closest('[data-mm]');
@@ -352,17 +358,17 @@ $('#mat-menu').addEventListener('click', async e => {
     const v = await appPrompt('重命名文档', '', name);
     if (v && v.trim() && v !== name) {
       try { await api('/api/materials/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: v.trim() }) }); toast('已重命名'); loadMaterials(); }
-      catch (err) { toast(err.message, true); }
+      catch (err) { toast(errMsg(err), true); }
     }
   } else if (act === 'dup') {
     try { await api('/api/materials/' + id + '/duplicate', { method: 'POST' }); toast('已复制一份'); loadMaterials(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { toast(errMsg(err), true); }
   } else if (act === 'dl') {
     const a = document.createElement('a'); a.href = '/api/materials/' + id + '/download'; a.download = '';
     document.body.appendChild(a); a.click(); a.remove();
   } else if (act === 'del') {
     if (!(await appConfirm('删除「' + name + '」？'))) return;
     try { await api('/api/materials/' + id, { method: 'DELETE' }); toast('已删除'); loadMaterials(); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { toast(errMsg(err), true); }
   }
 });

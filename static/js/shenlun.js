@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, IS_MOBILE, api, appConfirm, artEm, c, esc, frCheckBody, frMatHtml, matOpen, openEssays, push, state, toast */
+/* global $, api, appConfirm, artEm, c, errMsg, esc, frCheckBody, frMatHtml, IC, IS_MOBILE,
+   matOpen, openEssays, push, state, toast, uiError */
 /* frMatHtml / frCheckBody 来自 find.js（它在 index.html 里先加载）：
    真题批改的「练习模式」和小题训练的找点是同一件事 —— 同一套采分点、同一套判定、
    同一套按句渲染。渲染规则必须共用一份，两边各写一套迟早会判得不一样。 */
@@ -28,7 +29,7 @@ async function openShenlun() {
       </div>`).join('');
     loadSlPapers();
     loadSlHistory();
-  } catch (e) { $('#sl-types').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#sl-types').innerHTML = uiError(e); }
 }
 $('#sl-types').addEventListener('click', e => {
   const c = e.target.closest('[data-slt]'); if (c) openSlType(c.dataset.slt);
@@ -47,7 +48,7 @@ async function slUploadPaper(file) {
     toast('识别出 ' + d.questions.length + ' 道题');
     loadSlPapers();
     openSlPaper(d.id);
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 }
 $('#sl-file').addEventListener('change', e => {
   const f = e.target.files[0]; e.target.value = '';
@@ -90,7 +91,7 @@ $('#sl-papers').addEventListener('click', async e => {
     e.stopPropagation();
     if (!(await appConfirm('删除这份真题卷？批改记录会保留。'))) return;
     try { await api('/api/shenlun/paper/' + del.dataset.slpdel, { method: 'DELETE' }); loadSlPapers(); }
-    catch (er) { toast(er.message, true); }
+    catch (er) { toast(errMsg(er), true); }
     return;
   }
   const p = e.target.closest('[data-slp]');
@@ -121,7 +122,7 @@ async function openSlPaper(pid) {
         ${d ? `<button class="slq-view" data-slview="${d.grade_id}">看批改</button>` : ''}
       </div>`;
     }).join('');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#slp-qs').addEventListener('click', e => {
   const v = e.target.closest('[data-slview]');
@@ -159,7 +160,7 @@ $('#sl-hist').addEventListener('click', async e => {
     e.stopPropagation();
     if (!(await appConfirm('删除这条批改记录？'))) return;
     try { await api('/api/shenlun/record/' + del.dataset.sldel, { method: 'DELETE' }); loadSlHistory(); }
-    catch (er) { toast(er.message, true); }
+    catch (er) { toast(errMsg(er), true); }
     return;
   }
   const it = e.target.closest('[data-slr]');
@@ -185,7 +186,7 @@ async function openSlType(key) {
             `<div class="slm-cell"><b>${esc(k)}</b>${esc(r[k])}</div>`).join('')}</div>
         </div>`).join('')}
       </div>`).join('');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#slt-go').onclick = () => { if (slType) openSlGrade(slType); };
 
@@ -374,7 +375,7 @@ async function slDoCheck() {
     r.nearSents = new Set((r.near || []).map(x => x.i));
     slFind.check = r;
     slRenderFind();
-  } catch (e) { toast(e.message, true); b.disabled = false; b.textContent = old; }
+  } catch (e) { toast(errMsg(e), true); b.disabled = false; b.textContent = old; }
 }
 $('#slg-go').onclick = async () => {
   const answer = $('#slg-a').value.trim();
@@ -398,7 +399,7 @@ $('#slg-go').onclick = async () => {
     renderSlResult(d);
     loadSlHistory();
     if (d.next) showSlNext(d);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   btn.disabled = false; btn.textContent = '开始批改';
 };
 
@@ -415,7 +416,7 @@ function showSlNext(d) {
       slPaper = p;
       const q = p.questions.find(x => x.id === d.next.id);
       if (q) openSlGradeQ(q);
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { toast(errMsg(e), true); }
   };
 }
 
@@ -423,7 +424,7 @@ async function openSlRecord(rid) {
   try {
     const d = await api('/api/shenlun/record/' + rid);
     renderSlResult(d.result);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 function renderSlResult(r) {
@@ -510,7 +511,7 @@ $('#slr-ref').addEventListener('click', async e => {
     await openSlRecord(b.dataset.rid);
     toast('范文已生成（' + d.ref_words + ' 字）');
   } catch (err) {
-    toast(err.message, true);
+    toast(errMsg(err), true);
     b.disabled = false; b.textContent = '🔄 重新生成参考范文';
   }
 });

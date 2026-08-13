@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, emKey, esc, injectReadBtns, mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, emKey, errMsg, esc, injectReadBtns, mdToHtml, push, stack,
+   toast, uiError */
 
 /* ============= 每日时政（爬虫 + AI 三行式；国内/四川/国际 三板块，全局共享） ============= */
 let newsBoard = '党内', newsDate = '';
@@ -45,7 +46,7 @@ async function loadXiyu() {
         ${it.source_url ? `<a class="poly-src" href="${esc(it.source_url)}" target="_blank" rel="noopener">讲话原文 ↗</a>` : ''}
       </div>`;
     }).join('');
-  } catch (e) { $('#news-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#news-list').innerHTML = uiError(e, () => loadNews()); }
 }
 async function loadNews() {
   if (newsBoard === '习语') {
@@ -78,7 +79,7 @@ async function loadNews() {
         ${sum ? `<div class="news-sum" style="white-space:pre-wrap">${esc(sum)}</div>` : ''}
       </div>`;
     }).join('');
-  } catch (e) { $('#news-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#news-list').innerHTML = uiError(e, () => loadNews()); }
 }
 function openNews() { newsDate = ''; push({ view: 'news', title: '每日时政' }); loadNews(); }
 $('#news-boards').addEventListener('click', e => {
@@ -101,7 +102,7 @@ $('#news-list').addEventListener('click', async e => {
       st.classList.toggle('on', on); st.textContent = on ? '★' : '☆';
       if (newsBoard === '收藏' && !on) loadNews();
       else toast(on ? '已收藏' : '已取消收藏');
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const c = e.target.closest('[data-news]'); if (c) openNewsItem(+c.dataset.news);
@@ -150,7 +151,7 @@ async function openNewsItem(id) {
     nwCur = d;
     stack[stack.length - 1].title = d.title; $('#top-title').textContent = d.title;
     nwRender(d);
-  } catch (e) { $('#news-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#news-wrap').innerHTML = uiError(e); }
 }
 
 function nwRender(d) {
@@ -214,7 +215,7 @@ $('#news-wrap').addEventListener('click', async e => {
     nwRender(nwCur);
     toast('划出 ' + d.marks.length + ' 处重点');
   } catch (err) {
-    toast(err.message, true);
+    toast(errMsg(err), true);
     b.disabled = false; b.textContent = '🖍 帮我划重点';
   }
 });
@@ -235,7 +236,7 @@ async function loadGaikuo() {
         <div class="gk-sent"><span class="gk-lab gk-lab-s">概括</span><b>${esc(it.sentence)}</b></div>
         ${it.tip ? `<div class="gk-tip">${artEm('💡')} ${esc(it.tip)}</div>` : ''}
       </div>`).join('');
-  } catch (e) { $('#gk-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#gk-list').innerHTML = uiError(e); }
 }
 function openGaikuo() { gkDate = ''; push({ view: 'gaikuo', title: '概括句积累' }); loadGaikuo(); }
 $('#gk-dates').addEventListener('click', e => {

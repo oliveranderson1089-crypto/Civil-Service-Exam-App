@@ -20,7 +20,7 @@ from flask import Flask, jsonify, redirect, request, send_from_directory, sessio
 import assets
 from mods.pdfkit import ensure_pdf_font
 from schema import init_db
-from core import CFG, STATIC, UPLOADS, close_db, users_count
+from core import CFG, STATIC, THREADS, UPLOADS, close_db, users_count
 
 # 各业务模块的蓝图。加新模块 = 在 mods/ 下建一个文件 + 这里两行；
 # tests/test_wiring.py 会盯着别漏了注册（漏掉的话路由会静默消失）。
@@ -85,6 +85,7 @@ from mods.team import bp as team_bp
 from mods.theory import bp as theory_bp
 from mods.today import bp as today_bp
 from mods.todos import bp as todos_bp
+from mods.usage import bp as usage_bp
 from mods.wrongq import bp as wrongq_bp
 from mods.xiyu import bp as xiyu_bp
 from mods.zinnia import bp as zinnia_bp
@@ -164,6 +165,7 @@ app.register_blueprint(team_bp)
 app.register_blueprint(theory_bp)
 app.register_blueprint(today_bp)
 app.register_blueprint(todos_bp)
+app.register_blueprint(usage_bp)
 app.register_blueprint(wrongq_bp)
 app.register_blueprint(xiyu_bp)
 app.register_blueprint(zinnia_bp)
@@ -208,7 +210,16 @@ def _cache_policy(resp):
     if p in _NOSTORE:
         resp.headers["Cache-Control"] = "no-store, must-revalidate"
         resp.headers.pop("Expires", None)
-    elif p in _REVALIDATE or (p.startswith("/js/") and p != "/js/app.bundle.js"):
+    elif p == "/style.css" and request.args.get("v"):
+        # 带内容指纹的 style.css（?v= 由 assets.py 注入）：改了内容哈希就变、URL 就变，
+        # 老 URL 永远对应老内容，长缓存不可能发旧的。
+        # 省掉的是**每次首屏一个回源校验往返** —— 本机 3 毫秒无感，公网隧道实测
+        # 一跳就是 0.9~1.4 秒，白付。
+        # 裸 /style.css（登录页、直接访问，没有指纹）不走这条，仍旧回源校验。
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        resp.headers.pop("Expires", None)
+    elif p in _REVALIDATE or (p.startswith("/js/")
+                              and p not in ("/js/app.bundle.js", "/js/app.rest.js")):
         resp.headers["Cache-Control"] = "no-cache"
         resp.headers.pop("Expires", None)
     return resp
@@ -276,10 +287,13 @@ except Exception as _e:   # noqa: BLE001 —— 打包只是加速，出岔子�
     print(" * [assets] 前端打包未启用，退回逐个脚本：", _e)
 
 
-@app.route("/js/app.bundle.js")
-def js_bundle():
-    """56 个 js 合成的一个 bundle：带内容哈希 ETag + gzip，走 immutable 长缓存。"""
-    js, js_gz, etag = assets.bundle()
+def _serve_bundle(which):
+    """发一个 bundle：带内容哈希 ETag + gzip，走 immutable 长缓存。
+
+    两个包各有各的哈希，所以只改了聊天（在 rest 里）不会让 core 的长缓存作废——
+    回头客那一侧，改一次前端要重下的字节数也跟着分成了两半。
+    """
+    js, js_gz, etag = assets.bundle(which)
     if etag and etag in request.headers.get("If-None-Match", ""):
         resp = app.response_class(status=304)
     elif "gzip" in request.headers.get("Accept-Encoding", ""):
@@ -291,6 +305,18 @@ def js_bundle():
     resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     resp.headers["Vary"] = "Accept-Encoding"
     return resp
+
+
+@app.route("/js/app.bundle.js")
+def js_bundle():
+    """首屏包：外壳 + 常驻导航 + 今日仪表盘。同步加载，越小越早见界面。"""
+    return _serve_bundle("core")
+
+
+@app.route("/js/app.rest.js")
+def js_rest():
+    """其余功能：defer 加载，DOM 解析完再执行，赶在用户能点之前就位。"""
+    return _serve_bundle("rest")
 
 
 @app.route("/")
@@ -325,4 +351,10 @@ if __name__ == "__main__":
     else:
         from waitress import serve
         print(f" * 公考助手已启动： http://{a.host}:{a.port}")
-        serve(app, host=a.host, port=a.port, threads=32)
+        # 线程数不只是「快慢」的旋钮，它是**并发上限**：WSGI 下一条 SSE 连接
+        # 占住一个线程直到断开（聊天推送最长 300 秒、AI 流式一轮几十秒），
+        # 池子空了之后所有请求都排队，而且日志里一个字都没有。
+        # 32 → 64：内存几乎不变（整个进程才 216M），换来一倍的在线人数余量。
+        # 真实占用在后台「备份容量 › 服务并发」看得到，逼近上限了再考虑把 SSE
+        # 拆出去单独跑（见 docs/README-full.md）。
+        serve(app, host=a.host, port=a.port, threads=THREADS)

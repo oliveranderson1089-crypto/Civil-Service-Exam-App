@@ -113,7 +113,7 @@ function lbRecent() {
   return `<div class="tab-gh">最近打开</div><div class="tv-rows">` + its.map(it => {
     const go = LB_OPEN[it.kind];
     const i = tbItem({ go: () => (go ? go(it.id) : null) });
-    return `<div class="tv-row" data-tbi="${i}">
+    return `<div class="tv-row" data-tbi="${i}" tabindex="0" role="button">
       <span class="td-dot"></span>
       <span class="tv-name">${esc(it.title)}</span>
       <span class="tv-tag">${esc(it.label)}</span>
@@ -225,7 +225,7 @@ function meHero() {
   const k2 = !st ? '' : (st.streak > 0
     ? `连续学习 <b>${st.streak}</b> 天 · 累计 ${st.total} 天`
     : '今天学一点，连续天数就从 1 开始');
-  return `<div class="td-hero" data-tbi="${tbItem({ go: () => openPlanLog() })}">
+  return `<div class="td-hero" data-tbi="${tbItem({ go: () => openPlanLog() })}" tabindex="0" role="button">
     ${ring}
     <div class="td-hero-t">
       <div class="td-hero-k">${esc(k1)}</div>
@@ -262,7 +262,7 @@ function meGroups() {
       ? [{ name: '管理后台', go: () => { location.href = '/admin'; }, dot: 'b' }]
       : []) },
   ].map(g => `<div class="tab-gh">${esc(g.name)}</div><div class="tv-rows">` + g.items.map(it => `
-    <div class="tv-row" data-tbi="${tbItem(it)}">
+    <div class="tv-row" data-tbi="${tbItem(it)}" tabindex="0" role="button">
       <span class="td-dot td-${it.dot}"></span>
       <span class="tv-name">${esc(it.name)}</span>
       ${it.badge ? `<span class="td-badge">${it.badge > 99 ? '99+' : it.badge}</span>` : ''}
@@ -290,5 +290,7 @@ async function meView() {
 }
 
 window.lbView = lbView;
+// 右侧随手栏的「最近打开」读这一份（宽屏才有；拿不到就那一段不出现）
+window.lbGet = () => lbData;
 window.meView = meView;
 window.openStars = openStars;

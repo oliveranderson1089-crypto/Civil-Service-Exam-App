@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, lsGet, lsSet, toast */
+/* global $, api, appConfirm, errMsg, lsGet, lsSet, toast */
 
 /* ================= 外观：头像 / 壁纸 =================
    壁纸铺在 body 上（fixed，不跟着滚），上面盖一层可调浓度的蒙版保证正文看得清。
@@ -69,7 +69,7 @@ document.addEventListener('change', async e => {
     SKIN[kind] = d.url + '?t=' + Date.now();      // 加时间戳，绕过缓存立刻看到新图
     applySkin(); renderSkinPrev();
     toast(kind === 'avatar' ? '头像已更换' : '壁纸已更换');
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 });
 $('#view-account').addEventListener('click', async e => {
   const del = e.target.closest('[data-skindel]');
@@ -81,7 +81,7 @@ $('#view-account').addEventListener('click', async e => {
     await api('/api/skin/' + kind, { method: 'DELETE' });
     SKIN[kind] = ''; applySkin(); renderSkinPrev();
     toast('已恢复默认');
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 });
 $('#skin-dim').addEventListener('input', e => {
   lsSet('skinDim', e.target.value);

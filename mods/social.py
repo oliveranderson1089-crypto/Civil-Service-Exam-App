@@ -2203,6 +2203,17 @@ _chat_listeners = {}
 _listeners_lock = threading.Lock()
 
 
+def listener_count():
+    """当前挂着的聊天 SSE 连接数。给后台「服务并发」那块读。
+
+    这个数就是**此刻被 SSE 占住的 waitress 线程数**（一条连接 = 一个阻塞线程，
+    最长活 300 秒）。线程池一共就那么大，池子见底的症状是整站变慢而不是报错，
+    日志里什么都不会有 —— 所以它必须有个能看见的刻度。
+    """
+    with _listeners_lock:
+        return sum(len(s) for s in _chat_listeners.values())
+
+
 def _notify_chat(user_id, payload):
     with _listeners_lock:
         qs = list(_chat_listeners.get(user_id, ()))

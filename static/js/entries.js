@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IN_APP, PAGE_SIZE, api, appConfirm, artEm, c, composing, esc, push, toast */
+/* global $, api, appConfirm, artEm, c, composing, errMsg, esc, IN_APP, PAGE_SIZE, push,
+   toast, uiError */
 
 /* ================= 成语 / 词语 ================= */
 let state = { filter: 'all', q: '', items: [], page: 1, pages: 1 };
@@ -15,6 +16,10 @@ let preview = null;
 function openIdiom() {
   state = { filter: 'all', q: '', items: [], page: 1, pages: 1 };
   $('#word-input').value = ''; $('#preview').classList.add('hidden'); $('#search').value = ''; preview = null;
+  // 筛选框每次进来都收回去（它和上面那个查询框长得像，展开着容易被当成查询框）
+  $('#search').classList.add('hidden');
+  $('#filter-btn').classList.remove('on');
+  $('#filter-btn').setAttribute('aria-expanded', 'false');
   document.querySelectorAll('#filters .chip').forEach(x => x.classList.toggle('active', x.dataset.f === 'all'));
   push({ view: 'idiom' });
   loadEntries();
@@ -36,7 +41,7 @@ async function doLookup() {
     $('#pv-ai').classList.remove('hidden');
     $('#pv-ai').textContent = d.found ? '🤖 AI 重新生成' : '🤖 AI 解释并收录';
     $('#preview').classList.remove('hidden'); $('#add-hint').textContent = '';
-  } catch (e) { $('#add-hint').textContent = ''; toast(e.message, true); }
+  } catch (e) { $('#add-hint').textContent = ''; toast(errMsg(e), true); }
 }
 async function doAiExplain() {
   if (!preview || !preview.word) return;
@@ -60,7 +65,7 @@ async function doAiExplain() {
     // 不隐藏按钮：不满意可反复重新生成
     toast(regen ? '已重新生成，不满意可再次点击' : '已解释并收录进词库，以后可直接查到');
     if (regen) loadEntries();  // 已收录的同名词条已被后端同步刷新，重载列表
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   finally { btn.disabled = false; btn.textContent = (preview && preview.found) ? '🤖 AI 重新生成' : '🤖 AI 解释并收录'; }
 }
 async function doSave() {
@@ -76,9 +81,13 @@ async function doSave() {
     toast('已收录：' + preview.word);
     $('#word-input').value = ''; $('#preview').classList.add('hidden'); preview = null;
     state.page = 1; loadEntries(); $('#word-input').focus();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 async function loadEntries() {
+  /* 三个容器**在 await 之前**取好。await 回来时页面可能已经不在了（返回、退出、
+     或者测试把 window 关了），那时 $() 里的 document 是 undefined。
+     首页的 tdLoad 早就是这个写法，这里跟上。 */
+  const listBox = $('#list'), emptyBox = $('#empty'), pagerBox = $('#pager');
   let url = '/api/entries?page=' + state.page + '&page_size=' + PAGE_SIZE + '&';
   if (state.filter === '成语' || state.filter === '词语' || state.filter === '词组') url += 'category=' + encodeURIComponent(state.filter) + '&';
   if (state.filter === 'star') url += 'starred=1&';
@@ -87,7 +96,13 @@ async function loadEntries() {
     const d = await api(url);
     state.items = d.items; state.page = d.page; state.pages = d.pages;
     renderEntries(); renderPager(d.total);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) {
+    // 只弹气泡的话，列表区是一片什么都没有的空白 —— 分不清「没收录」和「没拉到」
+    if (!listBox) return;                 // 页面已经不在了
+    emptyBox.classList.add('hidden');
+    pagerBox.classList.add('hidden');
+    listBox.innerHTML = uiError(e, () => loadEntries());
+  }
 }
 function renderEntries() {
   const box = $('#list');
@@ -144,14 +159,14 @@ $('#list').addEventListener('click', async e => {
   const id = btn.closest('.item').dataset.id;
   const it = state.items.find(x => x.id == id);
   if (btn.dataset.act === 'star') {
-    try { await api('/api/entries/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: !it.starred }) }); loadEntries(); } catch (err) { toast(err.message, true); }
+    try { await api('/api/entries/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: !it.starred }) }); loadEntries(); } catch (err) { toast(errMsg(err), true); }
   } else if (btn.dataset.act === 'del') {
     if (!(await appConfirm('删除「' + it.word + '」？'))) return;
-    try { await api('/api/entries/' + id, { method: 'DELETE' }); toast('已删除'); loadEntries(); } catch (err) { toast(err.message, true); }
+    try { await api('/api/entries/' + id, { method: 'DELETE' }); toast('已删除'); loadEntries(); } catch (err) { toast(errMsg(err), true); }
   } else if (btn.dataset.act === 'edit') {
     const note = await editNote('「' + it.word + '」的笔记', it.note || '');
     if (note === null) return;
-    try { await api('/api/entries/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) }); toast('已保存'); loadEntries(); } catch (err) { toast(err.message, true); }
+    try { await api('/api/entries/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) }); toast('已保存'); loadEntries(); } catch (err) { toast(errMsg(err), true); }
   }
 });
 $('#lookup-btn').onclick = doLookup;
@@ -165,6 +180,17 @@ $('#filters').addEventListener('click', e => {
 });
 let searchTimer;
 $('#search').addEventListener('input', e => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.q = e.target.value.trim(); state.page = 1; loadEntries(); }, 250); });
+/* 筛选框平时收成一枚放大镜（问题 10：这一页原来同屏三个输入框）。
+   点开就聚焦；收起时把筛选条件一起清掉 —— 留着一个看不见的过滤条件，
+   下次进来会以为「词条怎么少了一半」。 */
+$('#filter-btn').addEventListener('click', () => {
+  const box = $('#search'), btn = $('#filter-btn');
+  const open = box.classList.toggle('hidden') === false;
+  btn.classList.toggle('on', open);
+  btn.setAttribute('aria-expanded', String(open));
+  if (open) { box.focus(); return; }
+  if (state.q) { box.value = ''; state.q = ''; state.page = 1; loadEntries(); }
+});
 $('#pg-prev').onclick = () => goPage(state.page - 1);
 $('#pg-next').onclick = () => goPage(state.page + 1);
 /* 导出 PDF */
@@ -194,5 +220,5 @@ $('#ex-go').onclick = async () => {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1500);
     $('#export-modal').classList.add('hidden'); toast('PDF 已生成');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };

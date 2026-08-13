@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, api, appConfirm, artEm, c, esc, matBoard, openViewerUrl, push, qz, render, toast */
+/* global $, api, appConfirm, artEm, c, errMsg, esc, IC, matBoard, openViewerUrl, push, qz,
+   render, toast, uiError */
 
 /* ================= 题库：模拟卷 / 题目解析 ================= */
 function openQuiz() {
@@ -39,7 +40,7 @@ async function openQuizSets() {
         <div class="poly-meta">${it.total} 题 · 已做 ${it.done}${it.done ? ` · 正确率 ${pct}%` : ''}</div>
       </div>`;
     }).join('');
-  } catch (e) { $('#qz-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#qz-list').innerHTML = uiError(e); }
 }
 
 /* ---- 题目解析：上传讲义 → 后台识题 → 生成含答案解析副本 ---- */
@@ -81,7 +82,7 @@ async function loadDocqa() {
     }).join('') : '<p class="empty">还没有解析任务。上传一份讲义，AI 会把里面没答案的例题解出来。</p>';
     clearInterval(dqPoll);
     if (running) dqPoll = setInterval(loadDocqa, 4000);     // 有任务在跑就轮询进度
-  } catch (e) { $('#dq-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#dq-list').innerHTML = uiError(e); }
 }
 $('#dq-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-dqdel]');
@@ -89,7 +90,7 @@ $('#dq-list').addEventListener('click', async e => {
     e.stopPropagation();
     if (!(await appConfirm('删除这条解析记录？（资料库里的文件不会删）'))) return;
     try { await api('/api/docqa/task/' + del.dataset.dqdel, { method: 'DELETE' }); loadDocqa(); }
-    catch (er) { toast(er.message, true); }
+    catch (er) { toast(errMsg(er), true); }
     return;
   }
   const t = e.target.closest('[data-dqt]');
@@ -118,7 +119,7 @@ async function openDocqaTask(tid) {
         <div class="slp-li hit">【答案】${esc(q.answer)}</div>
         <div class="slp-mat"><b>解析：</b>${esc(q.explain)}</div>
       </div>`).join('');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#dqd-files').addEventListener('click', e => {
   const b = e.target.closest('[data-dqopen]'); if (!b) return;

@@ -5,6 +5,7 @@
 
 import json
 import re
+import threading
 
 from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
@@ -17,6 +18,25 @@ from mods.aichat import _user_stats
 from mods.attach import ai_img_path
 
 bp = Blueprint("aisession", __name__)
+
+# 正在流式回答的轮数。和聊天 SSE 一样，每一轮**占住一个 waitress 线程**直到生成结束
+# ——深度档走推理模型，一轮能占好几十秒。后台「服务并发」把这个数和聊天连接数加起来，
+# 才是线程池真实的占用情况。用锁是因为 waitress 是多线程的，+= 不是原子操作。
+_streaming = 0
+_streaming_lock = threading.Lock()
+
+
+def _streaming_delta(n):
+    """流式并发计数 ±1。包一层是为了不用在两处写 global —— 一处在生成器的
+    finally 里、一处在外层函数，散着写很容易改漏一边，漏掉 -1 那边计数就只增不减。"""
+    global _streaming
+    with _streaming_lock:
+        _streaming += n
+
+
+def streaming_count():
+    with _streaming_lock:
+        return _streaming
 
 
 @bp.get("/api/aichat/home")
@@ -611,7 +631,9 @@ def aichat_stream(cid):
                     log.warning("AI 对话中断后补存失败", exc_info=True)
             db.close()
             g._db = None      # teardown 会再 close 一次，别让它拿着已关的连接
+            _streaming_delta(-1)   # 客户端断开走的是 GeneratorExit，一样会到 finally
 
+    _streaming_delta(1)
     resp = Response(stream_with_context(gen()), mimetype="text/event-stream")
     resp.headers["Cache-Control"] = "no-cache"
     resp.headers["X-Accel-Buffering"] = "no"   # 别让中间代理攒着不发，那就白流式了

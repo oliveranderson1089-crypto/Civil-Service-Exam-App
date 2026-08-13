@@ -7,15 +7,14 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, SECTIONS, api, c, csBoard, csTopic,
-   draft, esc, loadCsBoard, loadDraft, loadEntries, loadPartyDict,
-   openAccount, openBoardKb, openChangkao, openChangshi, openCkBoard, openClassicDetail,
-   openClassics, openDoc, openDocqa, openDraft, openDrafts, openEssay,
-   openEssays, openGaikuo, openGongwen, openIdiom, openKb, openMaterials,
+/* global $, api, c, csBoard, csTopic, draft, errMsg, esc, loadCsBoard, loadDraft,
+   loadEntries, loadPartyDict, openAccount, openBoardKb, openChangkao, openChangshi,
+   openCkBoard, openClassicDetail, openClassics, openDoc, openDocqa, openDraft, openDrafts,
+   openEssay, openEssays, openGaikuo, openGongwen, openIdiom, openKb, openMaterials,
    openNews, openNewsItem, openNotebook, openNotes, openPartyDict, openPlanLog,
    openPolicyDoc, openPolicyDocs, openReview, openSection, openShenlun, openSucai,
-   openTasks, openThBoard, openTheory, openViewer, openWorkDetail, openWorks,
-   openWqDetail, openWrongq, openYyLib, push, state, tkSwitch, toast */
+   openTasks, openThBoard, openTheory, openViewer, openWorkDetail, openWorks, openWqDetail,
+   openWrongq, openYyLib, push, SECTIONS, state, tkSwitch, toast */
 
 /* ================= 全文搜索 ================= */
 let searchData = { q: '', filter: 'all', results: [] };
@@ -51,7 +50,7 @@ async function runSearch(q) {
       .map(f => ({ type: 'feature', title: f.name, snippet: f.desc, _open: f.open }));
     searchData.results = fhits.concat(d.results);
     renderSearch();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function hl(text, q) {
   const t = esc(text || '');
@@ -141,7 +140,7 @@ $('#search-results').addEventListener('click', async e => {
       const note = await api('/api/notes/' + r.id);
       openNotes();
       setTimeout(() => loadDraft(note), 120);
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { toast(errMsg(e), true); }
   } else if (r.type === 'wrongq') {
     openWqDetail(r.id);
   } else if (r.type === 'boardkb') {

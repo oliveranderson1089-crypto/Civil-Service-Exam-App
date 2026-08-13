@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DT_L, IC, api, appConfirm, appPrompt, artEm, c, esc, injectReadBtns, openClassicDetail, push, toast */
+/* global $, api, appConfirm, appPrompt, artEm, c, DT_L, errMsg, esc, IC, injectReadBtns,
+   openClassicDetail, push, toast, uiError */
 
 /* ================= 常考（高频考点合集） + 上位词 ================= */
 async function openChangkao() {
@@ -33,7 +34,7 @@ async function loadCkBoards() {
         <div class="hc-name">我的收藏</div>
         <div class="hc-desc">${nStar} 条 · 各模块收藏的都在这</div>
       </div>` + '</div>';
-  } catch (e) { $('#ck-boards').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#ck-boards').innerHTML = uiError(e); }
 }
 $('#ck-boards').addEventListener('click', e => {
   const c = e.target.closest('[data-ckb]'); if (c) openCkBoard(c.dataset.ckb);
@@ -82,7 +83,7 @@ async function openCkBoard(key) {
         ? `<span class="ckb-n">${days} 天</span>` +
           '<span class="ckb-tip">「今日复习 · 古诗」每天新出的诗自动收进来</span>' : '');
     renderCkList();
-  } catch (e) { $('#ckb-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#ckb-list').innerHTML = uiError(e); }
 }
 // 收藏是**各模块通用**的（key = "板块:id"）。成语/实词额外同步进「成语词语积累」——
 // 收藏就是为了拿去背，散在两处等于没收。
@@ -171,7 +172,7 @@ $('#ckb-list').addEventListener('click', async e => {
         toast('已取消收藏');
         if (ckBoard === '收藏') { openCkBoard('收藏'); return; }   // 收藏页里取消了就移走
       }
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     star.disabled = false;
     return;
   }
@@ -180,7 +181,7 @@ $('#ckb-list').addEventListener('click', async e => {
     e.stopPropagation();
     if (!(await appConfirm('从上位词库中删除这一组？'))) return;
     try { await api('/api/hyper/' + del.dataset.ckdel, { method: 'DELETE' }); openCkBoard('上位词'); }
-    catch (er) { toast(er.message, true); }
+    catch (er) { toast(errMsg(er), true); }
     return;
   }
   const it = e.target.closest('[data-cki]');
@@ -220,7 +221,7 @@ async function openCkStory(cid) {
     ckLoadExample(cid);          // 已经有例句就直接显示，不用点
     ckLoadConfuse(cid, true);
   } catch (e) {
-    $('#cd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>';
+    $('#cd-wrap').innerHTML = uiError(e);
   }
 }
 
@@ -314,7 +315,7 @@ async function openHyper(hid) {
     window.scrollTo(0, 0);
     injectReadBtns();
   } catch (e) {
-    $('#cd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>';
+    $('#cd-wrap').innerHTML = uiError(e);
   }
 }
 $('#ckb-ai').onclick = async () => {
@@ -325,5 +326,5 @@ $('#ckb-ai').onclick = async () => {
     const d = await api('/api/hyper/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: w.trim() }) });
     toast(d.cached ? '已在库中：' + d.hyper : '已收录：' + d.hyper);
     openCkBoard('上位词');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };

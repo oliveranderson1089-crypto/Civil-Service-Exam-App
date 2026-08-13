@@ -10,7 +10,7 @@
  * 零 AI 调用：题目全部来自 yy_items 里的成对错例（错句 + 改正 + 扣分理由），
  * 那批数据是从 71 篇自产范文里用格式检查器捞出来的，判据都有真题实证。
  */
-/* global $, api, artEm, esc, push, toast */
+/* global $, api, artEm, errMsg, esc, push, toast */
 
 let yeItems = [], yeIdx = 0, yeAnswered = [], yeDone = 0;
 
@@ -77,7 +77,7 @@ async function loadYyErr() {
     yeItems = d.items || []; yeIdx = 0; yeAnswered = []; yeDone = 0;
     $('#ye-bar').classList.toggle('hidden', !yeItems.length);
     yeRender();
-  } catch (e) { toast(e.message, true); $('#ye-body').innerHTML = '<p class="empty">出题失败</p>'; }
+  } catch (e) { toast(errMsg(e), true); $('#ye-body').innerHTML = '<p class="empty">出题失败</p>'; }
 }
 
 function openYyErr() {

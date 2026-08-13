@@ -11,18 +11,17 @@ from reportlab.platypus import (HRFlowable, Paragraph, SimpleDocTemplate, Spacer
                                 Table, TableStyle)
 
 from core import _truthy, get_db, uid
-from mods.pdfkit import PDF_FONT, ensure_pdf_font
+from mods.pdfkit import ensure_pdf_font
 
 bp = Blueprint("pdfexport", __name__)
 
 
 def build_pdf(entries, opts):
-    ensure_pdf_font()
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
                             topMargin=16 * mm, bottomMargin=16 * mm,
                             title="公考·成语词语积累")
-    f = PDF_FONT
+    f = ensure_pdf_font()
     st_title = ParagraphStyle("t", fontName=f, fontSize=20, leading=26, alignment=1, spaceAfter=2)
     st_sub = ParagraphStyle("s", fontName=f, fontSize=10, leading=14, alignment=1,
                             textColor=colors.grey, spaceAfter=10)

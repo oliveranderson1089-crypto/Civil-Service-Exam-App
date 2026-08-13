@@ -7,7 +7,7 @@
  * 空格子也要看得见：库里哪个文种、哪一块还没素材，正是这个页面该回答的问题。
  * 所以有素材的和没素材的都列，不做「没有就不显示」——那样看上去永远是齐的。
  */
-/* global $, api, artEm, esc, push, toast */
+/* global $, api, artEm, errMsg, esc, push, toast */
 
 let ylCats = [], ylKind = '';
 
@@ -88,7 +88,7 @@ async function ylOpenCell(dt, part) {
         <b>${esc(dt)}</b>${part ? ' · ' + esc(part) : ''}　${d.items.length} 条</div>
       ${d.items.length ? d.items.map(ylItemCard).join('')
         : '<p class="empty">这一格还没有素材。</p>'}`;
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 
 async function loadYyLib() {
@@ -98,7 +98,7 @@ async function loadYyLib() {
     ylCats = d.cats || []; ylKindCounts = d.kinds || {};
     $('#yl-total').textContent = d.total ? `共 ${d.total} 条素材` : '库里还没有素材';
     ylRenderCats();
-  } catch (e) { toast(e.message, true); $('#yl-body').innerHTML = '<p class="empty">加载失败</p>'; }
+  } catch (e) { toast(errMsg(e), true); $('#yl-body').innerHTML = '<p class="empty">加载失败</p>'; }
 }
 
 function openYyLib(dt) {

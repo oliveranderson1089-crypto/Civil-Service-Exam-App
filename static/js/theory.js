@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, api, c, emKey, esc,
-   push */
+/* global $, api, c, emKey, esc, IC, push, uiError */
 
 /* ================= 理论基础（马原/毛概/中特/习思想） ================= */
 async function openTheory() {
@@ -22,7 +21,7 @@ async function openTheory() {
         <div class="hc-name">${esc(b.short)}</div>
         <div class="hc-desc">${b.count} 条 · ${esc(b.desc)}</div>
       </div>`).join('') + '</div>';
-  } catch (e) { $('#th-boards').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#th-boards').innerHTML = uiError(e); }
 }
 $('#th-boards').addEventListener('click', e => {
   const c = e.target.closest('[data-thb]'); if (c) openThBoard(c.dataset.thb);
@@ -42,5 +41,5 @@ async function openThBoard(name) {
           <div class="cki-c">${emKey(it.content || '')}</div>
         </div>`).join('')}
       </div>`).join('');
-  } catch (e) { $('#thb-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#thb-list').innerHTML = uiError(e); }
 }

@@ -7,11 +7,11 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, emKey, esc, lsGet,
-   lsSet, push */
+/* global $, api, c, emKey, esc, lsGet, lsSet, push, uiError */
 
 /* ================= 党的创新理论学习词典（12371.cn） ================= */
-let pdCat = '全部', pdTimer = null;
+let pdCat = '全部', pdTimer = null, pdOffset = 0;
+const PD_PAGE = 60;    // 一屏取多少条。词条正文长，120 条就有 204KB；60 条约 100KB
 async function openPartyDict() {
   push({ view: 'partydict', title: '创新理论词典' });
   $('#pd-q').value = ''; pdCat = '全部';
@@ -23,16 +23,33 @@ async function openPartyDict() {
   } catch (e) { console.debug('[党建词典] 分类加载失败：%s', (e && e.message) || e); }
   loadPartyDict();
 }
-async function loadPartyDict() {
+function pdCard(it) {
+  return `<div class="pd-item"><div class="pd-term">${esc(it.term)}<span class="pd-tag">${esc(it.cat)}</span></div>
+        <div class="pd-body">${emKey(it.content)}</div></div>`;
+}
+/* more=true 是「加载更多」：往后接着取、追加渲染，不重画已经在屏幕上的卡片
+   （重画会把背诵模式翻开过的那些又盖回去）。切分类 / 改搜索词走 more=false，从头来。 */
+async function loadPartyDict(more) {
   const q = $('#pd-q').value.trim();
-  $('#pd-list').innerHTML = '<p class="empty">加载中…</p>';
+  if (!more) { pdOffset = 0; $('#pd-list').innerHTML = '<p class="empty">加载中…</p>'; }
   try {
-    const d = await api('/api/partydict?cat=' + encodeURIComponent(pdCat) + '&q=' + encodeURIComponent(q));
-    if (!d.items.length) { $('#pd-list').innerHTML = '<p class="empty">没有匹配的词条，换个关键词试试。</p>'; return; }
-    $('#pd-list').innerHTML = d.items.map(it =>
-      `<div class="pd-item"><div class="pd-term">${esc(it.term)}<span class="pd-tag">${esc(it.cat)}</span></div>
-        <div class="pd-body">${emKey(it.content)}</div></div>`).join('');
-  } catch (e) { $('#pd-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+    const d = await api('/api/partydict?cat=' + encodeURIComponent(pdCat) + '&q=' + encodeURIComponent(q)
+      + '&limit=' + PD_PAGE + '&offset=' + pdOffset);
+    if (!more && !d.items.length) { $('#pd-list').innerHTML = '<p class="empty">没有匹配的词条，换个关键词试试。</p>'; return; }
+    const html = d.items.map(pdCard).join('')
+      + (d.more ? '<button class="pd-more" data-pdmore="1">加载更多词条</button>' : '');
+    if (more) {
+      const btn = $('#pd-list').querySelector('.pd-more');
+      if (btn) btn.remove();
+      $('#pd-list').insertAdjacentHTML('beforeend', html);
+    } else {
+      $('#pd-list').innerHTML = html;
+    }
+    pdOffset += d.items.length;
+  } catch (e) {
+    if (more) { const btn = $('#pd-list').querySelector('.pd-more'); if (btn) { btn.disabled = false; btn.textContent = '加载更多词条'; } }
+    else { $('#pd-list').innerHTML = uiError(e); }
+  }
 }
 $('#pd-cats').addEventListener('click', e => {
   const b = e.target.closest('.pd-chip'); if (!b) return;
@@ -52,6 +69,8 @@ $('#pd-recite').onclick = () => {
   $('#pd-list').querySelectorAll('.pd-item.revealed').forEach(x => x.classList.remove('revealed'));
 };
 $('#pd-list').addEventListener('click', e => {
+  const more = e.target.closest('[data-pdmore]');
+  if (more) { more.disabled = true; more.textContent = '加载中…'; loadPartyDict(true); return; }
   if (!pdRecite) return;
   const it = e.target.closest('.pd-item'); if (it) it.classList.toggle('revealed');
 });

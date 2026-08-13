@@ -12,6 +12,13 @@ function cpSize(b) {
   return b + 'B';
 }
 
+/* 异地状态的中文说法。'off' 特意不叫「未启用」——那听着像一个可选功能，
+   而它实际的意思是「这些数据只有一份」。 */
+function offLabel(st) {
+  return { ok: '已同步', off: '数据只有一份', bad: '推送失败',
+           running: '上次没跑完', unknown: '状态未知' }[st] || '状态未知';
+}
+
 function cpBar(items, total) {
   return `<div class="cp-bar">` + items.map(i =>
     `<i class="${i.cls}" style="width:${total ? Math.max(0.5, i.v * 100 / total) : 0}%" title="${esc(i.label)} ${cpSize(i.v)}"></i>`
@@ -26,7 +33,7 @@ async function loadCapacity() {
     const r = await fetch('/api/admin/capacity', { cache: 'no-store' });
     const d = await r.json();
     if (!r.ok) { box.innerHTML = '<p class="ai-tip">读取失败：' + esc(d.error || '') + '</p>'; return; }
-    const s = d.states, b = d.backup, sz = d.sizes, dk = d.disk;
+    const s = d.states, b = d.backup, sz = d.sizes, dk = d.disk, off = d.offsite || {}, cc = d.conc || {};
     const used = sz.db + sz.uploads + sz.data + b.db_bytes + b.uploads_bytes + d.manual_bytes;
 
     const snapRows = d.manual_snaps.map(x =>
@@ -53,12 +60,45 @@ async function loadCapacity() {
             最新一份 ${cpSize(b.last_size)}。每天 03:30 自动跑，滚动保留 14 天。
             备份时已做 <code>integrity_check</code>，快照存在即校验通过。</div>
         </div>
+        <div class="ql-card ${s.offsite}">
+          <div class="ql-top"><span class="hl-dot ${s.offsite === 'bad' ? 'down' : s.offsite}"></span>
+            <b class="hl-name">异地副本</b>
+            <span class="pill ${s.offsite === 'ok' ? 'run' : 'fail'}">${esc(offLabel(off.state))}</span></div>
+          <div class="ql-num"><b>${esc(off.at || '—')}</b></div>
+          <div class="hl-note">${esc(off.note || '')}
+            ${off.snapshots ? `共 ${off.snapshots} 个远端快照${off.repo_bytes ? '，仓库 ' + cpSize(off.repo_bytes) : ''}。` : ''}
+            ${off.state === 'off' || off.state === 'unknown'
+              ? '本地快照和原始库在<b>同一块盘</b>上。配法见项目里的 <code>backup.env.example</code>。'
+              : ''}</div>
+        </div>
         <div class="ql-card ${s.disk}">
           <div class="ql-top"><span class="hl-dot ${s.disk === 'bad' ? 'down' : s.disk}"></span>
             <b class="hl-name">磁盘</b><span class="pill ${s.disk === 'ok' ? 'run' : 'fail'}">${dk.pct}%</span></div>
           <div class="ql-num"><b>${cpSize(dk.free)}</b> 可用 / ${cpSize(dk.total)}</div>
           <div class="hl-note">公考助手一共占 ${cpSize(used)}，其中备份和快照占了大头。</div>
         </div>
+        <div class="ql-card ${s.conc}">
+          <div class="ql-top"><span class="hl-dot ${s.conc === 'bad' ? 'down' : s.conc}"></span>
+            <b class="hl-name">服务并发</b>
+            <span class="pill ${s.conc === 'ok' ? 'run' : 'fail'}">${cc.pct}%</span></div>
+          <div class="ql-num"><b>${cc.free}</b> 空闲 / ${cc.total} 线程</div>
+          <div class="hl-note">此刻被长连接占住 <b>${cc.held}</b> 个：聊天推送 ${cc.chat_sse}、AI 流式 ${cc.ai_stream}。
+            一条长连接就占一个线程直到断开，池子空了之后<b>新请求只会排队、不会报错</b>——
+            所以这个数要有人看着。这不是缓存值，是此刻。</div>
+        </div>
+      </div>
+
+      <div class="ai-cfg" style="margin-top:12px;">
+        <p class="ai-tip" style="margin:0;"><b>没演练过的备份不算备份。</b>
+          备份 exit 0、校验通过、文件大小也对，都不能证明「这份东西能变回一个能用的应用」——
+          真出事的是快照里少了 uploads、config.json 没跟着走、恢复出来的库缺一张表导致首页 500。
+          每月跑一次这条命令，全绿才算这个月的备份是有效的：</p>
+        <div class="ql-fix" style="margin-top:10px;">
+          <code>cd ~/AppStore/apps/gongkao-app &amp;&amp; ./restore_drill.sh</code>
+          <button class="ubtn" data-copy="cd ~/AppStore/apps/gongkao-app && ./restore_drill.sh">复制</button>
+        </div>
+        <p class="ai-tip" style="margin:6px 0 0;">它会在临时目录里恢复、起一个实例（端口 8019）、走一遍真请求，跑完自动清理，全程不碰生产。
+          接了异地之后加 <code>--offsite</code> 演练真正该演练的那条路。</p>
       </div>
 
       <h3 class="st-h">占用构成</h3>

@@ -7,7 +7,9 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, IC, IS_MOBILE, KB, OFFICE_EXT, SECTIONS, api, appConfirm, artEm, c, composing, createDock, deskMsg, esc, fmtTime, iconFor, lsGet, lsSet, mdToHtml, openAI, openViewerUrl, push, stack, toast */
+/* global $, api, appConfirm, artEm, c, composing, createDock, deskMsg, errMsg, esc,
+   fmtTime, IC, iconFor, IS_MOBILE, KB, lsGet, lsSet, mdToHtml, OFFICE_EXT, openAI,
+   openViewerUrl, push, SECTIONS, stack, toast */
 
 /* ================= 小记（仿语雀） ================= */
 let curNoteBoard = '';
@@ -456,7 +458,7 @@ $('#cp-cancel').onclick = () => newDraft(true);
 $('#cp-del').onclick = async () => {
   if (!draft.id || !(await appConfirm('删除这条小记？'))) return;
   try { await api('/api/notes/' + draft.id, { method: 'DELETE' }); toast('已删除'); newDraft(true); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
-  catch (e) { toast(e.message, true); }
+  catch (e) { toast(errMsg(e), true); }
 };
 $('#cp-submit').onclick = async () => {
   const content = $('#cp-content').value.trim();
@@ -482,7 +484,7 @@ $('#cp-submit').onclick = async () => {
       await api('/api/notes', { method: 'POST', body: fd });
     }
     toast('已保存'); newDraft(true); loadFeed(); loadFeedTags(); refreshNoteCounts();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   $('#cp-submit').disabled = false;
 };
 
@@ -519,7 +521,7 @@ $('#ocr-file').addEventListener('change', async e => {
     draft.content = d.text || '';
     openComposerM();
     toast(d.text ? '识别完成，可编辑后发布' : '没识别到文字，可手动输入', !d.text);
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { toast(errMsg(err), true); }
 });
 function newNoteM(mode) {
   newDraft();
@@ -636,7 +638,7 @@ async function loadFeed() {
     $('#feed-empty').classList.add('hidden');
     box.innerHTML = items.map(feedCard).join('');
     box._items = items;
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function feedCard(n) {
   const todos = n.todos.length ? `<div class="fc-todos">${n.todos.map((t, i) =>
@@ -661,7 +663,7 @@ $('#feed').addEventListener('click', async e => {
       await api('/api/notes/' + tg.dataset.tg + '/todo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idx: +tg.dataset.ti, done: tg.checked }) });
       tg.closest('.fc-todo').classList.toggle('done', tg.checked);
       const it = (box._items || []).find(x => x.id == tg.dataset.tg); if (it) it.todos[+tg.dataset.ti].done = tg.checked;
-    } catch (err) { tg.checked = !tg.checked; toast(err.message, true); }
+    } catch (err) { tg.checked = !tg.checked; toast(errMsg(err), true); }
     return;
   }
   const ed = e.target.closest('[data-edit]');
@@ -670,7 +672,7 @@ $('#feed').addEventListener('click', async e => {
   if (dl) {
     if (!(await appConfirm('删除这条小记？'))) return;
     try { await api('/api/notes/' + dl.dataset.del, { method: 'DELETE' }); toast('已删除'); if (draft.id == dl.dataset.del) newDraft(true); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
-    catch (err) { toast(err.message, true); } return;
+    catch (err) { toast(errMsg(err), true); } return;
   }
   const fl = e.target.closest('[data-file]');
   if (fl) {
@@ -896,6 +898,6 @@ $('#qn-save').onclick = async () => {
     qnClose();
     toast('已记下');
     if ((stack[stack.length - 1] || {}).view === 'notes') { loadFeed(); refreshNoteCounts(); }
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
   b.disabled = false; b.textContent = '记下';
 };

@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, esc, mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, errMsg, esc, mdToHtml, push, stack, toast, uiError */
 
 /* ================= 古诗文速查（唐诗宋词·四书五经） ================= */
 const CLS_BADGE = { '唐诗': '#c0392b', '宋词': '#7b5ea7', '元曲': '#2c8c8c', '诗经': '#2f8060', '先秦': '#b08a1e', '汉魏六朝': '#8a6d3b', '明清': '#4a6785', '论语': '#1a6fb5', '孟子': '#1a6fb5', '大学': '#b08a1e', '中庸': '#b08a1e', '孙子兵法': '#9b2c22', '资治通鉴': '#5a4b8a', '增广贤文': '#2c7a5a' };
@@ -39,7 +39,7 @@ async function loadClsCats() {
       `<button class="chip active" data-cc="">全部${total ? ' ' + total : ''}</button>` +
       `<button class="chip" data-cc="__star">★ 收藏${d.star_count ? ' ' + d.star_count : ''}</button>` +
       d.categories.map(c => `<button class="chip" data-cc="${esc(c.name)}">${esc(c.name)} ${c.count}</button>`).join('');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#cls-daily').addEventListener('click', e => {
   const t = e.target.closest('[data-clsopen]'); if (t) openClassicDetail(+t.dataset.clsopen);
@@ -67,7 +67,7 @@ async function loadClassics() {
     const d = await api(url);
     clsState.pages = d.pages;
     renderClassics(d.items, d.total);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function renderClassics(items, total) {
   const box = $('#cls-list');
@@ -113,7 +113,7 @@ $('#cls-list').addEventListener('click', async e => {
       s.classList.toggle('on', on); s.textContent = on ? '★' : '☆';
       const it = ($('#cls-list')._items || []).find(x => x.id == id); if (it) it.starred = on;
       if (clsState.star && !on) loadClassics();   // 收藏页里取消收藏即移除
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const card = e.target.closest('.cls-item'); if (!card) return;
@@ -131,7 +131,7 @@ async function openClassicDetail(id) {
     stack[stack.length - 1].title = d.title;
     $('#top-title').textContent = d.title;
     renderCDetail();
-  } catch (e) { $('#cd-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#cd-wrap').innerHTML = uiError(e); }
 }
 function renderCDetail() {
   const d = cdData;
@@ -165,7 +165,7 @@ function renderCDetail() {
 $('#cd-wrap').addEventListener('click', async e => {
   if (e.target.closest('#cd-star')) {
     const on = !cdData.starred;
-    try { await api('/api/classics/' + cdData.id + '/star', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) }); cdData.starred = on; renderCDetail(); } catch (err) { toast(err.message, true); }
+    try { await api('/api/classics/' + cdData.id + '/star', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: on }) }); cdData.starred = on; renderCDetail(); } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const gen = e.target.closest('#cd-ai-btn') || e.target.closest('#cd-ai-regen');
@@ -175,7 +175,7 @@ $('#cd-wrap').addEventListener('click', async e => {
     try {
       const d = await api('/api/classics/' + cdData.id + '/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: regen }) });
       cdData.ai_explain = d.content; renderCDetail();
-    } catch (err) { toast(err.message, true); gen.disabled = false; gen.textContent = '🤖 AI 讲解'; }
+    } catch (err) { toast(errMsg(err), true); gen.disabled = false; gen.textContent = '🤖 AI 讲解'; }
   }
 });
 

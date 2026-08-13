@@ -114,5 +114,11 @@ def sucai_list():
     where, args = "", []
     if kind and kind != "全部":
         where = "WHERE kind=?"; args = [kind]
-    rows = db.execute("SELECT * FROM sucai_items %s ORDER BY date DESC, id LIMIT 400" % where, args).fetchall()
-    return jsonify({"items": [dict(r) for r in rows], "counts": counts})
+    # 分页取，理由同 partydict：原先一次 400 条 = 226 KB，进页面就得等它整份下完。
+    # 多取一条判断「还有没有」。
+    limit = max(1, min(int(request.args.get("limit") or 120), 400))
+    offset = max(0, int(request.args.get("offset") or 0))
+    rows = db.execute("SELECT * FROM sucai_items %s ORDER BY date DESC, id LIMIT ? OFFSET ?" % where,
+                      args + [limit + 1, offset]).fetchall()
+    return jsonify({"items": [dict(r) for r in rows[:limit]], "more": len(rows) > limit,
+                    "counts": counts})

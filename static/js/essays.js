@@ -7,8 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, esc, openSlPaper, push,
-   toast */
+/* global $, api, c, errMsg, esc, openSlPaper, push, toast, uiError */
 
 /* ================= 范文推荐（仿真卷 + 全套参考答案） ================= */
 let esKind = 'zuowen', esTopic = '', esPapers = [], esCur = null;
@@ -20,7 +19,7 @@ async function openEssays() {
     esPapers = d.papers;
     renderEsTopics();
     loadEssays();
-  } catch (e) { $('#es-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#es-list').innerHTML = uiError(e); }
 }
 function renderEsTopics() {
   $('#es-topics').innerHTML = `<button class="chip ${esTopic ? '' : 'active'}" data-est="">全部</button>`
@@ -53,7 +52,7 @@ async function loadEssays() {
         </div>
         <span class="bc-arrow">›</span>
       </div>`).join('');
-  } catch (e) { $('#es-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#es-list').innerHTML = uiError(e); }
 }
 $('#es-list').addEventListener('click', e => {
   const c = e.target.closest('[data-esid]'); if (c) openEssay(+c.dataset.esid);
@@ -76,7 +75,7 @@ async function openEssay(eid) {
       <div class="slr-wtag">${d.answer_words} 字 · 题目要求 ${d.word_min}-${d.word_max} 字</div>
       <div class="slr-reftext">${esc(d.answer).replace(/\n/g, '<br>')}</div>`;
     esdTab('q');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 function esdTab(t) {
   document.querySelectorAll('#esd-tabs .tk-tab').forEach(x => x.classList.toggle('active', x.dataset.esd === t));
@@ -91,5 +90,5 @@ $('#esd-practice').onclick = async () => {
     const d = await api('/api/essays/paper/' + esCur.paper_id + '/practice', { method: 'POST' });
     toast(d.existed ? '这套卷已经在你的真题卷里' : '已加入我的真题卷');
     openSlPaper(d.id);
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };

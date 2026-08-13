@@ -50,6 +50,7 @@ DL_RANGES
 DL_SCENE
 DL_SCENE_VB
 DL_STARS
+DL_TINT
 DL_TRAIL
 DOC
 DOCK_NAME
@@ -115,6 +116,7 @@ PAD_BGICON
 PAD_COLORS
 PAD_INK
 PAGE_SIZE
+PD_PAGE
 PL_MOD_COLOR
 POLY_COLOR
 QP_TABS
@@ -130,11 +132,17 @@ RV_INTERVALS
 RV_KIND
 RV_LNAME
 SC_COLOR
+SC_PAGE
 SECTIONS
 SECTION_EXTRA
 SECTION_FEATURES
 SHARE_ICON
 SKIN
+SR_CHEV
+SR_R_GO
+SR_R_MIN
+SR_R_OFF
+SR_R_OPEN
 SR_TYPE
 STATUS_OPTS
 ST_OPEN
@@ -198,6 +206,9 @@ _syncBusy
 _syncEditing
 _syncToken
 _themeMedia
+_uiAct
+_uiActs
+_uiSeq
 _viewerFull
 _wqlBox
 _wqlCtx
@@ -505,6 +516,7 @@ dlGrain
 dlGrainUrl
 dlGuardInk
 dlHex
+dlIconsApply
 dlInkFix
 dlIsDesk
 dlKbCovers
@@ -525,6 +537,9 @@ dlSame
 dlSceneColors
 dlSceneUrl
 dlSolid
+dlTintApply
+dlTintAt
+dlTintOn
 dlWasDesk
 doAiExplain
 doInsert
@@ -632,6 +647,7 @@ editNote
 emKey
 emojiTarget
 ensureNotifyPerm
+errMsg
 esCur
 esKind
 esPapers
@@ -765,6 +781,7 @@ hwStrokes
 hwT0
 hwTimer
 iconFor
+iconsRender
 init
 initials
 injectReadBtns
@@ -1094,11 +1111,16 @@ padTool
 padUndo
 padUp
 padW
+pdCard
 pdCat
+pdOffset
 pdRecite
 pdTimer
 pgInit
+pgQueue
+pgRaf
 pgScroll
+pgSync
 pickFriend
 pkgSize
 plDirty
@@ -1243,6 +1265,8 @@ saveDoc
 saveDraftLocal
 saveMatBoards
 scKind
+scLastDate
+scOffset
 searchData
 selBubHide
 setNtfDot
@@ -1283,6 +1307,12 @@ slType
 slUploadPaper
 slWords
 slrTab
+srRightFill
+srRightOn
+srRightSync
+srRow
+srWasOn
+srWasWide
 ssMid
 ssPage
 ssPrefetch
@@ -1319,6 +1349,7 @@ tbNav
 tbRailFill
 tbRailItems
 tbRailMark
+tbRailOpen
 tbRender
 tbReset
 tbRow
@@ -1334,10 +1365,13 @@ tdLoad
 tdPct
 tdRecalcProg
 tdRender
+tdRepaint
+tdReview
 tdSetDone
 tdTodo
 tdUpdates
 texToHtml
+tintRender
 tkItemsById
 tkMeId
 tkMembers
@@ -1352,6 +1386,8 @@ ttsEng
 ttsHas
 ttsSetup
 ttsVoice
+uiEmpty
+uiError
 upProg
 updModal
 updateChatBadge

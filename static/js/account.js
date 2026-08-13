@@ -7,9 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DESKTOP_VER, IN_APP, IS_DESKTOP, ME, api,
-   doLogout, esc, goHome, push, refreshNotifyBtn, renderSkinPrev,
-   toast, ttsSetup */
+/* global $, api, DESKTOP_VER, doLogout, errMsg, esc, goHome, IN_APP, IS_DESKTOP, ME, push,
+   refreshNotifyBtn, renderSkinPrev, toast, ttsSetup */
 
 /* ================= 账户 / 个人信息页 ================= */
 async function openAccount() {
@@ -32,7 +31,7 @@ async function openAccount() {
     renderSkinPrev();
     ttsSetup();
     refreshNotifyBtn();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 }
 $('#brand-logo').onclick = openAccount;
 $('#account-btn').onclick = openAccount;
@@ -44,7 +43,7 @@ $('#acct-email-save').onclick = async () => {
     const em = $('#acct-email-in').value.trim();
     $('#acct-email').textContent = em ? ('📧 ' + em) : '未绑定邮箱';
     toast('邮箱已保存');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 $('#acct-pw-save').onclick = async () => {
   const np = $('#acct-newpw').value;
@@ -52,14 +51,14 @@ $('#acct-pw-save').onclick = async () => {
   try {
     await api('/api/account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new_password: np, old_password: $('#acct-oldpw').value }) });
     $('#acct-oldpw').value = ''; $('#acct-newpw').value = ''; toast('密码已修改');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 $('#acct-sec-save').onclick = async () => {
   if (!$('#acct-seca').value.trim()) { toast('请输入密保答案', true); return; }
   try {
     await api('/api/account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sec_question: $('#acct-secq').value, sec_answer: $('#acct-seca').value }) });
     $('#acct-seca').value = ''; toast('密保已保存');
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { toast(errMsg(e), true); }
 };
 $('#acct-refresh').onclick = () => {
   if (window.GongkaoNative && window.GongkaoNative.reload) { try { window.GongkaoNative.reload(); return; } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ } }

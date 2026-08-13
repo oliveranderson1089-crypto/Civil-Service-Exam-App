@@ -7,9 +7,9 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, DL_ART, aiSheetClose, aiSideClose, applyPush, avoidFab, dlArtApply, dlArtAt, dlArtClock,
-   dlArtDark, dlArtHue, dlArtKey, dlArtMode, dlIsDesk, esc, loadAiHome, lsGet, lsSet,
-   toast */
+/* global $, aiSheetClose, aiSideClose, applyPush, avoidFab, DL_ART, dlArtApply, dlArtAt,
+   dlArtClock, dlArtDark, dlArtHour, dlArtHue, dlArtKey, dlArtMode, dlIconsApply, dlIsDesk,
+   dlTintApply, dlTintOn, esc, loadAiHome, lsGet, lsSet, toast */
 
 /* ================= 主题：日间 / 夜间 / 跟随系统 ================= */
 const _themeMedia = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -49,6 +49,9 @@ function applyTheme() {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = dark ? '#0f141e' : '#1a6fb5';
   if (window.__padTheme) window.__padTheme();      // 草稿纸墨色跟着日/夜间翻转（钩子在脚本末尾才挂，早期调用自动跳过）
+  /* 默认外观的天光底要跟着重算：它只在「日间 + 没开主题」时才上色，
+     而这两件事都可能刚刚在上面几行里变了。放最后，等 .dark 定下来。 */
+  if (window.dlTintApply) dlTintApply();
 }
 // 原生壳在系统深色模式切换时调用
 window.__onSysTheme = function (dark) { window.__sysDark = !!dark; applyTheme(); };
@@ -56,6 +59,7 @@ document.addEventListener('click', e => {
   const b = e.target.closest('.theme-opt'); if (!b || !b.dataset.theme) return;
   lsSet('theme', b.dataset.theme);
   applyTheme();
+  if (window.tintRender) tintRender();   // 夜间时天光底让位，那两格要跟着灰掉
   toast(b.textContent.trim() + ' 已应用');
 });
 if (_themeMedia) {
@@ -92,6 +96,7 @@ function artRenderPicker() {
   const hint = $('#art-scope-hint');
   if (hint) {
     hint.textContent = '给整个界面换一套美术方向：模块面、图标和壁纸一起变。不选就是现在的样子。'
+      + '下面的色块画的是**此刻**那一档。'
       + (desk ? `这 ${keys.length} 套是电脑端专用的，手机上另有一套清单。`
         : `这 ${keys.length} 套是手机端的，电脑上另有一套清单。`);
   }
@@ -107,7 +112,10 @@ function artRenderPicker() {
   });
   keys.forEach(key => {
     const T = DL_ART[key];
-    const v = dlArtAt(key, 13);                 // 一律用白昼那一档做预览，四格之间才可比
+    /* 预览画**当前时刻**那一档，不是白昼那一档。
+       原来固定取 13 点：晚上打开设置页，格子里是一派明亮的纸黄，选下去却是深蓝灰 ——
+       选之前和选之后不是一回事。四格之间仍然可比，因为它们取的是同一个时刻。 */
+    const v = dlArtAt(key, window.dlArtHour ? dlArtHour() : 13);
     let bg, dots;
     if (key === 'celadon') {
       // 釉底 + 釉青印、纸卡、墨：这三点就是"有色壁纸、无色正文"那句话的缩影
@@ -178,11 +186,71 @@ function artRenderClock() {
       : '主题固定成一套配色，日夜仍由上面的「外观」决定。';
   }
 }
+/* 图标风格那两格。选中态和「主题接管了」的提示都在这里刷；
+   真正切字形的是 body.icons-emoji（daylight.js 的 dlIconsApply 挂的）。 */
+function iconsRender() {
+  const row = $('#icons-row');
+  if (!row) return;
+  const cur = lsGet('icons') || 'line';
+  const taken = !!(window.dlArtMode && dlArtMode());
+  row.querySelectorAll('[data-icons]').forEach(b =>
+    b.classList.toggle('on', b.dataset.icons === cur));
+  row.classList.toggle('art-taken', taken);
+  const hint = $('#icons-hint');
+  if (hint) {
+    hint.textContent = taken
+      ? '主题风格自带一册图标，这两个按钮暂时不起作用 —— 回到「默认」外观就能选了。'
+      : (cur === 'emoji'
+        ? '界面里用系统的彩色 emoji。'
+        : '界面里用和顶栏、标签栏同一套的描边图标。');
+  }
+}
+window.iconsRender = iconsRender;
+
+/* 天光底那两格。开了美术主题、或者此刻是夜间，这一段就让位 ——
+   那两种情况下底色归别人管，摆一个点不动的开关只会让人以为坏了。 */
+function tintRender() {
+  const row = $('#tint-row');
+  if (!row) return;
+  const on = window.dlTintOn ? dlTintOn() : true;
+  const dark = document.body.classList.contains('dark');
+  const taken = !!(window.dlArtMode && dlArtMode()) || dark;
+  row.querySelectorAll('[data-tint]').forEach(b =>
+    b.classList.toggle('on', (b.dataset.tint === '1') === on));
+  row.classList.toggle('art-taken', taken);
+  const hint = $('#tint-hint');
+  if (hint) {
+    hint.textContent = taken
+      ? (dark ? '夜间本来就是「夜」那一档，这个开关暂时不起作用。'
+        : '主题风格自己按时刻取色，这个开关暂时不起作用。')
+      : (on ? '页面底色在一天里极缓地走一遍：清晨偏冷、黄昏一丝暖。幅度很小，只动底色。'
+        : '底色固定成中性灰。');
+  }
+}
+window.tintRender = tintRender;
+
 document.addEventListener('click', e => {
+  const tn = e.target.closest('[data-tint]');
+  if (tn) {
+    lsSet('dayTint', tn.dataset.tint);
+    if (window.dlTintApply) dlTintApply();
+    tintRender();
+    toast(tn.dataset.tint === '1' ? '底色跟随天光' : '底色已固定');
+    return;
+  }
+  const ic = e.target.closest('[data-icons]');
+  if (ic) {
+    lsSet('icons', ic.dataset.icons);
+    if (window.dlIconsApply) dlIconsApply();
+    iconsRender();
+    toast(ic.dataset.icons === 'emoji' ? '已换成彩色 emoji' : '已换成线描图标');
+    return;
+  }
   const a = e.target.closest('[data-art]');
   if (a) {
     lsSet(window.dlArtKey ? dlArtKey() : 'artTheme', a.dataset.art);   // 电脑/手机各记各的
     dlArtApply(); applyTheme(); artRenderPicker();
+    iconsRender(); tintRender();   // 开/关主题会夺走或交还图标和天光底的控制权
     toast(a.dataset.art ? (DL_ART[a.dataset.art].name + ' 已应用') : '已回到默认外观');
     return;
   }
@@ -194,6 +262,8 @@ document.addEventListener('click', e => {
   }
 });
 artRenderPicker();
+iconsRender();
+tintRender();
 
 /* ================= AI 面板的返回键 =================
    改版后 AI 只剩两层：会话抽屉开着 → 先收抽屉；否则关面板。

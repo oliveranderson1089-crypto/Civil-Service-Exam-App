@@ -1,5 +1,7 @@
 ? @resize
+document @click
 #crumb @click
+? @keydown
 #ad-ok .onclick
 #ad-alt .onclick
 #ad-cancel .onclick
@@ -99,6 +101,7 @@ document @keydown
 #save-btn .onclick
 #filters @click
 #search @input
+#filter-btn @click
 #pg-prev .onclick
 #pg-next .onclick
 #export-btn .onclick
@@ -528,6 +531,8 @@ document @click
 document @change
 #view-account @click
 #skin-dim @input
+? @scroll
+? @resize
 #pg-up .onclick
 #pg-dn .onclick
 #pg-end .onclick
@@ -558,6 +563,8 @@ document @keydown
 ? @resize
 #tabbar @click
 #siderail @click
+? @resize
+#siderail-r @click
 #st-chips @click
 #st-list @click
 #today-body @click

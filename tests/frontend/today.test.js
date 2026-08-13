@@ -127,7 +127,9 @@ test('聚合接口挂了给的是错误和重试，不是白屏', async (t) => {
   const h = boot({ fetch: () => new Error('后端 502') }); t.after(() => h.close());
   await h.run('tdLoad(true)');
   assert.match(txt(h), /502/);
-  assert.ok(body(h).querySelector('[data-td="retry"]'), '没给重试按钮，用户只能杀进程');
+  // 重试按钮改走全站共用的出错态（core.js 的 uiError，data-uigo）——
+  // 原来这一页自己写一份 .td-link[data-td=retry]，别处出错则什么都不画
+  assert.ok(body(h).querySelector('.ui-err [data-uigo]'), '没给重试按钮，用户只能杀进程');
 });
 
 test('叫「上次练习」不叫「接着做」：库里没有做到一半这个状态', async (t) => {

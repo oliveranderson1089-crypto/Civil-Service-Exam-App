@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, emKey, esc, isDocHeading, mdToHtml, push, stack, toast */
+/* global $, api, artEm, c, emKey, errMsg, esc, isDocHeading, mdToHtml, push, stack, toast,
+   uiError */
 
 /* ============= 经典著作（毛泽东选集） ============= */
 let wkData = null;
@@ -21,7 +22,7 @@ async function openWorks() {
         <div class="poly-t" style="font-size:15.5px">${it.ord + 1}. ${esc(it.title)}</div>
         <div class="poly-meta">${esc(it.book)} · 约 ${(it.chars / 1000).toFixed(1)} 千字${it.has_ai ? ' · <span class="poly-ai-on">' + artEm("✓") + ' 已有AI导读</span>' : ''}</div>
       </div>`).join('');
-  } catch (e) { $('#wk-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#wk-list').innerHTML = uiError(e); }
 }
 $('#wk-list').addEventListener('click', e => {
   const c = e.target.closest('[data-work]'); if (c) openWorkDetail(+c.dataset.work);
@@ -33,7 +34,7 @@ async function openWorkDetail(id) {
     const d = await api('/api/works/' + id); wkData = d;
     stack[stack.length - 1].title = d.title; $('#top-title').textContent = d.title;
     renderWork();
-  } catch (e) { $('#wk-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#wk-wrap').innerHTML = uiError(e); }
 }
 function renderWork() {
   const d = wkData;
@@ -60,5 +61,5 @@ $('#wk-wrap').addEventListener('click', async e => {
   try {
     const d = await api('/api/works/' + wkData.id + '/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: g.id === 'wk-regen' }) });
     wkData.interpretation = d.content; renderWork(); toast('已生成');
-  } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 生成 AI 导读'; }
+  } catch (err) { toast(errMsg(err), true); g.disabled = false; g.textContent = '🤖 生成 AI 导读'; }
 });

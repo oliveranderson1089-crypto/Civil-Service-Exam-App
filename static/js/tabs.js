@@ -13,15 +13,14 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, BOARD_FEATURES, ME, SECTIONS, api, artIcon, basicsFeats, esc, goHome, lbView, meView,
-   openBoardFeat, push, stack,
-   openAccount, openChangkao, openChangshi, openChat, openCkBoard, openClassics,
-   openDocqa, openDrafts, openDrill, openDrive, openDtest, openEssays, openExam,
-   openFanwen, openFind, openGaikuo, openGongwen, openIdiom, openKb, openMaterials,
-   openNews, openNotes, openPartyDict, openPlanLog, openPolicyDocs,
-   openQuiz, openQuizSets, openRealq, openReview, openSection, openShenlun,
-   openStars, openSucai, openTasks, openTheory, openVideos, openWorks, openWrite,
-   openWrongq, openYyErr, openYyLib */
+/* global $, api, artIcon, basicsFeats, BOARD_FEATURES, esc, goHome, lbGet, lbView, ME,
+   meView, openAccount, openBoardFeat, openChangkao, openChangshi, openChat, openCkBoard,
+   openClassics, openDocqa, openDrafts, openDrill, openDrive, openDtest, openEssays,
+   openExam, openFanwen, openFind, openGaikuo, openGongwen, openIdiom, openKb,
+   openMaterials, openNews, openNotes, openPartyDict, openPlanLog, openPolicyDocs,
+   openQuiz, openQuizSets, openRealq, openReview, openSection, openShenlun, openStars,
+   openSucai, openTasks, openTheory, openVideos, openWorks, openWrite, openWrongq,
+   openYyErr, openYyLib, pgSync, push, SECTIONS, stack, tdGet, tdRepaint */
 
 const TB_SVG = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 
@@ -263,7 +262,7 @@ function tbRow(it) {
   const i = tbItems.push(it) - 1;
   /* 标题**不能用 <b>**：夜间有条全局的 body.dark b{color:#f0c674!important}（正文着重用的金色），
      列表标题套上去会整片变金。应用里其他列表（.bc-name 等）也都是 span，这里跟着来。 */
-  return `<div class="board-card tab-row" data-tbi="${i}">
+  return `<div class="board-card tab-row" data-tbi="${i}" tabindex="0" role="button">
     <span class="tr-text"><span class="tr-n">${esc(it.name)}</span>${it.desc ? `<span class="tr-d">${esc(it.desc)}</span>` : ''}</span>
     ${it.stat ? `<span class="tr-stat ${esc(it.statTone || '')}">${esc(it.stat)}</span>` : ''}
     <span class="bc-arrow">›</span>
@@ -379,6 +378,16 @@ function tbGoGroup(key, name) {
   if (h && h.scrollIntoView) { try { h.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { /* 没实现就算了 */ } }
 }
 
+/* 左栏五组**只展开一组**（界面重构 P5）。
+   原来五组全铺开是 20+ 项，1440 高的窗口里 scrollHeight 1140 > clientHeight 1024，
+   进来就得滚 —— 一个常驻导航栏需要滚动，等于每次都要先找一下自己在哪。
+   展开的是**当前所在的那一组**，别的收起来；想去别处点一下组名就换过去。
+
+   收起来的组仍然可点（组名 = 那个标签页），所以折叠没有藏功能，
+   只是把「此刻用不到的十几行」暂时收走。 */
+const SR_CHEV = '<svg class="sr-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
+let tbRailOpen = '';          // 手动点开的那一组；空则跟着当前标签走
+
 function tbRailFill() {
   $('#siderail').innerHTML = TAB_DEFS.map(t => {
     const subs = tbRailItems(t).map((it, i) => {
@@ -387,17 +396,32 @@ function tbRailFill() {
         ${window.artIcon ? artIcon(it.icon, RAIL_ICON[it.icon] || '') : (RAIL_ICON[it.icon] || '')}<i>${esc(it.name)}</i>
         ${n ? `<span class="sr-bd">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
     }).join('');
-    return `<div class="sr-g-h" data-tb="${esc(t.key)}">${esc(t.name)}</div>`
-      + (subs || `<button class="sr-i" data-tb="${esc(t.key)}">${window.artIcon ? artIcon(t.key, t.icon) : t.icon}<i>${esc(t.name)}</i></button>`);
+    /* 组内条目的角标要冒到组头上：这一组收起来的时候，「今日复习还有 23 条」
+       不该跟着一起消失 —— 那正是你需要它提醒你的时候。 */
+    const tot = tbRailItems(t).reduce((a, it) => a + (it.badge ? it.badge() : 0), 0);
+    const head = `<button class="sr-g-h" data-tb="${esc(t.key)}" aria-expanded="false">${SR_CHEV}<i>${esc(t.name)}</i>`
+      + `${tot ? `<span class="sr-bd sr-bd-g">${tot > 99 ? '99+' : tot}</span>` : ''}</button>`;
+    if (!subs) {
+      return head.replace(' aria-expanded="false"', '').replace('class="sr-g-h"', 'class="sr-g-h sr-solo"')
+        .replace(SR_CHEV, '');
+    }
+    return head + `<div class="sr-g" data-srg="${esc(t.key)}">${subs}</div>`;
   }).join('');
   tbRailMark();
 }
-// 高亮：分组标题跟着当前标签，条目跟着当前视图
+/* 高亮 + 展开：分组标题跟着当前标签，条目跟着当前视图。
+   两件事同一个口径（栈里最近的那个标签页），所以放在一起算，
+   不然会出现「亮着的是练、展开的是积累」。 */
 function tbRailMark() {
   const rail = $('#siderail'); if (!rail) return;
   const t = [...stack].reverse().find(s2 => s2.view === 'tab');
   const cur = (stack.length <= 1 && (stack[0] || {}).view === 'home') ? 'today' : (t ? t.tab : '');
   rail.querySelectorAll('[data-tb]').forEach(b => b.classList.toggle('on', b.dataset.tb === cur));
+  const open = tbRailOpen || cur;
+  rail.querySelectorAll('.sr-g-h[data-tb]').forEach(b =>
+    b.setAttribute('aria-expanded', String(b.dataset.tb === open)));
+  rail.querySelectorAll('[data-srg]').forEach(g =>
+    g.classList.toggle('open', g.dataset.srg === open));
 }
 tbRailFill();
 
@@ -437,6 +461,15 @@ $('#siderail').addEventListener('click', e => {
     if (it && it.go) it.go();
     return;
   }
+  /* 单独点箭头 = 只展开、不跳转（想扫一眼别的组里有什么）。
+     点组名本身 = 跳过去，展开跟着当前标签自动发生，所以顺手把手动状态清掉。 */
+  const h = e.target.closest('.sr-g-h[data-tb]');
+  if (h && e.target.closest('.sr-chev')) {
+    tbRailOpen = (tbRailOpen === h.dataset.tb) ? '__none' : h.dataset.tb;
+    tbRailMark();
+    return;
+  }
+  tbRailOpen = '';
   tbNav(e);
 });
 
@@ -462,4 +495,118 @@ window.__tabView = function (view) {
     document.body.classList.toggle('has-rail', railOn);
     tbRailMark();
   }
+  srRightSync(view);
+  /* 翻页条要跟着重算：内容是异步来的，页面从「滚不动」变成「滚得动」的那一刻
+     既没有 scroll 也没有 resize，光靠那两个事件它会一直停在收起态。 */
+  if (window.pgSync) requestAnimationFrame(pgSync);
 };
+
+/* ================= 右侧「随手栏」（界面重构 P5） =================
+   1920 宽下内容列右边空着 296px，1440 下空 176px —— 那块地方一直在，只是没人用。
+   这里把它填成一栏常驻的「此刻还欠什么」：待办、今天进了什么新东西、最近打开过什么。
+
+   **不加接口**：三段数据首页和库页本来就在拉（/api/today、/api/lib/home），
+   这里只是把同一份再画一遍（tdGet / lbGet）。拿不到就整段不出现，
+   不摆骨架屏 —— 它是配角，为它闪一下不值得。
+
+   出现的条件比左栏严：左栏 206 是恒定成本，这一栏 250 只有在
+   「左栏 + 内容列 + 它」都摆得下（≥1360）时才划算，否则会把内容列挤窄。 */
+const SR_R_OFF = new Set(['doc', 'viewer', 'chat', 'notes', 'notebook', 'kb',
+  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest', 'slgrade', 'slpaper', 'writed']);
+
+function srRow(name, val, go) {
+  const i = tbItem({ go });
+  return `<button class="srr-row" data-tbi="${i}"><span class="srr-n">${esc(name)}</span>`
+    + (val ? `<span class="srr-v">${esc(String(val))}</span>` : '') + '</button>';
+}
+function srRightFill() {
+  /* 这个函数会在 await 之后被调到（tdLoad 拉完接口才喂它），那时页面**可能已经没了**：
+     用户点了返回、壳退出、或者测试把 jsdom 的 window 关掉了。
+     document 一没，$() 里的 document.querySelector 就是在 undefined 上取属性。
+     所有「await 之后才碰 DOM」的地方都该先问这一句。 */
+  if (typeof document === 'undefined' || !document) return;
+  const box = $('#siderail-r');
+  if (!box || box.classList.contains('hidden')) return;
+  const d = window.tdGet ? tdGet() : null;
+  const lb = window.lbGet ? lbGet() : null;
+  let html = '';
+  if (d) {
+    const rows = [];
+    const rv = tbBadge.review;
+    if (rv) rows.push(srRow('今日复习', rv, () => openReview()));
+    if (d.tasks && d.tasks.total) {
+      rows.push(srRow('任务清单', `${d.tasks.done}/${d.tasks.total}`, () => openTasks()));
+    }
+    if (d.plan && d.plan.total) {
+      rows.push(srRow('今日计划', `${d.plan.done}/${d.plan.total}`, () => openPlanLog()));
+    }
+    if (rows.length) html += '<div class="srr-h">待办</div>' + rows.join('');
+    const ups = d.updates || [];
+    if (ups.length) {
+      html += '<div class="srr-h">今日更新</div>'
+        + ups.map(u => srRow(u.name, '+' + u.n, () => { const f = SR_R_GO[u.go]; if (f) f(); })).join('');
+    }
+  }
+  const recent = (lb && lb.recent) || [];
+  if (recent.length) {
+    html += '<div class="srr-h">最近打开</div>'
+      + recent.slice(0, 4).map(it => srRow(it.title, '', () => {
+        const f = SR_R_OPEN[it.kind]; if (f) f(it.id);
+      })).join('');
+  }
+  box.innerHTML = html;
+  box.classList.toggle('srr-empty', !html);
+}
+// 「今日更新」和「最近打开」点进去分别是谁。key 跟 today.js 的 TD_GO / tabviews.js 的 LB_OPEN 对齐
+const SR_R_GO = {
+  news: () => openNews(), sucai: () => openSucai('全部'), fanwen: () => openFanwen(),
+  videos: () => openVideos(), gaikuo: () => openGaikuo(), changshi: () => openChangshi(),
+};
+const SR_R_OPEN = {
+  note: () => openNotes(), doc: () => openMaterials(), kb: () => openKb(),
+  draft: () => openDrafts(), drive: () => openDrive(),
+};
+/* 随手栏此刻是不是真的在屏幕上。
+   有两个条件：这一页允许出（srRightSync）+ 窗口够宽（CSS 的 1360 断点）。
+   首页要问这一句：待办和今日更新一旦进了随手栏，中间就不该再写一遍 ——
+   两栏并排显示同样三行，看着像出了 bug。 */
+const SR_R_MIN = 1360;
+function srRightOn() {
+  return document.body.classList.contains('has-rrail') && window.innerWidth >= SR_R_MIN;
+}
+window.srRightOn = srRightOn;
+
+/* 首页那两段（待办 / 今日更新）住哪一边，取决于随手栏此刻在不在。
+   而首页是**自己起跑的**（today.js 末尾直接 tdLoad()），它渲染的时候
+   has-rrail 还没挂上 —— 于是第一屏两边都画了一份。
+   所以这里每次改变随手栏的在/不在，都要回头让首页重画一次。 */
+let srWasOn = null;
+function srRightSync(view) {
+  const box = $('#siderail-r');
+  if (!box) return;
+  const on = !SR_R_OFF.has(view);
+  box.classList.toggle('hidden', !on);
+  document.body.classList.toggle('has-rrail', on);
+  if (on) srRightFill();
+  const now = srRightOn();
+  if (now !== srWasOn) {
+    srWasOn = now;
+    if (window.tdRepaint) tdRepaint();
+  }
+}
+/* 拖窗口跨过 1360 时，首页得重画一次：那两段要在中间和随手栏之间搬家。
+   只在**真的跨过**断点时重画，不然拖动过程中每一帧都在重排。 */
+let srWasWide = window.innerWidth >= SR_R_MIN;
+addEventListener('resize', () => {
+  const now = window.innerWidth >= SR_R_MIN;
+  if (now === srWasWide) return;
+  srWasWide = now;
+  srRightFill();
+  if (window.tdRepaint) tdRepaint();
+});
+$('#siderail-r').addEventListener('click', e => {
+  const r = e.target.closest('[data-tbi]'); if (!r) return;
+  const it = tbItems[+r.dataset.tbi];
+  if (it && it.go) it.go();
+});
+window.srRightFill = srRightFill;

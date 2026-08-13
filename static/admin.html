@@ -155,6 +155,54 @@
   .cp-snap span{flex:1 1 auto;min-width:0;word-break:break-all;font-family:ui-monospace,Menlo,monospace;}
   .cp-snap i{color:#a3abb6;font-style:normal;white-space:nowrap;}
   .cp-snap b{color:#2c3540;white-space:nowrap;}
+
+  /* ---- 使用观测 ---- */
+  /* 覆盖率轨道：实心=已做，浅色=照当前速度还能补上的，剩下的空白就是缺口。
+     缺口画成空白而不是另一根柱子——它本来就该是个缺口。 */
+  .ug-track{position:relative;height:18px;border-radius:20px;background:#eef1f5;overflow:hidden;}
+  .ug-track i{position:absolute;top:0;bottom:0;left:0;display:block;border-radius:20px;}
+  .ug-proj{background:#bcd9ef;}
+  .ug-done{background:#1a6fb5;}
+  .ug-tlegend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:9px;font-size:12.5px;color:#5a6b85;}
+  .ug-tlegend span{display:flex;align-items:center;gap:5px;}
+  .ug-tlegend em{width:9px;height:9px;border-radius:3px;display:inline-block;}
+  .ug-s1{background:#1a6fb5;} .ug-s2{background:#bcd9ef;}
+  .ug-s3{background:#eef1f5;box-shadow:inset 0 0 0 1px #d7dee7;}
+
+  /* 每日做题量。零的那天留一条底线，不是留白。 */
+  .ug-spark{display:flex;align-items:flex-end;gap:2px;height:86px;
+    border-bottom:1px solid var(--line);}
+  .ug-spark i{flex:1 1 0;min-width:0;background:#1a6fb5;border-radius:3px 3px 0 0;display:block;}
+  .ug-spark i.zero{height:2px !important;background:#dfe5ec;border-radius:0;}
+  .ug-sparkx{display:flex;justify-content:space-between;margin-top:5px;
+    font-size:11.5px;color:#a3abb6;font-family:ui-monospace,Menlo,monospace;}
+
+  /* 功能冷热表 */
+  .ug-table{background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:4px 14px;}
+  .ug-row{display:grid;grid-template-columns:14px minmax(0,1fr) 46px 52px 56px 74px auto;
+    align-items:center;gap:8px;padding:8px 0;font-size:13px;
+    border-bottom:1px solid var(--line);}
+  .ug-row:last-child{border-bottom:none;}
+  .ug-row.head{font-size:11.5px;color:#a3abb6;letter-spacing:.04em;}
+  .ug-row.head .ug-n,.ug-row.head .ug-last{text-align:right;}
+  .ug-dot{width:8px;height:8px;border-radius:50%;background:#cfd6df;}
+  .ug-row.hot .ug-dot{background:#2fa96a;}
+  .ug-row.cold .ug-dot{background:#e8a33d;}
+  .ug-row.dead .ug-dot,.ug-row.never .ug-dot,.ug-row.broken .ug-dot{background:#c0392b;}
+  .ug-name{min-width:0;display:flex;flex-direction:column;gap:1px;color:#2c3540;}
+  .ug-name i{font-style:normal;font-size:11.5px;color:#a3abb6;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ug-n{text-align:right;font-family:ui-monospace,Menlo,monospace;
+    font-variant-numeric:tabular-nums;color:#2c3540;}
+  .ug-last{text-align:right;font-size:12px;color:#5a6b85;white-space:nowrap;}
+  .ug-tag{font-size:11.5px;color:#5a6b85;white-space:nowrap;padding-left:4px;}
+  .ug-row.dead .ug-tag,.ug-row.never .ug-tag,.ug-row.broken .ug-tag{color:#c0392b;}
+  /* 窄屏：砍掉「最后一次」和状态词，三个数字列都留着——
+     数字才是这张表的正文，nth-of-type 那种按位置猜的写法容易数错列。 */
+  @media (max-width:640px){
+    .ug-row{grid-template-columns:14px minmax(0,1fr) 42px 48px 52px;}
+    .ug-last,.ug-tag{display:none;}
+  }
 </style>
 </head>
 <body>
@@ -169,6 +217,7 @@
     <button class="atab" data-v="stats">AI 用量</button>
     <button class="atab" data-v="quality">内容质检</button>
     <button class="atab" data-v="capacity">备份容量</button>
+    <button class="atab" data-v="usage">使用观测</button>
     <button class="atab" data-v="svc">服务</button>
     <button class="atab" data-v="ai">AI 设置</button>
     <button class="atab" data-v="asr">语音识别</button>
@@ -235,6 +284,21 @@
     </div>
   </div>
   <div id="cp-body"><p class="ai-tip">加载中…</p></div>
+</section>
+
+<section class="aview" id="v-usage">
+  <h2 class="view-title">使用观测</h2>
+  <div class="ai-cfg" style="margin-bottom:12px;">
+    <p class="ai-tip" style="margin:0 0 10px;">另外四块盯的都是<b>机器</b>干得怎么样。这一块盯的是<b>人</b>——
+      建了这么多东西，哪些你真的在用。判据不是「点开过几次」，是「留下了什么」：
+      做了一道题、收了一条词才算数。用途是<b>做减法</b>：哪些模块可以不再维护，
+      以及今天该不该把改代码的时间换成做题。</p>
+    <div class="svc-head">
+      <span class="grow"></span>
+      <button class="ubtn" id="ug-refresh">刷新</button>
+    </div>
+  </div>
+  <div id="ug-body"><p class="ai-tip">加载中…</p></div>
 </section>
 
 <section class="aview" id="v-ai">
@@ -732,5 +796,6 @@ document.querySelector('.anav').onclick = (e) => {
 <script src="js/admin-stats.js"></script>
 <script src="js/admin-quality.js"></script>
 <script src="js/admin-capacity.js"></script>
+<script src="js/admin-usage.js"></script>
 </body>
 </html>

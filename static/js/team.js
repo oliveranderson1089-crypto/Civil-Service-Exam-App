@@ -9,7 +9,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, ME, api, appConfirm, artEm, composing, esc, toast */
+/* global $, api, appConfirm, artEm, composing, errMsg, esc, ME, toast, uiError */
 let tkMembers = [], tkMeId = 0, tkItemsById = {};
 /* 先看组队状态：没组队 → 组队 UI；已组队 → 队头 + 互监清单 */
 async function loadShared() {
@@ -22,7 +22,7 @@ async function loadShared() {
     renderTeamHeader(t);
     $('#tk-board').classList.remove('hidden');
     await loadSharedBoard();
-  } catch (e) { $('#tk-team').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#tk-team').innerHTML = uiError(e); }
 }
 function renderTeamSetup(t) {
   const inc = (t.incoming || []).filter(r => r.kind === 'join').map(r => `
@@ -68,12 +68,12 @@ async function tmSearch() {
       <div class="tm-res"><span>${esc(u.name)} <i class="tm-uid">ID ${u.id}</i></span>
         ${u.in_team ? '<span class="tm-busy">已组队</span>' : `<button class="btn tiny primary" data-tminvite="${u.id}">邀请组队</button>`}</div>`).join('')
       : '<p class="empty">没找到这个账号</p>';
-  } catch (e) { $('#tm-results').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#tm-results').innerHTML = uiError(e); }
 }
 async function tmDisband() {
   if (!(await appConfirm('向搭档发出解散组队申请？对方同意后才会解散。'))) return;
   try { await api('/api/team/disband', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); toast('已发出解散申请'); loadShared(); }
-  catch (e) { toast(e.message, true); }
+  catch (e) { toast(errMsg(e), true); }
 }
 $('#tk-team').addEventListener('click', async e => {
   const inv = e.target.closest('[data-tminvite]');
@@ -85,7 +85,7 @@ $('#tk-team').addEventListener('click', async e => {
     else if (acc) { const r = await api('/api/team/request/' + acc.dataset.tmacc + '/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); toast(r.disbanded ? '已解散组队' : '已组队 🤝'); loadShared(); }
     else if (rej) { await api('/api/team/request/' + rej.dataset.tmrej + '/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadShared(); }
     else if (can) { await api('/api/team/request/' + can.dataset.tmcancel + '/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); loadShared(); }
-  } catch (er) { toast(er.message, true); }
+  } catch (er) { toast(errMsg(er), true); }
 });
 async function loadSharedBoard() {
   $('#tk-shared-list').innerHTML = '<p class="empty">加载中…</p>';
@@ -102,7 +102,7 @@ async function loadSharedBoard() {
     $('#tk-shared-list').innerHTML = d.items.length
       ? d.items.map(it => { tkItemsById[it.id] = it; return renderSharedItem(it); }).join('')
       : '<p class="empty">还没有共享待办，加一条大家一起监督～</p>';
-  } catch (e) { $('#tk-shared-list').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#tk-shared-list').innerHTML = uiError(e); }
 }
 // 渲染单条互监待办（打勾走乐观更新时，只重画这一条 → 不跳「加载中」、不回顶）
 function renderSharedItem(it) {
@@ -138,7 +138,7 @@ function shortName(n) { n = n || ''; n = n.split('@')[0]; return n.length > 6 ? 
 function initials(n) { n = (n || '').split('@')[0]; return n.slice(0, 4); }
 $('#tk-shared-list').addEventListener('click', async e => {
   const del = e.target.closest('[data-tsdel]');
-  if (del) { e.stopPropagation(); if (!(await appConfirm('删除这条共享待办？'))) return; try { await api('/api/shared_todos/' + del.dataset.tsdel, { method: 'DELETE' }); loadSharedBoard(); } catch (er) { toast(er.message, true); } return; }
+  if (del) { e.stopPropagation(); if (!(await appConfirm('删除这条共享待办？'))) return; try { await api('/api/shared_todos/' + del.dataset.tsdel, { method: 'DELETE' }); loadSharedBoard(); } catch (er) { toast(errMsg(er), true); } return; }
   const box = e.target.closest('[data-tsbox]'); if (!box) return;
   const tid = box.dataset.tsbox, who = +box.dataset.tsuser;
   if (who === tkMeId) { toast('自己不能给自己打勾，等搭档来确认 🤝', true); return; }
@@ -164,11 +164,11 @@ $('#tk-shared-list').addEventListener('click', async e => {
   } catch (er) {
     it.done_ids = snapIds; it.done_by_map = snapBy;
     replaceSharedItem(tid);
-    toast(er.message, true);
+    toast(errMsg(er), true);
   }
 });
 $('#tk-shared-add').onclick = async () => {
   const v = $('#tk-shared-in').value.trim(); if (!v) return;
-  try { await api('/api/shared_todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-shared-in').value = ''; loadSharedBoard(); } catch (e) { toast(e.message, true); }
+  try { await api('/api/shared_todos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: v }) }); $('#tk-shared-in').value = ''; loadSharedBoard(); } catch (e) { toast(errMsg(e), true); }
 };
 $('#tk-shared-in').addEventListener('keydown', e => { if (!composing(e) && e.key === 'Enter') $('#tk-shared-add').click(); });

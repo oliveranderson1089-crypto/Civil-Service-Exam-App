@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, esc, mdToHtml, push, rqStart, stack, toast */
+/* global $, api, artEm, c, errMsg, esc, mdToHtml, push, rqStart, stack, toast, uiError */
 
 /* ================= 机构讲义：优路精讲 / 三色速记 / 考点对照 =================
  *
@@ -114,7 +114,7 @@ async function openBasicsTree(board, source) {
   try {
     bkTree = await api('/api/basics/tree?board=' + encodeURIComponent(board) + '&source=' + source);
     renderBkTree();
-  } catch (e) { $('#bktree-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#bktree-wrap').innerHTML = uiError(e); }
 }
 
 function renderBkTree() {
@@ -163,7 +163,7 @@ async function openBasicsNode(id) {
         <div class="bk-head-t">${esc(d.title)}</div></div>
       ${bkBlocks(d.blocks, d.source_id)}${bkPractice(d.practice)}${nav}`;
     bkNodePr = d.practice;
-  } catch (e) { $('#bknode-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#bknode-wrap').innerHTML = uiError(e); }
 }
 
 $('#bknode-wrap').addEventListener('click', e => {
@@ -191,7 +191,7 @@ async function openBasicsCmp(board, repush) {
           <span class="bk-leaf-t">${esc(t.name)}</span>
           <span class="bk-leaf-n">${t.youlu ? '优路 ' + t.youlu : ''}${t.youlu && t.sanse ? ' · ' : ''}${t.sanse ? '三色 ' + t.sanse : ''}</span>
         </div>`).join('') || '<p class="empty">这个板块还没有对齐的考点</p>';
-  } catch (e) { $('#bkcmp-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#bkcmp-wrap').innerHTML = uiError(e); }
 }
 
 async function openBasicsTopic(tid) {
@@ -210,7 +210,7 @@ async function openBasicsTopic(tid) {
       <div class="bk-cmp">${side(d.youlu || [], 'bk-y', artEm('📘') + ' 优路 · 系统精讲')}
         ${side(d.sanse || [], 'bk-s', artEm('⚡') + ' 三色笔记 · 速记')}</div>${bkPractice(d.practice)}`;
     bkCmpPr = d.practice;
-  } catch (e) { $('#bkcmp-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  } catch (e) { $('#bkcmp-wrap').innerHTML = uiError(e); }
 }
 
 $('#bkcmp-wrap').addEventListener('click', e => {
@@ -230,7 +230,7 @@ async function openBoardKb(board) {
   push({ view: 'boardkb', title: board + ' · 基础知识点' });
   $('#bkb-wrap').innerHTML = '<p class="empty">加载中…</p>';
   try { const d = await api('/api/boardkb?board=' + encodeURIComponent(board)); bkbData = d; renderBkb(); }
-  catch (e) { $('#bkb-wrap').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; }
+  catch (e) { $('#bkb-wrap').innerHTML = uiError(e); }
 }
 function renderBkb() {
   const d = bkbData;
@@ -259,16 +259,16 @@ $('#bkb-wrap').addEventListener('click', async e => {
     try {
       const d = await api('/api/boardkb/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: bkbBoard, force: g.id === 'bkb-regen' }) });
       bkbData.ai = d.content; renderBkb(); toast('已生成');
-    } catch (err) { toast(err.message, true); g.disabled = false; g.textContent = '🤖 AI 生成基础知识点'; }
+    } catch (err) { toast(errMsg(err), true); g.disabled = false; g.textContent = '🤖 AI 生成基础知识点'; }
     return;
   }
   if (e.target.closest('#bkb-addbtn')) {
     const c = $('#bkb-input').value.trim(); if (!c) return;
-    try { const p = await api('/api/boardkb/point', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: bkbBoard, content: c }) }); bkbData.points.unshift({ id: p.id, content: c }); renderBkb(); } catch (err) { toast(err.message, true); }
+    try { const p = await api('/api/boardkb/point', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: bkbBoard, content: c }) }); bkbData.points.unshift({ id: p.id, content: c }); renderBkb(); } catch (err) { toast(errMsg(err), true); }
     return;
   }
   const del = e.target.closest('[data-bpdel]');
   if (del) {
-    try { await api('/api/boardkb/point/' + del.dataset.bpdel, { method: 'DELETE' }); bkbData.points = bkbData.points.filter(p => p.id != del.dataset.bpdel); renderBkb(); } catch (err) { toast(err.message, true); }
+    try { await api('/api/boardkb/point/' + del.dataset.bpdel, { method: 'DELETE' }); bkbData.points = bkbData.points.filter(p => p.id != del.dataset.bpdel); renderBkb(); } catch (err) { toast(errMsg(err), true); }
   }
 });
