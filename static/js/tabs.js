@@ -335,6 +335,9 @@ $('#tab-chips').addEventListener('click', e => {
 });
 
 $('#tab-groups').addEventListener('click', e => {
+  // 备考方向的切换按钮（「我的」页最上面那块）
+  const ln = e.target.closest('[data-line]');
+  if (ln) { if (window.switchLine) switchLine(ln.dataset.line); return; }
   const r = e.target.closest('[data-tbi]'); if (!r) return;
   const it = tbItems[+r.dataset.tbi];
   if (it && it.go) it.go();

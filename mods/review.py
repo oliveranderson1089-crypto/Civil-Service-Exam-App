@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request
 
 from core import get_db, log, uid
+from mods import line
 from mods.annots import _ann_sentence, _ann_where
 
 bp = Blueprint("review", __name__)
@@ -127,6 +128,7 @@ def _review_due(db, u, today):
             ("【步骤】" + r["steps"]) if r["steps"] else "",
             ("【答案】" + r["answer"]) if r["answer"] else ""] if x)
         check("wrongq", r["id"], r["created_at"], {
+            "board": r["board"] or "",          # 按备考方向过滤要用它
             "title": (r["question"] or "（图片错题）")[:36], "sub": r["qtype"] or r["board"] or "错题",
             "body": (r["points"] or "")[:90],
             "front": (r["question"] or "（图片错题）"), "front_sub": r["qtype"] or r["board"] or "错题",
@@ -303,6 +305,22 @@ def review_limits_set():
     return jsonify({"limits": cur})
 
 
+# 哪几副牌是**公考专属的积累**：成语词语、古诗、常考、素材、应用文错例、真题。
+# 它们的内容本身就是行测/申论的，社区那条线里出现只会挤掉真正该背的。
+# 批注（annot）两边都留：任何模块的正文都能划重点，社区的讲义也划得了。
+_GONGKAO_ONLY = {"entry", "classic", "changkao", "sucai", "gushi", "yy", "realq"}
+
+
+def _line_keep(it, ln):
+    """这张卡该不该出现在这条线的复习队列里。"""
+    kind = it.get("kind")
+    if kind == "wrongq":
+        return line.in_line(it.get("board") or "", ln)
+    if kind in _GONGKAO_ONLY:
+        return ln == line.GONGKAO
+    return True                      # 批注等：两条线都留
+
+
 @bp.get("/api/review/today")
 def review_today():
     today = datetime.now().strftime("%Y-%m-%d")
@@ -314,6 +332,11 @@ def review_today():
              "annot": 5, "wrongq": 6}
     # 组内排序：**已经在复习轮里的排前面**（stage>0 说明背过一遍了，别让它一直往后堆），
     # 然后才是新词。被上限截掉的不动 next_due —— 只是今天不出现，明天照样在。
+    # **按备考方向过滤**。切社区时，成语/古诗/素材/常考这些公考专属的积累不该出现 ——
+    # 三周后要考的是社工初级和社区建设，遗忘曲线把两门课的卡片交替推，哪门都记不牢。
+    # 数据一条不删：切回公考，它们原样都在（stage/next_due 全没动过）。
+    ln = line.current(db, uid())
+    due = [it for it in due if _line_keep(it, ln)]
     due.sort(key=lambda x: (order.get(x["kind"], 9), -int(x.get("stage") or 0), x["id"]))
     lim = _rv_limits(db, uid())
     pool = dict.fromkeys(RV_GROUPS, 0)

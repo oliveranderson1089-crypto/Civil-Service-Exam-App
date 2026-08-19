@@ -513,6 +513,66 @@ class Test题库对齐:
         assert rep["n_all"] == 2 and rep["n_ok"] == 1 and abs(rep["rate"] - 0.5) < 0.01
 
 
+class Test备考方向:
+    """两条线并存：切换只是视图开关，**数据一条不删**（用户明说考完社区还要接着考公）。"""
+
+    def _ln(self):
+        from mods import line
+        return line
+
+    def test_两条线的板块零交集(self):
+        L = self._ln()
+        assert not (L.line_boards(L.GONGKAO) & L.line_boards(L.SHEQU))
+
+    def test_手打的板块名按名字归队(self):
+        # 错题本里有用户自己打的名：一律「两边都显示」的话，社区线里会混进行测错题
+        L = self._ln()
+        assert L.guess_line("行测·数量关系") == L.GONGKAO
+        assert L.guess_line("言语理解") == L.GONGKAO          # 标准名的前缀
+        assert L.guess_line("社会工作实务（社区工作者）") == L.SHEQU
+
+    def test_认不出的板块两边都留(self):
+        # 因为我们的分类不认识它就把人家记的错题藏起来，是最糟的做法
+        L = self._ln()
+        assert L.guess_line("我自己瞎起的名字") == ""
+        assert L.in_line("我自己瞎起的名字", L.GONGKAO)
+        assert L.in_line("我自己瞎起的名字", L.SHEQU)
+
+    def test_SQL判据和Python判据同义(self, auth_client):
+        # 两处判据说不到一块去时，列表条数和统计数字会对不上，而且不报错
+        from core import DB
+        import sqlite3
+        L = self._ln()
+        con = sqlite3.connect(DB)
+        con.execute("DELETE FROM wrong_questions")
+        for b in ("常识判断", "社区知识", "行测·数量关系", "社会工作实务（社区工作者）", "怪名字"):
+            con.execute("INSERT INTO wrong_questions(user_id,board,question) VALUES(1,?,'x')", (b,))
+        con.commit()
+        for ln in (L.GONGKAO, L.SHEQU):
+            frag, args = L.sql_filter("board", ln, con)
+            got = {r[0] for r in con.execute(
+                "SELECT board FROM wrong_questions WHERE " + frag, args)}
+            want = {b for b in ("常识判断", "社区知识", "行测·数量关系",
+                                "社会工作实务（社区工作者）", "怪名字") if L.in_line(b, ln)}
+            assert got == want, (ln, got, want)
+        con.close()
+
+    def test_切换只改一个字段不动数据(self, auth_client):
+        from core import DB
+        import sqlite3
+        con = sqlite3.connect(DB)
+        before = con.execute("SELECT COUNT(*) FROM wrong_questions").fetchone()[0]
+        auth_client.post("/api/me/line", json={"line": "shequ"})
+        auth_client.post("/api/me/line", json={"line": "gongkao"})
+        after = con.execute("SELECT COUNT(*) FROM wrong_questions").fetchone()[0]
+        con.close()
+        assert before == after, "切换方向动了数据"
+
+    def test_不认识的方向名要拒绝(self, auth_client):
+        r = auth_client.post("/api/me/line", json={"line": "随便写的"})
+        assert r.status_code == 400
+
+
 class Test裁决台:
     def test_体检单只数客观题(self, auth_client, paper):
         # 主观题没有客观答案可校、压根不过这道闸；算进 todo 会显示成

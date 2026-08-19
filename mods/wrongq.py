@@ -21,7 +21,8 @@ import uuid
 
 from flask import Blueprint, jsonify, request, send_file
 
-from core import UPLOADS, get_db, uid
+from core import SQ_BOARDS, UPLOADS, get_db, uid
+from mods import line
 from mods.ai import _ai_call_or_error
 from mods.files import _no_script, _remove_file, _user_dir
 
@@ -29,6 +30,9 @@ bp = Blueprint("wrongq", __name__)
 
 
 WQ_BOARDS = ["常识判断", "资料分析", "判断推理", "数量关系", "政治理论", "言语理解与表达", "申论"]
+# 社区那条线的板块。AI 判板块时给哪一组，取决于**当前备考方向** ——
+# 社区的题让它在行测那七个里挑，只会挑出个最像的，然后这条错题永远出现在错板块下。
+WQ_BOARDS_SQ = list(SQ_BOARDS)
 # 来源标签：错题详情里显示「来自哪」，也用来决定能不能「回去重做这道题」
 WQ_SRC_NAME = {"realq": "历年真题", "drill": "专项练", "dtest": "巩固测试",
                "quiz": "题库模拟卷", "manual": "手动录入"}
@@ -96,20 +100,28 @@ def wq_upsert(db, user_id, kind, key, fields):
     return cur.lastrowid, True
 
 
-def _wq_analyze(question, answer=""):
+def _wq_analyze(question, answer="", ln=None):
+    """AI 判板块/题型/解法。**候选板块按当前备考方向给** —— 让社区的题在行测那
+       七个板块里挑，它只会挑个最像的，然后这条错题永远躺在错板块下面。"""
+    sq = (ln or "") == line.SHEQU
+    boards = WQ_BOARDS_SQ if sq else WQ_BOARDS
+    who = ("社区工作者招聘考试（社工初级/社区建设/基层治理/法律常识/党建）"
+           if sq else "公务员考试(行测/申论)")
+    eg = ("如：社会工作-通用过程、社区建设-居民自治、法律法规-民法典 等" if sq
+          else "如：资料分析-增长率、判断推理-类比推理、逻辑填空 等")
     prompt = (
-        "你是公务员考试(行测/申论)辅导老师。分析下面这道题"
+        "你是%s辅导老师。分析下面这道题" % who
         + ("（附我的作答或参考解析）" if answer else "")
         + "，只输出一个 JSON 对象（不要多余文字），字段如下：\n"
-        '{"board":"所属板块，取值之一：' + "/".join(WQ_BOARDS) + '",\n'
-        ' "qtype":"具体题型（如：资料分析-增长率、判断推理-类比推理、逻辑填空 等）",\n'
-        ' "points":"涉及的核心知识点",\n'
+        '{"board":"所属板块，取值之一：' + "/".join(boards) + '",\n'
+        + ' "qtype":"具体题型（%s）",\n' % eg
+        + ' "points":"涉及的核心知识点",\n'
         ' "method":"用到的公式或方法",\n'
         ' "skill":"解题技巧与易错点",\n'
         ' "steps":"清晰的解题步骤，分条，用\\n换行"}\n\n题目：\n' + question
         + (("\n\n我的作答/参考解析：\n" + answer) if answer else ""))
     reply, err = _ai_call_or_error(
-        [{"role": "system", "content": "你是公考辅导老师，只输出规范的 JSON 对象。"},
+        [{"role": "system", "content": "你是%s辅导老师，只输出规范的 JSON 对象。" % who},
          {"role": "user", "content": prompt}],
         temperature=0.3, max_tokens=1500, json_mode=True)
     if err:
@@ -149,12 +161,27 @@ def _get_wq(wid):
 
 @bp.get("/api/wrongq/boards")
 def wq_boards():
+    """板块清单与计数。**按当前备考方向过滤** —— 复习社区时一屏一半是行测题，
+       翻不动；而两条线的错题都还在库里，切回去一条不少。"""
     db = get_db()
-    rows = db.execute("SELECT board,COUNT(*) c FROM wrong_questions WHERE user_id=? "
-                      "GROUP BY board ORDER BY c DESC", (uid(),)).fetchall()
+    ln = line.current(db)
+    frag, largs = line.sql_filter("board", ln, db)
+    rows = db.execute("SELECT board,COUNT(*) c FROM wrong_questions WHERE user_id=? AND %s "
+                      "GROUP BY board ORDER BY c DESC" % frag, [uid()] + largs).fetchall()
+    one = lambda extra, a: db.execute(                                     # noqa: E731
+        "SELECT COUNT(*) c FROM wrong_questions WHERE user_id=? AND %s%s" % (frag, extra),
+        [uid()] + largs + a).fetchone()["c"]
+    # 另一条线还剩多少 —— 明写出来，免得以为错题丢了
+    other = "shequ" if ln == "gongkao" else "gongkao"
+    ofrag, oargs = line.sql_filter("board", other, db)
+    n_other = db.execute("SELECT COUNT(*) c FROM wrong_questions WHERE user_id=? AND %s "
+                         "AND NOT %s" % (ofrag, frag),
+                         [uid()] + oargs + largs).fetchone()["c"]
     return jsonify({"boards": [{"name": r["board"] or "未分类", "count": r["c"]} for r in rows],
-                    "total": db.execute("SELECT COUNT(*) c FROM wrong_questions WHERE user_id=?", (uid(),)).fetchone()["c"],
-                    "star": db.execute("SELECT COUNT(*) c FROM wrong_questions WHERE user_id=? AND starred=1", (uid(),)).fetchone()["c"]})
+                    "total": one("", []), "star": one(" AND starred=1", []),
+                    "line": ln, "line_name": line.LINES[ln]["short"],
+                    "other_line": other, "other_name": line.LINES[other]["short"],
+                    "other_count": n_other})
 
 
 @bp.get("/api/wrongq")
@@ -168,8 +195,13 @@ def wq_list():
         page = 1
     size = 10
     where, args = ["user_id=?"], [uid()]
+    # 指定了板块就按板块（那是用户自己点的，不该再被方向盖掉）；
+    # 没指定才按当前方向过滤。
     if board:
         where.append("board=?"); args.append(board)
+    else:
+        frag, largs = line.sql_filter("board", line.current(), get_db())
+        where.append(frag); args += largs
     if star:
         where.append("starred=1")
     if q:
@@ -200,7 +232,7 @@ def wq_create():
         return jsonify({"error": "请填写题目或上传图片"}), 400
     f = {"board": board, "qtype": "", "points": "", "method": "", "skill": "", "steps": ""}
     if do_ai and question:
-        res, err = _wq_analyze(question, answer)
+        res, err = _wq_analyze(question, answer, line.current())
         if res:
             for k, v in res.items():
                 if v:
@@ -295,7 +327,7 @@ def wq_reanalyze(wid):
         return jsonify({"error": "未找到"}), 404
     if not (r["question"] or "").strip():
         return jsonify({"error": "没有题目文字，请先填写题干或对图片做 OCR"}), 400
-    res, err = _wq_analyze(r["question"], r["answer"] or "")
+    res, err = _wq_analyze(r["question"], r["answer"] or "", line.current())
     if err:
         return err
     board = r["board"] or res.get("board") or ""

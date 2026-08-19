@@ -377,4 +377,16 @@ const SECTION_EXTRA = {
 };
 
 let ME = null, SECTIONS = [], IDIOM_BOARD = '', ALL_BOARDS = [];
+/* 备考方向。**只是个视图开关**：错题本、今日复习、每日测试、备考规划按它过滤，
+   两条线的数据一条不删 —— 考完社区还要回头接着考公。 */
+let LINE = { line: 'gongkao', lines: [], boards: [] };
+
+async function switchLine(want) {
+  if (!want || (LINE && LINE.line === want)) return;
+  try {
+    LINE = await api('/api/me/line', { line: want });
+    toast('已切到「' + ((LINE.lines.find(x => x.key === want) || {}).short || want) + '」备考');
+    location.reload();       // 首页、错题、复习、计划全都要按新方向重取，整页重来最省事也最不容易漏
+  } catch (e) { toast(errMsg(e), true); }
+}
 let stack = [];

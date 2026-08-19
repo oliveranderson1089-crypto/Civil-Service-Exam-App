@@ -260,7 +260,13 @@ function meGroups() {
   const t = d.tasks || {};
   const un = d.unread || {};
   const rv = (window.tbBadge && tbBadge.review) || 0;
+  /* 备考方向摆在最上面，而且要写清「切换不会丢数据」——
+     两条线的题目、错题、复习进度都留着，切回去一条不少。
+     不写这句的话，谁也不敢点。 */
+  const cur = (LINE.lines || []).find(x => x.key === LINE.line) || {};
+  const other = (LINE.lines || []).find(x => x.key !== LINE.line);
   return [
+    { name: '备考方向', line: true, items: [] },
     { name: '学习安排', items: [
       { name: '任务清单', go: () => openTasks(),
         tag: t.total ? `${t.done}/${t.total}` : '', dot: t.total && t.done >= t.total ? 'g' : 'b' },
@@ -280,7 +286,14 @@ function meGroups() {
     ].concat(ME && ME.is_admin
       ? [{ name: '管理后台', go: () => { location.href = '/admin'; }, dot: 'b' }]
       : []) },
-  ].map(g => `<div class="tab-gh">${esc(g.name)}</div><div class="tv-rows">` + g.items.map(it => `
+  ].map(g => g.line ? `<div class="tab-gh">${esc(g.name)}</div>
+      <div class="tv-line">
+        <div class="tv-line-cur"><b>${esc(cur.name || '公务员考试')}</b>
+          <span>${esc(cur.desc || '')}</span></div>
+        ${other ? `<button class="btn" data-line="${esc(other.key)}">切到「${esc(other.short)}」</button>` : ''}
+        <div class="tv-line-n">错题本、今日复习、每日测试、备考规划都按方向分开；
+          <b>切换不会丢任何数据</b>，两条线的记录都留着，随时切回来。</div>
+      </div>` : `<div class="tab-gh">${esc(g.name)}</div><div class="tv-rows">` + g.items.map(it => `
     <div class="tv-row" data-tbi="${tbItem(it)}" tabindex="0" role="button">
       <span class="td-dot td-${it.dot}"></span>
       <span class="tv-name">${esc(it.name)}</span>

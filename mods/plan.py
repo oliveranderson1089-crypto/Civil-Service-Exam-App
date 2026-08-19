@@ -9,6 +9,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from core import _mark_study, _study_stats, current_user, get_db, uid
+from mods import line
 from mods.ai import _ai_call_or_error
 from mods.review import RV_GROUP, RV_GROUPS, _review_due
 from mods.team import _my_team
@@ -22,6 +23,60 @@ PLAN_LINKS = ["review", "quiz", "changshi", "news", "sucai", "gaikuo",
 
 bp = Blueprint("plan", __name__)
 
+
+# 社区那条线的冲刺路线。**和 ROADMAP_40 并存、互不覆盖**（存在 plan_roadmap 的
+# 不同 line 行里）—— 用户明说了考完社区还要接着考公，那份 40 天的一个字都不动。
+#
+# 阶段划分的依据全部来自实测与公告，不是拍脑袋：
+#   · 卷面 60 客观 + 40 主观，主观占四成 —— 所以主观题从第一阶段就要动手，
+#     不能像公考那样把大作文留到后期；
+#   · 公告写明笔试内容是「社工初级 + 党建 + 社区建设 + 基层治理 + 法律常识 + 时政」，
+#     **没有行测** —— 所以整条路线里没有资料分析/数量关系那些；
+#   · 资中本地题两卷共 8 道、全出自招聘公告参数，是背了就一定拿得到的分，
+#     所以放在最后一周（记忆最新鲜的时候）。
+ROADMAP_SQ = {
+    "name": "24 天冲刺路线（资中社区专职工作者）",
+    "days": 24,
+    "rhythm": "考期只剩三周多，不设「打牢根基」那种慢热阶段：第一天就开始做题 + 写主观题。"
+              "每天固定「小测 20 题 + 到期复习 + 一道主观题」，周末不排新内容，只做整卷与订正。",
+    "priority": "社工初级（445 考点）＞ 社区建设与基层治理 ＞ 主观题骨架 ＞ 法律常识 ＞ 党建 ＞ 资中县情",
+    "priority_why": "公告点名「社会工作者职业资格考试初级知识」排在第一位，题库和考点树里它也最厚；"
+                    "主观题 40 分但骨架只有两种，练几次就能拿住，性价比极高；"
+                    "资中县情只有 8 道题的量，放最后突击最划算。",
+    "fixed": [
+        {"t": "每日小测 20 题（12 单选 + 4 多选 + 4 判断）", "link": "sqdtest",
+         "note": "题从 6531 道册子原题里出，先出你错过的，再出没做过的"},
+        {"t": "到期复习（遗忘曲线）", "link": "review",
+         "note": "做错的题第二天就会再见到；切到社区方向后，队列里只有社区的卡"},
+        {"t": "一道主观题（案例或公文）", "link": "sqsub",
+         "note": "按采分点逐条批改，「沾边」单独算一档 —— 骨架比辞藻值钱"},
+        {"t": "考点清单过一节", "link": "bk-shequ",
+         "note": "973 个考点，书→章→考点三层；社工初级那 445 个优先"},
+    ],
+    "phases": [
+        {"key": "S1", "name": "铺开面（第 1–8 天）", "d0": 1, "d1": 8,
+         "focus": "社工初级考点树过一遍 + 每天小测 20 题摸清哪块最弱。主观题**先只练列点**，"
+                  "不求成文 —— 先把两套骨架背下来。",
+         "quota": {"社会工作": 40, "社区知识": 30, "法律法规": 20, "党建党务": 10},
+         "accuracy": {"社会工作": "60%", "社区知识": "65%", "法律法规": "60%"},
+         "weekly": ["第 7 天：整卷背题模式做一套真题，只求把题型摸熟，不看分数"],
+         "output": "两套主观题骨架能默写；错题本立起来"},
+        {"key": "S2", "name": "补短板（第 9–17 天）", "d0": 9, "d1": 17,
+         "focus": "按错题分布死磕最弱的两块。多选题单独刷 —— 它「少选也是 0 分」，"
+                  "是最容易丢分的地方。主观题开始**完整成文**并逐点批改。",
+         "quota": {"社会工作": 30, "社区知识": 25, "法律法规": 25, "党建党务": 15, "公文写作": 15},
+         "accuracy": {"社会工作": "75%", "社区知识": "75%", "法律法规": "70%", "党建党务": "70%"},
+         "weekly": ["第 14 天：整卷模考一套（总倒计时、交卷才判分），按真实考场来"],
+         "output": "多选题正确率过半；案例分析能稳定拿到骨架分"},
+        {"key": "S3", "name": "收口（第 18–24 天）", "d0": 18, "d1": 24,
+         "focus": "错题三刷 + 资中专项突击 + 公文模板背熟。**不碰新题**，只把做过的错题清干净。",
+         "quota": {"错题重做": 60, "资中县情": 20, "公文写作": 20},
+         "accuracy": {"错题重做": "90%"},
+         "weekly": ["考前两天：资中专项速记卡全过一遍（招聘公告那 13 条是白送的分）",
+                    "考前一天：只看错题本和公文模板，不做新题"],
+         "output": "错题本清空；招聘公告参数张口就来；通知类公文能默写骨架"},
+    ],
+}
 
 ROADMAP_40 = {
     "name": "40 天冲刺路线（对标 140 分强度）",
@@ -140,7 +195,7 @@ def _plan_stats(db, today):
 
 @bp.get("/api/plan/profile")
 def plan_profile_get():
-    r = get_db().execute("SELECT * FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    r = get_db().execute("SELECT * FROM plan_profile WHERE user_id=? AND line=?", (uid(), line.current())).fetchone()
     d = dict(r) if r else None
     if d:
         d["days_left"] = _plan_days_left(d.get("exam_date"))
@@ -157,12 +212,15 @@ def plan_profile_set():
     except Exception:
         minutes = 120
     db = get_db()
-    db.execute("INSERT INTO plan_profile(user_id,exam,exam_date,minutes,weak,note,updated_at) "
-               "VALUES(?,?,?,?,?,?,datetime('now','localtime')) "
-               "ON CONFLICT(user_id) DO UPDATE SET exam=excluded.exam, exam_date=excluded.exam_date, "
-               "minutes=excluded.minutes, weak=excluded.weak, note=excluded.note, "
-               "updated_at=excluded.updated_at",
-               (uid(), exam, exam_date, minutes,
+    # 冲突键跟着主键走：现在是 (user_id, line)，两条备考线各存各的。
+    # 只写 user_id 的话，切到社区填一次考试日期就会把公考那条覆盖掉 ——
+    # 而用户明说了公考那套要留着。
+    db.execute("INSERT INTO plan_profile(user_id,line,exam,exam_date,minutes,weak,note,updated_at) "
+               "VALUES(?,?,?,?,?,?,?,datetime('now','localtime')) "
+               "ON CONFLICT(user_id,line) DO UPDATE SET exam=excluded.exam, "
+               "exam_date=excluded.exam_date, minutes=excluded.minutes, weak=excluded.weak, "
+               "note=excluded.note, updated_at=excluded.updated_at",
+               (uid(), line.current(), exam, exam_date, minutes,
                 (d.get("weak") or "").strip()[:120], (d.get("note") or "").strip()[:200]))
     db.commit()
     return plan_profile_get()
@@ -172,7 +230,7 @@ def plan_profile_set():
 def plan_today():
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
-    p = db.execute("SELECT * FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    p = db.execute("SELECT * FROM plan_profile WHERE user_id=? AND line=?", (uid(), line.current())).fetchone()
     prof = dict(p) if p else None
     if prof:
         prof["days_left"] = _plan_days_left(prof.get("exam_date"))
@@ -223,7 +281,7 @@ def _plan_snapshot(db, date, note=""):
     if not rows:
         return
     items = [dict(r) for r in rows]
-    prof = db.execute("SELECT summary, summary_date FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    prof = db.execute("SELECT summary, summary_date FROM plan_profile WHERE user_id=? AND line=?", (uid(), line.current())).fetchone()
     summary = (prof["summary"] if prof and prof["summary_date"] == date else "") or note
     db.execute("INSERT INTO plan_log(user_id,date,summary,minutes_total,done_n,total,items_json) "
                "VALUES(?,?,?,?,?,?,?)",
@@ -235,7 +293,7 @@ def _plan_snapshot(db, date, note=""):
 
 def _roadmap_state(db):
     """今天在 40 天路线图的第几天、属于哪个阶段、今天的定额是多少。"""
-    r = db.execute("SELECT * FROM plan_roadmap WHERE user_id=?", (uid(),)).fetchone()
+    r = db.execute("SELECT * FROM plan_roadmap WHERE user_id=? AND line=?", (uid(), line.current())).fetchone()
     if not r:
         return None
     try:
@@ -276,16 +334,20 @@ def roadmap_start():
     d = request.get_json(silent=True) or {}
     db = get_db()
     start = (d.get("start_date") or datetime.now().strftime("%Y-%m-%d"))[:10]
-    days = max(7, min(120, int(d.get("days") or ROADMAP_40["days"])))
-    db.execute("INSERT INTO plan_roadmap(user_id,start_date,days,data_json) VALUES(?,?,?,?) "
-               "ON CONFLICT(user_id) DO UPDATE SET start_date=excluded.start_date, "
+    ln = line.current()
+    # 社区那条线剩不到四周，40 天的路线图套不上 —— 按实际剩余天数走，
+    # 阶段按比例压缩。公考那份 ROADMAP_40 原样不动。
+    plan = ROADMAP_SQ if ln == line.SHEQU else ROADMAP_40
+    days = max(7, min(120, int(d.get("days") or plan["days"])))
+    db.execute("INSERT INTO plan_roadmap(user_id,line,start_date,days,data_json) VALUES(?,?,?,?,?) "
+               "ON CONFLICT(user_id,line) DO UPDATE SET start_date=excluded.start_date, "
                "days=excluded.days, data_json=excluded.data_json, "
                "created_at=datetime('now','localtime')",
-               (uid(), start, days, json.dumps(ROADMAP_40, ensure_ascii=False)))
+               (uid(), ln, start, days, json.dumps(plan, ensure_ascii=False)))
     mins = d.get("minutes")
     if mins:
-        db.execute("UPDATE plan_profile SET minutes=? WHERE user_id=?",
-                   (max(20, min(720, int(mins))), uid()))
+        db.execute("UPDATE plan_profile SET minutes=? WHERE user_id=? AND line=?",
+                   (max(20, min(720, int(mins))), uid(), line.current()))
     db.commit()
     return jsonify({"roadmap": _roadmap_state(db)})
 
@@ -293,7 +355,7 @@ def roadmap_start():
 @bp.delete("/api/plan/roadmap")
 def roadmap_stop():
     db = get_db()
-    db.execute("DELETE FROM plan_roadmap WHERE user_id=?", (uid(),))
+    db.execute("DELETE FROM plan_roadmap WHERE user_id=? AND line=?", (uid(), line.current()))
     db.commit()
     return jsonify({"ok": True})
 
@@ -346,7 +408,7 @@ PLAN_SYS = ("你是公考备考规划师。只根据给出的「学情快照」�
 def plan_generate():
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
-    p = db.execute("SELECT * FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    p = db.execute("SELECT * FROM plan_profile WHERE user_id=? AND line=?", (uid(), line.current())).fetchone()
     if not p:
         return jsonify({"error": "请先填写备考信息（考试、日期、每天可学时长）"}), 400
 
@@ -435,8 +497,8 @@ def plan_generate():
                    (uid(), today, base + i, (x.get("title") or "").strip()[:120],
                     (x.get("module") or "").strip()[:20], mins,
                     (x.get("reason") or "").strip()[:200], link))
-    db.execute("UPDATE plan_profile SET summary=?, summary_date=? WHERE user_id=?",
-               ((d.get("summary") or "").strip()[:200], today, uid()))
+    db.execute("UPDATE plan_profile SET summary=?, summary_date=? WHERE user_id=? AND line=?",
+               ((d.get("summary") or "").strip()[:200], today, uid(), line.current()))
     _sync_plan_to_shared(db, today)      # 同步进互监待办，方便搭档监督
     db.commit()
     return jsonify(plan_today().get_json())
@@ -514,8 +576,8 @@ def plan_restore(log_id):
                     x.get("minutes") or 20, (x.get("reason") or "")[:200], x.get("link") or "",
                     1 if x.get("done") else 0, 1 if x.get("done") else 0))
     if r["summary"]:
-        db.execute("UPDATE plan_profile SET summary=?, summary_date=? WHERE user_id=?",
-                   (r["summary"].replace("【找回】", ""), today, uid()))
+        db.execute("UPDATE plan_profile SET summary=?, summary_date=? WHERE user_id=? AND line=?",
+                   (r["summary"].replace("【找回】", ""), today, uid(), line.current()))
     _sync_plan_to_shared(db, today)
     db.commit()
     return jsonify({"ok": True})

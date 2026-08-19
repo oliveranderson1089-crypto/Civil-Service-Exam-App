@@ -183,6 +183,7 @@ async function init() {
     const d = await api('/api/sections');
     SECTIONS = d.sections; IDIOM_BOARD = d.idiom_board;
     ALL_BOARDS = SECTIONS.flatMap(s => s.boards);
+    LINE = d.line || LINE;
   } catch (e) {
     // 拉不到基础数据（掉线 / 后端异常）：别把用户丢在空白首页，给个能重试的提示。
     // 未登录时 api() 已跳去 /login，不会走到这里。

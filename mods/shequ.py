@@ -20,6 +20,8 @@ from flask import Blueprint, jsonify, request
 from core import BASE, get_db, log, uid
 from mods import sqgrade, sqscore, timing
 from mods.ai import _ai_call_or_error
+from mods.review import REVIEW_INTERVALS
+from mods.wrongq import wq_upsert
 
 bp = Blueprint("shequ", __name__)
 
@@ -195,6 +197,10 @@ def submit():
         if r["part"] in sqscore.OBJ_PARTS and sqscore.servable(r):
             full += float(r["score"] or 0)
 
+    wrong_rows = [r for r in rows if r["part"] in sqscore.OBJ_PARTS and sqscore.servable(r)
+                  and str(r["id"]) in answers
+                  and not sqscore.is_correct(r["part"], answers[str(r["id"])], r["answer"])]
+    n_new = _to_wrongq(db, wrong_rows) if wrong_rows else 0
     cur = db.execute(
         "INSERT INTO sq_records(user_id,paper_id,mode,obj_score,obj_full,n_done,n_total,"
         "secs,detail) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -204,7 +210,7 @@ def submit():
     return jsonify({"id": cur.lastrowid, "obj_score": round(got, 1),
                     "obj_full": round(full, 1), "n_done": ndone,
                     "n_sub": sum(1 for x in detail if x["correct"] == -1),
-                    "detail": detail})
+                    "detail": detail, "to_wrongq": len(wrong_rows), "new_wrongq": n_new})
 
 
 @bp.get("/api/shequ/records")
@@ -340,6 +346,35 @@ def drill():
                     "rules": sqscore.RULE_TEXT})
 
 
+def _to_wrongq(db, rows):
+    """做错的社区题进错题本 + 排进今日复习。
+
+    和真题库那边走**同一张表、同一个 upsert、同一副遗忘曲线** —— 社区这条线不另起
+    一套本子，它只是 board 不同（错题本按备考方向过滤，见 mods/line.py）。
+    身份用 sq_questions.id：同一道题在整卷里做错、在专项练里也做错，收的是同一条。
+    """
+    n = 0
+    for r in rows:
+        opts = json.loads(r["options"] or "[]")
+        body = r["stem"] + ("\n" + "\n".join("%s. %s" % (c, o) for c, o in zip("ABCD", opts))
+                            if opts else "")
+        ans = r["answer"]
+        if r["part"] == "judge":
+            ans = "√ 正确" if ans == "T" else "× 错误"
+        wid, created = wq_upsert(db, uid(), "sq", str(r["id"]), {
+            "board": r["qtype"] or "社区知识",
+            "question": ("【%s】%s" % (sqscore.PART_NAME.get(r["part"], ""), body))[:2000],
+            "answer": "正确答案 %s。%s" % (ans, (r["explain"] or "")[:300]),
+            "qtype": sqscore.PART_NAME.get(r["part"], ""), "points": r["qtype"] or "",
+            "note": "来自社区练习"})
+        n += created
+        # 排进遗忘曲线：**做错的题第二天就该再见到**，不等下次碰运气抽到
+        db.execute("INSERT OR IGNORE INTO review_state(user_id,kind,item_id,stage,next_due) "
+                   "VALUES(?,'wrongq',?,0,date('now','localtime',?))",
+                   (uid(), wid, "+%d day" % (REVIEW_INTERVALS[0] if REVIEW_INTERVALS else 1)))
+    return n
+
+
 @bp.post("/api/shequ/drill/done")
 def drill_done():
     """交一组专项练。判分口径和整卷一模一样，走同一个 sqscore。"""
@@ -363,8 +398,94 @@ def drill_done():
         db.execute("INSERT INTO sq_attempts(user_id,qid,chosen,correct,secs,mode) "
                    "VALUES(?,?,?,?,?,'drill')",
                    (u, r["id"], str(chosen)[:16], 1 if ok else 0, 0))
+    wrong = [r for r in rows if not sqscore.is_correct(
+        r["part"], answers.get(str(r["id"]), ""), r["answer"])]
+    n_new = _to_wrongq(db, wrong) if wrong else 0
     db.commit()
-    return jsonify({"n": len(rows), "ok": got, "detail": detail})
+    return jsonify({"n": len(rows), "ok": got, "detail": detail,
+                    "to_wrongq": len(wrong), "new_wrongq": n_new})
+
+
+# ---------------------------------------------------------------- 每日测试
+# 卷面配额按真题的题型比例折算：真题 40/10/10 → 20 题就是 12/4/4。
+# **不让 AI 出题**：社区这条线已经有 6531 道册子原题，而这门考试考的是记没记住
+# 具体条文与做法，AI 现编的题在这上面不如原册可靠 —— 项目的老规矩「有真题就
+# 不许自己编题」在这儿同样适用，顺带一分钱 AI 都不花。
+SQ_DTEST_QUOTA = {"single": 12, "multi": 4, "judge": 4}
+
+
+@bp.get("/api/shequ/dtest")
+def sq_dtest():
+    """今天的小测。同一天重复打开给同一份卷子（做到一半退出去还能接着做）。"""
+    db, u = get_db(), uid()
+    today = date.today().isoformat()
+    row = db.execute(
+        "SELECT * FROM sq_records WHERE user_id=? AND mode='dtest' "
+        "AND substr(created_at,1,10)=? ORDER BY id DESC LIMIT 1", (u, today)).fetchone()
+    if row and row["detail"]:
+        ids = [x["qid"] for x in json.loads(row["detail"])]
+        if ids:
+            qs = {q["id"]: q for q in db.execute(
+                "SELECT * FROM sq_questions WHERE id IN (%s)" % ",".join("?" * len(ids)), ids)}
+            items = [_pub(qs[i], True) for i in ids if i in qs]
+            return jsonify({"date": today, "items": items, "done": row["n_done"] > 0,
+                            "record_id": row["id"], "rules": sqscore.RULE_TEXT})
+
+    picked = []
+    for part, k in SQ_DTEST_QUOTA.items():
+        rows = db.execute(
+            "SELECT q.*, "
+            "  (SELECT COUNT(*) FROM sq_attempts a WHERE a.qid=q.id AND a.user_id=?) tried, "
+            "  (SELECT MIN(a.correct) FROM sq_attempts a WHERE a.qid=q.id AND a.user_id=?) everwrong "
+            "FROM sq_questions q JOIN sq_papers p ON p.id=q.paper_id "
+            "WHERE %s AND %s AND q.part=? "
+            # 「巩固」两个字要对得起：**先出你错过的**，再出没做过的，最后才是做对过的
+            "ORDER BY CASE WHEN everwrong=0 THEN 0 WHEN tried=0 THEN 1 ELSE 2 END, RANDOM() "
+            "LIMIT ?" % (_BANK, SERVABLE), (u, u, part, k)).fetchall()
+        picked += list(rows)
+    if not picked:
+        return jsonify({"date": today, "items": [], "note": "题库还没灌进来"})
+    cur = db.execute(
+        "INSERT INTO sq_records(user_id,paper_id,mode,obj_score,obj_full,n_done,n_total,"
+        "secs,detail) VALUES(?,NULL,'dtest',0,?,0,?,0,?)",
+        (u, float(len(picked)), len(picked),
+         json.dumps([{"qid": r["id"]} for r in picked], ensure_ascii=False)))
+    db.commit()
+    return jsonify({"date": today, "items": [_pub(r, True) for r in picked],
+                    "done": False, "record_id": cur.lastrowid, "rules": sqscore.RULE_TEXT})
+
+
+@bp.post("/api/shequ/dtest")
+def sq_dtest_done():
+    """交今天的小测。判分口径、错题收集、遗忘曲线全走和别处同一套。"""
+    db, u = get_db(), uid()
+    d = request.get_json(silent=True) or {}
+    rid = int(d.get("record_id") or 0)
+    answers = d.get("answers") or {}
+    row = db.execute("SELECT * FROM sq_records WHERE id=? AND user_id=?", (rid, u)).fetchone()
+    if not row:
+        return jsonify({"error": "没有这份小测"}), 404
+    ids = [x["qid"] for x in json.loads(row["detail"] or "[]")]
+    rows = db.execute("SELECT * FROM sq_questions WHERE id IN (%s)"
+                      % ",".join("?" * len(ids)), ids).fetchall() if ids else []
+    detail, got = [], 0
+    for r in rows:
+        chosen = answers.get(str(r["id"]), "")
+        ok = sqscore.is_correct(r["part"], chosen, r["answer"])
+        got += 1 if ok else 0
+        miss, extra = sqscore.miss_and_extra(r["part"], chosen, r["answer"])
+        detail.append({"qid": r["id"], "part": r["part"], "chosen": chosen,
+                       "correct": 1 if ok else 0, "miss": miss, "extra": extra})
+        db.execute("INSERT INTO sq_attempts(user_id,qid,chosen,correct,secs,mode) "
+                   "VALUES(?,?,?,?,0,'dtest')", (u, r["id"], str(chosen)[:16], 1 if ok else 0))
+    wrong = [r for r in rows if not sqscore.is_correct(
+        r["part"], answers.get(str(r["id"]), ""), r["answer"])]
+    n_new = _to_wrongq(db, wrong) if wrong else 0
+    db.execute("UPDATE sq_records SET obj_score=?, n_done=?, detail=? WHERE id=?",
+               (float(got), len(detail), json.dumps(detail, ensure_ascii=False), rid))
+    db.commit()
+    return jsonify({"n": len(rows), "ok": got, "detail": detail,
+                    "to_wrongq": len(wrong), "new_wrongq": n_new})
 
 
 # ---------------------------------------------------------------- 主观题（40 分）

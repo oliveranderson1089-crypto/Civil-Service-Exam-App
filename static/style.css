@@ -6484,3 +6484,11 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
 .sq-drill-row:first-of-type{border-top:0;}
 .sq-drill-row .sq-rec-s{font-size:var(--fs-lg);}
 .sq-f-s.warn{color:var(--gold);}
+/* 备考方向切换（「我的」页最上面） */
+.tv-line{background:var(--card);border-radius:var(--r-md);padding:12px 14px;box-shadow:var(--shadow);}
+.tv-line-cur{display:flex;flex-direction:column;gap:1px;margin-bottom:10px;}
+.tv-line-cur b{font-size:var(--fs-lg);color:var(--text);}
+.tv-line-cur span{font-size:var(--fs-sm);color:var(--muted);}
+.tv-line-n{font-size:var(--fs-sm);color:var(--muted);line-height:1.7;margin-top:10px;
+  padding-top:9px;border-top:1px dashed var(--line);}
+.tv-line-n b{color:var(--text);}

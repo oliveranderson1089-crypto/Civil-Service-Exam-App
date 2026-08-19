@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from core import IDIOM_BOARD, SECTIONS, current_user, get_db, uid
+from mods import line
 
 bp = Blueprint("me", __name__)
 
@@ -69,7 +70,8 @@ def api_ui_order():
 
 @bp.get("/api/sections")
 def api_sections():
-    return jsonify({"sections": SECTIONS, "idiom_board": IDIOM_BOARD})
+    return jsonify({"sections": SECTIONS, "idiom_board": IDIOM_BOARD,
+                    "line": line.pub()})
 
 
 @bp.get("/api/account")
@@ -100,3 +102,14 @@ def api_account_update():
                     generate_password_hash(data["sec_answer"].strip().lower()), u["id"]))
     db.commit()
     return jsonify({"ok": True})
+
+
+@bp.post("/api/me/line")
+def me_line():
+    """切换备考方向。**只写一个字段，不动任何数据** —— 切过去切回来，
+       两条线的题目、错题、复习进度一条不少（用户明说了考完社区还要接着考公）。"""
+    d = request.get_json(silent=True) or {}
+    want = (d.get("line") or "").strip()
+    if not line.set_current(want):
+        return jsonify({"error": "不认识的备考方向"}), 400
+    return jsonify(line.pub())

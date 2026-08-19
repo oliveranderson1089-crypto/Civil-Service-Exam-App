@@ -101,6 +101,7 @@ KB_COVER_N
 LB_LINE
 LB_OPEN
 LB_TILES
+LINE
 MAT_BOARD_MAX
 MAT_COLORS
 MAT_HOT
@@ -1436,6 +1437,7 @@ stPaint
 stack
 state
 stripHtml
+switchLine
 syncSendState
 syncTabletUi
 sysIsDark

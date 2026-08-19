@@ -131,6 +131,42 @@ def _migrate_basic_sources_unique(con):
     log.info("basic_sources 唯一键已放宽到 (source,board,file_id)")
 
 
+def _migrate_plan_two_lines(con):
+    """备考规划与冲刺路线改成**每条备考线各一份**。
+
+    原来是「一个用户一行」（user_id 主键），加了社区那条线之后必须分开：两个考试
+    日期、两套配额，混在一行里排出来的计划自相矛盾。
+
+    **现有那行原样变成公考的**（line='gongkao'）—— 用户明说了「考公的路线不要直接
+    删除，等这 24 天之后接着继续考公」。id 与全部字段照抄，只多一列 line。
+    幂等：已经有 line 列就直接返回。
+    """
+    for table, extra in (("plan_profile",
+                          "exam TEXT, exam_date TEXT, minutes INTEGER DEFAULT 120, "
+                          "weak TEXT, note TEXT, "
+                          "updated_at TEXT DEFAULT (datetime('now','localtime')), "
+                          "summary TEXT, summary_date TEXT"),
+                         ("plan_roadmap",
+                          "start_date TEXT, days INTEGER DEFAULT 40, data_json TEXT, "
+                          "created_at TEXT DEFAULT (datetime('now','localtime'))")):
+        if "line" in _cols(con, table):
+            continue
+        cols = [c for c in _cols(con, table) if c != "user_id"]
+        con.executescript("""
+            CREATE TABLE {t}__new(
+                user_id INTEGER NOT NULL,
+                line TEXT NOT NULL DEFAULT 'gongkao',
+                {extra},
+                PRIMARY KEY(user_id, line)
+            );
+            INSERT INTO {t}__new(user_id, line, {cols})
+                SELECT user_id, 'gongkao', {cols} FROM {t};
+            DROP TABLE {t};
+            ALTER TABLE {t}__new RENAME TO {t};
+        """.format(t=table, extra=extra, cols=",".join(cols)))
+        log.info("%s 已按备考线拆行（老数据归入公考）", table)
+
+
 def _cols(con, table):
     return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
 
@@ -1258,6 +1294,7 @@ def init_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_msgs(conv_id, id)")
     _migrate_chat_convs(con)
     _migrate_basic_sources_unique(con)
+    _migrate_plan_two_lines(con)
     # 搜索走 LIKE 而不是 FTS5：FTS5 的 unicode61 不给中文切词（整串算一个 token），
     # trigram 又要求查询词至少 3 个字（搜「李萌」就废了）。这个库的消息量级下
     # LIKE 完全够快，而且不用维护触发器同步——中文场景这是更对的取舍，不是偷懒。
@@ -1547,6 +1584,10 @@ def init_db():
     # 所以进页面默认只看关注的地区 + 全国性公告。
     if "exam_follow" not in _cols(con, "users"):
         con.execute("ALTER TABLE users ADD COLUMN exam_follow TEXT")
+    if "exam_line" not in _cols(con, "users"):
+        # 备考方向（公考 / 社区）。**只是个视图开关**：切换不动任何题目、
+        # 错题与复习进度，随时切回来两边的记录一条不少。见 mods/line.py。
+        con.execute("ALTER TABLE users ADD COLUMN exam_line TEXT")
     # 备考规划：把 AI 给出的今日重点存下来，刷新后还能看到
     for col in ("summary", "summary_date"):
         if col not in _cols(con, "plan_profile"):
