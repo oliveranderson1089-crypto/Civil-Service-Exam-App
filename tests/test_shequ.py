@@ -255,6 +255,19 @@ class Test资中专项:
             for it in g["items"]:
                 assert it["src"] and it["year"], "有条目没带来源或年份：%r" % it
 
+    def test_题库册子不混进真题列表(self, auth_client, paper):
+        # 只排除「专项」而没排除后来加的「题库」时，75 份练习册全跑进了真题列表。
+        # 所以改成白名单：将来再加什么 kind 都不会漏进来。
+        from core import DB
+        import sqlite3
+        con = sqlite3.connect(DB)
+        con.execute("INSERT INTO sq_papers(id,file_id,name,year,kind,region) "
+                    "VALUES(8,9008,'社区概论练习1',0,'题库','通用')")
+        con.commit()
+        con.close()
+        d = auth_client.get("/api/shequ/overview").get_json()
+        assert "社区概论练习1" not in [p["name"] for p in d["papers"]]
+
     def test_专项卷不混进真题列表(self, auth_client, paper):
         from core import DB
         import sqlite3

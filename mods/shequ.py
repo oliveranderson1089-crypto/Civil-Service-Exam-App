@@ -25,6 +25,12 @@ bp = Blueprint("shequ", __name__)
 
 SERVABLE = sqscore.SERVABLE_SQL
 
+# 「真题」页只列真卷子。**用白名单不用黑名单**：这一版只排除了「专项」，
+# 后来加「题库」时忘了同步，结果 75 份练习册全跑进真题列表里显示成 77 份卷子。
+# 白名单的话，将来再加什么 kind 都不会漏进来。
+REAL_KINDS = ("招聘", "公开选聘")
+_REAL = "p.kind IN (%s)" % ",".join("'%s'" % k for k in REAL_KINDS)
+
 # 招聘公告的权威事实（build_zizhong.py 也读它）。日期从这儿取而**不是**从用户的
 # 「备考计划」里取：那个字段一个用户只有一个，填的是公考的日子；社区笔试是另一场，
 # 而且它的日期是公告定死的、对所有人一样，本来就不该让人自己填。
@@ -95,15 +101,15 @@ def overview():
         "  (SELECT COUNT(*) FROM sq_questions q WHERE q.paper_id=p.id "
         "     AND q.part IN ('single','multi','judge') AND q.verify<>'ok') n_doubt, "
         "  (SELECT COUNT(*) FROM sq_records r WHERE r.paper_id=p.id AND r.user_id=?) mine "
-        # 专项那份是**程序化生成**的练习集，不是真题卷：混在真题列表里会让人
-        # 以为资中考过三套卷。它有自己的入口（资中专项），从这儿排除掉。
-        "FROM sq_papers p WHERE COALESCE(p.kind,'')<>'专项' "
-        "ORDER BY p.year DESC" % SERVABLE, (u,)).fetchall()
+        # 专项（程序化生成）和题库（练习册）都不是真题卷，混进来会让人以为
+        # 资中考过七十几套。它们各有自己的入口（资中专项 / 专项练）。
+        "FROM sq_papers p WHERE %s "
+        "ORDER BY p.year DESC" % (SERVABLE, _REAL), (u,)).fetchall()
     # 考点分布：只统计发得出去的题，**不要拿库存充数**（库存满 ≠ 有题做）
     # 考点分布只统计真题：专项那 18 道是我们自己按公告造的，
     # 算进去会让「资中县情」这一格虚高，看不出真题的真实分布。
     real = ("FROM sq_questions q JOIN sq_papers p ON p.id=q.paper_id "
-            "WHERE COALESCE(p.kind,'')<>'专项' AND q.part IN ('single','multi','judge')")
+            "WHERE %s AND q.part IN ('single','multi','judge')" % _REAL)
     types = [dict(r) for r in db.execute(
         "SELECT q.qtype, COUNT(*) c %s AND %s GROUP BY q.qtype ORDER BY c DESC"
         % (real, SERVABLE))]
@@ -477,8 +483,8 @@ def doubts():
     rows = db.execute(
         "SELECT q.*, p.name paper_name, p.year FROM sq_questions q "
         "LEFT JOIN sq_papers p ON p.id=q.paper_id "
-        "WHERE q.part IN ('single','multi','judge') AND q.verify<>'ok' "
-        "ORDER BY q.paper_id, q.seq").fetchall()
+        "WHERE %s AND q.part IN ('single','multi','judge') AND q.verify<>'ok' "
+        "ORDER BY q.paper_id, q.seq" % _REAL).fetchall()
     out = []
     for r in rows:
         try:
@@ -498,7 +504,7 @@ def doubts():
         "  SUM(CASE WHEN COALESCE(q.verify,'')='' THEN 1 ELSE 0 END) todo "
         "FROM sq_papers p LEFT JOIN sq_questions q ON q.paper_id=p.id "
         "  AND q.part IN ('single','multi','judge') "
-        "GROUP BY p.id ORDER BY p.year DESC")]
+        "WHERE %s GROUP BY p.id ORDER BY p.year DESC" % _REAL)]
     return jsonify({"items": out, "health": health})
 
 
