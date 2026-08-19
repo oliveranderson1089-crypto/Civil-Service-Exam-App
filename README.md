@@ -141,6 +141,8 @@ sudo apt install tesseract-ocr tesseract-ocr-chi-sim poppler-utils qpdf libreoff
 打开 http://localhost:8011 ，**首次进入是注册页**（没有默认账号，第一个注册者即管理员）。
 
 > ⚠️ `app.db`（数据库）、`config.json`（密钥）、`uploads/`（用户文件）都在 `.gitignore` 里，**不在这个仓库中**，需要自己生成。
+> 安装包（`dist/gongkao.apk`、`dist/gongkao-win.zip`）同理——二进制每发一版就在 git 历史里永久留一整份，
+> 服务端是从文件系统发包的，包自己构建（`android/make_apk.sh`、`desktop/win/build_win.sh`）；仓库里只留几百字节的版本清单 `dist/*.json`。
 
 ---
 

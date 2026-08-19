@@ -2350,7 +2350,8 @@ gongkao-app/
 ├─ app.py                # 后端（Flask + waitress）：鉴权、各模块 API、AI 调用、PDF/OCR、消息中心
 ├─ static/               # 前端 SPA + PWA（Service Worker 离线缓存、pdf.js）
 ├─ android/              # 安卓 WebView 壳（Gradle 项目：app/src/main + make_apk.sh）
-├─ dist/gongkao.apk      # 构建好的安装包；dist/apk.json 供应用内更新比对版本
+├─ dist/                 # 构建好的安装包（apk / deb / win.zip，**大包不进仓库**，见 .gitignore）；
+│                        # dist/*.json 是版本清单，几百字节，照旧提交——应用内更新比对的就是它们
 │
 ├─ aiclient.py           # AI 模型的唯一真源：档位（fast/pro）→ 真实模型名、下线名纠正、探活自愈
 ├─ emergency.sh          # 应急自救：只要 bash + python3 + systemctl，不依赖 Web / venv / AI
@@ -2983,7 +2984,7 @@ AI 挂了、后台进不去、也没人能帮你改代码时用它。只依赖 b
 cd ~/AppStore/apps/gongkao-app/android
 # 改版本号：app/build.gradle 的 versionCode / versionName
 APK_NOTES="这次改了什么" ./make_apk.sh
-# 产物：dist/gongkao.apk + dist/apk.json（供应用内更新比对）
+# 产物：dist/gongkao.apk（不进仓库）+ dist/apk.json（版本清单，提交）
 ```
 > **已从手工构建迁移到 Gradle**（AGP 8.5.2 + Gradle 8.9 + JDK17）。`make_apk.sh` 跑 `:app:assembleRelease` 再复制产物、写 `apk.json`。标准项目布局 `app/src/main/{java,res,AndroidManifest.xml}`，`namespace` 与签名 keystore（`android/debug.keystore`，alias `gongkao`）都沿用，所以**新包签名与旧包一致、可直接覆盖安装**。
 > 迁 Gradle 只换"打包方式"，**界面和功能不变**（整个 UI 是 WebView 加载的网页）。好处是以后能一行加原生库（如离线手写 ML Kit）。旧的手工脚本保留为 `build_apk.sh.superseded` 仅作参考。
