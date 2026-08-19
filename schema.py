@@ -96,6 +96,41 @@ def _migrate_chat_convs(con):
                         "VALUES(?,?,?)", (cid, u, last))
 
 
+def _migrate_basic_sources_unique(con):
+    """basic_sources 的唯一键从 (source,board) 放宽到 (source,board,file_id)。
+
+    为什么非改不可：社区那条线**一个板块下有好几册**（「社会工作」板块就有考前 5 页纸、
+    考前 12 页纸、必记 66 条、考点资料四册）。旧约束下第二册插不进去，
+    而 INSERT OR IGNORE 会**默默地不插**，接着四册的原文全写进第一册那条 —— 
+    不报错，只是考点树少了四分之三。
+
+    SQLite 改不了约束，只能重建表。id 照抄（basic_nodes.source_id 指着它），
+    幂等：唯一索引已经是三列的就直接返回。
+    """
+    row = con.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='basic_sources'").fetchone()
+    if not row or "file_id" in (row[0] or "").split("UNIQUE")[-1]:
+        return                                    # 已经是新的了
+    if "UNIQUE(source, board)" not in row[0]:
+        return
+    con.executescript("""
+        CREATE TABLE basic_sources__new(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL, board TEXT NOT NULL, title TEXT,
+            file_id INTEGER, stored_name TEXT,
+            pages INTEGER DEFAULT 0, page_offset INTEGER DEFAULT 0, sha256 TEXT,
+            imported_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(source, board, file_id)
+        );
+        INSERT INTO basic_sources__new
+            SELECT id,source,board,title,file_id,stored_name,pages,page_offset,sha256,imported_at
+            FROM basic_sources;
+        DROP TABLE basic_sources;
+        ALTER TABLE basic_sources__new RENAME TO basic_sources;
+    """)
+    log.info("basic_sources 唯一键已放宽到 (source,board,file_id)")
+
+
 def _cols(con, table):
     return {r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
 
@@ -1208,6 +1243,7 @@ def init_db():
         con.execute("ALTER TABLE chat_msgs ADD COLUMN conv_id INTEGER")
     con.execute("CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_msgs(conv_id, id)")
     _migrate_chat_convs(con)
+    _migrate_basic_sources_unique(con)
     # 搜索走 LIKE 而不是 FTS5：FTS5 的 unicode61 不给中文切词（整串算一个 token），
     # trigram 又要求查询词至少 3 个字（搜「李萌」就废了）。这个库的消息量级下
     # LIKE 完全够快，而且不用维护触发器同步——中文场景这是更对的取舍，不是偷懒。

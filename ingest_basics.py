@@ -59,6 +59,52 @@ SANSE_TITLE = {"言语理解": "言语理解与表达", "判断推理": "判断�
 # ---------------------------------------------------------------- 正则
 # WPS 导出的 PDF 会在字之间塞空格（【 答 案 】、【例 2】都真实出现过），
 # 所有标记正则一律容忍内部空白。
+# 社区专职工作者那条线的速记资料（第三种形态，parse_shequ）。
+# **只收有文字层的**：四色笔记（117 页 / 76 页）和黄金考点（292 页）是纯扫描件，
+# 而资料自己就标着「有时间就看」—— 等 P5 批量 OCR 时再补，不为它们提前上 OCR。
+# 认文件名不认路径，和上面两套一个规矩：资料以后挪文件夹也不影响。
+SHEQU_BOARD = {
+    # 公告点名的核心：社工职业资格考试**初级**知识
+    "1.2024 初级社会工作者初级实务 考前5页纸（特别特别特别重要）.pdf": "社会工作",
+    "2.2024 初级实务考前12页纸（特别重要）.pdf": "社会工作",
+    "1.2026社会工作知识-必记66条知识点.pdf": "社会工作",
+    "5.社会综合能力与实务考点资料.pdf": "社会工作",
+    # 社区建设 / 基层治理
+    "【5】2026社区知识-高频考点集锦.pdf": "社区知识",
+    "【1】社区知识14页必背（三色笔记）.pdf": "社区知识",
+    "1.（重点）社区社会工作知识.pdf": "社区知识",
+    "2.社区建设与管理.pdf": "社区知识",
+    "3.社区居委会工作实用基础知识.pdf": "社区知识",
+    "4.社区基础治理.pdf": "社区知识",
+    # 法律常识
+    "7.信访工作条例.pdf": "法律法规",
+    "民法典考点整理.pdf": "法律法规",
+}
+SHEQU_ROOT = "内江资中县社区备考资料"
+
+# 章/部分：`第一章 社会工作实务的通用过程` / `第一部分 社会工作综合能力` /
+# `一、总则亮点`（民法典考点整理用的是这种）
+# `部分` 要整个吃掉：只写 `部` 的话「第一部分 社会工作综合能力」会被切成
+# 「第一部」+ 标题「分 社会工作综合能力」，多出一个「分」字。
+RE_SQ_SEC = re.compile(r"^[\s　]*第\s*([一二三四五六七八九十百零〇\d]+)\s*(部\s*分|[章编篇部])"
+                       r"[\s　]*[：:、.]?[\s　]*(.*)$")
+RE_SQ_SEC2 = re.compile(r"^[\s　]*([一二三四五六七八九十]{1,3})[、.．][\s　]*(\S.{2,28})$")
+
+# 考点行。这批资料**一册一个写法**，所以是一串模式按顺序试，不是一条正则包打天下：
+#   `1、会谈的主要任务：…`      考前 5 页纸 / 必记 66 条
+#   `4社会工作的重要目标：…`     社区知识 14 页必背（序号后面**没有分隔符**）
+#   `考点 3——遗失物拾得`         民法典考点整理
+#   `第一条 为了坚持和加强…`      信访工作条例（法规原文，条即考点）
+RE_SQ_PTS = [
+    re.compile(r"^[\s　]*\d{1,3}[、.．][\s　]*(.+)$"),
+    re.compile(r"^[\s　]*考点[\s　]*\d{1,3}[\s　]*[—－\-]{1,3}[\s　]*(.+)$"),
+    re.compile(r"^[\s　]*第[\s　]*([一二三四五六七八九十百零〇\d]+)[\s　]*条[\s　]+(.+)$"),
+    # 序号紧跟汉字、中间什么都没有。**必须要求下一个字符是汉字**，
+    # 否则「2020 年 5 月」这种正文行会被当成考点 2020。
+    re.compile(r"^[\s　]*(\d{1,3})(?=[\u4e00-\u9fa5])(.+)$"),
+]
+
+
 def _lax(s):
     """把 '【答案】' 变成能匹配 '【 答 案 】' 的正则。"""
     return r"\s*".join(re.escape(c) for c in s)
@@ -368,6 +414,116 @@ def parse_youlu(rows, board):
 
 
 # ---------------------------------------------------------------- 库
+def parse_shequ(rows, board, title=""):
+    """rows: [(page, text)] → (nodes, blocks)。第三种形态：**浓缩速记**。
+
+    这批资料（考前 5 页纸 / 必记 66 条 / 高频考点集锦）不像机构讲义那样有完整的
+    章节树，它们是「一条一个考点」的清单：
+
+        第一章 社会工作实务的通用过程          ← 章（level 1）
+        1、会谈的主要任务：界定问题、澄清角色…  ← 考点（level 2），冒号后面就是正文
+        2、会谈的技巧：主动介绍自己、治疗性沟通…
+
+    所以**序号行本身就是考点标题**，正文往往和标题挤在同一行 —— 这是它和优路讲义
+    最大的不同（那边标题独占一行、讲解在下面）。切法：冒号前当标题、冒号后当正文；
+    没有冒号就整行当标题、后续行当正文。
+
+    树是三层：**书 → 章 → 考点**。书名单独占一层，是因为社区这条线一个板块下有
+    好几册（「社会工作」板块就有四册），不分书的话四本的章节混成一棵树，
+    看不出这个考点是「考前 5 页纸」里的还是「必记 66 条」里的。
+    没有章的册子（高频考点集锦一路 1、2、3 编下去）自动补一个「全书」章节，
+    否则考点成了没爹的孤儿。
+    """
+    lines_all = []
+    for p, t in rows:
+        for ln in t.splitlines():
+            ln = RE_HDR_INLINE.sub(" ", ln.rstrip())
+            if ln.strip() and not RE_JUNK.match(ln):
+                lines_all.append((p, ln))
+
+    nodes, blocks = [], []
+    cur = {}
+    buf, page, span = [], 1, [None, None]
+
+    def flush():
+        nonlocal buf
+        host = max(cur.values(), key=lambda i: nodes[i]["level"]) if cur else None
+        if host is not None and buf:
+            md = "\n".join(buf).strip()
+            if md:
+                blocks.append({"node": host, "kind": "concept", "md": md,
+                               "page": span[0] or page, "page_to": span[1] or page})
+        buf.clear()
+        span[0] = span[1] = None
+
+    def add_node(level, title, pg):
+        parent = max((lv for lv in cur if lv < level), default=None)
+        nodes.append({"level": level, "title": (title or "").strip()[:80] or "（无标题）",
+                      "page": pg, "parent": cur.get(parent), "board": board,
+                      "sort": len(nodes)})
+        for lv in [lv for lv in cur if lv >= level]:
+            cur.pop(lv)
+        cur[level] = len(nodes) - 1
+
+    # 书名占第一层。标题里的「.pdf」和前面的编号去掉，树上读着才像书名。
+    book = re.sub(r"\.pdf$", "", title or board, flags=re.I)
+    book = re.sub(r"^[\s【】\d.、]*", "", book).strip() or board
+    add_node(1, book, 1)
+
+    for page, line in lines_all:
+        m = RE_SQ_SEC.match(line)
+        if m:
+            flush()
+            add_node(2, "第%s%s %s" % (m.group(1), m.group(2).replace(" ", ""),
+                                       m.group(3)), page)
+            continue
+        m2 = RE_SQ_SEC2.match(line)
+        if m2 and not re.search(r"[：:，,。；]", m2.group(2)):   # 带标点的多半是正文
+            flush()
+            add_node(2, "%s、%s" % (m2.group(1), m2.group(2).strip()), page)
+            continue
+        m, body = None, ""
+        for rx in RE_SQ_PTS:
+            m = rx.match(line)
+            if m:
+                g = m.groups()
+                # 法条那条有两个捕获组（条号 + 正文），标题要带上「第 N 条」
+                body = ("第%s条 %s" % (g[0], g[1])) if len(g) == 2 and rx is RE_SQ_PTS[2] \
+                    else (g[-1] if len(g) == 1 else "".join(g[1:]))
+                break
+        # 只有「序号 + 够长的标题」才算考点行：`1、2、3` 这种纯枚举、
+        # 以及正文里的「（1）」不能当成考点，否则一页能切出几十个空节点
+        if m and len(body.strip()) >= 4:
+            flush()
+            body = body.strip()
+            # 冒号前是考点名、冒号后是正文。
+            # 没冒号的整句（「了解服务对象的来源（主动、转介、外展）和类型…」）不能整条
+            # 当标题 —— 树节点会长到一行放不下。取首个短语当标题，整句照样进正文，
+            # 一个字都不丢。
+            cut = re.search(r"[：:]", body)
+            if cut:
+                head, tail = body[:cut.start()], body[cut.end():]
+            elif len(body) > 28:
+                brk = re.search(r"[（(，,、。]", body)
+                head = body[:brk.start()] if brk and brk.start() >= 4 else body[:24]
+                tail = body
+            else:
+                head, tail = body, ""
+            if 2 not in cur:                  # 没有章的册子：补一章，别让考点成孤儿
+                add_node(2, "全书", page)
+            add_node(3, head.strip() or body, page)
+            if tail.strip():
+                buf.append(tail.strip())
+                span[0] = span[1] = page
+            continue
+        if cur:
+            buf.append(line.strip())
+            span[0] = span[0] or page
+            span[1] = page
+    flush()
+    return nodes, blocks
+
+
 def nkey(board, level, title, dup, parent=""):
     """节点身份键：对齐结果（basic_map）挂在它上面，所以它**必须扛得住重新解析**。
 
@@ -394,13 +550,19 @@ def scan(con):
     """认云盘里的资料 → [(source, board(s), file_id, name, stored)]。"""
     rows = con.execute(
         "SELECT id,name,stored_name FROM drive_files "
-        "WHERE deleted_at IS NULL AND is_dir=0 AND folder LIKE '公考/%'").fetchall()
-    found = []
+        "WHERE deleted_at IS NULL AND is_dir=0 AND (folder LIKE '公考/%' OR folder LIKE ?)",
+        (SHEQU_ROOT + "%",)).fetchall()
+    found, seen = [], set()
     for r in rows:
         if r["name"] in YOULU_BOARD:
             found.append(("youlu", [YOULU_BOARD[r["name"]]], r["id"], r["name"], r["stored_name"]))
         elif r["name"] in SANSE_BOOK:
             found.append(("sanse", SANSE_BOOK[r["name"]], r["id"], r["name"], r["stored_name"]))
+        elif r["name"] in SHEQU_BOARD and r["name"] not in seen:
+            # 同一份资料在云盘里可能出现在多个文件夹（聊天转存过一次就多一条），
+            # 按文件名去重：认的是资料本身，不是它躺在哪儿
+            seen.add(r["name"])
+            found.append(("shequ", [SHEQU_BOARD[r["name"]]], r["id"], r["name"], r["stored_name"]))
     return found
 
 
@@ -419,8 +581,12 @@ def load_raw(con, only=None, force=False):
                 "INSERT OR IGNORE INTO basic_sources(source,board,title,file_id,"
                 "stored_name,pages) VALUES(?,?,?,?,?,?)",
                 (source, board, name, fid, stored, n))
-        sid = con.execute("SELECT id FROM basic_sources WHERE source=? AND board=?",
-                          (source, boards[0])).fetchone()["id"]
+        # 社区那条线**一个板块下有好几册**（社会工作板块就有 4 册），
+        # 按 (source, board) 取会永远拿到第一册的 id，把 4 册的原文全写进同一条。
+        # 所以带上 file_id 一起认。
+        sid = con.execute(
+            "SELECT id FROM basic_sources WHERE source=? AND board=? AND file_id=?",
+            (source, boards[0], fid)).fetchone()["id"]
         have = con.execute("SELECT COUNT(*) c FROM basic_raw WHERE source_id=?",
                            (sid,)).fetchone()["c"]
         if have >= n and not force:
@@ -442,8 +608,9 @@ def parse_all(con, only=None):
     for source, boards, _fid, name, _stored in scan(con):
         if only and source != only:
             continue
-        sid = con.execute("SELECT id FROM basic_sources WHERE source=? AND board=?",
-                          (source, boards[0])).fetchone()
+        sid = con.execute(
+            "SELECT id FROM basic_sources WHERE source=? AND board=? AND file_id=?",
+            (source, boards[0], _fid)).fetchone()
         if not sid:
             print("!! %s 还没抽原文，先跑 --load" % name)
             continue
@@ -453,6 +620,9 @@ def parse_all(con, only=None):
             continue
         if source == "sanse":
             nodes, blocks = parse_sanse([(r["page"], r["xml"] or "") for r in rows], boards)
+        elif source == "shequ":
+            nodes, blocks = parse_shequ([(r["page"], r["text"] or "") for r in rows],
+                                        boards[0], name)
         else:
             nodes, blocks = parse_youlu([(r["page"], r["text"] or "") for r in rows], boards[0])
         for i, n in enumerate(nodes):                       # 块挂到节点上，按板块分组
@@ -462,14 +632,16 @@ def parse_all(con, only=None):
         for board in boards:
             bn = [n for n in nodes if n["board"] == board]
             idx = {n["_i"] for n in bn}
-            out[(source, board)] = (bn, [b for b in blocks if b["node"] in idx])
+            # 键必须带上 file_id：社区那条线一个板块下有四册，只按 (source,board)
+            # 做键的话四册互相覆盖，最后只剩一册 —— 而且不报错，只是考点少了四分之三。
+            out[(source, board, _fid)] = (bn, [b for b in blocks if b["node"] in idx])
     return out
 
 
 def report(parsed):
     print("\n%-6s %-12s %6s %6s %6s   %s" % ("来源", "板块", "章", "考点", "块", "前 3 个考点"))
     print("-" * 88)
-    for (source, board), (nodes, blocks) in sorted(parsed.items()):
+    for (source, board, _fid), (nodes, blocks) in sorted(parsed.items(), key=lambda x: x[0][:2]):
         l1 = [n for n in nodes if n["level"] == 1]
         l2 = [n for n in nodes if n["level"] == 2]
         head = " / ".join(n["title"][:12] for n in l2[:3])
@@ -692,15 +864,17 @@ def audit(con):
 
 
 def save(con, parsed):
-    for (source, board), (nodes, blocks) in parsed.items():
-        sid = con.execute("SELECT id FROM basic_sources WHERE source=? AND board=?",
-                          (source, board)).fetchone()
+    for (source, board, fid), (nodes, blocks) in parsed.items():
+        sid = con.execute(
+            "SELECT id FROM basic_sources WHERE source=? AND board=? AND file_id IS ?",
+            (source, board, fid)).fetchone()
         if not sid:
-            con.execute("INSERT INTO basic_sources(source,board,title) VALUES(?,?,?)",
-                        (source, board, board))
+            con.execute("INSERT INTO basic_sources(source,board,title,file_id) VALUES(?,?,?,?)",
+                        (source, board, board, fid))
             con.commit()
-            sid = con.execute("SELECT id FROM basic_sources WHERE source=? AND board=?",
-                              (source, board)).fetchone()
+            sid = con.execute(
+                "SELECT id FROM basic_sources WHERE source=? AND board=? AND file_id IS ?",
+                (source, board, fid)).fetchone()
         sid = sid["id"]
         # 人工对齐结果要留住：先记下 nkey → topic_id，重建后按 nkey 认回来
         keep = {r["nkey"]: r["topic_id"] for r in con.execute(
@@ -729,8 +903,9 @@ def save(con, parsed):
                         "VALUES(?,?,?,?,?,?)", (ids[b["node"]], j, b["kind"], b["md"],
                                                 b["page"], b.get("page_to") or b["page"]))
         con.commit()
-        print("入库 %-6s %-12s 节点 %d 块 %d（保留人工对齐 %d）"
-              % (source, board, len(nodes), len(blocks), len(keep)))
+        title = con.execute("SELECT title FROM basic_sources WHERE id=?", (sid,)).fetchone()[0]
+        print("入库 %-6s %-8s %-34s 节点 %d 块 %d（保留人工对齐 %d）"
+              % (source, board, (title or "")[:34], len(nodes), len(blocks), len(keep)))
 
 
 def main():
@@ -739,7 +914,7 @@ def main():
     ap.add_argument("--load", action="store_true", help="抽 PDF 原文进 basic_raw")
     ap.add_argument("--reparse", action="store_true", help="从 basic_raw 重新解析")
     ap.add_argument("--dry-run", action="store_true", help="只报告解析结果，不写库")
-    ap.add_argument("--source", choices=["youlu", "sanse"], help="只处理一套资料")
+    ap.add_argument("--source", choices=["youlu", "sanse", "shequ"], help="只处理一套资料")
     ap.add_argument("--force", action="store_true", help="原文已在库也重抽")
     ap.add_argument("--audit", action="store_true", help="覆盖率体检：入库正文 / 原文")
     ap.add_argument("--align", action="store_true", help="AI 建考点大纲并挂靠两套资料")

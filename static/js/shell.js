@@ -513,6 +513,9 @@ function openBoardFeat(k, board) {
   else if (k === 'boardkb') openBoardKb(board);
   else if (k === 'bk-youlu') openBasicsTree(board, 'youlu');
   else if (k === 'bk-sanse') openBasicsTree(board, 'sanse');
+  else if (k === 'bk-shequ') openBasicsTree(board, 'shequ');
+  // 「社区」伪板块下的三本：key 里带着真板块名（bk-shequ@社会工作）
+  else if (String(k).startsWith('bk-shequ@')) openBasicsTree(String(k).slice(9), 'shequ');
   else if (k === 'bk-cmp') openBasicsCmp(board);
   else if (k === 'partydict') openPartyDict();
   else if (k === 'policydoc') openPolicyDocs();

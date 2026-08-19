@@ -24,11 +24,26 @@ let bkTree = null, bkCmpBoard = '', bkNodePr = null, bkCmpPr = null;
 })();
 
 /* 板块页要摆哪几张讲义卡 —— 只摆真有资料的那几张 */
+/* 社区那条线的考点树挂在**三个真板块**下（社会工作 / 社区知识 / 法律法规），
+   而「社区」本身是给「练」标签的 chip 用的伪板块。不在这儿把三本摊出来的话，
+   从 练→社区 进去够不着考点树，得绕 按学科浏览→社区→社会工作 三层 ——
+   那正是当初压层级要消灭的路径。 */
+const SQ_BK_BOARDS = ['社会工作', '社区知识', '法律法规'];
+
 function basicsFeats(board) {
+  if (board === '社区') {
+    return SQ_BK_BOARDS.map(b => {
+      const n = ((bkAvail || {})[b] || {}).shequ;
+      return n ? { key: 'bk-shequ@' + b, name: b + ' · 考点清单',
+                   desc: n + ' 个考点 · 公告点名的范围', icon: 'compass' } : null;
+    }).filter(Boolean);
+  }
   const a = (bkAvail || {})[board];
   if (!a) return [];
   const out = [];
-  ['youlu', 'sanse'].forEach(s => {
+  // 来源清单从后端下发的 meta 里取，别在这儿写死一份 —— 加第三套资料（社区速记）
+  // 时写死的那份会漏，表现是「库里有考点、板块页上没入口」，而且不报错。
+  Object.keys(bkMeta || {}).forEach(s => {
     if (a[s]) out.push({
       key: 'bk-' + s, name: (bkMeta[s] || {}).name || s,
       desc: ((bkMeta[s] || {}).desc || '') + ' · ' + a[s] + ' 个考点',

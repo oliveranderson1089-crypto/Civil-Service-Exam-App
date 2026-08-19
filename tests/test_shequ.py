@@ -294,6 +294,62 @@ class Test出题构造:
             assert q["options"]["ABCD".index(q["answer"])] is not None
 
 
+class Test考点树解析:
+    """parse_shequ 的三种考点行形态 —— 这批资料一册一个写法，
+       改这条正则前必须全量新旧对比（改共用规则的规矩）。"""
+
+    def _p(self, text, title="某某资料.pdf"):
+        import ingest_basics as I
+        return I.parse_shequ([(1, text)], "社会工作", title)
+
+    def test_书名占第一层(self):
+        nodes, _ = self._p("第一章 通用过程\n1、会谈的技巧：倾听。")
+        assert nodes[0]["level"] == 1 and nodes[0]["title"] == "某某资料"
+
+    def test_章和考点分别是二三层(self):
+        nodes, _ = self._p("第一章 通用过程\n1、会谈的技巧：倾听。")
+        lv = {n["level"]: n["title"] for n in nodes}
+        assert lv[2].startswith("第一章") and lv[3] == "会谈的技巧"
+
+    def test_冒号后面是正文不是标题(self):
+        nodes, blocks = self._p("第一章 通用过程\n1、会谈的技巧：主动介绍自己、倾听。")
+        assert [n for n in nodes if n["level"] == 3][0]["title"] == "会谈的技巧"
+        assert "主动介绍自己" in blocks[0]["md"]
+
+    def test_序号后面没分隔符也认(self):
+        # 社区知识 14 页必背是「4社会工作的重要目标：促进发展。」这种写法
+        nodes, _ = self._p("4社会工作的重要目标：促进发展。")
+        assert any(n["title"] == "社会工作的重要目标" for n in nodes)
+
+    def test_法条也当考点(self):
+        nodes, _ = self._p("第一章 总则\n第一条 为了坚持和加强党对信访工作的全面领导。")
+        assert any(n["level"] == 3 and n["title"].startswith("第一条") for n in nodes)
+
+    def test_考点N破折号那种也认(self):
+        nodes, _ = self._p("一、总则亮点\n考点 1——紧急情况下的救助义务")
+        assert any("紧急情况" in n["title"] for n in nodes)
+
+    def test_年份不会被当成考点(self):
+        # 「2020 年 5 月 28 日通过」这种正文行若被当成考点 2020，一页能切出几十个空节点
+        nodes, _ = self._p("第一章 概述\n2020 年 5 月 28 日十三届全国人大三次会议通过。")
+        assert not [n for n in nodes if n["level"] == 3], [n["title"] for n in nodes]
+
+    def test_部分不会被切成部加分(self):
+        nodes, _ = self._p("第一部分 社会工作综合能力\n1、含义：某某。")
+        assert [n for n in nodes if n["level"] == 2][0]["title"] == "第一部分 社会工作综合能力"
+
+    def test_没有章的册子自动补一章(self):
+        nodes, _ = self._p("1、社区的由来：起源于睦邻运动。")
+        assert [n for n in nodes if n["level"] == 2][0]["title"] == "全书"
+
+    def test_长句没冒号时标题取首个短语正文留全(self):
+        long = "了解服务对象的来源（主动、转介、外展）和类型及现有与潜在服务对象。"
+        nodes, blocks = self._p("第一章 通用过程\n1、" + long)
+        t = [n for n in nodes if n["level"] == 3][0]["title"]
+        assert len(t) < len(long) and long[:6] in t
+        assert long in blocks[0]["md"], "整句必须原样留在正文里，一个字都不能丢"
+
+
 class Test裁决台:
     def test_体检单只数客观题(self, auth_client, paper):
         # 主观题没有客观答案可校、压根不过这道闸；算进 todo 会显示成
