@@ -612,6 +612,38 @@ class Test题库混排:
         assert items == [] and rep["n_ok"] == 0
 
 
+class TestOCR文本修复:
+    """扫描件 OCR 出来的题册，比文字层多两道加工：还原被认错的字符、切开双栏。
+       顺序反了或漏了任一步，都会静默产出选项残缺的题。"""
+
+    def _r(self, text):
+        import ingest_sqbank as B
+        return B.ocr_repair(text).splitlines()
+
+    def test_选项C被认成5要还原(self):
+        # 实测千题斩全书 799 行以「5.」开头，其中 748 行其实是选项 C
+        out = self._r("A. 一至三年\n5. 三至七年                    D.五至七年")
+        assert any(l.strip().startswith("C.") for l in out), out
+
+    def test_真的第五题不能被改成C(self):
+        out = self._r("上一行是正文。\n5. 社区的构成要素有哪些？")
+        assert any(l.strip().startswith("5.") for l in out), out
+
+    def test_双栏一行两个选项要切开(self):
+        out = self._r("A.支持                                B. 同感")
+        assert [l.strip() for l in out] == ["A.支持", "B. 同感"]
+
+    def test_题干后面跟选项时不切(self):
+        # 「题干  D.某某」不能被当成双栏，否则题干会被截断
+        out = self._r("下列哪项属于社区服务？  D.养老助餐")
+        assert len(out) == 1
+
+    def test_还原C必须在切双栏之前(self):
+        # 顺序反了：左半是「5. 面质」时守卫认不出它是选项，整行切不开，右边的 D 也丢
+        out = self._r("5. 面质                                   D. 自我表露")
+        assert sum(1 for l in out if l.strip()[:2] in ("C.", "D.")) == 2, out
+
+
 class Test裁决台:
     def test_体检单只数客观题(self, auth_client, paper):
         # 主观题没有客观答案可校、压根不过这道闸；算进 todo 会显示成

@@ -105,6 +105,12 @@ _ANS_BARE = re.compile(r"^[\s　]*(\d{1,3})[、.．][\s　]*([A-EＡ-Ｅ]{1,5})[
 # 单独一对的写法交给上面两条严格的正则，免得把解析正文里的「…见第 3 条 B 项」
 # 这种也当成答案。后面不许紧跟汉字或字母，挡住「1.E 类社区」这种。
 _ANS_ROW = re.compile(r"(\d{1,3})[、.．][\s　]*([A-EＡ-Ｅ]{1,5})(?![A-Za-z\u4e00-\u9fa5])")
+# 解析册的写法：`56. C。公众号【…】解析，…` —— 答案紧跟题号，后面接一整段解析。
+# 判断题的 √ 被 OCR 认成 Y 或 V（`51. Y 。解析:`），一并折成 T。
+# 字符集里**必须含 X**：判断题的 × 被 OCR 认成大写 X（`1. X。解析:`）。
+# 少了它，_OCR_TF 里的 X→F 那条映射永远轮不到执行 —— 87 道判断题就是这么丢的。
+_ANS_EXP = re.compile(r"^[\s　]*(\d{1,4})[\s　]*[.、．][\s　]*([A-EＡ-ＥXYV√×]{1,4})[\s　]*[。．,，:：]")
+_OCR_TF = {"Y": "T", "V": "T", "√": "T", "×": "F", "X": "F"}
 _ANS_HEAD = re.compile(r"参考答案|答案及解析|答案与解析|^[\s　]*答案[\s　]*$", re.M)
 # 章标题：`第二章 社会工作价值观与专业伦理`。千题斩那种「刷题册 + 解析册」两本的，
 # 题号在**每章的每个题型里**各自从 1 编，所以键必须是三段：章 + 题型 + 题号。
@@ -140,10 +146,13 @@ def _scan_answers(tail):
         if len(row) >= 2:
             pairs = row
         else:
-            mm = _ANS.match(ln) or _ANS_BARE.match(ln) or _ANS_LEAD.match(ln)
+            mm = (_ANS.match(ln) or _ANS_BARE.match(ln) or _ANS_LEAD.match(ln)
+                  or _ANS_EXP.match(ln))
             pairs = [(mm.group(1), mm.group(2))] if mm else []
         for no, raw in pairs:
             a = _half(raw).upper()
+            # OCR 把判断题的 √ 认成 Y / V，先折回来再判
+            a = _OCR_TF.get(a, a) if len(a) == 1 else a
             a = "T" if a in ("√", "对") else ("F" if a in ("×", "错") else a)
             answers.setdefault((achap, akind, int(no)), a)
     return answers
@@ -236,6 +245,53 @@ def parse_inline(text):
                 "rate": rate, "bad": bad,
                 "kinds": {k: sum(1 for i in ok if i["part"] == k)
                           for k in ("single", "multi", "judge")}}
+
+
+# 千题斩专用：OCR 把选项 **C 系统性地认成了 5**（`5. 面质` 其实是 `C. 面质`）。
+# 实测全书 799 行以「5.」开头，其中 748 行在选项序列里、51 行是真的第 5 题。
+# 判据：同一行里还有 `D.`，或上一行是 `A.`/`B.` 开头 —— 那它就在选项序列里。
+_C_AS_5 = re.compile(r"^([\s　]*)5([\s　]*[.、．])")
+
+
+def fix_ocr_c(lines):
+    """把被认成 5 的选项 C 还原。只动**确实在选项序列里**的那些，不碰真题号。"""
+    out = []
+    for i, l in enumerate(lines):
+        if _C_AS_5.match(l):
+            prev = out[-1] if out else ""
+            in_opt = bool(re.search(r"(?:^|[\s　])D[\s　]*[.、．]", l)) or \
+                bool(re.search(r"(?:^|[\s　])[AB][\s　]*[.、．]", prev))
+            if in_opt:
+                l = _C_AS_5.sub(r"\1C\2", l, count=1)
+        out.append(l)
+    return out
+
+
+# 双栏排版：一行里并排两个选项（`A.支持    B. 同感`）。切成两行再交给下游，
+# 下游那套「一行一个选项」的逻辑就不用动。
+_TWO_COL = re.compile(r"(.*?[\s　]{2,})((?:^|[\s　])[B-DＢ-Ｄ][\s　]*[.、．].*)$")
+
+
+def split_two_col(lines):
+    """**必须在 fix_ocr_c 之后调用**：左半是「5. 面质」时（还没还原成 C），
+       守卫条件认不出它是选项，那一行就切不开，右边的 D 也就跟着丢了。
+       实测顺序反了的话 D 只认出 244 个，顺序对了是 843 个。"""
+    out = []
+    for l in lines:
+        m = _TWO_COL.match(l)
+        # 左半必须自己也是个选项（以 A-C 开头），否则「题干  D.某某」会被误切
+        if m and re.match(r"^[\s　]*[A-CＡ-Ｃ][\s　]*[.、．]", m.group(1)):
+            out.append(m.group(1).rstrip())
+            out.append(m.group(2).strip())
+        else:
+            out.append(l)
+    return out
+
+
+def ocr_repair(text):
+    """OCR 文本的通用修复：先还原被认成 5 的选项 C，再切开双栏。**顺序不能反。**"""
+    lines = [l.rstrip() for l in (text or "").splitlines() if l.strip()]
+    return "\n".join(split_two_col(fix_ocr_c(lines)))
 
 
 def parse_bank(text, answer_text=None):
@@ -345,6 +401,17 @@ def parse_bank(text, answer_text=None):
             bad.append((it, "答案 %s 超出本题 %d 个选项的范围" % (a, n_opt)))
         elif it["part"] == "single" and len(a) != 1:
             bad.append((it, "单选题答案有 %d 个字母" % len(a)))
+        elif any(re.search(r"(?:^|[\s　])[A-E][\s　]*[.、．]", o) for o in it["options"]):
+            # 选项里混进了**别的选项标记**（`B.大众传媒5C.家庭 D. 朋`）——
+            # 双栏切分在这一行失败了，C/D 被并进了 B。这种题**按题剔除**，
+            # 不放宽整册的闸：闸是用来判「解析器懂不懂这本书」，
+            # 逐题检查才是真正决定「这道题能不能发给人做」的东西。
+            bad.append((it, "选项里混着别的选项标记（多半是双栏没切开）"))
+        elif any(not o.strip() or len(o) > 80 for o in it["options"]):
+            # 只挡**空选项**和**长到不像话的**。下限别设成 2 ——
+            # 真实册子里「A.1」「B.对」这种一个字的选项是存在的，
+            # 一刀切会把好题也剔掉（实测误伤了四条老测试用例）。
+            bad.append((it, "选项长度异常（%s）" % "/".join(str(len(o)) for o in it["options"])))
         else:
             it["answer"] = a
             ok.append(it)
@@ -357,7 +424,15 @@ def parse_bank(text, answer_text=None):
                           for k in ("single", "multi", "judge")}}
 
 
-def find_banks(con):
+def ocr_text(con, file_id):
+    """从 sq_ocr 拼出整本的文字。**OCR 一次、解析多次** —— 调解析规则时从这儿重来，
+       绝不重跑 OCR（那是 2331 页、半小时的活）。"""
+    rows = con.execute("SELECT text FROM sq_ocr WHERE file_id=? ORDER BY page",
+                       (file_id,)).fetchall()
+    return "\n".join(r[0] or "" for r in rows)
+
+
+def find_banks(con, from_ocr=False):
     rows = con.execute(
         "SELECT id,name,folder,stored_name FROM drive_files WHERE folder LIKE ? "
         "AND is_dir=0 AND deleted_at IS NULL AND ext='.pdf' ORDER BY folder,name",
@@ -380,10 +455,16 @@ def find_banks(con):
             continue
         seen.add(r["name"])
         out.append({"file_id": r["id"], "name": r["name"], "folder": r["folder"], "path": path})
+    if from_ocr:
+        # 只留 OCR 过的那些：有文字层的那批已经由默认模式收过了，不必重来
+        ocred = {r[0] for r in con.execute("SELECT DISTINCT file_id FROM sq_ocr")}
+        out = [b for b in out if b["file_id"] in ocred]
     return out
 
 
-def save(con, bank, items):
+def save(con, bank, items, from_ocr=False):
+    """入库。**标明这批题是不是 OCR 来的** —— OCR 那条链路比文字层长
+       （识别 + 双栏切分 + 字符还原），做错时得看得出是题的问题还是自己的问题。"""
     row = con.execute("SELECT id FROM sq_papers WHERE file_id=?", (bank["file_id"],)).fetchone()
     name = bank["name"].rsplit(".", 1)[0]
     if row:
@@ -406,7 +487,8 @@ def save(con, bank, items):
              # 练习册的答案是**原册印着的**，不是回忆版：不过 AI 校对闸门。
              # 闸门是用来查回忆版真题的；拿它审一百多份正规练习册，钱和时间都不划算，
              # 而且模型对社工细则的把握还不如册子本身。对齐率就是这里的质量闸。
-             "ok", json.dumps({"why": "练习册原册答案，按题号对齐入库"}, ensure_ascii=False),
+             "ok", json.dumps({"why": "练习册原册答案，按题号对齐入库",
+                               "src": "ocr" if from_ocr else "pdf"}, ensure_ascii=False),
              hashlib.sha1(R.qhash_text(stem).encode("utf-8")).hexdigest()[:16]))
     con.execute("UPDATE sq_papers SET n_obj=?, n_sub=0, n_doubt=0 WHERE id=?", (len(items), pid))
     return pid
@@ -417,12 +499,28 @@ def main():
     ap.add_argument("--scan", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--min", type=float, default=0.85, help="对齐率低于它就整册跳过")
+    ap.add_argument("--from-ocr", action="store_true",
+                    help="文字从 sq_ocr 读（扫描件走这条），不再碰 PDF")
+    ap.add_argument("--only", default="", help="只处理文件名含这个词的册子")
+    ap.add_argument("--pair", default="", help="答案在另一本册子里，给它的文件名关键词")
+    ap.add_argument("--parts", default="",
+                    help="只收这些题型（如 multi,judge）—— 加工链路长的题型可以只挑信得过的收")
     ap.add_argument("--limit", type=int, default=0)
     a = ap.parse_args()
 
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
-    banks = find_banks(con)
+    banks = find_banks(con, a.from_ocr)
+    if a.only:
+        banks = [b for b in banks if a.only in b["name"]]
+    pair_text = None
+    if a.pair:
+        pr = con.execute("SELECT id FROM drive_files WHERE name LIKE ? AND deleted_at IS NULL "
+                         "LIMIT 1", ("%" + a.pair + "%",)).fetchone()
+        if pr:
+            pair_text = ocr_repair(ocr_text(con, pr["id"])) if a.from_ocr \
+                else R.pdf_text(find_banks.__globals__["UPLOADS"])
+    want_parts = {x.strip() for x in a.parts.split(",") if x.strip()}
     if a.limit:
         banks = banks[:a.limit]
     print("候选 %d 份（已排除行测类）\n" % len(banks))
@@ -430,10 +528,10 @@ def main():
     took = skipped = total = 0
     kinds = {"single": 0, "multi": 0, "judge": 0}
     for b in banks:
-        text = R.pdf_text(b["path"])
+        text = ocr_repair(ocr_text(con, b["file_id"])) if a.from_ocr else R.pdf_text(b["path"])
         if len(text.strip()) < 500:
             continue
-        items, rep = parse_bank(text)
+        items, rep = parse_bank(text, pair_text)
         # 卷末没有「参考答案」区、却每题后面跟着「答案：X」的，换内联模式再试一次。
         # 判据是**结果**不是文件名：按对齐率挑更好的那一版，规则认不出的自然被闸门挡下。
         if rep["rate"] < a.min and (_ANS_INLINE.search(text) or _ANS_BRACKET.search(text)):
@@ -442,14 +540,22 @@ def main():
                 items, rep = it2, rep2
         if rep["n_all"] < 5:
             continue
-        flag = "✓" if rep["rate"] >= a.min else "✗"
-        if rep["rate"] >= a.min:
+        if want_parts:
+            # 只收指定题型：**逐题剔除，不放宽整册的闸** ——
+            # 加工链路长的册子（OCR + 双栏切分 + 字符还原）可以只挑信得过的题型收。
+            items = [x for x in items if x["part"] in want_parts]
+            rep["n_ok"] = len(items)
+            rep["kinds"] = {k: sum(1 for i in items if i["part"] == k)
+                            for k in ("single", "multi", "judge")}
+        ok_gate = bool(items) if want_parts else (rep["rate"] >= a.min)
+        flag = "✓" if ok_gate else "✗"
+        if ok_gate:
             took += 1
             total += len(items)
             for k in kinds:
                 kinds[k] += rep["kinds"][k]
             if not a.scan:
-                save(con, b, items)
+                save(con, b, items, a.from_ocr)
         else:
             skipped += 1
         print("%s %-44s 题 %3d 答案 %3d 可用 %3d 对齐 %3.0f%% %s"

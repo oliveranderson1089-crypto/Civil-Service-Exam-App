@@ -421,6 +421,9 @@ body.dark .ui-err{border-left-color:#e8776a;}
 .sr-snip{font-size:13px;color:#5a6678;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .sr-snip mark{background:#fff3b0;color:inherit;padding:0 1px;border-radius:2px;}
 .sr-meta{font-size:11.5px;color:var(--muted);margin-top:4px;}
+/* 相近结果的抬头：整串没搜到、后端按词又搜了一轮时才出（见 mods/search.py 的模糊轮） */
+.sr-tip{font-size:12.5px;color:var(--muted);line-height:1.6;padding:9px 13px;
+  background:var(--card);border:1px dashed var(--line);border-radius:10px;}
 
 /* ---- 古诗文速查（唐诗宋词·四书五经） ---- */
 #view-classics{max-width:920px;margin:0 auto;}

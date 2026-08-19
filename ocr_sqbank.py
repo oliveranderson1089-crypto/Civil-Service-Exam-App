@@ -6,16 +6,26 @@
 **OCR 一次、解析多次** —— 之后调解析规则一律从 sq_ocr 重来，绝不重跑 OCR。
 真题库当年「改解析器却把 OCR 重跑一遍」的教训，这里不再犯。
 
-配置是量出来的，不是抄来的：
+配置是量出来的：`--oem 1 --psm 6` + DPI 150，比默认快一个数量级，而且**识别结果和
+默认逐字相同**（同一页两种配置的输出完全一致）—— 不是拿质量换速度，是默认配置在
+这类扫描件上做了无用功。
 
-    默认 tesseract                 一页 163 秒 → 2379 页 107 小时
-    --oem 1 --psm 6 + DPI 150      一页  17 秒 → 2379 页  11 小时（单线程）
+**并行方式比配置更要命。** tesseract 默认自己是多线程的，外面再开 N 路并行，
+同一批核就被抢 N 遍 —— 实测（同一份文件、同样 12 页）：
 
-而且**快 10 倍的那版，识别结果和默认逐字相同**（同一页两种配置的输出完全一致）——
-不是拿质量换速度，是默认配置在这类扫描件上做了无用功。
+    4 路并行 × tesseract 多线程      48 秒/页   （2331 页要 31 小时）
+    4 路并行 × OMP_THREAD_LIMIT=1   0.72 秒/页  （2331 页要 28 分钟）
 
-（第一次估「一页 1.4 秒」是测错了：那 1.4 秒只是 pdftoppm 转图，
-tesseract 因为文件名写错根本没执行。所以这份文件头把真实数字写清楚。）
+**差 67 倍**，而且慢的那版是我自己写出来的。所以 tesseract 一律限成单线程，
+并行度交给外面的线程池。
+
+估时长这件事在这个脚本上错过四次，教训写在这儿：
+    「1.4 秒/页」  只给 pdftoppm 计了时，tesseract 因文件名写错根本没执行
+    「163 秒/页」  拿默认配置测的，换 --oem 1 --psm 6 后不成立
+    「17 秒/页」   只拿一页测
+    「48 秒/页」   是自己造成的资源争抢，不是真实成本
+**每次都是「只给我以为慢的那一步计时」。** 所以这份脚本逐页落盘、每 5 页打一次
+真实速率 —— 实报比预估可靠。单页超过 120 秒直接跳过。
 
 用法：
     python3 ocr_sqbank.py --scan             # 只列要跑哪些、预估多久
@@ -114,7 +124,11 @@ def ocr_page(path, page, tmpd):
     if not png:
         return ""
     try:
-        r = subprocess.run(["tesseract", png, "-"] + TESS, capture_output=True, timeout=300)
+        # **每个 tesseract 只给一个线程**，并行度交给外面的线程池。
+        # tesseract 默认自己就是多线程的，再开 N 路并行等于同一批核被抢 N 遍 ——
+        # 实测 4 路 × 多线程是 48 秒/页，4 路 × 单线程是 0.72 秒/页，差 67 倍。
+        r = subprocess.run(["tesseract", png, "-"] + TESS, capture_output=True,
+                           timeout=120, env=dict(os.environ, OMP_THREAD_LIMIT="1"))
         return r.stdout.decode("utf-8", "ignore")
     except subprocess.TimeoutExpired:
         return ""
@@ -142,24 +156,33 @@ def run_one(con, bank, jobs):
     todo = [p for p in range(1, bank["pages"] + 1) if p not in have]
     if not todo:
         return 0
-    t0 = time.time()
+    t0, got, n = time.time(), 0, 0
+    # **逐页落盘 + 实时报进度**，不是整份跑完再写。第一版是后者，结果第一份 118 页
+    # 的册子跑了 25 分钟、库里还是 0 页 —— 分不清是在干活还是卡死了，崩了还全丢。
+    # 而且页与页的耗时**差得极大**（同一份里抽样 1.8 秒/页，实跑却有页要几分钟），
+    # 单页抽样根本估不准总时长，只能边跑边看真实速率。
     with tempfile.TemporaryDirectory(prefix="sqocr-") as tmpd:
         with ThreadPoolExecutor(max_workers=jobs) as ex:
-            texts = list(ex.map(lambda p: (p, ocr_page(bank["path"], p, tmpd)), todo))
-    for p, t in texts:
-        con.execute("INSERT OR REPLACE INTO sq_ocr(file_id,page,text) VALUES(?,?,?)",
-                    (bank["file_id"], p, t))
-    con.commit()
-    got = sum(1 for _p, t in texts if len(re.sub(r"\s", "", t)) > 30)
-    print("    %d 页，%d 页有字，用时 %.1f 分钟" % (len(todo), got, (time.time() - t0) / 60))
-    return len(todo)
+            for p, t in ex.map(lambda pg: (pg, ocr_page(bank["path"], pg, tmpd)), todo):
+                con.execute("INSERT OR REPLACE INTO sq_ocr(file_id,page,text) VALUES(?,?,?)",
+                            (bank["file_id"], p, t))
+                con.commit()
+                n += 1
+                if len(re.sub(r"\s", "", t)) > 30:
+                    got += 1
+                if n % 5 == 0:
+                    print("      …%d/%d 页　%.1f 秒/页" % (n, len(todo), (time.time() - t0) / n),
+                          flush=True)
+    print("    %d 页，%d 页有字，用时 %.1f 分钟" % (n, got, (time.time() - t0) / 60), flush=True)
+    return n
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scan", action="store_true")
     ap.add_argument("--top", type=int, default=0, help="只跑优先级最高的前 N 份")
-    ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    # 并行度默认给满核：每个 tesseract 已被限成单线程，核数就是并行度
+    ap.add_argument("--jobs", type=int, default=(os.cpu_count() or 2))
     a = ap.parse_args()
 
     con = sqlite3.connect(DB)
@@ -170,15 +193,16 @@ def main():
         banks = banks[:a.top]
     pages = sum(b["pages"] for b in banks)
     done = con.execute("SELECT COUNT(*) FROM sq_ocr").fetchone()[0]
-    print("待 OCR %d 份 %d 页（已 OCR 过 %d 页）；并行 %d 路，按 17 秒/页估约 %.1f 小时\n"
-          % (len(banks), pages, done, a.jobs, pages * 17 / 3600 / max(a.jobs * 0.8, 1)))
+    # 不给总时长预估：页与页差两个数量级，估出来的数只会误导（已经错过三次）。
+    print("待 OCR %d 份 %d 页（已 OCR 过 %d 页）；并行 %d 路，速率跑起来才知道\n"
+          % (len(banks), pages, done, a.jobs))
     if a.scan:
         for b in banks[:20]:
             print("  [%3d] %4d 页  %s" % (b["score"], b["pages"], b["name"][:52]))
         return 0
     n = 0
     for i, b in enumerate(banks, 1):
-        print("  (%d/%d) %s  %d 页" % (i, len(banks), b["name"][:48], b["pages"]))
+        print("  (%d/%d) %s  %d 页" % (i, len(banks), b["name"][:48], b["pages"]), flush=True)
         n += run_one(con, b, a.jobs)
     print("\n共 OCR %d 页，落在 sq_ocr 表里。改解析规则时从这张表重来，别重跑 OCR。" % n)
     return 0

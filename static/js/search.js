@@ -17,9 +17,9 @@
    openWrongq, openYyLib, push, SECTIONS, state, tkSwitch, toast */
 
 /* ================= 全文搜索 ================= */
-let searchData = { q: '', filter: 'all', results: [] };
+let searchData = { q: '', filter: 'all', results: [], fuzzy: false, terms: [] };
 function openSearch() {
-  searchData = { q: '', filter: 'all', results: [] };
+  searchData = { q: '', filter: 'all', results: [], fuzzy: false, terms: [] };
   $('#search-input').value = '';
   $('#search-results').innerHTML = '';
   $('#search-empty').classList.add('hidden');
@@ -42,21 +42,29 @@ $('#search-filter').addEventListener('click', e => {
 });
 async function runSearch(q) {
   searchData.q = q;
-  if (!q) { searchData.results = []; renderSearch(); return; }
+  if (!q) { searchData.results = []; searchData.fuzzy = false; searchData.terms = []; renderSearch(); return; }
   try {
     const d = await api('/api/search?q=' + encodeURIComponent(q));
     // 功能入口匹配（名称/关键词），置顶
     const fhits = FEATURES.filter(f => f.name.includes(q) || f.kw.includes(q))
       .map(f => ({ type: 'feature', title: f.name, snippet: f.desc, _open: f.open }));
+    // fuzzy＝整串一条都没搜到，后端换成分词又搜了一轮（见 mods/search.py）
+    searchData.fuzzy = !!d.fuzzy;
+    searchData.terms = d.terms || [];
     searchData.results = fhits.concat(d.results);
     renderSearch();
   } catch (e) { toast(errMsg(e), true); }
 }
 function hl(text, q) {
   const t = esc(text || '');
-  if (!q) return t;
-  try { return t.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'), '<mark>$1</mark>'); }
-  catch (_) { return t; }
+  // 相近结果里没有整串，只有后端切出来的词；不按词高亮的话通篇看不出命中在哪
+  const src = (searchData.fuzzy && searchData.terms.length) ? searchData.terms : (q ? [q] : []);
+  if (!src.length) return t;
+  try {
+    const pat = src.slice().sort((a, b) => b.length - a.length)
+      .map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    return t.replace(new RegExp('(' + pat + ')', 'gi'), '<mark>$1</mark>');
+  } catch (_) { return t; }
 }
 const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能',
   draft: '草稿本', essay: '范文', gongwen: '应用文', yy: '应用文素材', changkao: '常考', theory: '理论', xiyu: '习语', work: '经典著作',
@@ -110,7 +118,9 @@ function renderSearch() {
     return;
   }
   $('#search-empty').classList.add('hidden');
-  box.innerHTML = items.map((r, i) => {
+  const tip = searchData.fuzzy
+    ? `<div class="sr-tip">没有完全匹配「${esc(searchData.q)}」，下面是内容相近的结果</div>` : '';
+  box.innerHTML = tip + items.map((r, i) => {
     const meta = r.type === 'doc' ? ('知识库：' + esc(r.notebook || ''))
       : r.type === 'material' ? ((r.ext || '').replace('.', '').toUpperCase() + (r.board ? ' · ' + esc(r.board) : ''))
         : r.type === 'note' ? (r.tags && r.tags.length ? r.tags.map(t => '#' + esc(t)).join(' ') : (r.board ? esc(r.board) : ''))
