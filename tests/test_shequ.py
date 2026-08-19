@@ -227,6 +227,73 @@ class Test整卷接口:
         assert n >= 2, "第二次作答把第一次覆盖了，看不出有没有进步"
 
 
+class Test资中专项:
+    @pytest.fixture
+    def facts(self, auth_client):
+        from core import DB
+        import sqlite3
+        con = sqlite3.connect(DB)
+        con.execute("DELETE FROM sq_facts")
+        con.execute("INSERT INTO sq_facts(grp,k,v,unit,note,src,year,proven,ord) "
+                    "VALUES('招聘公告','选聘总名额','72','名','','2026 公告',2026,1,0)")
+        con.execute("INSERT INTO sq_facts(grp,k,v,unit,note,src,year,proven,ord) "
+                    "VALUES('县情与经济','GDP','383.53','亿元','','统计公报',2025,0,1)")
+        con.commit()
+        con.close()
+
+    def test_真题考过的那组排在前面(self, auth_client, facts):
+        # 8 道本地题全部出自招聘公告参数，没有一道考县情 GDP —— 两档不能混着摆
+        d = auth_client.get("/api/shequ/facts").get_json()
+        assert d["groups"][0]["grp"] == "招聘公告"
+        assert d["groups"][0]["proven"] == 1
+        assert d["groups"][-1]["proven"] == 0
+
+    def test_每条都带来源和年份(self, auth_client, facts):
+        # 不标年份的本地数据是会过期的假知识
+        d = auth_client.get("/api/shequ/facts").get_json()
+        for g in d["groups"]:
+            for it in g["items"]:
+                assert it["src"] and it["year"], "有条目没带来源或年份：%r" % it
+
+    def test_专项卷不混进真题列表(self, auth_client, paper):
+        from core import DB
+        import sqlite3
+        con = sqlite3.connect(DB)
+        con.execute("INSERT INTO sq_papers(id,file_id,name,year,kind,region) "
+                    "VALUES(9,9009,'资中专项 · 地方必得分',2026,'专项','资中县')")
+        con.commit()
+        con.close()
+        d = auth_client.get("/api/shequ/overview").get_json()
+        names = [p["name"] for p in d["papers"]]
+        assert "资中专项 · 地方必得分" not in names, "专项是生成的练习集，混进去像考过三套卷"
+
+
+class Test出题构造:
+    def test_答案字母是轮流发的(self):
+        # 单纯 shuffle 实测偏成 D8/C5/A3/B2，「蒙 D」就能多对几道
+        import json as _j
+        import build_zizhong as B
+        m = _j.load(open("zizhong_meta.json", encoding="utf-8"))
+        qs = B.gen_questions(B.facts_of(m), m)
+        from collections import Counter
+        c = Counter(q["answer"] for q in qs)
+        assert max(c.values()) - min(c.values()) <= 1, "答案字母分布不均：%r" % dict(c)
+
+    def test_每道题四个选项互不相同(self):
+        import json as _j
+        import build_zizhong as B
+        m = _j.load(open("zizhong_meta.json", encoding="utf-8"))
+        for q in B.gen_questions(B.facts_of(m), m):
+            assert len(set(q["options"])) == 4, q["stem"]
+
+    def test_正确答案确实在选项里那一格(self):
+        import json as _j
+        import build_zizhong as B
+        m = _j.load(open("zizhong_meta.json", encoding="utf-8"))
+        for q in B.gen_questions(B.facts_of(m), m):
+            assert q["options"]["ABCD".index(q["answer"])] is not None
+
+
 class Test裁决台:
     def test_体检单只数客观题(self, auth_client, paper):
         # 主观题没有客观答案可校、压根不过这道闸；算进 todo 会显示成

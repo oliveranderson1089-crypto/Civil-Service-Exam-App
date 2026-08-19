@@ -27,13 +27,28 @@ async function openSqReal() {
   } catch (e) { $('#sq-list').innerHTML = `<p class="empty">${esc(errMsg(e))}</p>`; }
 }
 
+/* 顶上那条：还剩几天、报名什么时候、笔试考什么范围。
+   「笔试不考行测」是从公告的考试内容里读出来的，不是我们的判断 —— 原文照抄，
+   让人自己看：社工初级 + 党建 + 社区 + 基层治理 + 法律 + 时政，没有行测。 */
+function sqExamBar(x) {
+  if (!x) return '';
+  const near = x.days >= 0 && x.days <= 30;
+  return `<div class="card sq-exam${near ? ' near' : ''}">
+      <div class="sq-exam-d">${x.days > 0 ? `距笔试还有 <b>${x.days}</b> 天`
+        : x.days === 0 ? '<b>今天就是笔试</b>' : '笔试已过'}</div>
+      <div class="sq-exam-m">${esc(x.exam_date)} 笔试${x.sign_up
+        ? '　·　报名 ' + esc(x.sign_up) : ''}${x.total ? '　·　选聘 ' + x.total + ' 名' : ''}</div>
+      ${x.scope ? `<div class="sq-exam-s">公告写明的笔试内容：${esc(x.scope)}</div>` : ''}
+    </div>`;
+}
+
 function sqRenderList(d) {
   if (!sqPapers.length) {
     $('#sq-list').innerHTML = '<p class="empty">还没有卷子。先跑 ingest_shequ.py 把真题解析进库。</p>';
     return;
   }
   const types = (d.types || []).map(t => `<span class="sq-chip">${esc(t.qtype)} ${t.c}</span>`).join('');
-  $('#sq-list').innerHTML = sqPapers.map(p => `
+  $('#sq-list').innerHTML = sqExamBar(d.exam) + sqPapers.map(p => `
     <div class="card sq-paper">
       <div class="sq-p-t">${esc(p.name.replace(/\.pdf$/i, ''))}</div>
       <div class="sq-p-m">${p.year} 年 · ${esc(p.kind)} ·
@@ -297,6 +312,48 @@ function sqResult(d) {
     <div class="card"><button class="btn primary sq-wide" id="sq-back-list">回卷子列表</button></div>`;
 }
 
+/* ---------------------------------------------------------------- 资中专项
+   两套原卷里 8 道本地题**全部出自招聘公告参数**，没有一道考县情地理或 GDP。
+   所以速记卡按「真题考过 / 未经真题验证」分档摆，不装作同等重要 ——
+   只剩三周多，得先背确定考的那些。 */
+async function openSqLocal() {
+  push({ view: 'sqlocal', title: '资中专项' });
+  $('#sq-local').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/shequ/facts');
+    sqRenderFacts(d);
+  } catch (e) { $('#sq-local').innerHTML = `<p class="empty">${esc(errMsg(e))}</p>`; }
+}
+
+function sqRenderFacts(d) {
+  if (!(d.groups || []).length) {
+    $('#sq-local').innerHTML = '<p class="empty">还没有数据。先跑 build_zizhong.py。</p>';
+    return;
+  }
+  $('#sq-local').innerHTML = sqExamBar(d.exam) + (d.quiz_n ? `<div class="card sq-quiz-entry">
+      <div class="sq-sec-t">${artEm('🎯')} 这些数字，练 ${d.quiz_n} 道</div>
+      <div class="sq-note">题目由公告数据直接生成，<b>答案由数据保证</b>，
+        干扰项取自同一组真实数字 —— 记混了才会选错，这正是本地题的考法。</div>
+      <button class="btn primary sq-wide" data-sq-quiz="${d.quiz_paper}">开始练</button>
+    </div>` : '')
+    + d.groups.map(g => `
+      <div class="card">
+        <div class="sq-sec-t">${esc(g.grp)}
+          ${g.proven ? `<span class="sq-badge proven">${g.proven} 条真题考过</span>`
+            : '<span class="sq-badge plain">未经真题验证</span>'}</div>
+        <div class="sq-facts-list">${g.items.map(f => `
+          <div class="sq-f${f.proven ? ' proven' : ''}">
+            <div class="sq-f-k">${esc(f.k)}${f.proven ? '<i title="真题考过">●</i>' : ''}</div>
+            <div class="sq-f-v">${esc(f.v)}${f.unit ? ' ' + esc(f.unit) : ''}</div>
+            ${f.note ? `<div class="sq-f-n">${esc(f.note)}</div>` : ''}
+            <div class="sq-f-s">据 ${esc(f.src)}${f.year ? '（' + f.year + '）' : ''}</div>
+          </div>`).join('')}</div>
+      </div>`).join('')
+    + `<div class="card"><div class="sq-note">
+        ${artEm('📍')} <b>本地数据是会过期的。</b>招聘公告每年换，县情 PDF 里还有 2018 年的数字。
+        所以每条都标了来源和年份 —— 明年换公告时整份替换，别只改数字。</div></div>`;
+}
+
 /* 回看某一次：作答从记录里取，题面/答案/解析后端现查库（记录表不存题面）。
    复用成绩页那一屏 —— 同一份东西不画两遍。 */
 async function sqOpenRecord(rid) {
@@ -377,6 +434,11 @@ function sqRenderCheck(d) {
 }
 
 /* ---------------------------------------------------------------- 事件 */
+$('#view-sqlocal').addEventListener('click', (e) => {
+  const q = e.target.closest('[data-sq-quiz]');
+  if (q) sqOpenPaper(+q.dataset.sqQuiz, 'study');   // 专项一律背题：目的是记住，不是模考
+});
+
 $('#view-sqreal').addEventListener('click', async (e) => {
   const op = e.target.closest('[data-sq-open]');
   if (op) { sqOpenPaper(+op.dataset.sqOpen, op.dataset.sqMode); return; }
@@ -445,3 +507,4 @@ document.addEventListener('keydown', (e) => {
 
 window.openSqReal = openSqReal;
 window.openSqCheck = openSqCheck;
+window.openSqLocal = openSqLocal;

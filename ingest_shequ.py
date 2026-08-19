@@ -138,6 +138,11 @@ def parse_choice(body, part):
     为什么以答案为锚而不是以题号为锚：**2025 那套卷的单选题根本没有题号**
     （2023 那套有）。答案行是两套卷唯一都有、且一题一个的稳定标记。
     """
+    # **先把空行压掉**。这份 PDF 是每行之间都插一个空行的排版，而
+    # realbank._trim_tail 把「空行」当段落结束，会从那儿把 D 选项截断 ——
+    # 「D. 宣传方\n\n式」变成「宣传方」，题数照样对、体检单全绿，只有选项少了两个字。
+    # 对行测卷那条规则是对的，对这份卷子不是，所以在进 _split_options 之前就压掉。
+    body = re.sub(r"\n[ \t\u3000]*\n", "\n", body)
     items, pos = [], 0
     for m in _ANS.finditer(body):
         block = body[pos:m.start()]
@@ -146,10 +151,20 @@ def parse_choice(body, part):
                       for c in m.group(1))
         stem, opts = R._split_options(block)
         stem = strip_seq(R.norm(stem), len(items) + 1)
-        # 题干里夹着的换行是 PDF 排版造成的，不是语义换行；但选项之间的不能压。
-        stem = re.sub(r"\s*\n\s*", "", stem)
+        # 题干和选项里夹着的换行都是 PDF 排版造成的，不是语义换行 ——
+        # 选项本来就是一行一个短语，留着换行会让「宣传方\n式」这样显示出来。
+        flat = lambda x: re.sub(r"\s*\n\s*", "", x)          # noqa: E731
+        stem = flat(stem)
+        opts = [flat(o) for o in opts]
         if not stem:
             continue
+        # 覆盖率：抠出来的题干+选项，应当覆盖原文块的绝大部分字。
+        # 少太多就是有文字被吃掉了（D 选项被截断就是这么露出来的）。
+        # 只数汉字与数字，忽略空白和 A./B. 这类标记。
+        keep = re.sub(r"[^\u4e00-\u9fa5\d]", "", stem + "".join(opts))
+        raw = re.sub(r"[^\u4e00-\u9fa5\d]", "", re.sub(r"^\s*\d{1,2}\s*[.、．)）]", "", block))
+        lost = len(raw) - len(keep)
+
         bad = ""
         if _STUCK_NOTE.match(stem):
             bad = "题干头上粘着章节分值说明"
@@ -157,6 +172,8 @@ def parse_choice(body, part):
             bad = "题干开头的年份被当成题号剥掉了"
         elif len(opts) < 4:
             bad = "选项没抠全（%d 个）" % len(opts)
+        elif lost > 2:
+            bad = "解析后少了 %d 个字（多半是选项被截断）" % lost
         elif part == "single" and len(ans) != 1:
             bad = "单选题答案有 %d 个字母" % len(ans)
         elif any(c not in "ABCD" for c in ans):
@@ -295,7 +312,7 @@ def find_papers(con):
 
 
 # ---------------------------------------------------------------- 写库
-def save(con, paper, items):
+def save(con, paper, items, reparse=False):
     cur = con.execute("SELECT id FROM sq_papers WHERE file_id=?", (paper["file_id"],))
     row = cur.fetchone()
     n_obj = sum(1 for it in items if it["part"] in ("single", "multi", "judge"))
@@ -311,25 +328,51 @@ def save(con, paper, items):
             "n_obj=?,n_sub=?,n_bad=?,status=? WHERE id=?", fields + (pid,))
         # 重跑=整卷重来。**先删再插**，不做增量合并：卷子只有一份来源，
         # 增量合并只会让「上一版解析残留的题」神不知鬼不觉地留在库里。
+        #
+        # 但校对结果（verify / verify_note）是**花了 37 分钟、两家模型跑出来的**，
+        # 还带着人工裁决，不能跟着解析一起丢。--reparse 就是为这个：
+        # 先把旧的按 seq 记下来，题面没变的原样搬回去，**变了的重置成未校对**
+        # —— 内容改了却继续沿用旧结论，等于拿 A 题的核验给 B 题背书。
+        old = {}
+        if reparse:
+            for r in con.execute("SELECT * FROM sq_questions WHERE paper_id=?", (pid,)):
+                old[r["seq"]] = dict(r)
         con.execute("DELETE FROM sq_questions WHERE paper_id=?", (pid,))
     else:
+        old = {}
         cur = con.execute(
             "INSERT INTO sq_papers(file_id,name,folder,ext,region,year,kind,"
             "n_obj,n_sub,n_bad,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (paper["file_id"],) + fields)
         pid = cur.lastrowid
+    kept = reset = 0
     for it in items:
+        opts = json.dumps(it.get("options") or [], ensure_ascii=False)
+        o = old.get(it["seq"])
+        same = bool(o) and o["stem"] == it["stem"] and (o["options"] or "[]") == opts \
+            and o["answer"] == it["answer"]
+        verify = "bad" if it["bad"] else ""
+        note = json.dumps({"parse": it["bad"]}, ensure_ascii=False) if it["bad"] else None
+        explain = it.get("explain", "")
+        if same:
+            verify, note = o["verify"], o["verify_note"]
+            # 人工在解析后面补过话（比如「按 2026 公告这题的答案已不适用」），
+            # 那份补充比重新解析出来的更值钱，别覆盖掉。
+            if (o["explain"] or "").startswith(explain) and len(o["explain"] or "") > len(explain):
+                explain = o["explain"]
+            kept += 1
+        elif o:
+            reset += 1
         con.execute(
             "INSERT INTO sq_questions(paper_id,seq,part,part_seq,qtype,stem,options,"
             "answer,explain,score,verify,verify_note,qhash) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (pid, it["seq"], it["part"], it["part_seq"], it["qtype"], it["stem"],
-             json.dumps(it.get("options") or [], ensure_ascii=False),
-             it["answer"], it.get("explain", ""), it.get("score", 1.0),
-             "bad" if it["bad"] else "",          # 未校验一律留空 = 当存疑看待
-             json.dumps({"parse": it["bad"]}, ensure_ascii=False) if it["bad"] else None,
-             it["qhash"]))
-    return pid
+            (pid, it["seq"], it["part"], it["part_seq"], it["qtype"], it["stem"], opts,
+             it["answer"], explain, it.get("score", 1.0), verify, note, it["qhash"]))
+    con.execute("UPDATE sq_papers SET n_doubt=(SELECT COUNT(*) FROM sq_questions q "
+                "WHERE q.paper_id=? AND q.part IN ('single','multi','judge') "
+                "AND q.verify<>'ok') WHERE id=?", (pid, pid))
+    return pid, kept, reset
 
 
 def main():
@@ -380,8 +423,9 @@ def main():
             for it in items:
                 print("      %2d [%-7s] %s" % (it["seq"], it["part"], it["stem"][:46]))
         if not a.scan:
-            save(con, p, items)
-            print("    → 已写入 sq_questions %d 条" % len(items))
+            _, kept, reset = save(con, p, items, reparse=True)
+            print("    → 已写入 sq_questions %d 条（沿用旧校对 %d 条，内容变了重置 %d 条）"
+                  % (len(items), kept, reset))
     if not a.scan:
         con.commit()
     if skipped:

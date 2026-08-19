@@ -1122,6 +1122,7 @@ openSlRecord
 openSlType
 openSlideshow
 openSqCheck
+openSqLocal
 openSqReal
 openStars
 openStyleSheet
@@ -1385,6 +1386,7 @@ slUploadPaper
 slWords
 slrTab
 sqAnsText
+sqExamBar
 sqFmt
 sqGo
 sqLoadRecs
@@ -1396,6 +1398,7 @@ sqPick
 sqQuestionHtml
 sqRender
 sqRenderCheck
+sqRenderFacts
 sqRenderList
 sqResult
 sqRules

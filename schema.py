@@ -944,6 +944,27 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_sqr_user ON sq_records(user_id, id DESC);
+        -- 资中专项：地方必得分的**事实表**（见 build_zizhong.py）。
+        -- 为什么单开一张而不是直接写死在代码里：这些数字**每年都会变**
+        -- （2026 招 72 名、2025 是四渠道 143/35/71/9），而且必须能指出
+        -- 「这条是哪份文件哪一年说的」—— 界面上要如实标出来源与年份，
+        -- 不标年份的本地数据是会过期的假知识。
+        --
+        -- proven=1 表示**这个字段在历年真题里原样考过**。两套原卷里 8 道本地题
+        -- 全部出自招聘公告参数（合同期限/户籍/年龄/加分/招录人数），
+        -- 没有一道考县情地理或 GDP —— 所以带 proven 的排最前，
+        -- 县情经济那一组如实标成「未经真题验证」，不装作同等重要。
+        CREATE TABLE IF NOT EXISTS sq_facts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            grp TEXT,                   -- 招聘公告 / 岗位名额 / 县情 / 经济数据
+            k TEXT, v TEXT, unit TEXT,  -- 字段名 / 值 / 单位
+            note TEXT,                  -- 一句话说明（考点提示）
+            src TEXT, year INTEGER,     -- 来源文件 / 年份，界面上必须显示
+            proven INTEGER DEFAULT 0,   -- 1 = 历年真题原样考过
+            ord INTEGER DEFAULT 0,
+            UNIQUE(grp, k, year)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sqf ON sq_facts(grp, ord);
         -- 理论基础（马原/毛中特/习思想…）
         CREATE TABLE IF NOT EXISTS theory_items(
             id INTEGER PRIMARY KEY AUTOINCREMENT,

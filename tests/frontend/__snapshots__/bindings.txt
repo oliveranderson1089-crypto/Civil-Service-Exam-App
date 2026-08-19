@@ -285,6 +285,7 @@ document @pointerup
 #rq-exp @click
 #rqr-list @click
 #rqd-body @click
+#view-sqlocal @click
 #view-sqreal @click
 #view-sqrun @click
 #view-sqres @click

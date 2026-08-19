@@ -6453,3 +6453,24 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
   font-size:var(--fs-sm);line-height:1.7;color:var(--muted);margin-bottom:10px;}
 .sq-local-tip b{color:var(--text);}
 .sq-p-m b{color:var(--text);}
+/* 资中专项：速记卡 */
+.sq-quiz-entry{border:1px solid var(--blue);}
+.sq-badge.proven{background:rgba(64,192,87,.14);color:#1e8449;margin-left:8px;}
+.sq-badge.plain{background:var(--bg2);color:var(--muted);margin-left:8px;}
+.sq-facts-list{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);
+  border-radius:var(--r-sm);overflow:hidden;}
+.sq-f{background:var(--card);padding:10px 12px;}
+.sq-f.proven{background:rgba(64,192,87,.05);}
+.sq-f-k{font-size:var(--fs-sm);color:var(--muted);}
+.sq-f-k i{font-style:normal;color:#1e8449;margin-left:5px;font-size:var(--fs-xs);}
+.sq-f-v{font-size:var(--fs-lg);font-weight:700;color:var(--text);line-height:1.5;
+  font-variant-numeric:tabular-nums;}
+.sq-f-n{font-size:var(--fs-sm);color:var(--muted);line-height:1.65;margin-top:2px;}
+.sq-f-s{font-size:var(--fs-xs);color:var(--muted);margin-top:4px;opacity:.85;}
+/* 考试倒计时条 */
+.sq-exam.near{border:1px solid var(--gold);}
+.sq-exam-d{font-size:var(--fs-lg);color:var(--text);}
+.sq-exam-d b{font-size:var(--fs-2xl);color:var(--blue);font-variant-numeric:tabular-nums;}
+.sq-exam-m{font-size:var(--fs-sm);color:var(--muted);margin-top:2px;}
+.sq-exam-s{font-size:var(--fs-sm);color:var(--muted);line-height:1.7;margin-top:8px;
+  padding-top:8px;border-top:1px dashed var(--line);}

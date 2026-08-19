@@ -11,15 +11,56 @@
 判分口径一律走 mods/sqscore，这儿一个字都不许重写。
 """
 import json
+import os
+import re
+from datetime import date
 
 from flask import Blueprint, jsonify, request
 
-from core import get_db, uid
+from core import BASE, get_db, uid
 from mods import sqscore, timing
 
 bp = Blueprint("shequ", __name__)
 
 SERVABLE = sqscore.SERVABLE_SQL
+
+# 招聘公告的权威事实（build_zizhong.py 也读它）。日期从这儿取而**不是**从用户的
+# 「备考计划」里取：那个字段一个用户只有一个，填的是公考的日子；社区笔试是另一场，
+# 而且它的日期是公告定死的、对所有人一样，本来就不该让人自己填。
+_META = os.path.join(BASE, "zizhong_meta.json")
+_meta_cache = {"mtime": 0, "data": None}
+
+
+def _meta():
+    try:
+        mt = os.path.getmtime(_META)
+    except OSError:
+        return None
+    if _meta_cache["mtime"] != mt:
+        try:
+            with open(_META, encoding="utf-8") as f:
+                _meta_cache["data"] = json.load(f)
+            _meta_cache["mtime"] = mt
+        except Exception:
+            return None
+    return _meta_cache["data"]
+
+
+def _countdown():
+    """距笔试还有多少天。取不到就返回 None —— **宁可不显示，也不要显示一个瞎算的数**。"""
+    m = _meta()
+    if not m:
+        return None
+    raw = (m.get("schedule") or {}).get("笔试") or ""
+    mm = re.search(r"(\d{4})[-年](\d{1,2})[-月](\d{1,2})", raw)
+    if not mm:
+        return None
+    y, mo, d = (int(x) for x in mm.groups())
+    left = (date(y, mo, d) - date.today()).days
+    return {"exam_date": "%04d-%02d-%02d" % (y, mo, d), "days": left,
+            "sign_up": (m.get("schedule") or {}).get("报名", ""),
+            "scope": (m.get("exam") or {}).get("内容", ""),
+            "year": m.get("year"), "total": m.get("total")}
 
 
 def _pub(r, reveal):
@@ -53,16 +94,22 @@ def overview():
         "  (SELECT COUNT(*) FROM sq_questions q WHERE q.paper_id=p.id "
         "     AND q.part IN ('single','multi','judge') AND q.verify<>'ok') n_doubt, "
         "  (SELECT COUNT(*) FROM sq_records r WHERE r.paper_id=p.id AND r.user_id=?) mine "
-        "FROM sq_papers p ORDER BY p.year DESC" % SERVABLE, (u,)).fetchall()
+        # 专项那份是**程序化生成**的练习集，不是真题卷：混在真题列表里会让人
+        # 以为资中考过三套卷。它有自己的入口（资中专项），从这儿排除掉。
+        "FROM sq_papers p WHERE COALESCE(p.kind,'')<>'专项' "
+        "ORDER BY p.year DESC" % SERVABLE, (u,)).fetchall()
     # 考点分布：只统计发得出去的题，**不要拿库存充数**（库存满 ≠ 有题做）
+    # 考点分布只统计真题：专项那 18 道是我们自己按公告造的，
+    # 算进去会让「资中县情」这一格虚高，看不出真题的真实分布。
+    real = ("FROM sq_questions q JOIN sq_papers p ON p.id=q.paper_id "
+            "WHERE COALESCE(p.kind,'')<>'专项' AND q.part IN ('single','multi','judge')")
     types = [dict(r) for r in db.execute(
-        "SELECT q.qtype, COUNT(*) c FROM sq_questions q WHERE %s AND q.part IN "
-        "('single','multi','judge') GROUP BY q.qtype ORDER BY c DESC" % SERVABLE)]
-    doubt = db.execute("SELECT COUNT(*) c FROM sq_questions q WHERE q.part IN "
-                       "('single','multi','judge') AND q.verify<>'ok'").fetchone()["c"]
+        "SELECT q.qtype, COUNT(*) c %s AND %s GROUP BY q.qtype ORDER BY c DESC"
+        % (real, SERVABLE))]
+    doubt = db.execute("SELECT COUNT(*) c %s AND q.verify<>'ok'" % real).fetchone()["c"]
     return jsonify({"papers": [dict(r) for r in rows], "types": types,
                     "doubt": doubt, "paper_min": timing.SQ_PAPER_MIN,
-                    "rules": sqscore.RULE_TEXT})
+                    "rules": sqscore.RULE_TEXT, "exam": _countdown()})
 
 
 @bp.get("/api/shequ/paper/<int:pid>")
@@ -185,6 +232,35 @@ def record(rid):
                           correct=x.get("correct", 0),
                           miss=x.get("miss", ""), extra=x.get("extra", "")))
     return jsonify({"record": dict(r, detail=None), "items": items})
+
+
+# ---------------------------------------------------------------- 资中专项
+@bp.get("/api/shequ/facts")
+def facts():
+    """资中专项的速记卡。
+
+    **每条都带来源与年份**，界面上必须显示 —— 本地数据是会过期的：县情 PDF 里
+    还有 2018 年的数字，招聘公告和统计公报每年换。不标年份就是假知识。
+
+    proven=1 的排在前面：两套原卷里 8 道本地题全部出自招聘公告参数，
+    没有一道考县情地理或 GDP。所以「真题考过」这一档不能和其余的混着摆。
+    """
+    db = get_db()
+    rows = db.execute("SELECT * FROM sq_facts ORDER BY grp, ord").fetchall()
+    groups, order = {}, []
+    for r in rows:
+        g = r["grp"]
+        if g not in groups:
+            groups[g] = {"grp": g, "items": [], "proven": 0}
+            order.append(g)
+        groups[g]["items"].append(dict(r))
+        groups[g]["proven"] += 1 if r["proven"] else 0
+    # 「真题考过的条目多」的组排前面，不按字典序
+    out = sorted((groups[g] for g in order), key=lambda x: -x["proven"])
+    paper = db.execute("SELECT id, n_obj FROM sq_papers WHERE kind='专项'").fetchone()
+    return jsonify({"groups": out, "total": len(rows),
+                    "quiz_paper": paper["id"] if paper else 0,
+                    "quiz_n": paper["n_obj"] if paper else 0, "exam": _countdown()})
 
 
 # ---------------------------------------------------------------- 校对裁决台

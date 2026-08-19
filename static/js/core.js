@@ -310,6 +310,7 @@ const BOARD_FEATURES = {
     // 分组原来只认 key==='drill'，社区没有专项练（P1 才有），
     // 不加这个标记的话「资中真题」会被归进「这个板块的积累」—— 它是练，不是积累。
     { key: 'sqreal', name: '资中真题', desc: '2023 / 2025 原卷 · 整卷模考或背题 · 100 分卷面', icon: 'target', practice: true },
+    { key: 'sqlocal', name: '资中专项', desc: '公告数据直出的必得分 · 速记卡 + 程序化出题', icon: 'compass', practice: true },
     { key: 'sqcheck', name: '入库校对', desc: '源卷是回忆版 · 三方核验对不上的题在这儿定案', icon: 'check', practice: true },
   ],
   // 这三块靠练不靠背：题型固定、有套路、拼速度 → 专项练（按题型刷 + 计时 + 秒杀技巧）
@@ -366,6 +367,7 @@ const SECTION_EXTRA = {
      真正要点的两样挂在这儿，否则「按学科浏览 → 社区」只剩八个待填的分类。 */
   shequ: [
     { name: '资中真题', badge: '2023 / 2025 整卷', go: 'sqreal' },
+    { name: '资中专项', badge: '地方必得分', go: 'sqlocal' },
     { name: '入库校对', badge: '存疑答案定案', go: 'sqcheck' },
   ],
 };
