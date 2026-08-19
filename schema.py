@@ -880,6 +880,70 @@ def init_db():
             UNIQUE(paper_id, seq)
         );
         CREATE INDEX IF NOT EXISTS idx_slreal_q ON slreal_questions(qkind, doctype);
+        -- 社区专职工作者真题（资中县，见 ingest_shequ.py）。
+        -- 又是单起一族，理由和 slreal_* 那对一样、但多两条：
+        --   · 这张卷子有**多选和判断**，answer 不再是单个字母（多选是 "ABD"、判断是
+        --     "T"/"F"）。塞进 real_questions 的话，凡是按「answer 是一个字母」写的
+        --     地方都会静默算错分，而不是报错。
+        --   · 卷面 40 分是主观题（案例分析 + 公文），根本没有选项。
+        -- 形状**按 part 分派**，不按题型名猜——真题库那次就是栽在「看名字猜形状」上。
+        CREATE TABLE IF NOT EXISTS sq_papers(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id INTEGER UNIQUE,     -- drive_files.id，重跑靠它认出「这份处理过了」
+            name TEXT, folder TEXT, ext TEXT,
+            region TEXT,                -- 资中县 / 内江市 / 通用
+            year INTEGER, kind TEXT,    -- 招聘 / 公开选聘 / 模拟 / 押题
+            total REAL DEFAULT 100,     -- 卷面总分
+            n_obj INTEGER DEFAULT 0, n_sub INTEGER DEFAULT 0,
+            n_doubt INTEGER DEFAULT 0,  -- 答案存疑几道（不计入可练题量）
+            n_bad INTEGER DEFAULT 0,    -- 题干残缺、不入练习几道
+            status TEXT, note TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE TABLE IF NOT EXISTS sq_questions(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paper_id INTEGER NOT NULL,
+            seq INTEGER,                -- 卷内连号，跨题型不重排；答题卡按它排
+            part TEXT,                  -- single/multi/judge/case/gongwen
+            part_seq INTEGER,           -- 本题型内序号（「多选第 3 题」）
+            qtype TEXT,                 -- 考点大类：社区知识/社会工作/法律法规/党建党务/公文写作/应急安全/资中县情/时政
+            stem TEXT,
+            options TEXT,               -- JSON 数组；judge/case/gongwen 恒为 ''
+            answer TEXT,                -- single:"A" multi:"ABD" judge:"T"/"F" 主观题:参考答案全文
+            explain TEXT,
+            score REAL DEFAULT 1,
+            -- 这两列是**校对闸门**：源卷是回忆版，答案本身就可能是错的。
+            -- verify='' 时一律当 doubt 看待，不许默认发给人做。
+            verify TEXT DEFAULT '',     -- ok=多方一致 / doubt=存疑 / bad=题干残缺
+            verify_note TEXT,           -- JSON：各核验方给出的答案与理由
+            qhash TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(paper_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sq_part ON sq_questions(part, qtype);
+        CREATE INDEX IF NOT EXISTS idx_sq_hash ON sq_questions(qhash);
+        CREATE INDEX IF NOT EXISTS idx_sq_verify ON sq_questions(verify);
+        -- 每次作答独立留痕（和真题库一个规矩：不覆盖上一次）
+        CREATE TABLE IF NOT EXISTS sq_attempts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL, qid INTEGER NOT NULL,
+            chosen TEXT, correct INTEGER DEFAULT 0, secs INTEGER DEFAULT 0,
+            mode TEXT,                  -- exam=模考 / study=背题 / drill=专项练
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sqa_user ON sq_attempts(user_id, qid);
+        CREATE TABLE IF NOT EXISTS sq_records(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL, paper_id INTEGER,
+            mode TEXT,                  -- exam=模考 / study=背题
+            obj_score REAL DEFAULT 0,   -- 客观 60 分当场判
+            obj_full REAL DEFAULT 0,
+            n_done INTEGER DEFAULT 0, n_total INTEGER DEFAULT 0,
+            secs INTEGER DEFAULT 0,
+            detail TEXT,                -- JSON：逐题 {qid, chosen, correct}
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sqr_user ON sq_records(user_id, id DESC);
         -- 理论基础（马原/毛中特/习思想…）
         CREATE TABLE IF NOT EXISTS theory_items(
             id INTEGER PRIMARY KEY AUTOINCREMENT,

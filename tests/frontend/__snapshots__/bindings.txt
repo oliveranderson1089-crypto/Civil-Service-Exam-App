@@ -285,6 +285,11 @@ document @pointerup
 #rq-exp @click
 #rqr-list @click
 #rqd-body @click
+#view-sqreal @click
+#view-sqrun @click
+#view-sqres @click
+#view-sqcheck @click
+document @keydown
 #dr-srcs @click
 #dr-years @click
 #dr-levels @click

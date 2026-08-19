@@ -6306,3 +6306,150 @@ body.dark .feed-exp{background:#1a2233;border-color:#2a3345;}
 .nx-off{opacity:.35;pointer-events:none;}   /* 这个格式带不走的东西，直接置灰而不是藏起来 */
 body.dark .nx-fmt{background:#1a2130;border-color:#2a3345;color:#e2e7ef;}
 body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blue);}
+
+/* ================= 社区专职工作者（资中县） =================
+   新元素一律走 --blue / --line / --muted / --card / --text 这几个变量，
+   一个写死的灰都没有 —— 夜间和十八套美术主题会自动跟上（见文件开头那条规矩）。
+   选项、卡片的圆角与内边距沿用 .rq-opt 那一套，两处做题页看起来才是同一个应用。 */
+.sq-paper{margin-bottom:12px;}
+.sq-p-t{font-size:var(--fs-lg);font-weight:700;color:var(--text);line-height:1.5;}
+.sq-p-m{font-size:var(--fs-sm);color:var(--muted);margin:4px 0 12px;}
+.sq-warn{color:var(--gold);margin-left:8px;}
+.sq-mine{margin-left:8px;}
+.sq-p-b{display:flex;gap:8px;flex-wrap:wrap;}
+.sq-sec-t{font-size:var(--fs-md);font-weight:700;color:var(--text);margin-bottom:8px;}
+.sq-note{font-size:var(--fs-sm);color:var(--muted);line-height:1.7;margin-top:8px;}
+.sq-chips{display:flex;gap:6px;flex-wrap:wrap;}
+.sq-chip{font-size:var(--fs-sm);color:var(--muted);border:1px solid var(--line);
+  border-radius:var(--r-pill);padding:2px 10px;}
+.sq-doubt-entry{border:1px solid var(--gold);}
+.sq-recs{display:grid;gap:2px;}
+.sq-rec{display:flex;gap:8px;align-items:baseline;font-size:var(--fs-sm);
+  padding:7px 0;border-top:1px solid var(--line);}
+.sq-rec:first-child{border-top:0;}
+.sq-rec-m{color:var(--blue);flex:0 0 40px;}
+.sq-rec-n{flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sq-rec-s{font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;}
+.sq-rec-d{color:var(--muted);flex:0 0 auto;}
+
+/* ---- 做题 ---- */
+.sq-run-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:10px 12px;background:var(--card);border-radius:var(--r-md);
+  box-shadow:var(--shadow);margin-bottom:12px;font-size:var(--fs-sm);color:var(--muted);}
+.sq-run-p{color:var(--text);}
+.sq-run-d{margin-left:auto;}
+.sq-clock{font-variant-numeric:tabular-nums;font-weight:700;color:var(--blue);
+  font-size:var(--fs-lg);}
+.sq-q-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  font-size:var(--fs-xs);color:var(--muted);margin-bottom:10px;}
+.sq-qt{padding:1.5px 8px;border-radius:var(--r-pill);background:#eef5fc;color:var(--blue);
+  font-weight:700;}
+.sq-qt.judge{background:rgba(64,192,87,.12);color:#1e8449;}
+.sq-qt.case,.sq-qt.gongwen{background:rgba(240,165,0,.14);color:#8a5a00;}
+.sq-qs{margin-left:auto;}
+.sq-stem{font-size:var(--fs-lg);line-height:1.85;color:var(--text);
+  margin-bottom:14px;white-space:pre-wrap;}
+.sq-opts{display:grid;gap:8px;}
+.sq-opt{display:flex;gap:9px;align-items:flex-start;text-align:left;
+  border:1px solid var(--line);background:var(--card);border-radius:11px;
+  padding:11px 13px;font-size:14.5px;line-height:1.7;cursor:pointer;color:inherit;width:100%;}
+.sq-opt.ro{cursor:default;}
+.sq-opt .sq-l{flex:0 0 22px;height:22px;border-radius:50%;background:var(--line);
+  display:grid;place-items:center;font-size:var(--fs-sm);font-weight:700;}
+/* 多选用方标、单选用圆标：形状即规则，不用读说明就知道能不能多勾 */
+.sq-opt.multi .sq-l{border-radius:var(--r-xs);}
+.sq-opt.chosen{border-color:var(--blue);background:#eef5fc;}
+.sq-opt.chosen .sq-l{background:var(--blue-fill);color:#fff;}
+.sq-opt.right{border-color:#40c057;background:rgba(64,192,87,.09);}
+.sq-opt.right .sq-l{background:#40c057;color:#fff;}
+.sq-opt.wrong{border-color:#fa5252;background:rgba(250,82,82,.09);}
+.sq-opt.wrong .sq-l{background:#fa5252;color:#fff;}
+/* 「漏选」：多选题最常见的丢分方式，对/错两态说不清它 */
+.sq-opt.miss{border-color:#40c057;border-style:dashed;background:rgba(64,192,87,.05);}
+.sq-opt.miss .sq-l{background:transparent;color:#1e8449;border:1.5px solid #1e8449;
+  box-sizing:border-box;}
+.sq-rule{margin-top:11px;font-size:var(--fs-sm);color:var(--muted);
+  background:var(--bg2);border-radius:9px;padding:8px 11px;line-height:1.65;}
+.sq-rule b{color:var(--text);}
+.sq-wide{width:100%;margin-top:10px;}
+.sq-tf{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.sq-tf-b{border:1.5px solid var(--line);background:var(--card);border-radius:13px;
+  padding:16px 0;font-size:26px;font-weight:700;color:var(--text);font-family:inherit;cursor:pointer;}
+.sq-tf-b.t{color:#1e8449;}
+.sq-tf-b.f{color:#c0392b;}
+.sq-tf-b.picked{border-color:var(--blue);background:#eef5fc;}
+.sq-tf-b small{display:block;font-size:var(--fs-xs);font-weight:400;color:var(--muted);margin-top:2px;}
+.sq-kbd{font-size:var(--fs-xs);color:var(--muted);text-align:center;margin-top:9px;}
+.sq-kbd i{font-style:normal;border:1px solid var(--line);border-radius:var(--r-xs);
+  padding:0 5px;background:var(--bg2);margin:0 1px;}
+.sq-sub{width:100%;border:1.5px solid var(--line);border-radius:var(--r-md);
+  padding:12px;font-size:var(--fs-md);line-height:1.9;font-family:inherit;
+  background:var(--card);color:var(--text);resize:vertical;}
+.sq-sub:focus{border-color:var(--blue);outline:none;}
+.sq-fb{margin-top:14px;padding:9px 12px;border-radius:var(--r-sm);font-size:var(--fs-md);}
+.sq-fb.ok{background:rgba(64,192,87,.10);color:#1e8449;}
+.sq-fb.no{background:rgba(250,82,82,.10);color:#c0392b;}
+.sq-ex{margin-top:10px;background:rgba(76,110,245,.09);border-left:3px solid #4c6ef5;
+  border-radius:0 var(--r-sm) var(--r-sm) 0;padding:9px 12px;font-size:var(--fs-md);line-height:1.75;}
+.sq-nav{display:flex;gap:8px;margin-top:16px;}
+.sq-nav .btn{flex:1;}
+
+/* ---- 答题卡 ---- */
+.sq-sheet-box{background:var(--card);border-radius:var(--r-md);padding:12px 14px;
+  box-shadow:var(--shadow);margin-bottom:12px;}
+.sq-sheet{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;}
+.sq-sheet-lab{display:flex;justify-content:space-between;font-size:var(--fs-xs);
+  color:var(--muted);margin:12px 0 7px;}
+.sq-sheet-lab:first-child{margin-top:0;}
+.sq-sq{aspect-ratio:1;border-radius:var(--r-sm);border:1px solid var(--line);
+  background:var(--card);color:var(--muted);font-size:var(--fs-sm);
+  font-variant-numeric:tabular-nums;cursor:pointer;padding:0;}
+.sq-sq.done{background:var(--blue-fill);border-color:var(--blue);color:#fff;}
+.sq-sq.cur{border-color:var(--blue);border-width:2px;color:var(--blue);font-weight:700;}
+.sq-sq.wide{grid-column:span 2;aspect-ratio:auto;padding:7px 0;font-size:var(--fs-xs);line-height:1.4;}
+.sq-warn-box{border:1px solid var(--gold);border-radius:var(--r-sm);padding:8px 11px;}
+
+/* ---- 成绩 ---- */
+.sq-score{font-size:var(--fs-md);color:var(--muted);}
+.sq-score b{font-size:var(--fs-3xl);color:var(--text);font-variant-numeric:tabular-nums;}
+.sq-wrong,.sq-sub-cmp{padding:11px 0;border-top:1px solid var(--line);}
+.sq-wrong:first-of-type,.sq-sub-cmp:first-of-type{border-top:0;}
+.sq-w-h{font-size:var(--fs-sm);color:var(--muted);margin-bottom:5px;}
+.sq-w-q{font-size:var(--fs-md);color:var(--text);line-height:1.8;white-space:pre-wrap;}
+.sq-w-a{font-size:var(--fs-sm);color:var(--muted);margin-top:6px;}
+.sq-w-a b{color:var(--text);}
+.sq-miss{color:#c0392b;margin-left:8px;}
+.sq-extra{color:var(--gold);margin-left:8px;}
+.sq-allright{text-align:center;color:var(--muted);}
+.sq-cmp2{display:grid;gap:10px;margin-top:8px;}
+@media(min-width:761px){.sq-cmp2{grid-template-columns:1fr 1fr;}}
+.sq-cmp-t{font-size:var(--fs-xs);color:var(--muted);margin-bottom:3px;}
+.sq-cmp-b{background:var(--bg2);border-radius:var(--r-sm);padding:9px 11px;
+  font-size:var(--fs-sm);line-height:1.85;white-space:pre-wrap;}
+
+/* ---- 裁决台 ---- */
+.sq-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:9px;}
+.sq-fact{background:var(--bg2);border-radius:11px;padding:10px 11px;}
+.sq-fact .v{font-size:var(--fs-2xl);font-weight:700;color:var(--text);
+  font-variant-numeric:tabular-nums;line-height:1.3;}
+.sq-fact .v.ok{color:#1e8449;}
+.sq-fact .v.warn{color:var(--gold);}
+.sq-fact .v.bad{color:#c0392b;}
+.sq-fact .k{font-size:var(--fs-xs);color:var(--muted);line-height:1.4;}
+.sq-doubt{border:1px solid var(--gold);}
+.sq-badge{font-size:var(--fs-xs);padding:1.5px 7px;border-radius:var(--r-pill);}
+.sq-badge.warn{background:rgba(240,165,0,.16);color:#8a5a00;}
+.sq-verdict{margin-top:12px;border:1px solid var(--line);border-radius:var(--r-md);padding:4px 12px;}
+.sq-party{display:flex;gap:9px;font-size:var(--fs-sm);padding:7px 0;
+  border-top:1px dashed var(--line);line-height:1.6;}
+.sq-party:first-child{border-top:0;}
+.sq-party .who{flex:0 0 84px;color:var(--muted);font-size:var(--fs-xs);}
+.sq-party .ans{flex:0 0 40px;font-weight:700;color:var(--text);}
+.sq-party .why{flex:1;color:var(--muted);}
+.sq-party.src .ans{color:var(--gold);}
+.sq-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+.sq-doubt.local{border-color:var(--blue);}
+.sq-local-tip{background:#eef5fc;border-radius:var(--r-sm);padding:9px 12px;
+  font-size:var(--fs-sm);line-height:1.7;color:var(--muted);margin-bottom:10px;}
+.sq-local-tip b{color:var(--text);}
+.sq-p-m b{color:var(--text);}

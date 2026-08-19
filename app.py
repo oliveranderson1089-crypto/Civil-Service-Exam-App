@@ -79,6 +79,7 @@ from mods.realq import bp as realq_bp
 from mods.review import bp as review_bp
 from mods.search import bp as search_bp
 from mods.shenlun import bp as shenlun_bp
+from mods.shequ import bp as shequ_bp
 from mods.skin import bp as skin_bp
 from mods.social import bp as social_bp
 from mods.sucai import bp as sucai_bp
@@ -163,6 +164,7 @@ app.register_blueprint(realq_bp)
 app.register_blueprint(review_bp)
 app.register_blueprint(search_bp)
 app.register_blueprint(shenlun_bp)
+app.register_blueprint(shequ_bp)
 app.register_blueprint(skin_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(sucai_bp)

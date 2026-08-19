@@ -29,7 +29,7 @@ const TB_SVG = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
    用「排除法」而不是「白名单」：以后新加的视图默认带标签栏，不会因为漏登记而丢导航。 */
 const TAB_OFF = new Set([
   'notes', 'notebook', 'kb', 'doc', 'viewer', 'chat', 'search',
-  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest',
+  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest', 'sqrun',
   'slgrade', 'slresult', 'writed', 'wqadd',
 ]);
 
@@ -74,8 +74,9 @@ function tbBoardGroups(board) {
   const mk = (f) => Object.assign(
     { name: f.name, desc: f.desc, go: () => openBoardFeat(f.key, board) },
     f.key === 'drill' ? tbBoardStat(board) : tbAcc(f.key));
-  const practice = feats.filter(f => f.key === 'drill').map(mk);
-  const rest = feats.filter(f => f.key !== 'drill' && !String(f.key).startsWith('bk') && f.key !== 'boardkb').map(mk);
+  const isPractice = (f) => f.key === 'drill' || f.practice;
+  const practice = feats.filter(isPractice).map(mk);
+  const rest = feats.filter(f => !isPractice(f) && !String(f.key).startsWith('bk') && f.key !== 'boardkb').map(mk);
   const know = feats.filter(f => String(f.key).startsWith('bk') || f.key === 'boardkb').map(mk);
   return [
     practice.length ? { name: '练', items: practice } : null,
@@ -124,14 +125,19 @@ const TAB_DEFS = [
   {
     key: 'drill', name: '练', icon: TB_SVG('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/>'),
     // 板块名取前两字当 chip：「言语理解与表达」整个塞进胶囊会把一行挤成两行
+    /* 「社区」是显式加的，不走 tbBoardNames() —— 那个函数按「配了 drill」反查，
+       而社区的专项练还没有（P1 才灌题库）。硬塞个 drill 键会让「专项突破」那一组
+       多出一个点进去没题的入口，那比多写一行更糟。 */
     chips: () => [{ key: '', name: '全部' }].concat(
-      tbBoardNames().map(b => ({ key: b, name: b.slice(0, 2) }))),
+      tbBoardNames().map(b => ({ key: b, name: b.slice(0, 2) })),
+      [{ key: '社区', name: '社区' }]),
     groups: (chip) => chip ? tbBoardGroups(chip) : [
       { name: '真题实战', icon: 'target', items: [
         { name: '历年真题', desc: '国考 / 川考原卷 · 错题自动重现', go: () => openRealq() },
         { name: '题库', desc: '四川省考卷面 · 每周自动更新', go: () => openQuiz() },
         { name: '模拟卷', desc: '整卷计时 · 卷面还原', go: () => openQuizSets() },
         { name: '申论真题批改', desc: 'AI 逐点批改', go: () => openShenlun() },
+        { name: '资中社区真题', desc: '2023 / 2025 原卷 · 100 分整卷', go: () => openSqReal() },
       ] },
       { name: '专项突破', icon: 'layers', items: tbDrillBoards() },
       { name: '申论小题与成文', icon: 'pen', items: [
@@ -518,7 +524,8 @@ window.__tabView = function (view) {
    出现的条件比左栏严：左栏 206 是恒定成本，这一栏 250 只有在
    「左栏 + 内容列 + 它」都摆得下（≥1360）时才划算，否则会把内容列挤窄。 */
 const SR_R_OFF = new Set(['doc', 'viewer', 'chat', 'notes', 'notebook', 'kb',
-  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest', 'slgrade', 'slpaper', 'writed']);
+  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest', 'sqrun',
+  'slgrade', 'slpaper', 'writed']);
 
 function srRow(name, val, go) {
   const i = tbItem({ go });

@@ -1,0 +1,447 @@
+/* 社区专职工作者（资中县）：整卷背题 / 模考 + 入库校对裁决台
+ *
+ * 这卷子和行测卷不是一个形状，所以没有复用 realq.js 的做题页：
+ *   · 五种题型（单选/多选/判断/案例/公文），**按 part 分派渲染**，不按题型名猜；
+ *   · 多选题是「多选、少选、错选均不得分」，所以要有「确定提交」这一步 ——
+ *     点一下就判的交互会让人手滑丢分，而这门考试丢的是整整 1 分；
+ *   · 40 分主观题没有标准答案可判，交卷后给参考答案并排对照。
+ *
+ * **判分一律在后端**（mods/sqscore.py）。前端连「对不对」都不自己算：
+ * 算两遍迟早算得不一样，而且不会报错。
+ */
+/* global $, api, appConfirm, artEm, errMsg, esc, push, back, stack, toast */
+
+let sqPapers = [], sqRules = {};
+let sqRun = null;        // { pid, mode, items, parts, idx, answers:{qid:值}, t0, left, timer, held }
+
+const SQ_L = ['A', 'B', 'C', 'D'];
+
+/* ---------------------------------------------------------------- 卷子列表 */
+async function openSqReal() {
+  push({ view: 'sqreal', title: '资中真题' });
+  $('#sq-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/shequ/overview');
+    sqPapers = d.papers || []; sqRules = d.rules || {};
+    sqRenderList(d);
+  } catch (e) { $('#sq-list').innerHTML = `<p class="empty">${esc(errMsg(e))}</p>`; }
+}
+
+function sqRenderList(d) {
+  if (!sqPapers.length) {
+    $('#sq-list').innerHTML = '<p class="empty">还没有卷子。先跑 ingest_shequ.py 把真题解析进库。</p>';
+    return;
+  }
+  const types = (d.types || []).map(t => `<span class="sq-chip">${esc(t.qtype)} ${t.c}</span>`).join('');
+  $('#sq-list').innerHTML = sqPapers.map(p => `
+    <div class="card sq-paper">
+      <div class="sq-p-t">${esc(p.name.replace(/\.pdf$/i, ''))}</div>
+      <div class="sq-p-m">${p.year} 年 · ${esc(p.kind)} ·
+        客观 <b>${p.servable}</b>/${p.n_obj} 题可练 + 主观 ${p.n_sub} 题
+        ${p.n_doubt ? `<span class="sq-warn">${p.n_doubt} 道待裁决</span>` : ''}
+        ${p.mine ? `<span class="sq-mine">做过 ${p.mine} 次</span>` : ''}</div>
+      <div class="sq-p-b">
+        <button class="btn primary" data-sq-open="${p.id}" data-sq-mode="exam">模考（总倒计时）</button>
+        <button class="btn" data-sq-open="${p.id}" data-sq-mode="study">背题（做一题揭晓一题）</button>
+      </div>
+    </div>`).join('')
+    + (types ? `<div class="card"><div class="sq-sec-t">能练的考点分布</div>
+        <div class="sq-chips">${types}</div>
+        <div class="sq-note">只统计过了校对闸门的题 —— 库存满不等于有题做。</div></div>` : '')
+    + (d.doubt ? `<div class="card sq-doubt-entry">
+        <div class="sq-sec-t">${artEm('⚠')} ${d.doubt} 道题的答案还没定</div>
+        <div class="sq-note">源卷是回忆版，答案本身可能是错的。这些题留在库里但不发给你做，
+          裁决完才会进卷子。</div>
+        <button class="btn primary" id="sq-go-check">去裁决</button></div>` : '')
+    + `<div class="card"><div class="sq-sec-t">我的记录</div><div id="sq-recs" class="sq-recs">
+        <p class="empty">加载中…</p></div></div>`;
+  sqLoadRecs();
+}
+
+async function sqLoadRecs() {
+  try {
+    const d = await api('/api/shequ/records');
+    const box = $('#sq-recs');
+    if (!box) return;
+    if (!(d.items || []).length) { box.innerHTML = '<p class="empty">还没做过</p>'; return; }
+    box.innerHTML = d.items.map(r => `
+      <div class="sq-rec" data-sq-rec="${r.id}">
+        <span class="sq-rec-m">${esc(r.mode_name)}</span>
+        <span class="sq-rec-n">${esc((r.paper_name || '').replace(/\.pdf$/i, ''))}</span>
+        <span class="sq-rec-s">${r.obj_score} / ${r.obj_full}</span>
+        <span class="sq-rec-d">${esc((r.created_at || '').slice(5, 16))}</span>
+      </div>`).join('');
+  } catch (e) { /* 记录拉不到不该挡住做题 */ }
+}
+
+/* ---------------------------------------------------------------- 做题 */
+async function sqOpenPaper(pid, mode) {
+  try {
+    const d = await api(`/api/shequ/paper/${pid}?mode=${mode}`);
+    if (!(d.items || []).length) { toast('这份卷子还没有能做的题', true); return; }
+    sqRun = { pid, mode, items: d.items, parts: d.parts || [], idx: 0, answers: {}, locked: {},
+              held: d.held || 0, objFull: d.obj_full, t0: Date.now(),
+              left: mode === 'exam' ? d.seconds : 0, timer: null, paper: d.paper };
+    push({ view: 'sqrun', title: mode === 'exam' ? '模考' : '背题' });
+    if (mode === 'exam') sqTick();
+    sqRender();
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+function sqTick() {
+  clearInterval(sqRun.timer);
+  sqRun.timer = setInterval(() => {
+    if (!sqRun) return;
+    sqRun.left -= 1;
+    const el = $('#sq-clock');
+    if (el) el.textContent = sqFmt(sqRun.left);
+    if (sqRun.left <= 0) { clearInterval(sqRun.timer); sqSubmit(true); }
+  }, 1000);
+}
+const sqFmt = (s) => {
+  s = Math.max(0, s | 0);
+  const h = (s / 3600) | 0, m = ((s % 3600) / 60) | 0;
+  return (h ? String(h).padStart(2, '0') + ':' : '') + String(m).padStart(2, '0')
+    + ':' + String(s % 60).padStart(2, '0');
+};
+
+function sqRender() {
+  const r = sqRun; if (!r) return;
+  const it = r.items[r.idx];
+  const done = Object.keys(r.answers).filter(k => String(r.answers[k]).trim()).length;
+  $('#sq-run-bar').innerHTML = `
+    <span class="sq-run-p">第 ${r.idx + 1} / ${r.items.length} 题 · ${esc(it.part_name)}</span>
+    ${r.mode === 'exam' ? `<span id="sq-clock" class="sq-clock">${sqFmt(r.left)}</span>` : ''}
+    <span class="sq-run-d">已答 ${done}</span>
+    <button class="btn tiny" id="sq-sheet-btn">答题卡</button>`;
+  $('#sq-run-body').innerHTML = sqQuestionHtml(it);
+  $('#sq-sheet').classList.add('hidden');
+}
+
+function sqQuestionHtml(it) {
+  const r = sqRun;
+  const mine = r.answers[it.id];
+  /* 什么时候揭晓：单选和判断点一下就揭晓；**多选要等「确定提交」**。
+     不区分的话，勾第一个选项的瞬间答案就亮出来了，那颗按钮等于摆设，
+     而且是在人还在挑的时候泄底 —— 这道题的规则是少选一个就 0 分，
+     正需要「想清楚再交」这一步。 */
+  const shown = r.mode !== 'exam' && it.answer != null && (it.part === 'multi'
+    ? !!(r.locked && r.locked[it.id])
+    : (mine != null && mine !== ''));
+  let body = '';
+  if (it.part === 'judge') {
+    body = `<div class="sq-tf">
+        <button class="sq-tf-b t${mine === 'T' ? ' picked' : ''}" data-sq-tf="T">√<small>正确</small></button>
+        <button class="sq-tf-b f${mine === 'F' ? ' picked' : ''}" data-sq-tf="F">×<small>错误</small></button>
+      </div>
+      <div class="sq-kbd"><i>J</i> 判对　<i>K</i> 判错　<i>Enter</i> 下一题</div>`;
+  } else if (it.part === 'case' || it.part === 'gongwen') {
+    body = `<textarea id="sq-sub" class="sq-sub" rows="10"
+        placeholder="在这里作答（${it.score} 分）">${esc(mine || '')}</textarea>
+      <div class="sq-note">主观题交卷后给参考答案对照，不当场判分。</div>`;
+  } else {
+    const multi = it.part === 'multi';
+    const picked = new Set(String(mine || '').split(''));
+    body = `<div class="sq-opts">` + (it.options || []).map((o, i) => {
+      const L = SQ_L[i];
+      let cls = picked.has(L) ? ' chosen' : '';
+      if (shown) {
+        const right = String(it.answer).includes(L);
+        if (right && picked.has(L)) cls = ' right';
+        else if (right) cls = ' miss';
+        else if (picked.has(L)) cls = ' wrong';
+        else cls = '';
+      }
+      return `<button class="sq-opt${multi ? ' multi' : ''}${cls}" data-sq-opt="${L}">
+          <span class="sq-l">${L}</span><span>${esc(o)}</span></button>`;
+    }).join('') + `</div>`
+      + (multi ? `<div class="sq-rule">${mine ? '已选 ' + String(mine).split('').join(' ') + '　·　' : ''}
+          <b>${esc(sqRules.multi || '')}</b></div>` : '');
+    if (multi && !shown) body += `<button class="btn primary sq-wide" id="sq-multi-ok">确定提交</button>`;
+  }
+  let after = '';
+  if (shown) {
+    const ok = sqLocalHint(it, mine);
+    after = `<div class="sq-fb ${ok}">${ok === 'ok' ? artEm('✅') + ' 答对了' : artEm('❌') + ' 答错了'}
+        　正确答案：<b>${esc(sqAnsText(it))}</b></div>`
+      + (it.explain ? `<div class="sq-ex">${esc(it.explain)}</div>` : '');
+  }
+  return `<div class="card sq-q">
+      <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
+        <span class="sq-qk">${esc(it.qtype)}</span><span class="sq-qs">${it.score} 分</span></div>
+      <div class="sq-stem">${esc(it.stem)}</div>
+      ${body}${after}
+      <div class="sq-nav">
+        <button class="btn" id="sq-prev"${sqRun.idx ? '' : ' disabled'}>上一题</button>
+        <button class="btn" id="sq-next">${sqRun.idx + 1 >= sqRun.items.length ? '到末尾' : '下一题'}</button>
+        <button class="btn primary" id="sq-submit">交卷</button>
+      </div>
+    </div>`;
+}
+
+/* 背题模式下的即时反馈。**只是提示，不是判分** —— 真正的分数由后端交卷时算，
+   这儿算错了也不会写进任何记录。多选按「全对才算对」，和后端同一条规矩。 */
+function sqLocalHint(it, mine) {
+  const a = String(it.answer || '').split('').sort().join('');
+  const c = String(mine || '').split('').sort().join('');
+  return a && c && a === c ? 'ok' : 'no';
+}
+const sqAnsText = (it) => it.part === 'judge'
+  ? (it.answer === 'T' ? '√ 正确' : '× 错误') : String(it.answer || '').split('').join(' ');
+
+function sqPick(letter) {
+  const r = sqRun, it = r.items[r.idx];
+  if (it.part === 'multi') {
+    const s = new Set(String(r.answers[it.id] || '').split(''));
+    s.has(letter) ? s.delete(letter) : s.add(letter);
+    r.answers[it.id] = [...s].sort().join('');
+    if (r.locked) delete r.locked[it.id];   // 又改了就撤回揭晓，别看着答案改
+    sqRender();
+    return;
+  }
+  r.answers[it.id] = letter;
+  sqRender();
+  if (r.mode === 'exam') setTimeout(() => sqGo(1), 180);   // 模考不揭晓，直接走下一题
+}
+
+function sqGo(step) {
+  const r = sqRun;
+  sqStash();
+  const n = r.idx + step;
+  if (n < 0 || n >= r.items.length) return;
+  r.idx = n; sqRender();
+}
+
+/* 主观题的输入要在切题前收起来，否则一翻页就白写了 */
+function sqStash() {
+  const el = $('#sq-sub');
+  if (el && sqRun) sqRun.answers[sqRun.items[sqRun.idx].id] = el.value;
+}
+
+function sqSheetHtml() {
+  const r = sqRun;
+  let h = '';
+  for (const p of r.parts) {
+    const rows = r.items.filter(i => i.part === p.part);
+    const done = rows.filter(i => String(r.answers[i.id] || '').trim()).length;
+    const wide = (p.part === 'case' || p.part === 'gongwen');
+    h += `<div class="sq-sheet-lab"><span>${esc(p.name)} ${p.n} 题 · ${p.score} 分</span>
+        <span>已答 ${done}</span></div>
+      <div class="sq-sheet">` + rows.map(i => {
+      const at = r.items.indexOf(i);
+      const cls = (String(r.answers[i.id] || '').trim() ? ' done' : '')
+        + (at === r.idx ? ' cur' : '') + (wide ? ' wide' : '');
+      return `<button class="sq-sq${cls}" data-sq-jump="${at}">${wide
+        ? esc(p.name.slice(0, 2)) + '<br>' + i.score + ' 分' : i.part_seq}</button>`;
+    }).join('') + `</div>`;
+  }
+  if (r.held) h += `<div class="sq-note sq-warn-box">另有 ${r.held} 道客观题答案待裁决，
+      本卷暂不发出 —— 卷面因此不满分，这是实话，不是漏题。</div>`;
+  return h;
+}
+
+async function sqSubmit(auto) {
+  const r = sqRun; if (!r) return;
+  sqStash();
+  const done = Object.keys(r.answers).filter(k => String(r.answers[k]).trim()).length;
+  if (!auto && done < r.items.length) {
+    const go = await appConfirm(`还有 ${r.items.length - done} 题没作答，确定交卷？`);
+    if (!go) return;
+  }
+  clearInterval(r.timer);
+  try {
+    const d = await api('/api/shequ/submit', {
+      paper_id: r.pid, mode: r.mode, seconds: ((Date.now() - r.t0) / 1000) | 0,
+      answers: r.answers,
+    });
+    push({ view: 'sqres', title: '成绩' });
+    sqResult(d);
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+function sqResult(d) {
+  const r = sqRun;
+  const byId = {}; (r.items || []).forEach(i => { byId[i.id] = i; });
+  const wrong = (d.detail || []).filter(x => x.correct === 0);
+  const subs = (d.detail || []).filter(x => x.correct === -1);
+  $('#sq-res').innerHTML = `
+    <div class="card">
+      <div class="sq-score"><b>${d.obj_score}</b><small> / ${d.obj_full} 分（客观题）</small></div>
+      <div class="sq-note">主观题 ${d.n_sub} 道未判分 —— 40 分那部分要按采分点批改，
+        现在先和参考答案对照着看。${r.held ? `另有 ${r.held} 道题答案待裁决，没进这张卷子。` : ''}</div>
+    </div>
+    ${wrong.length ? `<div class="card"><div class="sq-sec-t">错了 ${wrong.length} 道</div>`
+      + wrong.map(x => {
+        const it = byId[x.qid] || {};
+        const miss = x.miss ? `<span class="sq-miss">漏选 ${x.miss.split('').join(' ')}</span>` : '';
+        const extra = x.extra ? `<span class="sq-extra">多选 ${x.extra.split('').join(' ')}</span>` : '';
+        return `<div class="sq-wrong">
+            <div class="sq-w-h">第 ${it.seq || x.seq} 题 · ${esc(it.part_name || '')} ${miss}${extra}</div>
+            <div class="sq-w-q">${esc(it.stem || '')}</div>
+            <div class="sq-w-a">你选 <b>${esc(String(x.chosen || '—').split('').join(' '))}</b>
+              　正确 <b>${esc(sqAnsText(it))}</b></div>
+            ${it.explain ? `<div class="sq-ex">${esc(it.explain)}</div>` : ''}
+          </div>`;
+      }).join('') + `</div>` : '<div class="card sq-allright">' + artEm('✅') + ' 客观题全对</div>'}
+    ${subs.length ? `<div class="card"><div class="sq-sec-t">主观题对照</div>`
+      + subs.map(x => {
+        const it = byId[x.qid] || {};
+        return `<div class="sq-sub-cmp">
+            <div class="sq-w-h">${esc(it.part_name || '')} · ${it.score} 分</div>
+            <div class="sq-w-q">${esc(it.stem || '')}</div>
+            <div class="sq-cmp2">
+              <div><div class="sq-cmp-t">你写的</div><div class="sq-cmp-b">${esc(x.chosen || '（没写）')}</div></div>
+              <div><div class="sq-cmp-t">参考答案</div><div class="sq-cmp-b">${esc(it.answer || '')}</div></div>
+            </div></div>`;
+      }).join('') + `</div>` : ''}
+    <div class="card"><button class="btn primary sq-wide" id="sq-back-list">回卷子列表</button></div>`;
+}
+
+/* 回看某一次：作答从记录里取，题面/答案/解析后端现查库（记录表不存题面）。
+   复用成绩页那一屏 —— 同一份东西不画两遍。 */
+async function sqOpenRecord(rid) {
+  try {
+    const d = await api(`/api/shequ/record/${rid}`);
+    const items = d.items || [];
+    // sqResult 读的是 sqRun.items + detail 两份，这儿把它们从回看数据里拼回去
+    sqRun = { items, held: 0 };
+    const detail = items.map(it => ({ qid: it.id, seq: it.seq, chosen: it.chosen,
+                                      correct: it.correct, miss: it.miss, extra: it.extra }));
+    const r = d.record || {};
+    push({ view: 'sqres', title: '回看' });
+    sqResult({ obj_score: r.obj_score, obj_full: r.obj_full, detail,
+               n_sub: detail.filter(x => x.correct === -1).length });
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+/* ---------------------------------------------------------------- 裁决台 */
+async function openSqCheck() {
+  push({ view: 'sqcheck', title: '入库校对' });
+  $('#sq-check').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/shequ/doubts');
+    sqRenderCheck(d);
+  } catch (e) { $('#sq-check').innerHTML = `<p class="empty">${esc(errMsg(e))}</p>`; }
+}
+
+function sqRenderCheck(d) {
+  const health = (d.health || []).map(h => `
+    <div class="card">
+      <div class="sq-sec-t">${esc((h.name || '').replace(/\.pdf$/i, ''))}</div>
+      <div class="sq-facts">
+        <div class="sq-fact"><div class="v">${h.obj || 0}</div><div class="k">客观题总数</div></div>
+        <div class="sq-fact"><div class="v ok">${h.ok || 0}</div><div class="k">过闸，可练</div></div>
+        <div class="sq-fact"><div class="v warn">${h.doubt || 0}</div><div class="k">存疑待裁决</div></div>
+        <div class="sq-fact"><div class="v bad">${h.bad || 0}</div><div class="k">不入库</div></div>
+        ${h.todo ? `<div class="sq-fact"><div class="v">${h.todo}</div><div class="k">还没校对</div></div>` : ''}
+      </div>
+    </div>`).join('');
+  const items = (d.items || []).map(it => {
+    const note = it.note || {};
+    const parties = (note.parties || []).map(p => `
+      <div class="sq-party"><span class="who">${esc(p.who)}</span>
+        <span class="ans">${esc(p.answer || '—')}</span>
+        <span class="why">${esc(p.note || '')}</span></div>`).join('');
+    const opts = (it.options || []).map((o, i) =>
+      `<div class="sq-opt ro"><span class="sq-l">${SQ_L[i]}</span><span>${esc(o)}</span></div>`).join('');
+    /* 本地事实题单独说一句：招录人数、年龄上限这类只写在当地公告里的数字，
+       模型没有依据、给出的答案还互相矛盾。这时**源卷比模型可信**，
+       不提醒的话很容易顺手点「采信建议」，把对的答案改坏。 */
+    const localTip = note.local ? `<div class="sq-local-tip">${artEm('📍')}
+        这是<b>本地事实题</b> —— 招录人数、年龄上限、合同期限这类只写在资中当地公告里的数字，
+        模型答不了、也查不到，它们的答案是猜的。除非你手上有公告原文，否则<b>维持源卷</b>。</div>` : '';
+    return `<div class="card sq-doubt${note.local ? ' local' : ''}" data-sq-q="${it.id}">
+        <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
+          <span class="sq-qk">${esc(it.paper_name || '').replace(/\.pdf$/i, '')} 第 ${it.seq} 题</span>
+          <span class="sq-badge warn">${it.verify === 'bad' ? '题干有问题'
+            : note.local ? '本地事实题' : '答案存疑'}</span></div>
+        ${localTip}
+        <div class="sq-stem">${esc(it.stem)}</div>
+        ${opts ? `<div class="sq-opts">${opts}</div>` : ''}
+        <div class="sq-verdict">
+          <div class="sq-party src"><span class="who">源卷标注</span>
+            <span class="ans">${esc(sqAnsText(it))}</span><span class="why">${esc(note.why || '')}</span></div>
+          ${parties}
+        </div>
+        <div class="sq-acts">
+          ${note.suggest && note.suggest !== it.answer
+            ? `<button class="btn primary" data-sq-act="accept">采信 ${esc(note.suggest)}，改正入库</button>` : ''}
+          <button class="btn${note.local ? ' primary' : ''}" data-sq-act="keep">源卷是对的，过闸</button>
+          <button class="btn" data-sq-act="hold">保留存疑</button>
+          <button class="btn" data-sq-act="drop">这题不能用</button>
+        </div>
+      </div>`;
+  }).join('');
+  $('#sq-check').innerHTML = health
+    + (items || '<div class="card sq-allright">' + artEm('✅') + ' 没有待裁决的题</div>');
+}
+
+/* ---------------------------------------------------------------- 事件 */
+$('#view-sqreal').addEventListener('click', async (e) => {
+  const op = e.target.closest('[data-sq-open]');
+  if (op) { sqOpenPaper(+op.dataset.sqOpen, op.dataset.sqMode); return; }
+  if (e.target.closest('#sq-go-check')) { openSqCheck(); return; }
+  const rec = e.target.closest('[data-sq-rec]');
+  if (rec) { sqOpenRecord(+rec.dataset.sqRec); }
+});
+
+$('#view-sqrun').addEventListener('click', (e) => {
+  if (!sqRun) return;
+  const o = e.target.closest('[data-sq-opt]');
+  if (o) { sqPick(o.dataset.sqOpt); return; }
+  const tf = e.target.closest('[data-sq-tf]');
+  if (tf) { sqPick(tf.dataset.sqTf); return; }
+  const jp = e.target.closest('[data-sq-jump]');
+  if (jp) { sqStash(); sqRun.idx = +jp.dataset.sqJump; sqRender(); return; }
+  if (e.target.closest('#sq-multi-ok')) {
+    // 多选题的「确定提交」：背题模式下这一下才揭晓；模考模式只是确认并翻页
+    if (sqRun.mode === 'exam') { sqGo(1); return; }
+    (sqRun.locked = sqRun.locked || {})[sqRun.items[sqRun.idx].id] = true;
+    sqRender();
+    return;
+  }
+  if (e.target.closest('#sq-prev')) { sqGo(-1); return; }
+  if (e.target.closest('#sq-next')) { sqGo(1); return; }
+  if (e.target.closest('#sq-submit')) { sqSubmit(false); return; }
+  if (e.target.closest('#sq-sheet-btn')) {
+    const s = $('#sq-sheet');
+    s.innerHTML = sqSheetHtml();
+    s.classList.toggle('hidden');
+  }
+});
+
+$('#view-sqres').addEventListener('click', (e) => {
+  if (!e.target.closest('#sq-back-list')) return;
+  /* 交卷是「列表 → 做题 → 成绩」，要退两层；回看是「列表 → 成绩」，退一层。
+     按栈里有没有做题页判，不靠记一个标志位 —— 标志位迟早和真实栈走散。 */
+  back();
+  if (stack.length && stack[stack.length - 1].view === 'sqrun') back();
+});
+
+$('#view-sqcheck').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-sq-act]');
+  if (!b) return;
+  const card = b.closest('[data-sq-q]');
+  const qid = +card.dataset.sqQ, act = b.dataset.sqAct;
+  if (act === 'drop' && !await appConfirm('判定这题没法用？它将永不发出。')) return;
+  try {
+    await api(`/api/shequ/doubt/${qid}`, { act });
+    toast(act === 'accept' ? '已改正并入库' : act === 'keep' ? '已过闸' :
+      act === 'drop' ? '已标为不能用' : '保留存疑');
+    openSqCheck();
+  } catch (err) { toast(errMsg(err), true); }
+});
+
+/* 判断题的键盘操作。只在做题页、且当前是判断题时接管，别抢了别处的输入 */
+document.addEventListener('keydown', (e) => {
+  if (document.body.dataset.view !== 'sqrun' || !sqRun) return;
+  if (/^(INPUT|TEXTAREA)$/.test((e.target.tagName || '').toUpperCase())) return;
+  const it = sqRun.items[sqRun.idx];
+  const k = e.key.toUpperCase();
+  if (it.part === 'judge' && (k === 'J' || k === 'K')) { sqPick(k === 'J' ? 'T' : 'F'); e.preventDefault(); }
+  else if ((it.part === 'single' || it.part === 'multi') && SQ_L.includes(k)) { sqPick(k); e.preventDefault(); }
+  else if (e.key === 'Enter') { sqGo(1); e.preventDefault(); }
+});
+
+window.openSqReal = openSqReal;
+window.openSqCheck = openSqCheck;

@@ -1039,6 +1039,27 @@
       <div class="q-host hidden" id="rq-host"></div>
     </aside>
   </section>
+  <!-- 社区专职工作者（资中县）：卷子列表 / 做题 / 成绩 / 入库校对裁决台。
+       没有并进 realq 那几个视图：这卷子有多选、判断和 40 分主观题，形状不同。 -->
+  <section id="view-sqreal" class="view hidden">
+    <div class="pd-intro">内江市资中县社区专职工作者笔试：单选 40 + 多选 10 + 判断 10 +
+      案例分析 25 + 公文写作 15，共 100 分。<b>只发过了校对闸门的题</b> ——
+      源卷是回忆版，答案本身可能是错的。</div>
+    <div id="sq-list"></div>
+  </section>
+  <section id="view-sqrun" class="view hidden">
+    <div id="sq-run-bar" class="sq-run-bar"></div>
+    <div id="sq-sheet" class="sq-sheet-box hidden"></div>
+    <div id="sq-run-body"></div>
+  </section>
+  <section id="view-sqres" class="view hidden">
+    <div id="sq-res"></div>
+  </section>
+  <section id="view-sqcheck" class="view hidden">
+    <div class="pd-intro">这些题三方独立作答的结果和源卷对不上，或者根本判不出来。
+      它们<b>留在库里但不发给你做</b>；你点一下定案，才会进卷子。</div>
+    <div id="sq-check"></div>
+  </section>
   <section id="view-drill" class="view hidden">
     <div class="pd-intro" id="dr-intro"></div>
     <div class="dr-cfg">
@@ -2174,6 +2195,7 @@
 <script src="js/handwrite.js"></script>
 <script src="js/find.js"></script>
 <script src="js/realq.js"></script>
+<script src="js/shequ.js"></script>
 <script src="js/drill.js"></script>
 <script src="js/write.js"></script>
 <script src="js/plan.js"></script>

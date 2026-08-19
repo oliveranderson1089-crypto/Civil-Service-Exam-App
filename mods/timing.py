@@ -57,6 +57,26 @@ BOARD_ALIAS = {"言语理解": "言语理解与表达", "言语": "言语理解�
                "常识": "常识判断", "行测": ""}
 
 
+# 社区专职工作者：整卷 120 分钟。**这是个假设，不是从真题里读出来的**——
+# 两套原卷的文字里都没写考试时长。写在这儿而不是散在前端，是为了将来查到官方
+# 公告后只改一处；界面上也要如实标出「按 120 分钟计」，别让人以为是官方数据。
+SQ_PAPER_MIN = 120
+# 社区卷按题型给的参考用时（秒/题）。它不是硬倒计时（整卷只有一个总倒计时），
+# 只用来算「你这道题花得比参考久多少」，和行测那套口径住在同一份文件里。
+SQ_PART_SEC = {"single": 45, "multi": 70, "judge": 25,
+               "case": 900, "gongwen": 1200}
+
+
+def sq_paper_seconds(n_min=None):
+    """整卷模考的总倒计时（秒）。"""
+    return int((n_min or SQ_PAPER_MIN) * 60)
+
+
+def sq_part_sec(part):
+    """社区卷某一题型的参考用时。查不到就落到默认值，不要因为查不到就没有计时。"""
+    return SQ_PART_SEC.get((part or "").strip(), DEFAULT_SEC)
+
+
 def norm_board(board):
     b = (board or "").strip()
     return BOARD_ALIAS.get(b, b)
