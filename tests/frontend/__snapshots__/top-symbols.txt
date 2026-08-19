@@ -1123,6 +1123,7 @@ openSlRecord
 openSlType
 openSlideshow
 openSqCheck
+openSqDrill
 openSqLocal
 openSqReal
 openSqSub
@@ -1390,6 +1391,8 @@ slrTab
 sqAnsText
 sqCur
 sqDoGrade
+sqDrill
+sqDrillStart
 sqExamBar
 sqFmt
 sqGo

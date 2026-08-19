@@ -6479,3 +6479,8 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
 .sq-skel{border:1px solid var(--blue);}
 .sq-skel-l{margin:0;padding-left:22px;font-size:var(--fs-md);line-height:2;color:var(--text);}
 .sq-skel-l li{margin:2px 0;}
+.sq-drill-row{display:flex;gap:10px;align-items:center;padding:10px 0;
+  border-top:1px solid var(--line);cursor:pointer;}
+.sq-drill-row:first-of-type{border-top:0;}
+.sq-drill-row .sq-rec-s{font-size:var(--fs-lg);}
+.sq-f-s.warn{color:var(--gold);}

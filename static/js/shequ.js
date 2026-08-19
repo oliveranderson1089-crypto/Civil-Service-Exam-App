@@ -258,6 +258,14 @@ function sqSheetHtml() {
 async function sqSubmit(auto) {
   const r = sqRun; if (!r) return;
   sqStash();
+  if (!r.pid) {                       // 专项练：没有卷子，走 drill/done
+    try {
+      const d = await api('/api/shequ/drill/done', { answers: r.answers });
+      toast(`${d.n} 道里对了 ${d.ok} 道`);
+      back();
+    } catch (e) { toast(errMsg(e), true); }
+    return;
+  }
   const done = Object.keys(r.answers).filter(k => String(r.answers[k]).trim()).length;
   if (!auto && done < r.items.length) {
     const go = await appConfirm(`还有 ${r.items.length - done} 题没作答，确定交卷？`);
@@ -368,6 +376,55 @@ async function sqOpenRecord(rid) {
     push({ view: 'sqres', title: '回看' });
     sqResult({ obj_score: r.obj_score, obj_full: r.obj_full, detail,
                n_sub: detail.filter(x => x.correct === -1).length });
+  } catch (e) { toast(errMsg(e), true); }
+}
+
+/* ---------------------------------------------------------------- 专项练
+   多选和判断合起来 20 分，在此之前只能在整卷里碰到、没法针对性刷。
+   题只从**题库**出，不掺真题：真题是标尺，掺进来之后想拿它估分就估不准了。 */
+let sqDrill = null;
+
+async function openSqDrill() {
+  push({ view: 'sqdrill', title: '专项练' });
+  $('#sq-drill').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/shequ/drill/meta');
+    $('#sq-drill').innerHTML = `
+      <div class="card"><div class="sq-sec-t">按题型练　<span class="muted">共 ${d.total} 道</span></div>
+        ${d.parts.map(p => `<div class="sq-drill-row" data-sq-dr="part:${p.part}">
+            <span class="sq-rec-n"><b>${esc(p.name)}</b>
+              <span class="sq-f-s">${esc(p.rule)}</span></span>
+            <span class="sq-rec-s">${p.c}</span>
+            <span class="sq-rec-d">${p.done ? '做过 ' + p.done : ''}</span>
+          </div>`).join('')}
+      </div>
+      <div class="card"><div class="sq-sec-t">按考点练</div>
+        ${d.types.map(t => `<div class="sq-drill-row" data-sq-dr="qtype:${esc(t.qtype)}">
+            <span class="sq-rec-n"><b>${esc(t.qtype)}</b>
+              <span class="sq-f-s ${t.sure ? '' : 'warn'}">${esc(t.sure
+                || '⚠ 公告未点名、两套真题也没考过 —— 时间紧就先放放')}</span></span>
+            <span class="sq-rec-s">${t.c}</span>
+            <span class="sq-rec-d">${t.done ? '做过 ' + t.done : ''}</span>
+          </div>`).join('')}
+      </div>
+      <div class="card"><div class="sq-note">出题顺序是<b>错过的 › 没做过的 › 做对过的</b> ——
+        全随机的话，刷三遍等于把第一遍重刷三次，最该练的题反而遇不上。</div></div>`;
+  } catch (e) { $('#sq-drill').innerHTML = `<p class="empty">${esc(errMsg(e))}</p>`; }
+}
+
+async function sqDrillStart(kind, val) {
+  try {
+    const q = kind === 'part' ? 'part=' + encodeURIComponent(val)
+      : 'qtype=' + encodeURIComponent(val);
+    const d = await api('/api/shequ/drill?n=10&' + q);
+    if (!(d.items || []).length) { toast('这一类还没有可练的题', true); return; }
+    // 复用整卷那套作答态：多选方标、判断两键、少选高亮，一份组件两处用
+    sqRules = d.rules || {};
+    sqDrill = { items: d.items };
+    sqRun = { pid: 0, mode: 'study', items: d.items, parts: [], idx: 0,
+              answers: {}, locked: {}, held: 0, t0: Date.now(), left: 0, timer: null };
+    push({ view: 'sqrun', title: '专项练' });
+    sqRender();
   } catch (e) { toast(errMsg(e), true); }
 }
 
@@ -550,6 +607,13 @@ function sqRenderCheck(d) {
 }
 
 /* ---------------------------------------------------------------- 事件 */
+$('#view-sqdrill').addEventListener('click', (e) => {
+  const r = e.target.closest('[data-sq-dr]');
+  if (!r) return;
+  const [kind, val] = r.dataset.sqDr.split(':');
+  sqDrillStart(kind, val);
+});
+
 $('#view-sqsub').addEventListener('click', (e) => {
   const c = e.target.closest('[data-sq-sub]');
   if (c) sqOpenSub(+c.dataset.sqSub);
@@ -637,3 +701,4 @@ window.openSqReal = openSqReal;
 window.openSqCheck = openSqCheck;
 window.openSqLocal = openSqLocal;
 window.openSqSub = openSqSub;
+window.openSqDrill = openSqDrill;

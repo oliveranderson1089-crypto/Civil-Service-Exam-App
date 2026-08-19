@@ -436,6 +436,70 @@ class Test主观题判定合并:
         assert total_of(self._m([{"verdict": "hit"}, {"verdict": "partial"}])) == 6
 
 
+class Test题库对齐:
+    """练习册的题干和答案分处两地，**错位一格就是整册答案全错，而且题数照样对得上**。
+       这几条把踩过的坑钉住。"""
+
+    def _p(self, text, ans=None):
+        import ingest_sqbank as B
+        return B.parse_bank(text, ans)
+
+    def test_题号每个题型重编时不许串答案(self):
+        # 单选第 1 题和多选第 1 题都叫「1」，只按题号做键会让多选拿到单选的答案
+        text = ("一、单选题\n1.甲问题（ ）\nA.甲1\nB.甲2\n"
+                "二、多选题\n1.乙问题（ ）\nA.乙1\nB.乙2\nC.乙3\n"
+                "参考答案\n一、单选题\n1.答案：A\n二、多选题\n1.答案：BC\n")
+        items, rep = self._p(text)
+        got = {i["part"]: i["answer"] for i in items}
+        assert got == {"single": "A", "multi": "BC"}, got
+
+    def test_答案超出选项范围的题不要(self):
+        # 三个选项的题答案是 D —— 多半是答案区错位，这种题一道都不能收
+        text = ("一、单选题\n1.问题（ ）\nA.甲\nB.乙\nC.丙\n"
+                "参考答案\n一、单选题\n1.答案：D\n")
+        items, rep = self._p(text)
+        assert items == [] and rep["n_ok"] == 0
+
+    def test_一行多个答案要全部认出来(self):
+        # `1.E  2.D  3.A` 这种排版；为解析册加的「数字+字母+空格」模式会劫走它，
+        # 实测把一册 93 条答案吃成 22 条、对齐率 99%→23%，所以多对要先试
+        text = ("一、单选题\n1.甲（ ）\nA.a\nB.b\n2.乙（ ）\nA.a\nB.b\n3.丙（ ）\nA.a\nB.b\n"
+                "参考答案\n一、单选题\n1.A    2.B   3.A\n")
+        items, _ = self._p(text)
+        assert [i["answer"] for i in items] == ["A", "B", "A"]
+
+    def test_判断题按选项文字折成对错(self):
+        # 册子印成「A.正确 / B.错误」，答案给 A/B。按字母顺序猜会在反着印的册子上全判反
+        text = ("三、判断题\n1.人口是社区发展的基础。（ ）\nA.正确\nB.错误\n"
+                "2.社区就是社会。（ ）\nA.错误\nB.正确\n"
+                "参考答案\n三、判断题\n1.答案：B\n2.答案：A\n")
+        items, _ = self._p(text)
+        assert [i["answer"] for i in items] == ["F", "F"], [i["answer"] for i in items]
+        assert all(i["options"] == [] for i in items), "判断题不该带选项"
+
+    def test_共享题干那节整节丢掉(self):
+        # 几道题共用一段材料，单独抠出来是残缺的，收了就是发一道做不了的题
+        text = ("一、单选题\n1.甲（ ）\nA.a\nB.b\n"
+                "四、共享题干题\n1.乙（ ）\nA.a\nB.b\n"
+                "参考答案\n一、单选题\n1.答案：A\n四、共享题干题\n1.答案：B\n")
+        items, _ = self._p(text)
+        assert len(items) == 1 and items[0]["stem"].startswith("甲")
+
+    def test_跨册对齐要按章加题型加题号(self):
+        q = ("第一章 总则\n一、单选题\n1.甲（ ）\nA.a\nB.b\n"
+             "第二章 分则\n一、单选题\n1.乙（ ）\nA.a\nB.b\n")
+        a = ("第一章 总则\n一、单选题\n1.答案：A\n"
+             "第二章 分则\n一、单选题\n1.答案：B\n")
+        items, _ = self._p(q, a)
+        assert [i["answer"] for i in items] == ["A", "B"]
+
+    def test_对齐率算的是可用比例(self):
+        text = ("一、单选题\n1.甲（ ）\nA.a\nB.b\n2.乙（ ）\nA.a\nB.b\n"
+                "参考答案\n一、单选题\n1.答案：A\n")
+        _, rep = self._p(text)
+        assert rep["n_all"] == 2 and rep["n_ok"] == 1 and abs(rep["rate"] - 0.5) < 0.01
+
+
 class Test裁决台:
     def test_体检单只数客观题(self, auth_client, paper):
         # 主观题没有客观答案可校、压根不过这道闸；算进 todo 会显示成

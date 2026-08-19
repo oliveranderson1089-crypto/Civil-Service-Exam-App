@@ -264,6 +264,103 @@ def facts():
                     "quiz_n": paper["n_obj"] if paper else 0, "exam": _countdown()})
 
 
+# ---------------------------------------------------------------- 专项练
+# 只从**题库**里出题，不动真题卷：真题是标尺，刷散题时把它掺进来，
+# 到考前想拿真题估分就估不准了（做过的题再做一遍，分数是虚高的）。
+_BANK = "p.kind='题库'"
+
+# 哪些考点是**公告点名或真题考过**的。公告原文：「社会工作者职业资格考试初级知识，
+# 党的建设、社区建设、基层治理、法律常识、时事政治等」。
+# 「公基常识」（科技与生活 / 计算机 / 人文历史 / 经济）公告没点名、两套真题里也没考过 ——
+# 它是题库里最大的一桶（2147 道），**不标出来的话很容易把时间花在不确定考不考的题上**。
+# 不删掉是因为「等」字留了口子、社区考试也常带公基；但要让人自己决定练不练。
+SURE_QTYPE = {"社区知识": "公告点名", "社会工作": "公告点名（社工初级）",
+              "党建党务": "公告点名", "法律法规": "公告点名（法律常识）",
+              "时政理论": "公告点名（时事政治）", "公文写作": "真题 15 分",
+              "资中县情": "真题考过 8 道", "应急安全": "真题考过"}
+
+
+@bp.get("/api/shequ/drill/meta")
+def drill_meta():
+    """能练什么：按题型 × 考点大类给出可练题量，以及我练过多少。"""
+    db, u = get_db(), uid()
+    rows = db.execute(
+        "SELECT q.part, q.qtype, COUNT(*) c, "
+        "  COUNT(DISTINCT CASE WHEN a.qid IS NOT NULL THEN q.id END) done "
+        "FROM sq_questions q JOIN sq_papers p ON p.id=q.paper_id "
+        "LEFT JOIN sq_attempts a ON a.qid=q.id AND a.user_id=? "
+        "WHERE %s AND %s GROUP BY q.part, q.qtype ORDER BY c DESC" % (_BANK, SERVABLE),
+        (u,)).fetchall()
+    parts, types = {}, {}
+    for r in rows:
+        parts[r["part"]] = parts.get(r["part"], 0) + r["c"]
+        t = types.setdefault(r["qtype"], {"qtype": r["qtype"], "c": 0, "done": 0})
+        t["c"] += r["c"]
+        t["done"] += r["done"]
+    return jsonify({
+        "parts": [{"part": k, "name": sqscore.PART_NAME.get(k, k), "c": v,
+                   "rule": sqscore.RULE_TEXT.get(k, ""),
+                   "done": sum(r["done"] for r in rows if r["part"] == k)}
+                  for k, v in sorted(parts.items(), key=lambda x: -x[1])],
+        "types": [dict(t, sure=SURE_QTYPE.get(t["qtype"], ""))
+                  for t in sorted(types.values(),
+                                  key=lambda x: (0 if x["qtype"] in SURE_QTYPE else 1, -x["c"]))],
+        "total": sum(parts.values())})
+
+
+@bp.get("/api/shequ/drill")
+def drill():
+    """抽一组题。**做过的排在后面**——库存满不等于有题做，先把没做过的发完。"""
+    db, u = get_db(), uid()
+    n = max(1, min(int(request.args.get("n") or 10), 30))
+    part = (request.args.get("part") or "").strip()
+    qtype = (request.args.get("qtype") or "").strip()
+    where, args = [_BANK, SERVABLE], []
+    if part in sqscore.OBJ_PARTS:
+        where.append("q.part=?")
+        args.append(part)
+    if qtype:
+        where.append("q.qtype=?")
+        args.append(qtype)
+    rows = db.execute(
+        "SELECT q.*, (SELECT COUNT(*) FROM sq_attempts a WHERE a.qid=q.id AND a.user_id=?) tried, "
+        "  (SELECT MIN(a.correct) FROM sq_attempts a WHERE a.qid=q.id AND a.user_id=?) everwrong "
+        "FROM sq_questions q JOIN sq_papers p ON p.id=q.paper_id WHERE %s "
+        # 顺序就是这个接口的价值：**错过的 > 没做过的 > 做对过的**。
+        # 全随机的话，刷三遍等于把第一遍重刷三次，最该练的题反而遇不上。
+        "ORDER BY CASE WHEN everwrong=0 THEN 0 WHEN tried=0 THEN 1 ELSE 2 END, RANDOM() "
+        "LIMIT ?" % " AND ".join(where), [u, u] + args + [n]).fetchall()
+    return jsonify({"items": [_pub(r, True) for r in rows],
+                    "rules": sqscore.RULE_TEXT})
+
+
+@bp.post("/api/shequ/drill/done")
+def drill_done():
+    """交一组专项练。判分口径和整卷一模一样，走同一个 sqscore。"""
+    db, u = get_db(), uid()
+    d = request.get_json(silent=True) or {}
+    answers = d.get("answers") or {}
+    ids = [int(k) for k in answers]
+    if not ids:
+        return jsonify({"error": "还没作答"}), 400
+    rows = db.execute("SELECT * FROM sq_questions WHERE id IN (%s)"
+                      % ",".join("?" * len(ids)), ids).fetchall()
+    detail, got = [], 0
+    for r in rows:
+        chosen = answers.get(str(r["id"]), "")
+        ok = sqscore.is_correct(r["part"], chosen, r["answer"])
+        got += 1 if ok else 0
+        miss, extra = sqscore.miss_and_extra(r["part"], chosen, r["answer"])
+        detail.append({"qid": r["id"], "part": r["part"], "chosen": chosen,
+                       "correct": 1 if ok else 0, "answer": r["answer"],
+                       "stem": r["stem"], "miss": miss, "extra": extra})
+        db.execute("INSERT INTO sq_attempts(user_id,qid,chosen,correct,secs,mode) "
+                   "VALUES(?,?,?,?,?,'drill')",
+                   (u, r["id"], str(chosen)[:16], 1 if ok else 0, 0))
+    db.commit()
+    return jsonify({"n": len(rows), "ok": got, "detail": detail})
+
+
 # ---------------------------------------------------------------- 主观题（40 分）
 @bp.get("/api/shequ/subjective")
 def subjective():

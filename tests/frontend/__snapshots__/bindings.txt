@@ -285,6 +285,7 @@ document @pointerup
 #rq-exp @click
 #rqr-list @click
 #rqd-body @click
+#view-sqdrill @click
 #view-sqsub @click
 #view-sqwrite @click
 #view-sqwrite @input
