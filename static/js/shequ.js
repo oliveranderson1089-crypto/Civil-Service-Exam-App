@@ -9,7 +9,7 @@
  * **判分一律在后端**（mods/sqscore.py）。前端连「对不对」都不自己算：
  * 算两遍迟早算得不一样，而且不会报错。
  */
-/* global $, api, appConfirm, artEm, errMsg, esc, push, back, stack, toast */
+/* global $, api, appConfirm, artEm, errMsg, esc, postJSON, push, back, stack, toast */
 
 let sqPapers = [], sqRules = {};
 let sqRun = null;        // { pid, mode, items, parts, idx, answers:{qid:值}, t0, left, timer, held }
@@ -260,7 +260,7 @@ async function sqSubmit(auto) {
   sqStash();
   if (!r.pid) {                       // 专项练：没有卷子，走 drill/done
     try {
-      const d = await api('/api/shequ/drill/done', { answers: r.answers });
+      const d = await postJSON('/api/shequ/drill/done', { answers: r.answers });
       toast(`${d.n} 道里对了 ${d.ok} 道`);
       back();
     } catch (e) { toast(errMsg(e), true); }
@@ -273,7 +273,7 @@ async function sqSubmit(auto) {
   }
   clearInterval(r.timer);
   try {
-    const d = await api('/api/shequ/submit', {
+    const d = await postJSON('/api/shequ/submit', {
       paper_id: r.pid, mode: r.mode, seconds: ((Date.now() - r.t0) / 1000) | 0,
       answers: r.answers,
     });
@@ -501,7 +501,7 @@ async function sqDoGrade() {
   const btn = $('#sq-do-grade');
   btn.disabled = true; btn.textContent = '批改中…（约十几秒）';
   try {
-    const d = await api('/api/shequ/grade', { qid: sqCur.id, answer: el.value });
+    const d = await postJSON('/api/shequ/grade', { qid: sqCur.id, answer: el.value });
     sqRenderGrade(d);
   } catch (e) { toast(errMsg(e), true); }
   btn.disabled = false; btn.textContent = '逐点批改';
@@ -679,7 +679,7 @@ $('#view-sqcheck').addEventListener('click', async (e) => {
   const qid = +card.dataset.sqQ, act = b.dataset.sqAct;
   if (act === 'drop' && !await appConfirm('判定这题没法用？它将永不发出。')) return;
   try {
-    await api(`/api/shequ/doubt/${qid}`, { act });
+    await postJSON(`/api/shequ/doubt/${qid}`, { act });
     toast(act === 'accept' ? '已改正并入库' : act === 'keep' ? '已过闸' :
       act === 'drop' ? '已标为不能用' : '保留存疑');
     openSqCheck();

@@ -18,6 +18,15 @@ const $ = (s) => document.querySelector(s);
    Promise.prototype.finally 要 Chrome 63。两者都得先探再用，**探不到就退回无超时的老行为** ——
    超时只是锦上添花，为它把整个 api() 打崩（连出题按钮都点不动）得不偿失。 */
 const CAN_ABORT = typeof AbortController !== 'undefined';
+/* 发一个 JSON POST。**api() 的第二个参数是 fetch options，不是请求体** ——
+   写成 api(url, {字段}) 会发成一个带无效选项的 GET，服务端回 405，
+   前端只看到「请求失败」三个字，查半天。这个坑我踩过一次（备考方向切换、
+   整卷交卷、专项练交卷、主观题批改、裁决五处全中），所以封一层。 */
+const postJSON = (u, data, o) => api(u, Object.assign({
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data || {}),
+}, o || {}));
+
 const api = (u, o) => {
   const ms = o && o.timeoutMs;
   let timer = 0;
@@ -384,7 +393,7 @@ let LINE = { line: 'gongkao', lines: [], boards: [] };
 async function switchLine(want) {
   if (!want || (LINE && LINE.line === want)) return;
   try {
-    LINE = await api('/api/me/line', { line: want });
+    LINE = await postJSON('/api/me/line', { line: want });
     toast('已切到「' + ((LINE.lines.find(x => x.key === want) || {}).short || want) + '」备考');
     location.reload();       // 首页、错题、复习、计划全都要按新方向重取，整页重来最省事也最不容易漏
   } catch (e) { toast(errMsg(e), true); }
