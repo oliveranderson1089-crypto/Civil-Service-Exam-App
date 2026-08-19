@@ -1000,6 +1000,20 @@ def init_db():
             UNIQUE(grp, k, year)
         );
         CREATE INDEX IF NOT EXISTS idx_sqf ON sq_facts(grp, ord);
+        -- 社区主观题的批改记录（案例分析 25 分 + 公文写作 15 分，占卷面 40%）。
+        -- points 存**逐点判定**而不是只存一个总分：过两天回看时要说得出
+        -- 「丢的分在哪一步」，只留总分等于什么都没留。
+        CREATE TABLE IF NOT EXISTS sq_grade(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL, qid INTEGER,
+            part TEXT,                  -- case / gongwen
+            answer TEXT,
+            score REAL DEFAULT 0, full REAL DEFAULT 0,
+            points TEXT,                -- JSON：[{name,max,got,verdict,yours,why}]
+            advice TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sqg ON sq_grade(user_id, id DESC);
         -- 理论基础（马原/毛中特/习思想…）
         CREATE TABLE IF NOT EXISTS theory_items(
             id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -371,6 +371,122 @@ async function sqOpenRecord(rid) {
   } catch (e) { toast(errMsg(e), true); }
 }
 
+/* ---------------------------------------------------------------- 主观题 40 分
+   案例分析 25 + 公文 15。两处刻意的设计：
+     · **骨架常驻在作答框上方**。这门考试主观题占四成，而四道真题的参考答案只有
+       两种骨架 —— 骨架比辞藻值钱，练几次就该成肌肉记忆。
+     · 判定分三档，**「沾边」单独一档**（◐）：只写「上门劝导」没写「联合城管消防
+       整治」就是沾边，这是最常见的丢分方式，跟「整块没写」混为一谈就学不到东西。 */
+let sqSub = [], sqCur = null;
+
+async function openSqSub() {
+  push({ view: 'sqsub', title: '主观题 40 分' });
+  $('#sq-sub-list').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/shequ/subjective');
+    sqSub = d.items || [];
+    $('#sq-sub-list').innerHTML = sqSub.map(it => `
+      <div class="card sq-subq" data-sq-sub="${it.id}">
+        <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
+          <span class="sq-qk">${it.year} 年真题</span>
+          <span class="sq-qs">${it.score} 分</span></div>
+        <div class="sq-w-q">${esc(it.stem.slice(0, 110))}${it.stem.length > 110 ? '…' : ''}</div>
+        <div class="sq-p-m">${it.skeleton ? esc(it.skeleton.name) + '　·　' : ''}
+          ${it.n_points ? it.n_points + ' 个采分点' : '按结构部件给分'}
+          ${it.mine ? `　·　写过 ${it.mine} 次` : ''}</div>
+      </div>`).join('')
+      + `<div class="card"><div class="sq-sec-t">我的批改记录</div>
+          <div id="sq-glist" class="sq-recs"><p class="empty">加载中…</p></div></div>`;
+    sqLoadGrades();
+  } catch (e) { $('#sq-sub-list').innerHTML = `<p class="empty">${esc(errMsg(e))}</p>`; }
+}
+
+async function sqLoadGrades() {
+  try {
+    const d = await api('/api/shequ/grades');
+    const box = $('#sq-glist'); if (!box) return;
+    box.innerHTML = (d.items || []).length ? d.items.map(r => `
+      <div class="sq-rec"><span class="sq-rec-m">${esc(r.part_name.slice(0, 2))}</span>
+        <span class="sq-rec-n">${esc((r.stem || '').slice(0, 26))}</span>
+        <span class="sq-rec-s">${r.score} / ${r.full}</span>
+        <span class="sq-rec-d">${esc((r.created_at || '').slice(5, 16))}</span></div>`).join('')
+      : '<p class="empty">还没写过</p>';
+  } catch (e) { /* 记录拉不到不该挡住写题 */ }
+}
+
+function sqOpenSub(id) {
+  const it = sqSub.find(x => x.id === id); if (!it) return;
+  sqCur = it;
+  push({ view: 'sqwrite', title: it.part_name });
+  const sk = it.skeleton;
+  $('#sq-write').innerHTML = `
+    <div class="card">
+      <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
+        <span class="sq-qk">${it.year} 年真题</span><span class="sq-qs">${it.score} 分</span></div>
+      <div class="sq-stem">${esc(it.stem)}</div>
+    </div>
+    ${sk ? `<div class="card sq-skel">
+      <div class="sq-sec-t">${artEm('🦴')} 骨架：${esc(sk.name)}</div>
+      <ol class="sq-skel-l">${sk.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>
+      <div class="sq-note">${esc(sk.hint)}</div></div>` : ''}
+    <div class="card">
+      <div class="sq-sec-t">你的答案</div>
+      <textarea id="sq-ans" class="sq-sub" rows="14"
+        placeholder="按骨架一条一条写。写完点批改，会逐个采分点告诉你答到没答到。"></textarea>
+      <div class="sq-note" id="sq-wc">0 字</div>
+      <button class="btn primary sq-wide" id="sq-do-grade">逐点批改</button>
+    </div>
+    <div id="sq-gres"></div>`;
+}
+
+async function sqDoGrade() {
+  const el = $('#sq-ans'); if (!el || !sqCur) return;
+  const btn = $('#sq-do-grade');
+  btn.disabled = true; btn.textContent = '批改中…（约十几秒）';
+  try {
+    const d = await api('/api/shequ/grade', { qid: sqCur.id, answer: el.value });
+    sqRenderGrade(d);
+  } catch (e) { toast(errMsg(e), true); }
+  btn.disabled = false; btn.textContent = '逐点批改';
+}
+
+function sqRenderGrade(d) {
+  if (!d.gradable) {
+    $('#sq-gres').innerHTML = `<div class="card"><div class="sq-note">${esc(d.note || '')}</div>
+      <div class="sq-cmp-t">参考答案</div><div class="sq-cmp-b">${esc(d.reference || '')}</div></div>`;
+    return;
+  }
+  const MK = { hit: '✓', partial: '◐', miss: '✗' };
+  $('#sq-gres').innerHTML = `
+    <div class="card">
+      <div class="scoreline"><span class="big">${d.score}<small> / ${d.full} 分</small></span>
+        <span class="muted">${d.points.filter(p => p.verdict === 'hit').length} 点答全 ·
+          ${d.points.filter(p => p.verdict === 'partial').length} 点沾边 ·
+          ${d.points.filter(p => p.verdict === 'miss').length} 点没写</span></div>
+      ${d.points.map(p => `
+        <div class="pt ${p.verdict === 'hit' ? 'hit' : p.verdict === 'partial' ? 'half' : 'miss'}">
+          <span class="mk">${MK[p.verdict]}</span>
+          <span><b>${esc(p.name)}</b>：${esc(p.why || '')}
+            ${p.yours ? `<span class="sq-f-s">你写的：${esc(p.yours)}</span>` : ''}
+            ${p.verdict !== 'hit' ? `<span class="sq-f-s">标准要点：${esc(p.detail || '')}</span>` : ''}
+          </span>
+          <span class="sc">${p.got} / ${p.max}</span>
+        </div>`).join('')}
+      ${d.advice ? `<div class="sq-rule">${artEm('💡')} ${esc(d.advice)}</div>` : ''}
+    </div>
+    ${(d.repeat || []).length ? `<div class="card sq-doubt-entry">
+      <div class="sq-sec-t">${artEm('⚠')} 这几点你反复漏</div>
+      ${d.repeat.map(r => `<div class="sq-w-a">「${esc(r.name)}」—— 近 20 次里漏了 ${r.n} 回</div>`).join('')}
+      <div class="sq-note">一次没答上是手滑，两次以上是没记住 —— 骨架里就缺这一环。</div></div>` : ''}
+    ${(d.issues || []).length ? `<div class="card">
+      <div class="sq-sec-t">格式检查（纯代码判定，判据有真题实证）</div>
+      ${d.issues.map(e => `<div class="chk bad"><span class="m">✗</span>
+        <span>${esc(e.bad)}<span class="sq-f-s">应为：${esc(e.good)}</span></span></div>`).join('')}
+    </div>` : ''}
+    <div class="card"><div class="sq-cmp-t">参考答案</div>
+      <div class="sq-cmp-b">${esc(d.reference || '')}</div></div>`;
+}
+
 /* ---------------------------------------------------------------- 裁决台 */
 async function openSqCheck() {
   push({ view: 'sqcheck', title: '入库校对' });
@@ -434,6 +550,18 @@ function sqRenderCheck(d) {
 }
 
 /* ---------------------------------------------------------------- 事件 */
+$('#view-sqsub').addEventListener('click', (e) => {
+  const c = e.target.closest('[data-sq-sub]');
+  if (c) sqOpenSub(+c.dataset.sqSub);
+});
+
+$('#view-sqwrite').addEventListener('click', (e) => {
+  if (e.target.closest('#sq-do-grade')) sqDoGrade();
+});
+$('#view-sqwrite').addEventListener('input', (e) => {
+  if (e.target.id === 'sq-ans') $('#sq-wc').textContent = e.target.value.trim().length + ' 字';
+});
+
 $('#view-sqlocal').addEventListener('click', (e) => {
   const q = e.target.closest('[data-sq-quiz]');
   if (q) sqOpenPaper(+q.dataset.sqQuiz, 'study');   // 专项一律背题：目的是记住，不是模考
@@ -508,3 +636,4 @@ document.addEventListener('keydown', (e) => {
 window.openSqReal = openSqReal;
 window.openSqCheck = openSqCheck;
 window.openSqLocal = openSqLocal;
+window.openSqSub = openSqSub;

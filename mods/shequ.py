@@ -17,8 +17,9 @@ from datetime import date
 
 from flask import Blueprint, jsonify, request
 
-from core import BASE, get_db, uid
-from mods import sqscore, timing
+from core import BASE, get_db, log, uid
+from mods import sqgrade, sqscore, timing
+from mods.ai import _ai_call_or_error
 
 bp = Blueprint("shequ", __name__)
 
@@ -261,6 +262,114 @@ def facts():
     return jsonify({"groups": out, "total": len(rows),
                     "quiz_paper": paper["id"] if paper else 0,
                     "quiz_n": paper["n_obj"] if paper else 0, "exam": _countdown()})
+
+
+# ---------------------------------------------------------------- 主观题（40 分）
+@bp.get("/api/shequ/subjective")
+def subjective():
+    """案例分析 + 公文写作的题目清单。**采分点是规则从参考答案拆的**，
+       所以这儿顺带把「这道题能不能逐点批改」也算出来告诉前端。"""
+    db = get_db()
+    rows = db.execute(
+        "SELECT q.*, p.year, p.name paper_name FROM sq_questions q "
+        "JOIN sq_papers p ON p.id=q.paper_id WHERE q.part IN ('case','gongwen') "
+        "ORDER BY p.year DESC, q.seq").fetchall()
+    out = []
+    for r in rows:
+        pts = sqgrade.split_points(r["answer"], r["score"]) if r["part"] == "case" else []
+        sk = sqgrade.skeleton_of(r["stem"]) if r["part"] == "case" else None
+        out.append({"id": r["id"], "part": r["part"],
+                    "part_name": sqscore.PART_NAME.get(r["part"], r["part"]),
+                    "year": r["year"], "stem": r["stem"], "score": r["score"],
+                    "n_points": len(pts), "gradable": bool(pts),
+                    "skeleton": sqgrade.SKELETONS.get(sk) if sk else None,
+                    "mine": db.execute(
+                        "SELECT COUNT(*) c FROM sq_grade WHERE user_id=? AND qid=?",
+                        (uid(), r["id"])).fetchone()["c"]})
+    return jsonify({"items": out, "skeletons": sqgrade.SKELETONS})
+
+
+@bp.post("/api/shequ/grade")
+def grade():
+    """按采分点逐点批改。分数由**我们**按判定算，不采信 AI 报的总分。"""
+    db, u = get_db(), uid()
+    d = request.get_json(silent=True) or {}
+    qid = int(d.get("qid") or 0)
+    answer = (d.get("answer") or "").strip()
+    if len(answer) < 20:
+        return jsonify({"error": "请先写出你的答案（至少 20 个字）"}), 400
+    q = db.execute("SELECT * FROM sq_questions WHERE id=?", (qid,)).fetchone()
+    if not q or q["part"] not in sqscore.SUB_PARTS:
+        return jsonify({"error": "这不是一道主观题"}), 404
+
+    # 公文的参考答案是整篇范文、拆不出点，改按**结构部件**给分；
+    # 案例的参考答案本来就是分点写的，规则拆即可。
+    if q["part"] == "gongwen":
+        pts = sqgrade.gongwen_points(q["score"])
+        issues = sqgrade.format_issues(answer, "通知")
+    else:
+        pts = sqgrade.split_points(q["answer"], q["score"])
+        issues = []
+    if not pts:
+        # 拆不动就说拆不动：给参考答案对照，**不硬凑一个采分点把满分全压上去**
+        return jsonify({"gradable": False, "reference": q["answer"],
+                        "note": "这道题的参考答案不是分点写的，拆不出采分点，"
+                                "只能和参考答案对照着看。"})
+    prompt = sqgrade.build_prompt(q["stem"], answer, pts, q["score"])
+    if issues:
+        # 格式硬伤由**代码**判定（判据都有真题实证），直接告诉 AI 结论，
+        # 别让它对同一件事再判一遍 —— 两套判定说不到一块去时，用户不知道信谁。
+        prompt += "\n\n【格式检查器已判定的硬伤（请在相应采分点上扣分并指出）】\n" + \
+            "\n".join("· %s：%s" % (e["check"], e["why"][:80]) for e in issues)
+    msgs = [{"role": "system", "content": sqgrade.SYS},
+            {"role": "user", "content": prompt}]
+    # 批改用 pro：低频高价值，而且判「沾边」比判对错难
+    txt, err = _ai_call_or_error(msgs, tier="pro", temperature=0.2,
+                                 max_tokens=2200, json_mode=True, timeout=180)
+    if err:
+        return jsonify(err[0]), err[1]
+    try:
+        m = re.search(r"\{.*\}", txt or "", re.S)
+        raw = json.loads(m.group()) if m else {}
+    except Exception:
+        log.warning("社区主观题批改返回不是 JSON：%s", (txt or "")[:200])
+        return jsonify({"error": "AI 返回格式异常，请重试"}), 502
+
+    result = sqgrade.merge(pts, raw.get("points"))
+    total = sqgrade.total_of(result)
+    advice = str(raw.get("advice") or "")[:300]
+    cur = db.execute(
+        "INSERT INTO sq_grade(user_id,qid,part,answer,score,full,points,advice) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (u, qid, q["part"], answer, total, q["score"],
+         json.dumps(result, ensure_ascii=False), advice))
+    db.commit()
+    # 跨次统计：这个采分点你漏过几回 —— 一次没答上是手滑，三次没答上是没记住
+    miss = [p["name"] for p in result if p["verdict"] == "miss"]
+    hab = {}
+    for r in db.execute(
+            "SELECT points FROM sq_grade WHERE user_id=? AND part='case' ORDER BY id DESC LIMIT 20",
+            (u,)):
+        try:
+            for p in json.loads(r["points"] or "[]"):
+                if p.get("verdict") == "miss":
+                    hab[p["name"]] = hab.get(p["name"], 0) + 1
+        except Exception:
+            continue
+    return jsonify({"gradable": True, "id": cur.lastrowid, "score": total,
+                    "full": q["score"], "points": result, "advice": advice,
+                    "reference": q["answer"], "issues": issues,
+                    "repeat": [{"name": n, "n": hab[n]} for n in miss if hab.get(n, 0) >= 2]})
+
+
+@bp.get("/api/shequ/grades")
+def grades():
+    rows = get_db().execute(
+        "SELECT g.id,g.qid,g.part,g.score,g.full,g.advice,g.created_at,q.stem "
+        "FROM sq_grade g LEFT JOIN sq_questions q ON q.id=g.qid "
+        "WHERE g.user_id=? ORDER BY g.id DESC LIMIT 40", (uid(),)).fetchall()
+    return jsonify({"items": [dict(r, part_name=sqscore.PART_NAME.get(r["part"], r["part"]))
+                              for r in rows]})
 
 
 # ---------------------------------------------------------------- 校对裁决台

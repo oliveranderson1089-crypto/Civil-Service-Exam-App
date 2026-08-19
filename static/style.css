@@ -6474,3 +6474,8 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
 .sq-exam-m{font-size:var(--fs-sm);color:var(--muted);margin-top:2px;}
 .sq-exam-s{font-size:var(--fs-sm);color:var(--muted);line-height:1.7;margin-top:8px;
   padding-top:8px;border-top:1px dashed var(--line);}
+/* 主观题：骨架与逐点批改 */
+.sq-subq{cursor:pointer;}
+.sq-skel{border:1px solid var(--blue);}
+.sq-skel-l{margin:0;padding-left:22px;font-size:var(--fs-md);line-height:2;color:var(--text);}
+.sq-skel-l li{margin:2px 0;}

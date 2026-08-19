@@ -350,6 +350,92 @@ class Test考点树解析:
         assert long in blocks[0]["md"], "整句必须原样留在正文里，一个字都不能丢"
 
 
+class Test主观题采分点:
+    """社区案例的采分点是**规则从参考答案拆的**（参考答案本来就是分点写的），
+       不像申论要靠 AI 从材料里标。所以这套拆分必须钉死。"""
+
+    def _sp(self, text, full=12):
+        from mods import sqgrade
+        return sqgrade.split_points(text, full)
+
+    def test_编号式参考答案拆得出点(self):
+        pts = self._sp("1. 安抚接待：分别约谈双方。\n2. 政策宣讲：讲解补贴政策。\n"
+                       "3. 搭建平台：召开议事会。")
+        assert [p["point"] for p in pts] == ["安抚接待", "政策宣讲", "搭建平台"]
+
+    def test_无编号的短标题加冒号也拆得出(self):
+        # 2025 卷那两道就是这种写法
+        pts = self._sp("分类建档：建立台账。\n逐项处置：逐条处理。\n长效机制：每日巡查。")
+        assert [p["point"] for p in pts] == ["分类建档", "逐项处置", "长效机制"]
+
+    def test_分值加起来正好是满分(self):
+        for n, full in ((3, 12), (4, 13), (5, 12), (5, 13)):
+            text = "\n".join("%d. 点%d：内容。" % (i + 1, i + 1) for i in range(n))
+            pts = self._sp(text, full)
+            assert abs(sum(p["score"] for p in pts) - full) < 0.01, (n, full)
+
+    def test_子要素归到上一个点不单独算点(self):
+        pts = self._sp("分类建档：建台账。\n逐项处置：\n（1）用电隐患：换线路。\n"
+                       "（2）占道经营：联合整治。\n长效机制：每日巡查。")
+        assert len(pts) == 3
+        assert "用电隐患" in pts[1]["detail"] and "占道经营" in pts[1]["detail"]
+
+    def test_折行的续行接到子要素后面(self):
+        # PDF 折行会把「…张贴安全」和「提示，纳入巡查」拆成两行；接错地方
+        # 会让点的正文读起来前言不搭后语
+        pts = self._sp("逐项处置：\n（1）用电隐患：上门更换线路，张贴安全\n提示，纳入每周巡查。\n"
+                       "长效机制：每日巡查。")
+        assert "张贴安全提示，纳入每周巡查" in pts[0]["detail"]
+
+    def test_拆不动就返回空不硬凑(self):
+        # 硬凑一个点会把满分全压上去，比不判分更糟
+        assert self._sp("这是一整段没有分点的参考答案，读起来很顺但拆不出采分点。") == []
+
+    def test_骨架按题面判两类(self):
+        from mods.sqgrade import skeleton_of
+        assert skeleton_of("排查发现 3 项问题：占道经营、邻里纠纷、多次报警") == "grid"
+        assert skeleton_of("社区青年小李，失业半年，自我否定，求助社区") == "case"
+
+    def test_骨架判不出来就不给(self):
+        # 给错骨架比不给更误导
+        from mods.sqgrade import skeleton_of
+        assert skeleton_of("请谈谈你对社区工作的理解") is None
+
+    def test_公文按结构部件给分且合计十五分(self):
+        from mods.sqgrade import gongwen_points
+        pts = gongwen_points()
+        assert len(pts) == 6 and abs(sum(p["score"] for p in pts) - 15) < 0.01
+        assert any("落款" in p["point"] for p in pts)
+
+
+class Test主观题判定合并:
+    def _m(self, raw):
+        from mods import sqgrade
+        pts = [{"point": "甲", "detail": "d1", "score": 4},
+               {"point": "乙", "detail": "d2", "score": 4}]
+        return sqgrade.merge(pts, raw)
+
+    def test_沾边给一半分(self):
+        assert self._m([{"verdict": "partial"}, {"verdict": "hit"}])[0]["got"] == 2
+
+    def test_不采信AI报的分数(self):
+        # AI 报的 got 经常和它自己的 verdict 对不上，分数一律由 verdict 算
+        r = self._m([{"verdict": "hit", "got": 999}, {"verdict": "miss", "got": 4}])
+        assert r[0]["got"] == 4 and r[1]["got"] == 0
+
+    def test_AI少给几条时按miss补齐(self):
+        # 绝不因为 AI 漏了一条就少扣分
+        r = self._m([{"verdict": "hit"}])
+        assert len(r) == 2 and r[1]["verdict"] == "miss"
+
+    def test_认不得的判定当miss(self):
+        assert self._m([{"verdict": "很好"}, {}])[0]["verdict"] == "miss"
+
+    def test_总分按逐点加起来(self):
+        from mods.sqgrade import total_of
+        assert total_of(self._m([{"verdict": "hit"}, {"verdict": "partial"}])) == 6
+
+
 class Test裁决台:
     def test_体检单只数客观题(self, auth_client, paper):
         # 主观题没有客观答案可校、压根不过这道闸；算进 todo 会显示成

@@ -29,7 +29,7 @@ const TB_SVG = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
    用「排除法」而不是「白名单」：以后新加的视图默认带标签栏，不会因为漏登记而丢导航。 */
 const TAB_OFF = new Set([
   'notes', 'notebook', 'kb', 'doc', 'viewer', 'chat', 'search',
-  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest', 'sqrun',
+  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest', 'sqrun', 'sqwrite',
   'slgrade', 'slresult', 'writed', 'wqadd',
 ]);
 
@@ -524,7 +524,7 @@ window.__tabView = function (view) {
    出现的条件比左栏严：左栏 206 是恒定成本，这一栏 250 只有在
    「左栏 + 内容列 + 它」都摆得下（≥1360）时才划算，否则会把内容列挤窄。 */
 const SR_R_OFF = new Set(['doc', 'viewer', 'chat', 'notes', 'notebook', 'kb',
-  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest', 'sqrun',
+  'realrun', 'drillrun', 'findrun', 'quizrun', 'dtest', 'sqrun', 'sqwrite',
   'slgrade', 'slpaper', 'writed']);
 
 function srRow(name, val, go) {
