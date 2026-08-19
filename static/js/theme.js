@@ -7,7 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, aiSheetClose, aiSideClose, applyPush, avoidFab, DL_ART, dlArtApply, dlArtAt,
+/* global $, aiChatId, aiCurProject, aiMsgs, aiSheetClose, aiSideOpen,
+   applyPush, avoidFab, DL_ART, dlArtApply, dlArtAt, renderAiList,
    dlArtClock, dlArtDark, dlArtHour, dlArtHue, dlArtKey, dlArtMode, dlIconsApply, dlIsDesk,
    dlTintApply, dlTintOn, esc, loadAiHome, lsGet, lsSet, toast */
 
@@ -268,11 +269,37 @@ tintRender();
 /* ================= AI 面板的返回键 =================
    改版后 AI 只剩两层：会话抽屉开着 → 先收抽屉；否则关面板。
    （旧版有首页/项目/项目详情/会话四层，返回要一层层退 —— 那四个视图已经并成一栏了。） */
+/* AI 面板有自己的层级，返回要**一层一层往上退**，不能一步退出整个面板：
+
+       记忆/工具面板  →  会话列表(抽屉)  →  关掉面板
+                          ↑
+                     某个对话
+
+   以前这里只认「抽屉」和「工具面板」两层，剩下一律直接 hidden 整个面板 —— 在对话里
+   按一下返回，人就被扔回底下那个页面（今日/练习/随便什么），跟「上一级」毫无关系。
+
+   为什么「抽屉开着」是往上退而不是退回对话：那样会来回打转（关抽屉→再按返回→
+   又开抽屉）。抽屉是列表这一级，它的上一级就是关掉面板。想回对话点一下遮罩就行。 */
 function aiBack() {
-  if ($('#ai-panel').classList.contains('hidden')) return false;
-  if ($('#ai-panel').classList.contains('side-on')) { aiSideClose(); return true; }
+  const p = $('#ai-panel');
+  if (p.classList.contains('hidden')) return false;
+  // 记忆面板压在最上层，先收它
+  for (const id of ['#ai-projsheet', '#ai-memsheet']) {     // 压在最上层的弹层，先收它们
+    const el = $(id);
+    if (el && !el.classList.contains('hidden')) { el.classList.add('hidden'); return true; }
+  }
   if (!$('#ai-sheet').classList.contains('hidden')) { aiSheetClose(); return true; }
-  $('#ai-panel').classList.add('hidden');
+  if (p.classList.contains('side-on')) {
+    // 列表这一级里还有一层：正只看某个项目时，先退回「全部对话」
+    if (typeof aiCurProject !== 'undefined' && aiCurProject) {
+      aiCurProject = null; renderAiList(); return true;
+    }
+    // 已经是全部对话了 → 这一级的上一级就是关掉面板，往下走
+  } else if (p.dataset.shell !== 'desk' && aiChatId && aiMsgs.length) {
+    // 在某个对话里（工作台壳除外：那边列表本来就常驻，没有「上一级」可退）
+    aiSideOpen(); return true;
+  }
+  p.classList.add('hidden');
   /* 关面板必须顺手收 body 上的 pad-full / --push-*：全屏停靠时它给 body 挂了 pad-full，
      而那条类会把悬浮球 display:none。这条**返回键**路径原先只藏面板不收类，
      于是用返回退出全屏 AI 之后，悬浮球就一直不见了，只能重开应用。 */

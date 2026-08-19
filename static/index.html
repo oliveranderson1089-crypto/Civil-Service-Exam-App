@@ -174,6 +174,9 @@
           </div>
           <div class="feed-bar">
             <select id="feed-board" class="feed-board" title="按板块筛选"></select>
+            <button id="feed-export" class="feed-exp" title="导出小记（Markdown / PDF / HTML / ZIP…）">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="8 11 12 15 16 11"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg><span>导出</span>
+            </button>
             <div class="feed-filter" id="feed-tags"></div>
           </div>
           <div class="feed" id="feed"></div>
@@ -353,6 +356,8 @@
   <!-- ===== 文件查看器 ===== -->
   <section id="view-viewer" class="view hidden">
     <div class="viewer-bar">
+      <!-- 手机端全屏看文件时，唯一的退路本来只有系统手势，而 pdf.js 的 iframe 会吃掉边缘滑动 -->
+      <button id="viewer-back" class="btn vb-back" title="返回上一级">‹ 返回</button>
       <span id="viewer-name"></span>
       <span class="reader-tools hidden" id="reader-tools">
         <button id="rd-fontminus" title="字号减小">A-</button>
@@ -642,6 +647,16 @@
       </div>
     </div>
 
+    <!-- 页面本身的操作。**三端都要有** —— 以前这两个按钮和「手机通知/切服务器」
+         挤在同一张 #acct-app 卡里，而那张卡在浏览器里是整体隐藏的，于是网页端
+         「客户端」这一组只剩下载链接，连刷新都点不到。 -->
+    <div class="acct-sec" data-ag="客户端">
+      <div class="acct-sec-t"><span class="em-sw"><span class="em-e">🔄</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 12a8.4 8.4 0 0 1-14.6 5.6"/><path d="M3.6 12a8.4 8.4 0 0 1 14.6-5.6"/><path d="M18.2 2.6v3.8h-3.8M5.8 21.4v-3.8h3.8"/></svg></span></span> 页面</div>
+      <button class="btn acct-btn" id="acct-refresh">刷新页面</button>
+      <button class="btn acct-btn" id="acct-update">检查更新</button>
+      <p class="acct-hint" id="acct-upd-hint"></p>
+    </div>
+
     <div class="acct-sec" data-ag="客户端">
       <div class="acct-sec-t"><span class="em-sw"><span class="em-e">📥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 14.4V18a2 2 0 0 0 2 2h12.8a2 2 0 0 0 2-2v-3.6h-5l-1.4 2.4H10l-1.4-2.4z"/><path d="M12 3.6v8.2M8.6 8.6L12 12l3.4-3.4"/></svg></span></span> 下载客户端</div>
       <p class="acct-hint">装成独立应用更顺手：自己的图标、独立窗口、单独登录。</p>
@@ -654,8 +669,6 @@
 
     <div class="acct-sec hidden" id="acct-app" data-ag="客户端">
       <div class="acct-sec-t" id="acct-app-t"><span class="em-sw"><span class="em-e">📱</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.4" y="2.6" width="11.2" height="18.8" rx="2.4"/><path d="M10.4 18.6h3.2"/></svg></span></span> App</div>
-      <button class="btn acct-btn" id="acct-refresh">刷新页面</button>
-      <button class="btn acct-btn" id="acct-update">检查更新</button>
       <button class="btn acct-btn apk-only" id="acct-notify">手机通知</button>
       <button class="btn acct-btn apk-only" id="acct-notifytest">发送测试通知</button>
       <button class="btn acct-btn apk-only" id="acct-server">切换服务器地址</button>
@@ -663,6 +676,17 @@
     </div>
 
     <button class="btn acct-logout" id="acct-logout">退出登录</button>
+  </section>
+
+  <!-- ===== 别人分享给我的 AI 对话：只读地看，可以「接着问」 ===== -->
+  <section id="view-aishare" class="view hidden">
+    <div id="as-wrap" class="as-wrap"></div>
+  </section>
+
+  <!-- ===== AI 产出：助手生成的东西先落这儿，再决定投到哪 ===== -->
+  <section id="view-aiout" class="view hidden">
+    <div class="pd-intro" id="ao-intro">AI 生成的汇总、文档、题目先存在这里 · 满意了再投到资料库 / 云盘 / 小记</div>
+    <div id="ao-list" class="ao-list"></div>
   </section>
 
   <!-- ===== 党的创新理论学习词典（12371.cn） ===== -->
@@ -730,6 +754,7 @@
       <span id="dv-batch-n"></span>
       <button class="btn tiny" id="dv-copy">复制</button>
       <button class="btn tiny" id="dv-move">移动到…</button>
+      <button class="btn tiny" id="dv-bsend">发送到聊天…</button>
       <button class="btn tiny" id="dv-bdel">删除</button>
       <button class="btn tiny" id="dv-bcancel">取消</button>
     </div>
@@ -1584,7 +1609,11 @@
     <h3>上传资料</h3>
     <div class="opt"><span>板块</span><select id="up-board"></select></div>
     <div class="opt"><span>名称</span><input id="up-title" type="text" placeholder="选填，默认用文件名"></div>
-    <input id="up-file" type="file" multiple style="margin:8px 0 10px;width:100%;">
+    <div class="up-pickers">
+      <label class="up-pick" id="up-pick-file">📄 选文件<input id="up-file" type="file" multiple hidden></label>
+      <label class="up-pick" id="up-pick-dir">📁 选文件夹<input id="up-folder" type="file" webkitdirectory directory multiple hidden></label>
+    </div>
+    <div id="up-picked" class="up-picked hidden"></div>
     <div id="up-prog" class="up-prog hidden"><div class="up-bar"><i></i></div><span class="up-txt"></span></div>
     <div class="modal-actions">
       <button class="btn" id="up-cancel">取消</button>
@@ -1631,6 +1660,35 @@
     <div class="modal-actions">
       <button class="btn" id="ex-cancel">取消</button>
       <button class="btn primary" id="ex-go">下载 PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- 导出小记 -->
+<div id="nx-modal" class="modal hidden">
+  <div class="modal-box nx-box">
+    <h3>导出小记</h3>
+    <div class="nx-fmts" id="nx-fmts"></div>
+    <p class="nx-tip" id="nx-tip"></p>
+    <div class="opt"><span>范围</span>
+      <select id="nx-scope"></select>
+    </div>
+    <div class="opt"><span>顺序</span>
+      <select id="nx-order">
+        <option value="">新的在前（和界面一致）</option>
+        <option value="asc">旧的在前（像日记）</option>
+      </select>
+    </div>
+    <div class="opt checks" id="nx-fields">
+      <label><input type="checkbox" id="nx-todos" checked> 待办</label>
+      <label><input type="checkbox" id="nx-tags" checked> 标签</label>
+      <label><input type="checkbox" id="nx-time" checked> 时间/板块</label>
+      <label id="nx-imgs-l"><input type="checkbox" id="nx-imgs" checked> 图片</label>
+      <label id="nx-atts-l"><input type="checkbox" id="nx-atts" checked> 附件原件</label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="nx-cancel">取消</button>
+      <button class="btn primary" id="nx-go">导出</button>
     </div>
   </div>
 </div>
@@ -1772,6 +1830,7 @@
         <span class="ai-title" id="aic-title">新对话</span>
         <span class="ai-sub" id="aic-sub"></span>
       </button>
+      <button class="ai-x" id="ai-sumbtn" title="把这段对话汇总成一份纪要"><span class="em-sw"><span class="em-e">📝</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.6h11l3 3v11.8H5z"/><path d="M8.4 9.6h7M8.4 13h7M8.4 16.2h4"/></svg></span></span></button>
       <button class="ai-x" id="ai-newbtn" title="新对话"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span></button>
       <button class="ai-x ai-dock" title="按住拖到屏幕任一边 → 停靠那半边"><span class="em-sw"><span class="em-e">✥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6v18.8M2.6 12h18.8"/><path d="M12 2.6l-2.4 2.6M12 2.6l2.4 2.6M12 21.4l-2.4-2.6M12 21.4l2.4-2.6M2.6 12l2.6-2.4M2.6 12l2.6 2.4M21.4 12l-2.6-2.4M21.4 12l2.6 2.4" transform="translate(0,0)"/></svg></span></span></button>
       <button class="ai-x ai-full" title="全屏工作台 / 还原侧栏"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span></button>
@@ -1781,6 +1840,9 @@
     <!-- 停止生成：钉在输入栏上方的固定件。旧版它是消息流里的一个块，往上翻就找不着了（AD8） -->
     <div class="ai-stopbar"><button type="button" id="ai-stop" class="ai-stopbtn">■ 停止生成</button></div>
     <div class="ai-input" id="ai-input">
+      <!-- 云盘/资料库里复制了文件之后的提示条：右键菜单里的「粘贴」是 WebKit 自己的，
+           够不着应用内剪贴板，所以给一个点得着的入口（js/aichat.js: aiSyncClipChip） -->
+      <div id="ai-clipchip" class="ai-clipchip hidden"></div>
       <div id="ai-atts" class="ai-atts"></div>
       <div class="input-tools">
         <button type="button" id="ai-tools" class="ai-attbtn" title="工具：点一下让 AI 做，或直接打开功能"><span class="em-sw"><span class="em-e">🧰</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="8" width="18.8" height="11.4" rx="2"/><path d="M2.6 12.4h18.8"/><path d="M8.6 8V6.2a2 2 0 0 1 2-2h2.8a2 2 0 0 1 2 2V8"/></svg></span></span></button>
@@ -1823,6 +1885,9 @@
 
 <!-- AI 工具面板：可搜索、分组的快捷工具（点一下让 AI 做，或直接打开功能页） -->
 <div id="ai-memsheet" class="cr-picker hidden"></div>
+<!-- 项目设置：改名 / 改自定义指令 / 挂参考资料。内容由 js/aichat.js 现拼。
+     以前指令只在新建项目时问过一次，之后没有任何改法，参考资料更是有接口没入口。 -->
+<div id="ai-projsheet" class="cr-picker hidden"></div>
 <div id="ai-toolsheet" class="note-sheet hidden" style="z-index:130;">
   <div class="ns-mask" data-sheet-close></div>
   <div class="ns-panel">
@@ -1853,6 +1918,8 @@
 <!-- 资料条目操作菜单 -->
 <div id="mat-menu" class="ctxmenu hidden">
   <div class="acm-list">
+    <button data-mm="send"><span class="em-sw"><span class="em-e">📤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 3.5L10.8 13.2"/><path d="M20.5 3.5l-6.2 17-3.5-7.3-7.3-3.5z"/></svg></span></span> 发送到聊天…</button>
+    <button data-mm="ai"><span class="em-sw"><span class="em-e">🤖</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="7.4" width="17.2" height="12" rx="3"/><path d="M12 3.4v4M8.6 12.4v1.6M15.4 12.4v1.6"/></svg></span></span> 发给 AI 助手</button>
     <button data-mm="share"><span class="em-sw"><span class="em-e">📤</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 14.4V18a2 2 0 0 0 2 2h12.8a2 2 0 0 0 2-2v-3.6h-5l-1.4 2.4H10l-1.4-2.4z"/><path d="M12 12.2V4M8.6 7.4L12 4l3.4 3.4"/></svg></span></span> 分享到其他应用</button>
     <button data-mm="team"><span class="em-sw"><span class="em-e">👥</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.4A6 6 0 0 1 21 20"/></svg></span></span> 共享给队友</button>
     <button data-mm="rename"><span class="em-sw"><span class="em-e">✏️</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.6 3.2a2 2 0 0 1 2.8 2.8L8 18.4l-3.8.8.8-3.8z"/></svg></span></span> 重命名</button>
@@ -2144,6 +2211,8 @@
 <script src="js/matpanel.js"></script>
 <script src="js/aishot.js"></script>
 <script src="js/bookmarks.js"></script>
+<script src="js/aiout.js"></script>
+<script src="js/aishare.js"></script>
 <script src="js/desktop.js"></script>
 <script src="js/marks.js"></script>
 <script src="js/shortcuts.js"></script>

@@ -7,27 +7,43 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, aiHandleAttach, api, artEm, c, deskMsg, errMsg, loadMaterials, openAI, push,
-   qnAddImgs, qnOpen, stack, toast */
+/* global $, aiAttachLib, aiHandleAttach, api, artEm, c, clipFiles, deskMsg, errMsg, getAppClip,
+   loadMaterials, openAI, push, qnAddImgs, qnOpen, stack, toast */
 
 /* ================= AI：截图 / 粘贴图片 / 手写输入 =================
    识图必须走智谱 GLM-4.6V —— 实测 DeepSeek 的 API 直接拒收图片
    （HTTP 400: unknown variant `image_url`），它根本没有视觉能力。
    所以：图 → 智谱读成文字 → 文字再交给 DeepSeek（便宜）。/api/ai/extract 已经是这个流程。 */
 
-/* ---- #14 Ctrl+V 粘贴截图 / 拖图片进来，直接变成 AI 附件 ---- */
+/* ---- #14 Ctrl+V 粘贴截图/文件、拖文件进来，直接变成 AI 附件 ---- */
+async function aiAttachFiles(files) {
+  // 一个个来，不并发：extract 那头要 OCR，同时开几路只会互相拖慢，提示也会打架
+  for (const f of files.slice(0, 5)) {
+    toast((f.type || '').startsWith('image/') ? '正在读取截图…' : '正在读取附件…');
+    await aiHandleAttach(f);
+  }
+}
 $('#ai-panel').addEventListener('paste', e => {
-  const items = [...((e.clipboardData && e.clipboardData.items) || [])];
-  const img = items.find(i => (i.type || '').startsWith('image/'));
-  if (!img) return;                       // 粘文字就照常，不拦
+  const fs = clipFiles(e);                // 截图进 items、复制的文件进 files，两条都得看
+  if (fs.length) { e.preventDefault(); aiAttachFiles(fs); return; }
+  /* 系统剪贴板里没有文件，再看应用内剪贴板 —— 刚在云盘里点过「复制」的话，
+     文件只存在于应用自己这份剪贴板里（桌面壳的 WebKit 只认文本和图片，
+     云盘的「复制」也只是记下 id，压根没往系统剪贴板里放东西）。 */
+  const clip = getAppClip();
+  if (!clip.length) return;               // 粘文字就照常，不拦
+  const txt = (e.clipboardData && e.clipboardData.getData('text')) || '';
+  if (txt.trim()) {
+    // 两份剪贴板都有货：粘文字是人当下的意图，别替他做主，只把另一条路指出来
+    toast('剪贴板里还有 ' + clip.length + ' 个文件，点输入框上方的「附给 AI」可以一起带上');
+    return;
+  }
   e.preventDefault();
-  const f = img.getAsFile();
-  if (f) { toast('正在读取截图…'); aiHandleAttach(f); }
+  aiAttachLib(clip, { keepPanel: true });
 });
 $('#ai-panel').addEventListener('dragover', e => e.preventDefault());
 $('#ai-panel').addEventListener('drop', e => {
-  const f = [...(e.dataTransfer ? e.dataTransfer.files : [])][0];
-  if (f && (f.type || '').startsWith('image/')) { e.preventDefault(); aiHandleAttach(f); }
+  const fs = [...(e.dataTransfer ? e.dataTransfer.files : [])];
+  if (fs.length) { e.preventDefault(); aiAttachFiles(fs); }
 });
 
 /* ---- #13 截图：壳抓图（GNOME 区域选择，鼠标/笔都能拖）→ 回到网页再用笔自由圈 ---- */

@@ -8,20 +8,47 @@ CRUD（改名/删除/复制/下载）——又一处区段注释名不副实。�
 import json
 import os
 import re
+import shutil
 import subprocess
 import uuid
 
 from flask import Blueprint, Response, jsonify, request, send_file
 
-from core import UPLOADS, get_db, log, uid
+from core import SECTIONS, UPLOADS, get_db, log, uid
 from mods.files import (INLINE_EXT, OFFICE_EXT, TEXT_EXT, _cacheable,
-                        _extract_text, _no_script, _office_to_pdf, _remove_file,
-                        _user_dir)
+                        _extract_text, _no_script, _office_to_pdf, _remove_blob,
+                        _remove_file, _user_dir)
 
 bp = Blueprint("materials", __name__)
 
 
 # ---- 资料库 ----
+def finish_material_upload(db, tmp, name, board, title, mime):
+    """分片通道传完的临时文件 → 资料库的一行。
+
+    云盘和资料库共用 mods/social.py 那条 chunk 通道（init → 每片 → done），
+    done 按会话里记的 target 决定落到哪边，落资料库就走这里。
+    返回 (行字典, None) 或 (None, (json响应, 状态码))。
+    """
+    ext = os.path.splitext(name)[1].lower()
+    stored = uuid.uuid4().hex + ext
+    dst = os.path.join(_user_dir(uid()), stored)
+    try:
+        # 分片是在 uploads/drive/<id>/ 底下拼的，和资料库同一个文件系统，能直接 rename；
+        # 万一不是（有人把 drive 挂到别处），退回复制再删。
+        os.replace(tmp, dst)
+    except OSError:
+        shutil.copyfile(tmp, dst)
+        _remove_blob(tmp)
+    size = os.path.getsize(dst)
+    cur = db.execute(
+        "INSERT INTO materials(user_id,section,board,title,orig_name,stored_name,ext,mime,size) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (uid(), "", (board or "")[:20], title or name, name, stored, ext, mime or "", size))
+    db.commit()
+    return dict(db.execute("SELECT * FROM materials WHERE id=?", (cur.lastrowid,)).fetchone()), None
+
+
 @bp.post("/api/materials")
 def material_upload():
     section = (request.form.get("section") or "").strip()
@@ -51,20 +78,44 @@ def material_upload():
 
 @bp.get("/api/materials/boards")
 def material_boards():
-    """分类 = 已有资料反推出来的 + 用户自己存下来的。
-       只反推的话，新建了但还没往里传东西的分类（如「其它」）重启就没了 —— 这正是踩过的坑。"""
+    """分类 = 已有资料反推出来的 + 用户自己存下来的 + 固定板块。
+       只反推的话，新建了但还没往里传东西的分类（如「其它」）重启就没了 —— 这正是踩过的坑。
+
+    items 比 boards 多两样东西：**这个分类下有几份资料**，以及**按「用得多 + 最近用」排好的
+    顺序**。分类攒到十几个之后全平铺在顶上就没法用了（手机上得横着划找），前端据此只把前
+    几个摆在外面、其余收进「更多」面板。
+
+    排序为什么要带上「最近」：份数相同的分类不少（这库里 1 份的就有三个），只按份数排，它们
+    就退化成建库顺序（最老的排最前），正好是最没用的一头。份数一样就看最近传的那份资料是哪
+    条，手头正在攒的那个分类自然浮上来。
+
+    排序放服务端做：同一份口径前后端各排一次，迟早会不一致（小记那边同理，见 mods/notes.py）。
+    """
     db = get_db()
     rows = db.execute(
-        "SELECT DISTINCT board FROM materials WHERE user_id=? AND board<>'' ORDER BY board", (uid(),)).fetchall()
-    boards = [r["board"] for r in rows]
+        "SELECT board, COUNT(*) n, MAX(id) last FROM materials "
+        "WHERE user_id=? AND board<>'' GROUP BY board", (uid(),)).fetchall()
+    stat = {r["board"]: (r["n"], r["last"]) for r in rows}
+    custom = []
     r = db.execute("SELECT mat_boards FROM users WHERE id=?", (uid(),)).fetchone()
     try:
-        for b in json.loads((r["mat_boards"] if r else None) or "[]"):
-            if b and b not in boards:
-                boards.append(b)
+        custom = [b for b in json.loads((r["mat_boards"] if r else None) or "[]") if b]
     except Exception:
         log.warning("用户 mat_boards 不是合法 JSON，自定义分类会丢", exc_info=True)
-    return jsonify({"boards": boards})
+    # 固定板块也要在册：一份资料都没有的板块（如「数量关系」）前端要拿它当上传时的去处，
+    # 只是排在后面、收进面板里，不占外面那一行。SECTIONS 而不是 ALL_BOARDS —— 后者是
+    # set，顺序每次进程都可能不一样，空板块之间的次序就会跳。
+    fixed = [b for s in SECTIONS for b in s["boards"]]
+    order, seen = [], set()
+    for b in list(stat) + custom + fixed:
+        if b not in seen:
+            seen.add(b)
+            order.append(b)
+    items = sorted(
+        ({"board": b, "n": stat.get(b, (0, 0))[0], "last": stat.get(b, (0, 0))[1],
+          "custom": b not in fixed} for b in order),
+        key=lambda x: (-x["n"], -x["last"]))
+    return jsonify({"boards": [x["board"] for x in items], "items": items})
 
 
 @bp.get("/api/materials")

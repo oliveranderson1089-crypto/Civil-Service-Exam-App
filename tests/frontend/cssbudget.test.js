@@ -31,7 +31,7 @@ const CSS = fs.readFileSync(path.join(__dirname, '../../static/style.css'), 'utf
    评审当天的起点是：hex 670 / 字号 43 / 圆角 26 / 阴影 129 / z-index 41 /
    断点 15 / !important 322 —— 那一版还没剥注释，口径略松。 */
 const BUDGET = {
-  hexUnique: 668,      // 不重复的十六进制颜色
+  hexUnique: 666,      // 不重复的十六进制颜色（手写板三层底改成透明后少了两个实心底色）
   fontSizes: 42,       // 不重复的 font-size:Npx
   radii: 28,           // 不重复的 border-radius:Npx
   shadows: 129,        // 不重复的 box-shadow 值

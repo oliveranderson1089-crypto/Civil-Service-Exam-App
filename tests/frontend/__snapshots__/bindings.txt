@@ -1,5 +1,7 @@
 ? @resize
 document @click
+? @resize
+? @orientationchange
 #crumb @click
 ? @keydown
 #ad-ok .onclick
@@ -68,6 +70,11 @@ div.composer @drop
 #qn-imgs @click
 #qn-files @click
 #qn-save .onclick
+#feed-export .onclick
+#nx-cancel .onclick
+#nx-modal @click
+#nx-fmts @click
+#nx-go .onclick
 #mat-filter @contextmenu
 #mat-filter @click
 #mat-list @click
@@ -80,6 +87,7 @@ div.composer @drop
 document @keydown
 #slideshow @touchstart
 #slideshow @touchend
+#viewer-back .onclick
 #viewer-full .onclick
 #viewer-exit .onclick
 #viewer-ink .onclick
@@ -90,6 +98,9 @@ document @keydown
 #rd-serif .onclick
 #rd-copy .onclick
 #upload-btn .onclick
+#up-file @change
+#up-folder @change
+#up-pick-dir @click
 #up-cancel .onclick
 #upload-modal @click
 #up-go .onclick
@@ -154,9 +165,13 @@ document @keydown
 #clsx-go .onclick
 #cls-prev .onclick
 #cls-next .onclick
+#ai-projsheet @change
+#ai-projsheet @click
 #ai-atts @click
 #ai-attach .onclick
 #ai-attsheet @click
+document @appclip
+#ai-clipchip @click
 #ai-attfile @change
 #ai-camfile @change
 #ai-tools .onclick
@@ -185,6 +200,7 @@ div.input-grip @pointercancel
 #ais-close .onclick
 #ai-sidemask .onclick
 #ai-newbtn .onclick
+#ai-sumbtn .onclick
 #aih-new .onclick
 #ai-close .onclick
 #ai-plus .onclick
@@ -385,6 +401,7 @@ document @click
 #dv-bcancel .onclick
 #dv-bdel .onclick
 #dv-move .onclick
+#dv-bsend .onclick
 #dv-copy .onclick
 #dv-paste .onclick
 #view-drive @contextmenu
@@ -551,6 +568,7 @@ document @change
 #ai-shot .onclick
 ? @scroll
 document @click
+#view-aiout @click
 document @click
 document @click
 #mk-bar @pointerdown

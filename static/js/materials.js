@@ -7,8 +7,9 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, ALL_BOARDS, api, appConfirm, appPrompt, artEm, c, copyText, errMsg, esc,
-   fmtSize, hl, Ink, inkHere, KB, kbPrompt, openMatMenu, push, toast */
+/* global $, ALL_BOARDS, api, appConfirm, appPrompt, artEm, back, c, chunkUpload,
+   copyText, DV_CHUNK_MIN, errMsg, esc, libTouch, fmtSize, hl, Ink, inkHere, IS_DESKTOP, KB, kbPrompt,
+   openMatMenu, push, toast */
 
 /* ================= 资料库 ================= */
 const EXT_ICON = {
@@ -19,16 +20,79 @@ const EXT_ICON = {
 // 同 drive.js：两套字形，主题下换成跟色的线描
 const iconFor = (ext) => artEm(EXT_ICON[(ext || '').replace('.', '')] || '📎');
 const OFFICE_EXT = ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.rtf'];
-let matBoard = '', matCustomBoards = [];
-async function renderMatFilter() {
+/* 分类栏：**外面永远只占一行**。
+   固定板块 8 个 + 自建分类（上限 30），全平铺在顶上就得横着划找，越用越长。
+   所以外面只留「全部 + 用得最多的几个」，其余收进「更多 N」里的面板（带搜索）。
+
+   跟小记标签栏（notes.js 的 renderFeedTags）同一套办法，但按资料库的脾气改了两处：
+   · **一份资料都没有的分类不摆在外面**。小记的标签天生至少挂着一条笔记，资料库的固定
+     板块却有一半常年是空的（数量关系、应用文…），摆出来就是「点了必然空」的噪音。
+     它们只在面板里、和上传时的分类下拉里出现。
+   · **「＋ 分类」收进面板**。建分类是低频动作，让它把外面那一格让给常用分类；面板里搜
+     不着的时候，底部那颗按钮直接变成「新建这个名字」。
+   · 和小记一样的两条规矩：**正在筛的那个一定摆在外面**（否则筛完看不出自己在按哪个看），
+     以及**顺序由服务端给**（用得多的在前、一样多看最近传，见 mods/materials.py）——
+     两边各排一次，迟早不一致。
+
+   份数变了不当场重排：浏览时分类突然跳位比排得准更烦人。下次进资料库、或新建/删除分类
+   时才重新拉顺序。 */
+const MAT_HOT = 6;                 // 外面摆几个（连「全部」和「更多」正好一行）
+let matBoard = '', matCustomBoards = [], matBoardsAll = [], matPanelOpen = false;
+
+async function loadMatBoards() {
   try {
     const d = await api('/api/materials/boards');
-    (d.boards || []).forEach(b => { if (b && !ALL_BOARDS.includes(b) && !matCustomBoards.includes(b)) matCustomBoards.push(b); });
-  } catch (_) { /* 这一步失败不影响主流程，下面有兜底 */ }
-  const all = ALL_BOARDS.concat(matCustomBoards);
-  $('#mat-filter').innerHTML = `<button class="chip ${matBoard === '' ? 'active' : ''}" data-mb="">全部</button>` +
-    all.map(b => `<button class="chip ${b === matBoard ? 'active' : ''}" data-mb="${esc(b)}">${esc(b)}</button>`).join('') +
-    `<button class="chip chip-newcat" id="mat-newcat">${artEm('＋')} 分类</button>`;
+    // items 是新口径（带份数和顺序）；老响应只有 boards，退回去也要能用
+    matBoardsAll = d.items || (d.boards || []).map(b => ({ board: b, n: 0, custom: !ALL_BOARDS.includes(b) }));
+  } catch (_) {
+    // 拉不到就先拿固定板块顶着，至少还能筛、还能上传
+    if (!matBoardsAll.length) matBoardsAll = ALL_BOARDS.map(b => ({ board: b, n: 0, custom: false }));
+  }
+  matCustomBoards = matBoardsAll.filter(x => x.custom).map(x => x.board);
+  renderMatFilter();
+}
+function matChip(x) {
+  return `<button class="tagchip${x.board === matBoard ? ' active' : ''}${x.n ? '' : ' tagchip-empty'}"`
+    + ` data-mb="${esc(x.board)}">${esc(x.board)}`
+    + (x.n > 1 ? `<i class="tagchip-n">${x.n}</i>` : '') + '</button>';
+}
+function renderMatFilter(q = '') {
+  const box = $('#mat-filter');
+  /* 平时这一行是**横向滚动**（nowrap）的，面板要整行铺开就得让它临时换行。
+     用类名切，不用 :has() —— 安卓 WebView 的版本跟着系统走，不敢赌。 */
+  box.classList.toggle('mat-open', matPanelOpen);
+  const hot = matBoardsAll.filter(x => x.n > 0).slice(0, MAT_HOT);
+  // 正在筛的那个要是没排进常用（比如刚建的空分类），就把它挤进来，行数不变
+  if (matBoard && !hot.some(x => x.board === matBoard)) {
+    const cur = matBoardsAll.find(x => x.board === matBoard) || { board: matBoard, n: 0 };
+    if (hot.length >= MAT_HOT) hot.splice(hot.length - 1, 1, cur); else hot.push(cur);
+  }
+  const rest = matBoardsAll.length - hot.length;
+  const kw = q.trim();
+  const list = kw ? matBoardsAll.filter(x => x.board.includes(kw)) : matBoardsAll;
+  const newName = kw.slice(0, 20);
+  box.innerHTML = `<button class="tagchip${matBoard === '' ? ' active' : ''}" data-mb="">全部</button>`
+    + hot.map(matChip).join('')
+    + (rest > 0 ? `<button type="button" class="tagchip tagchip-more${matPanelOpen ? ' active' : ''}" data-matmore="1">`
+        + (matPanelOpen ? '收起 ▴' : `更多 ${rest} ▾`) + '</button>' : '')
+    + (matPanelOpen ? `<div class="tagpanel">
+        <input id="mat-boardq" class="tagpanel-q" placeholder="搜分类…" autocomplete="off" value="${esc(kw)}">
+        <div class="tagpanel-list">${list.length
+          ? list.map(matChip).join('')
+          : '<span class="tagpanel-none">没有这个分类</span>'}</div>
+        <div class="tagpanel-foot">
+          <button type="button" class="tagchip chip-newcat" id="mat-newcat">${artEm('＋')} ${newName ? `新建「${esc(newName)}」` : '新建分类'}</button>
+          <span class="tagpanel-tip">长按分类可删除（里面的资料不会丢）</span>
+        </div>
+      </div>` : '');
+  if (matPanelOpen) {
+    const inp = $('#mat-boardq');
+    /* 每次重渲染都会换一个新 input，光标位置也就没了。搜的时候必须把它送回去，
+       不然打第二个字就跑到别处了。 */
+    inp.focus();
+    inp.setSelectionRange(kw.length, kw.length);
+    inp.addEventListener('input', () => renderMatFilter(inp.value));
+  }
 }
 async function saveMatBoards() {
   try {
@@ -53,39 +117,45 @@ $('#mat-filter').addEventListener('contextmenu', async e => {
   matCustomBoards = matCustomBoards.filter(x => x !== b);
   await saveMatBoards();
   if (matBoard === b) matBoard = '';
-  renderMatFilter(); loadMaterials();
+  matPanelOpen = false;
+  await loadMatBoards(); loadMaterials();
   toast('分类已删除');
 });
 
 function openMaterials() {
   matBoard = '';
-  renderMatFilter();
+  matPanelOpen = false;
+  loadMatBoards();
   push({ view: 'materials' });
   loadMaterials();
 }
 $('#mat-filter').addEventListener('click', async e => {
   if (e.target.closest('#mat-newcat')) {
-    const name = await appPrompt('新建分类', '分类名，如：晨读');
+    const q = ($('#mat-boardq') || {}).value || '';
+    const name = q.trim() ? q : await appPrompt('新建分类', '分类名，如：晨读');
     const v = (name || '').trim().slice(0, 20);
     if (!v) return;
     if (!matCustomBoards.includes(v) && !ALL_BOARDS.includes(v)) matCustomBoards.push(v);
     await saveMatBoards();            // 存到服务器：不然新建了但还没传东西的分类，重启就没了
     matBoard = v;                     // 选中新分类：之后上传/拍照默认归入它
-    renderMatFilter(); loadMaterials();
+    matPanelOpen = false;             // 建完就收起来，别挡着下面的资料
+    await loadMatBoards(); loadMaterials();
     toast('分类「' + v + '」已保存，现在上传的资料会归入它');
     return;
   }
+  if (e.target.closest('[data-matmore]')) { matPanelOpen = !matPanelOpen; renderMatFilter(); return; }
   const c = e.target.closest('[data-mb]'); if (!c) return;
   matBoard = c.dataset.mb;
-  document.querySelectorAll('#mat-filter .chip').forEach(x => x.classList.toggle('active', x.dataset.mb === matBoard));
+  matPanelOpen = false;               // 挑完就收起来
+  renderMatFilter();
   loadMaterials();
 });
 async function loadMaterials() {
   try {
     const d = await api('/api/materials' + (matBoard ? '?board=' + encodeURIComponent(matBoard) : ''));
-    let newCat = false;
-    (d.items || []).forEach(m => { const b = m.board; if (b && !ALL_BOARDS.includes(b) && !matCustomBoards.includes(b)) { matCustomBoards.push(b); newCat = true; } });
-    if (newCat) renderMatFilter();
+    /* 列表里冒出分类栏还不知道的分类（别处上传的、共享来的、拖目录带进来的），
+       就把顺序重新拉一遍 —— 让它带着份数一起进来，而不是本地硬塞一个 0 份的。 */
+    if ((d.items || []).some(m => m.board && !matBoardsAll.some(x => x.board === m.board))) loadMatBoards();
     const box = $('#mat-list');
     if (!d.items.length) { box.innerHTML = ''; $('#mat-empty').classList.remove('hidden'); return; }
     $('#mat-empty').classList.add('hidden');
@@ -250,6 +320,12 @@ function setViewerFull(on) {
     if (window.GongkaoNative && typeof GongkaoNative.fullscreen === 'function') GongkaoNative.fullscreen(on);
   } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
 }
+/* 顶栏的「‹ 返回」：全屏时先退全屏，否则退一级导航栈（＝回到刚才那一页）。
+   走 appBack 而不是直接 back()，这样阅读器里开着的浮层会先被关掉，一次只退一级。 */
+$('#viewer-back').onclick = () => {
+  if (_viewerFull) { setViewerFull(false); return; }
+  if (window.appBack) appBack(); else back();
+};
 $('#viewer-full').onclick = () => setViewerFull(!_viewerFull);
 $('#viewer-exit').onclick = () => setViewerFull(false);
 $('#viewer-ink').onclick = () => inkHere();
@@ -553,18 +629,64 @@ function mdToHtml(src, opts) {
   return html;
 }
 function openViewer(id, name, ext) {
+  libTouch('material', id);
   const e = (ext || '').toLowerCase();
   const textUrl = (e === '.pdf' || OFFICE_EXT.includes(e)) ? '/api/materials/' + id + '/text' : null;
   openViewerUrl('/api/materials/' + id + '/view', name, ext, '/api/materials/' + id + '/download', textUrl);
 }
 /* 上传资料 */
 $('#upload-btn').onclick = () => {
+  // 下拉也吃服务端那份顺序：常用的分类排在前面，不用在一长串里翻
+  const upBoards = matBoardsAll.length ? matBoardsAll.map(x => x.board) : ALL_BOARDS.concat(matCustomBoards);
   $('#up-board').innerHTML = `<option value="">未分类</option>`
-    + ALL_BOARDS.concat(matCustomBoards).map(b => `<option ${b === matBoard ? 'selected' : ''}>${esc(b)}</option>`).join('')
+    + upBoards.map(b => `<option ${b === matBoard ? 'selected' : ''}>${esc(b)}</option>`).join('')
     + `<option value="__new__">${artEm('＋')} 新建分类…</option>`;
-  $('#up-title').value = ''; $('#up-file').value = '';
+  $('#up-title').value = ''; $('#up-file').value = ''; $('#up-folder').value = '';
+  matPickList = [];
+  matRenderPicked();
   $('#upload-modal').classList.remove('hidden');
 };
+
+/* 待上传清单：[{file, board}]。board 为空 = 用弹窗里选的那个分类。
+
+   资料库没有目录 —— 它的组织维度是「分类（board）」。所以传文件夹不是把目录搬进来，
+   而是**按目录名归类**：拖 `时政积累/` 进来就归进「时政积累」这个分类，多层目录用
+   `父/子` 拼成一个分类名。后端那边分类名最长 20 字，这里跟着截。 */
+let matPickList = [];
+const MAT_BOARD_MAX = 20;
+
+function matBoardOf(rel) {
+  const parts = (rel || '').split('/').filter(Boolean);
+  parts.pop();                                   // 去掉文件名，剩下的才是目录
+  return parts.length ? parts.join('/').slice(0, MAT_BOARD_MAX) : '';
+}
+function matRenderPicked() {
+  const el = $('#up-picked');
+  if (!el) return;
+  if (!matPickList.length) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const byBoard = new Map();
+  matPickList.forEach(it => byBoard.set(it.board, (byBoard.get(it.board) || 0) + 1));
+  const dirs = [...byBoard].filter(([b]) => b);
+  el.innerHTML = '已选 <b>' + matPickList.length + '</b> 个文件'
+    + (dirs.length ? '，按目录归类：' : '')
+    + dirs.map(([b, n]) => `<br>${artEm('📁')} <b>${esc(b)}</b> · ${n} 个`).join('');
+  el.classList.remove('hidden');
+}
+$('#up-file').addEventListener('change', e => {
+  matPickList = [...e.target.files].map(f => ({ file: f, board: '' }));
+  matRenderPicked();
+});
+$('#up-folder').addEventListener('change', e => {
+  matPickList = [...e.target.files].map(f => ({ file: f, board: matBoardOf(f.webkitRelativePath) }));
+  matRenderPicked();
+});
+/* 桌面壳是 WebKitGTK，不认 webkitdirectory（那是 Chromium 的能力）—— 点下去只会弹出
+   一个选**文件**的框，看着像坏了。说清楚，并指一条真能走的路。 */
+$('#up-pick-dir').addEventListener('click', e => {
+  if (!IS_DESKTOP) return;
+  e.preventDefault();
+  toast('桌面版请把文件夹直接拖进资料库', true);
+});
 $('#up-cancel').onclick = () => $('#upload-modal').classList.add('hidden');
 $('#upload-modal').addEventListener('click', e => { if (e.target.id === 'upload-modal') $('#upload-modal').classList.add('hidden'); });
 /* 带进度 + 断网重试的上传：服务器在家里，上行只有一百多 KB/s，
@@ -592,37 +714,62 @@ function upProg(show, pct, txt) {
   $('#up-prog').querySelector('i').style.width = Math.round(pct * 100) + '%';
   $('#up-prog').querySelector('.up-txt').textContent = txt;
 }
-$('#up-go').onclick = async () => {
-  const files = [...$('#up-file').files];
-  if (!files.length) { toast('请选择文件', true); return; }
-  const board = $('#up-board').value, title = $('#up-title').value.trim();
-  $('#up-go').disabled = true; $('#up-go').textContent = '上传中…';
-  $('#up-cancel').disabled = true;
+/* 传一份资料。超过分片门槛就走云盘那条分片通道（target=materials）——
+   整请求发完撞的是 app.py 的 64MB 全局上限，走隧道时更是 100MB 就断；
+   接到分片上之后，上限跟云盘一样是 2GB，还白拿断点续传。
+   onProg 收的是 0~1 的比例。 */
+function matUploadOne(file, board, title, onProg) {
+  if (file.size > DV_CHUNK_MIN) {
+    return chunkUpload(file, { target: 'materials', board, title },
+                       n => onProg(n / (file.size || 1)));
+  }
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('board', board);
+  fd.append('section', '');
+  fd.append('title', title || '');
+  return uploadXhr(fd, onProg);
+}
+
+/* 一批文件（可能带各自的分类）依次传上去。清单页和拖拽共用这一条。 */
+async function matUploadList(list, fallbackBoard, singleTitle) {
   let ok = 0;
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const label = files.length > 1 ? `(${i + 1}/${files.length}) ${file.name}` : file.name;
+  for (let i = 0; i < list.length; i++) {
+    const { file, board } = list[i];
+    const label = list.length > 1 ? `(${i + 1}/${list.length}) ${file.name}` : file.name;
+    // 自带分类的（从文件夹来的）不套用弹窗里选的那个，也不套用自定义名称
+    const b = board || fallbackBoard || '';
+    const t = (list.length === 1 && !board) ? (singleTitle || '') : '';
     let done = false;
     for (let attempt = 1; attempt <= 3 && !done; attempt++) {   // 网络抖动自动重试
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('board', board);
-      fd.append('section', '');
-      fd.append('title', files.length === 1 ? title : '');       // 多个文件各用文件名
       try {
-        await uploadXhr(fd, p => upProg(true, p,
+        await matUploadOne(file, b, t, p => upProg(true, p,
           `${label} ${Math.round(p * 100)}%${attempt > 1 ? ' · 第' + attempt + '次尝试' : ''}`));
         ok++; done = true;
       } catch (e) {
-        if (attempt === 3) { toast(file.name + '：' + e.message, true); }
+        if (attempt === 3) toast(file.name + '：' + errMsg(e), true);
         else { upProg(true, 0, label + ' 重试中…'); await new Promise(r => setTimeout(r, 1500)); }
       }
     }
   }
   upProg(false);
+  return ok;
+}
+
+$('#up-go').onclick = async () => {
+  if (!matPickList.length) { toast('先选文件或文件夹', true); return; }
+  const board = $('#up-board').value, title = $('#up-title').value.trim();
+  $('#up-go').disabled = true; $('#up-go').textContent = '上传中…';
+  $('#up-cancel').disabled = true;
+  const ok = await matUploadList(matPickList, board, title);
   $('#up-go').disabled = false; $('#up-go').textContent = '上传';
   $('#up-cancel').disabled = false;
-  if (ok) { toast('上传成功 ' + ok + ' 个'); $('#upload-modal').classList.add('hidden'); loadMaterials(); }
+  if (ok) {
+    toast('上传成功 ' + ok + ' 个');
+    matPickList = []; matRenderPicked();
+    $('#upload-modal').classList.add('hidden');
+    loadMaterials();
+  }
 };
 /* 资料库拍照直接上传 */
 $('#mat-camfile').addEventListener('change', async e => {

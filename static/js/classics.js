@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, errMsg, esc, mdToHtml, push, stack, toast, uiError */
+/* global $, api, artEm, c, errMsg, esc, libTouch, mdToHtml, push, stack, toast, uiError */
 
 /* ================= 古诗文速查（唐诗宋词·四书五经） ================= */
 const CLS_BADGE = { '唐诗': '#c0392b', '宋词': '#7b5ea7', '元曲': '#2c8c8c', '诗经': '#2f8060', '先秦': '#b08a1e', '汉魏六朝': '#8a6d3b', '明清': '#4a6785', '论语': '#1a6fb5', '孟子': '#1a6fb5', '大学': '#b08a1e', '中庸': '#b08a1e', '孙子兵法': '#9b2c22', '资治通鉴': '#5a4b8a', '增广贤文': '#2c7a5a' };
@@ -123,6 +123,7 @@ $('#cls-list').addEventListener('click', async e => {
 /* ---- 古诗文详情：拼音 / 译文 / 赏析 / AI 讲解 ---- */
 let cdData = null;
 async function openClassicDetail(id) {
+  libTouch('classic', id);
   push({ view: 'cdetail', title: '古诗文' });
   $('#cd-wrap').innerHTML = '<p class="empty">加载中…</p>';
   try {

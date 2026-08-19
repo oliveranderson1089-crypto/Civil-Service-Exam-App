@@ -7,19 +7,22 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, AI_FOLDER, aiCurProject, ALL_BOARDS, anchorMenu, api, appConfirm, appPrompt,
-   artEm, chSwitch, chTab, crInRoom, crLoad, DESKTOP_VER, errMsg, esc, fabClamp, init,
+/* global $, aiAttachLib, AI_FOLDER, aiCurProject, ALL_BOARDS, anchorMenu, api, appConfirm, appPrompt,
+   pickChatTargets,
+   artEm, chSwitch, chTab, crInRoom, crLoad, DESKTOP_VER, dvWalkEntry, errMsg, esc,
+   fabClamp, init, matBoard, matUploadList, pickChatTargets,
    inkHere, loadAiHome, loadCsBoard, loadDrive, loadEntries, loadFanwen, loadFeed,
-   loadFeedTags, loadGaikuo, loadGongwen, loadMaterials, loadNews, loadNotebooks,
+   loadFeedTags, loadGaikuo, loadMatBoards, loadGongwen, loadMaterials, loadNews, loadNotebooks,
    loadPartyDict, loadPlanLog, loadReview, loadShared, loadSucai, loadVideos, loadWrongq,
    lsGet, lsSet, matBoard, matCustomBoards, matPickMembers, ME, openAI, openAiProject,
+   saveMatBoards,
    padToggle, push, qnOpen, refreshChatBadge, shotAsk, stack, toast, wrSwitch, wrTab */
 
 /* ============= 多端自动同步：数据变了自动刷新当前视图，无需手动更新 ============= */
 let _syncToken = null, _syncBusy = false;
 const SYNC_REFRESH = {
   notes: () => { loadFeed(); loadFeedTags(); },
-  materials: () => loadMaterials(),
+  materials: () => { loadMaterials(); loadMatBoards(); },
   idiom: () => loadEntries(),
   kb: () => loadNotebooks(),
   wrongq: () => loadWrongq(),
@@ -85,7 +88,16 @@ const CTX_MENU_IDS = ['mat-menu', 'ai-chatmenu', 'node-menu', 'ai-attsheet'];
 const CTX_MENU_TRIGGERS = '.mat-more, [data-aimenu], [data-nodedots], #ai-attach, ' +
   '#ai-plus, #cr-plus, .input-tools, ' + CTX_MENU_IDS.map(id => '#' + id).join(', ');
 document.addEventListener('click', e => {
-  if (e.target.closest(CTX_MENU_TRIGGERS)) return;
+  /* 用**事件路径**判断，别用 e.target.closest()：菜单里若在响应这次点击时重画过内容
+     （AI 会话 ⋮ 的「移动到项目 ›」就是这么干的），被点的那个节点已经不在文档里了，
+     closest 只会返回 null，于是「点在菜单里」被误判成「点在菜单外」，刚画好的二级菜单
+     当场被收掉。composedPath 是**派发那一刻**定好的，重画不影响它。
+     老浏览器没有 composedPath 就退回原来的写法（行为不比现在差）。 */
+  const path = (e.composedPath && e.composedPath()) || [];
+  const inMenu = path.length
+    ? path.some(n => n && n.nodeType === 1 && n.matches && n.matches(CTX_MENU_TRIGGERS))
+    : !!(e.target.closest && e.target.closest(CTX_MENU_TRIGGERS));
+  if (inMenu) return;
   CTX_MENU_IDS.forEach(id => $('#' + id).classList.add('hidden'));
   // .input-tools 桌面端是常驻工具行，只有手机端（➕ 弹出）才需要点别处收起
   if (document.body.classList.contains('mobile-ui')) {
@@ -113,7 +125,10 @@ $('#up-board').addEventListener('change', async e => {
   const name = await appPrompt('新建分类', '分类名，如：晨读');
   const v = (name || '').trim().slice(0, 20);
   if (v) {
-    if (!matCustomBoards.includes(v) && !ALL_BOARDS.includes(v)) matCustomBoards.push(v);
+    if (!matCustomBoards.includes(v) && !ALL_BOARDS.includes(v)) {
+      matCustomBoards.push(v);
+      saveMatBoards();      // 只塞进内存的话，分类栏下次按服务端那份顺序重画就把它抹了
+    }
     const opt = document.createElement('option');
     opt.textContent = v; opt.value = v;
     e.target.insertBefore(opt, e.target.querySelector('option[value="__new__"]'));
@@ -137,15 +152,35 @@ async function uploadDropped(files) {
   }
   if (ok) { toast('已上传 ' + ok + ' 个'); loadMaterials(); }
 }
+/* 拖进来一整棵目录树：[{file, folder}] —— folder 是相对路径，直接当分类名用。
+   （资料库没有目录，见 materials.js 里 matBoardOf 那段说明。） */
+async function matUploadTree(items) {
+  const list = items.map(it => ({ file: it.file, board: (it.folder || '').slice(0, 20) }));
+  if (!list.length) return;
+  const ok = await matUploadList(list, matBoard, '');
+  if (ok) { toast('已上传 ' + ok + ' 个'); loadMaterials(); }
+}
+
 (function () {
   const mv = $('#view-materials'); if (!mv) return;
   ['dragover', 'dragenter'].forEach(ev => mv.addEventListener(ev, e => {
     e.preventDefault(); mv.classList.add('drag-on');
   }));
   mv.addEventListener('dragleave', e => { if (e.target === mv) mv.classList.remove('drag-on'); });
-  mv.addEventListener('drop', e => {
+  mv.addEventListener('drop', async e => {
     e.preventDefault(); mv.classList.remove('drag-on');
-    const fs = [...(e.dataTransfer ? e.dataTransfer.files : [])];
+    const dt = e.dataTransfer;
+    /* 必须走 dataTransfer.items 拿 FileSystemEntry：只读 .files 的话，拖进来的**文件夹**
+       会变成一个 0 字节的怪文件（或者干脆什么都没有），人以为传上去了其实是空的。
+       和云盘那边共用 dvWalkEntry —— 目录一层层读出来，目录名在资料库里当分类用。 */
+    const entries = [...(dt && dt.items || [])]
+      .map(it => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null)).filter(Boolean);
+    if (entries.length) {
+      const out = [];
+      await Promise.all(entries.map(en => dvWalkEntry(en, '', out)));
+      if (out.length) { matUploadTree(out); return; }
+    }
+    const fs = [...(dt ? dt.files : [])];
     if (fs.length) uploadDropped(fs);
     // 桌面版本该由壳接管（GTK 层）。要是这里还被触发且没文件，说明壳没接管成功 → 说清楚，别静默
     else if (window.__desktop) toast('桌面壳没接管拖放（请关掉应用重开一次）', true);
@@ -168,6 +203,7 @@ function openAiChatMenu(btn, id, title, projId, starred) {
   $('#acm-list').innerHTML = `
     <button data-acm="star">${starred ? '☆ 取消置顶' : '⭐ 置顶'}</button>
     <button data-acm="rename">${artEm('✏️')} 重命名</button>
+    <button data-acm="share">${artEm('📤')} 分享给好友</button>
     ${ps.length ? `<button data-acm="move">${AI_FOLDER} 移动到项目 ›</button>` : ''}
     ${aiMenuCtx.projId ? '<button data-acm="unproj">' + artEm("📤") + ' 移出项目</button>' : ''}
     <button data-acm="del" class="acm-danger">${artEm('🗑')} 删除对话</button>`;
@@ -188,6 +224,12 @@ $('#ai-chatmenu').addEventListener('click', async e => {
   if (!b || !aiMenuCtx) return;
   const act = b.dataset.acm;
   if (act === 'move') {
+    /* 这一分支下面会用 innerHTML 重画 #acm-list，把刚被点的那个按钮从文档里摘掉。
+       事件要是继续冒到 document 上那个「点菜单外面就关菜单」的钩子，那边拿脱离文档的
+       节点做 closest 一律得到 null → 判成「点在外面」→ 把刚画好的项目列表一起收了，
+       表现就是「点『移动到项目』毫无反应」。所以这里到此为止。
+       （钩子那边也按事件路径判了一道，两头都不靠对方兜底。） */
+    e.stopPropagation();
     const ps = $('#ai-panel')._projects || [];
     $('#acm-list').innerHTML = '<div class="acm-tip">移动到哪个项目：</div>'
       + ps.map(p => `<button data-acmproj="${p.id}">${AI_FOLDER} ${esc(p.name)}</button>`).join('');
@@ -195,6 +237,22 @@ $('#ai-chatmenu').addEventListener('click', async e => {
     return;
   }
   $('#ai-chatmenu').classList.add('hidden');
+  if (act === 'share') {
+    /* 分享的是一份**快照**：之后原对话继续聊，不会跟着漏给对方；对方点「接着问」
+       是在他自己名下复制一条新会话，两边从此各走各的。 */
+    const pick = await pickChatTargets('把这段对话分享给');
+    if (!pick) return;
+    try {
+      const r = await api('/api/aichat/chats/' + aiMenuCtx.id + '/share', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pick)
+      });
+      toast('已分享给 ' + [r.users ? r.users + ' 位好友' : '',
+                          r.groups ? r.groups + ' 个小组' : ''].filter(Boolean).join(' 和 ')
+            + '，对方能接着往下问');
+    } catch (err) { toast(errMsg(err), true); }
+    return;
+  }
   try {
     if (act === 'star') {
       await api('/api/aichat/chats/' + aiMenuCtx.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: !aiMenuCtx.starred }) });
@@ -321,6 +379,26 @@ $('#mat-menu').addEventListener('click', async e => {
   const { id, name } = matMenuCtx;
   $('#mat-menu').classList.add('hidden');
   const act = b.dataset.mm;
+  if (act === 'send') {
+    /* 发进应用内的聊天 —— 和云盘那条是同一个选择器、同一套后端。
+       跟隔壁两项的区别：这个是「发一条消息给他」，「共享给队友」是「让他在自己
+       资料库里长期看到」，「分享到其他应用」则是交给系统分享面板（微信、邮件…）。 */
+    const pick = await pickChatTargets('发送到');
+    if (!pick) return;
+    try {
+      const r = await api('/api/materials/' + id + '/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pick) });
+      toast('已发送给 ' + [r.users ? r.users + ' 位好友' : '',
+                          r.groups ? r.groups + ' 个小组' : ''].filter(Boolean).join('、'));
+    } catch (err) { toast(errMsg(err), true); }
+    return;
+  }
+  if (act === 'ai') {
+    // 挂成 AI 附件：文件已经在服务器上了，只把 id 递过去，不下下来再传回去
+    aiAttachLib([{ kind: 'material', id: +id, name }]);
+    return;
+  }
   if (act === 'share') {
     const url = '/api/materials/' + id + '/download';
     try {

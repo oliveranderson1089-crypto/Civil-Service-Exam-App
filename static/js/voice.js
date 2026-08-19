@@ -290,6 +290,49 @@ async function voiceToText(blob, ext) {
   return d.text || '';
 }
 
+/* ===== 识别出来的文字怎么落进输入框（AI 助手和聊天共用这一份） =====
+ *
+ * 铁律：**不要拿「开始识别时的 value 快照」整个覆盖输入框**。
+ * 识别是异步的（录一段 + 上传 + 转写要好几秒），这中间用户完全可能接着打字：
+ *   · 覆盖 = 把人家刚打的字吞掉，而且没有任何提示
+ *   · 正在用输入法拼的字也会被这一下打断，WebKit 直接把预编辑串按**原始字母**提交
+ *     ——「输入法明明切到中文了，打出来还是 dfsdf」就是这么来的（手写板踩过，见 handwrite.js）
+ * 一律插到**光标处**；异步回来之前，调用方还要先确认这个框是不是还归自己管
+ * （会话可能已经切走了）。
+ */
+function voiceSep(v, at) {      // 紧挨着已有文字时补个空格，别把两句话黏死
+  return (at > 0 && !/\s$/.test(v.slice(0, at))) ? ' ' : '';
+}
+function voiceInsert(el, text) {
+  if (!el || !text) return;
+  const v = el.value;
+  let s = el.selectionStart, e = el.selectionEnd;
+  if (s == null || e == null) s = e = v.length;   // 拿不到光标（没聚焦过）就接在末尾
+  const ins = voiceSep(v, s) + text;
+  el.value = v.slice(0, s) + ins + v.slice(e);
+  el.selectionStart = el.selectionEnd = s + ins.length;
+  el.dispatchEvent(new Event('input', { bubbles: true }));   // 输入框自动长高、草稿跟着存
+}
+/* 浏览器自带的实时识别：临时结果会被后来更好的结果不断替换，所以得记住
+   「我上次写进去的是哪一段」，每次只改这一段 —— 而不是重写整个输入框。
+   这样用户在后面接着打的字不会被一轮轮的临时结果冲掉。 */
+function voiceLive(el) {
+  if (!el) return { set() {} };
+  const at = (el.selectionStart != null ? el.selectionStart : el.value.length);
+  const sep = voiceSep(el.value, at);
+  let len = 0;                  // 上一次写进去多少个字符（含那个分隔空格）
+  return {
+    set(txt) {
+      const v = el.value;
+      const body = txt ? sep + txt : '';
+      el.value = v.slice(0, at) + body + v.slice(at + len);
+      len = body.length;
+      el.selectionStart = el.selectionEnd = at + len;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+  };
+}
+
 /* 语音气泡的 HTML。聊天里用，样式在 style.css 的 .cr-voice。 */
 function voiceBubbleHtml(m) {
   const w = Math.min(100, 26 + (m.dur || 0) * 2.2);      // 越长的条越宽，一眼看出长短

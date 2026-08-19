@@ -19,6 +19,22 @@ os.environ.setdefault("GTK_IM_MODULE", "fcitx")
 os.environ.setdefault("XMODIFIERS", "@im=fcitx")
 os.environ.setdefault("QT_IM_MODULE", "fcitx")
 
+# GNOME Wayland 会话下改走 XWayland，否则 fcitx5 的候选词窗口会飘到看不见的地方。
+#
+# 症状：打拼音有下划线（预编辑是好的）、按数字键 1 也能正常选出字来，就是**候选框不显示**，
+# 而且一会儿好一会儿坏；在应用内换个输入框点一下，往往又好了。
+# 根因：GNOME 上 fcitx5 只能走 GTK im module（D-Bus）这一条路 —— mutter 不接第三方
+# input-method 协议，所以 waylandim 那条路在 GNOME 上用不了。而 D-Bus 这条路要**客户端
+# 自己上报光标的全局屏幕坐标**，偏偏 Wayland 下客户端拿不到自己窗口在屏幕上的位置，
+# 报出去的是窗口内坐标 —— fcitx5 于是把候选框画到了别处。贴着窗口底边的输入框
+# （AI 助手、聊天的输入栏）最容易中招，因为算出来的位置直接掉到屏幕外面。
+# X11 下坐标是全局的，这条链就对上了。
+#
+# 代价：XWayland 在高分屏缩放下会比原生 Wayland 糊一点。要退回原生 Wayland 就带
+# GONGKAO_WAYLAND=1 启动（候选框的老毛病也会跟着回来）。
+if os.environ.get("XDG_SESSION_TYPE") == "wayland" and not os.environ.get("GONGKAO_WAYLAND"):
+    os.environ["GDK_BACKEND"] = "x11"
+
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")

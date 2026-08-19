@@ -46,6 +46,7 @@ test('没给文件名时兜一个默认名，不炸', (t) => {
 function at(h, view, opts = {}) {          // 把应用摆到某一页 + 决定 AI 面板开不开
   h.run(`stack.length = 0; stack.push({ view: ${JSON.stringify(view)} });`);
   if (opts.crFid !== undefined) h.run('crFid = ' + opts.crFid);
+  if (opts.crGid !== undefined) h.run('crGid = ' + opts.crGid);
   const ai = h.window.document.querySelector('#ai-panel');
   ai.classList.toggle('hidden', !opts.ai);
 }
@@ -103,4 +104,40 @@ test('__onPasteImage：聊天页粘的图直接发出去，不会自己弹开 AI
   sent.push(...(h.window.__sent || []));
   assert.deepStrictEqual(sent, ['粘贴的图片.png'], '聊天页粘的图没发出去');
   assert.ok(!h.window.__aiOpened, 'AI 助手又被自动弹开了');
+});
+
+/* ---- 拖进聊天窗的文件跑去了云盘（用户报的 bug） ----
+   分发表原来只认单聊的 crFid，群聊的 crGid 没算进去 → 目标算不出来 → 落到
+   __onPickedFiles 的兜底「悄悄收进云盘」。浏览器那条路一直两个都认，这里对齐它。 */
+test('拖进群聊窗口：发到群里，不是收进云盘', (t) => {
+  const h = boot(); t.after(() => h.close());
+  at(h, 'chat', { crFid: 0, crGid: 42 });
+  assert.strictEqual(h.run('dropTarget')(), 'chatroom', '群聊被当成「没有去处」，文件会掉进云盘');
+});
+
+test('聊天窗开着时，常驻的 AI 侧栏不该把拖进来的文件截走', (t) => {
+  const h = boot(); t.after(() => h.close());
+  at(h, 'chat', { ai: true, crFid: 0, crGid: 42 });
+  assert.strictEqual(h.run('dropTarget')(), 'chatroom');
+  at(h, 'chat', { ai: true, crFid: 7, crGid: 0 });
+  assert.strictEqual(h.run('dropTarget')(), 'chatroom');
+});
+
+test('在聊天页但没打开会话：明说「先打开一个会话」，不偷偷进云盘', (t) => {
+  const h = boot(); t.after(() => h.close());
+  at(h, 'chat', { crFid: 0, crGid: 0 });
+  assert.strictEqual(h.run('dropTarget')(), 'chatnone');
+  h.run("dropRoute('chatnone', [])");
+  assert.match(h.toasts.map(x => x.msg).join(' '), /先打开一个会话/);
+});
+
+test('没有明确去处才进云盘 —— 而且要说一声', async (t) => {
+  const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  at(h, 'home');
+  // 真去开云盘页会拉一串接口，这条测的是「有没有交代去向」，把落地那步换掉
+  h.run('dvOpenAndUpload = () => Promise.resolve()');
+  h.run("window.__onPickedFiles([{ data: '', name: 'a.txt', rel: '' }], '')");
+  await new Promise(r => setTimeout(r, 0));
+  assert.match(h.toasts.map(x => x.msg).join(' '), /收进云盘/,
+    '东西进了云盘却一声不吭，人只会以为文件丢了');
 });

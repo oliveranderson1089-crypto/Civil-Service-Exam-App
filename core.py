@@ -22,6 +22,10 @@ DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 STATIC = os.path.join(BASE, "static")
 UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
 CONFIG = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
+# 挂在 AI 项目上的参考资料，原件存这儿（<AI_PROJ_DIR>/<user_id>/<uuid><ext>）。
+# 路径常量放 core 是因为**两边都要用**：mods/aisession 往这儿写，mods/agent_tools 的
+# read_project_file 从这儿按页续读，而那两个模块之间不能互相 import（会成环）。
+AI_PROJ_DIR = os.path.join(UPLOADS, "_aiproj")
 
 # waitress 线程池大小 = **并发上限**，不是「快慢」的旋钮：WSGI 下一条 SSE 连接
 # 占住一个线程直到断开（聊天推送最长 300 秒、AI 流式一轮几十秒），池子空了之后

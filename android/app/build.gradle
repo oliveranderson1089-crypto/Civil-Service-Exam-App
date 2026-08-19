@@ -11,8 +11,8 @@ android {
         applicationId 'com.gongkao.app'
         minSdk 21
         targetSdk 34
-        versionCode 24
-        versionName '3.3'
+        versionCode 25
+        versionName '3.4'
     }
 
     // 用和手工构建同一个 keystore(alias gongkao)，签名一致 → 新包直接覆盖安装

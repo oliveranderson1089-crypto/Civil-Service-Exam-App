@@ -12,16 +12,23 @@ from flask import jsonify
 
 import aiclient
 from core import CFG, CJK_RE, _mark_study, log, lookup, to_pinyin, uid
-from mods.agent_tools import exec_tool, tool, tool_label, tool_specs, tool_specs_for
+from mods.agent_tools import (PROJECT_TOOLS, cur_project, exec_tool, tool,
+                              tool_label, tool_specs, tool_specs_for)
 from mods.ai import _ai_call_or_error
 
 
-# 对话是**用户盯着屏幕等**的场景，超时口径跟离线脚本（出题/批改，动辄一两分钟）不同：
-# 实测这条路径一次调用 1~3 秒（带全部工具、20 条历史也一样）。所以慢不是「模型在想」，
-# 是这条 TCP 已经死了——代理/路由一抖，连接静默失效，read 只会干等到超时。
-# 走流式之后这个数的含义变了：它是**两个 token 之间**能等多久，不是整次调用的上限。
-# 连接一死，几十秒内就报出来；模型写得再长也不会被它误杀。
-AI_TIMEOUT = 40
+# 对话是**用户盯着屏幕等**的场景，超时口径跟离线脚本（出题/批改，动辄一两分钟）不同。
+# 这里有**两个**口径，2026-08 那批超时就是因为拿一个数当两个用（近 14 天 162 次调用里
+# 33 次 timeout，elapsed 最大 41.7 秒，正正卡在下面这条线上）：
+#
+#   AI_FIRST_BYTE  等第一个字节。实测正常 1~3 秒；等更久不是「模型在想」，是这条 TCP
+#                  已经死了（代理/路由一抖，连接静默失效，read 只会干等到超时）。
+#                  这一段**会被重试放大**（重试只发生在一个字都没吐出去时），所以它才是
+#                  需要按尝试次数分摊的那一份。
+#   AI_TIMEOUT     已经在吐字之后，两片之间能空多久。这一段不会再重试，给满即可。
+#                  实测成功调用最慢 34.5 秒，原来的 40 秒只比它高 16%，稍慢一点就被误杀。
+AI_FIRST_BYTE = 12
+AI_TIMEOUT = 60
 AI_RETRIES = 2
 # 一次对话的总预算。工具循环最多 5 次调用，不封顶的话最坏叠成十分钟：
 # 手机端早在 Cloudflare 隧道的 100 秒上限处就 524 断了，服务端还在空转占线程。
@@ -36,13 +43,16 @@ def _ai_stream(messages, tools=None, temperature=0.4, max_tokens=1600, deadline=
     deadline 是这一整轮对话的截止时刻（time.time() 口径）：越到后面留给单次调用的
     时间越短，免得最后一次调用把总预算撑爆。
     """
-    timeout = AI_TIMEOUT
+    timeout, first = AI_TIMEOUT, AI_FIRST_BYTE
     if deadline is not None:
-        # 除以「尝试次数」而不是直接拿剩余时间当超时：timeout 是**每次尝试**的，
-        # 带 2 次重试就是三份，不摊开的话总预算会被一次调用撑到三倍。
-        timeout = max(5, min(timeout, (deadline - time.time()) / (AI_RETRIES + 1)))
+        left = deadline - time.time()
+        # **只有首字节那一段按尝试次数分摊**：重试只在一个字都没吐出去时发生，所以
+        # 会被乘以三的只有它。以前连「两片之间」也一起除，100 秒预算落到每次调用只剩
+        # 33 秒 —— 模型写得稍长就被自己的预算掐死，而真正该早点放弃的死连接反倒等满。
+        first = max(4, min(first, left / (AI_RETRIES + 1)))
+        timeout = max(5, min(timeout, left))
     return aiclient.stream(messages, tier=tier, temperature=temperature,
-                           max_tokens=max_tokens, timeout=timeout, cfg=CFG,
+                           max_tokens=max_tokens, timeout=timeout, first_byte=first, cfg=CFG,
                            retries=AI_RETRIES, extra={"tools": tools} if tools else None)
 
 
@@ -352,6 +362,81 @@ def _t_star_classic(args, db):
     return msg, {"type": "refresh", "what": "classics"}
 
 
+# ================================================================ 出文件 / 投放
+# 生成和投放**拆成两个工具**，理由是它们的性质不同：生成随时可以重来（不满意就再写一版），
+# 投放是「东西离开这个助手、进到别的容器」的动作。合成一个的话，AI 每写一版都会往
+# 资料库里堆一份，用户还得回头去删。
+# 拆开还有一个好处：以后加目的地（知识库、小记…）只改投放这一端，生成端一个字不用动。
+
+@tool("create_file",
+      ("把一段内容做成文件，存进用户的「AI 产出」（库 → AI 产出）。"
+       "当用户说「写一份…存成文件 / 导出成 PDF / 整理成文档」时调用。\n"
+       "**正文要你自己写全**：这个工具不会替你生成内容，它只负责落盘。"
+       "写完告诉用户文件存在哪、叫什么，并说明可以再投到资料库/云盘/小记。"),
+      {"type": "object", "properties": {
+          "title": {"type": "string", "description": "文件标题，例如「资料分析速算公式汇总」"},
+          "content": {"type": "string", "description": "完整正文，Markdown（# 标题、- 列表、**加粗** 都认）"},
+          "kind": {"type": "string", "enum": ["md", "txt", "pdf"],
+                   "description": "md=Markdown 文档（默认）、txt=纯文本、pdf=可直接打印的 PDF"}},
+          "required": ["title", "content"]}, kind="write")
+def _t_create_file(args, db):
+    from mods.aiout import create_output
+    title = (args.get("title") or "").strip()
+    content = args.get("content") or ""
+    if not title or not content.strip():
+        return "标题和正文都得有，才谈得上做成文件。", None
+    kind = args.get("kind") if args.get("kind") in ("md", "txt", "pdf") else "md"
+    oid = create_output(db, uid(), title, content, kind=kind)
+    return ("已存进「AI 产出」：《%s》（%s，%d 字，id=%d）。"
+            "用户可以在 库 → AI 产出 里看全文、下载，或让你投到资料库/云盘/小记。"
+            % (title, kind, len(content), oid),
+            {"type": "refresh", "what": "aiout", "toast": "已生成《%s》 📄" % title[:20]})
+
+
+def _pv_deliver(args, db):
+    """确认弹窗上要说清**哪份东西**要去**哪儿** —— 投放是东西离开这里的动作，
+    只弹一句「确认投放？」等于让人盲点。"""
+    r = db.execute("SELECT title FROM ai_outputs WHERE id=? AND user_id=?",
+                   (int(args.get("id") or 0), uid())).fetchone()
+    dest = {"material": "资料库", "drive": "云盘", "note": "小记"}.get(args.get("dest"), args.get("dest") or "?")
+    return "把《%s》投到%s" % ((r["title"] if r else "（找不到这份产出）"), dest)
+
+
+@tool("deliver_file",
+      ("把「AI 产出」里的某份文件投到别的地方：资料库 / 云盘 / 小记。"
+       "先用 list_files 拿到 id 再调（或用刚才 create_file 返回的那个 id）。"
+       "**投放会让东西离开这个助手**，所以系统会先让用户点头确认。"),
+      {"type": "object", "properties": {
+          "id": {"type": "integer", "description": "产出 id"},
+          "dest": {"type": "string", "enum": ["material", "drive", "note"],
+                   "description": "material=资料库、drive=云盘、note=小记"},
+          "_confirmed": {"type": "boolean",
+                         "description": "仅在用户已明确确认后才填 true；首次调用不要填"}},
+          "required": ["id", "dest"]}, kind="write", confirm=True, preview=_pv_deliver)
+def _t_deliver_file(args, db):
+    from mods.aiout import deliver
+    oid, dest = int(args.get("id") or 0), args.get("dest")
+    if dest not in ("material", "drive", "note"):
+        return "只能投到 资料库/云盘/小记 三者之一。", None
+    ok, msg = deliver(db, uid(), oid, dest)
+    if not ok:
+        return msg, None
+    return msg, {"type": "refresh", "what": dest, "toast": "已投放 📤"}
+
+
+@tool("list_files",
+      "列出用户「AI 产出」里的文件（你生成过的文档/汇总）。要投放或让用户下载时，先用它拿 id。",
+      {"type": "object", "properties": {
+          "limit": {"type": "integer", "description": "最多列几条，默认 10"}}}, kind="read")
+def _t_list_files(args, db):
+    n = max(1, min(int(args.get("limit") or 10), 30))
+    rows = db.execute("SELECT id, kind, title, size, sent, created_at FROM ai_outputs "
+                      "WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid(), n)).fetchall()
+    if not rows:
+        return "「AI 产出」里还是空的。", None
+    return json.dumps([dict(r) for r in rows], ensure_ascii=False), None
+
+
 # ================================================================ 删除类（destructive，需二次确认）
 # 下面三个 preview：确认弹窗要把**那条数据的原文**摆给用户看。没有它，删错题和删小记
 # 只能弹一句「确认删除这条内容？」，用户不知道是哪条，只能盲点确定——删除是不可逆的，
@@ -449,6 +534,8 @@ def _round(msgs, tools, temperature, max_tokens, deadline, parts, tier="fast"):
             yield "delta", p
         elif kind == "reasoning":
             yield "reasoning", p        # 前端拿它把「思考中…」变成真的在动
+        elif kind == "ping":
+            yield "ping", ""            # 上游心跳：一路转到浏览器，别让隧道把连接掐了
         elif kind == "done":
             m = p
     return m
@@ -474,7 +561,9 @@ def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_toke
     # 按最后一句用户消息的意图挑工具（命中不了主题就全给，见 tool_specs_for）
     last_user = next((m.get("content") or "" for m in reversed(messages)
                       if m.get("role") == "user"), "")
-    specs = tool_specs_for(last_user)
+    # 项目对话再并上项目资料那两个工具：挂在项目上的资料，这个项目下的每一轮都该够得着，
+    # 不管用户这句话里有没有出现「资料」两个字（见 PROJECT_TOOLS）。
+    specs = tool_specs_for(last_user, always=PROJECT_TOOLS if cur_project() else ())
     deadline = time.time() + budget
     truncated = True                # 只有「模型自己说完了」那条路会把它改回 False
     try:

@@ -59,11 +59,9 @@ def test_复制带下划线的文件夹不会顺手复制兄弟目录(auth_clien
 def test_对回收站里的东西再删一次不会把它从恢复批次里踢出去(auth_client):
     """搜索结果跨目录，用户可能同时选中父目录和它的子文件后批量删除 ——
     子文件会被删两次。第二次若重打 del_batch，恢复父目录时它就再也回不来了。"""
-    _up(auth_client, "孩子.txt", "父/子")
-    top = _dir_id(auth_client, "父")
+    kid = _up(auth_client, "孩子.txt", "父/子")               # 回收站里只列批次的根，
+    top = _dir_id(auth_client, "父")                          # 子文件的 id 得从上传结果拿
     auth_client.delete("/api/drive/%d" % top)
-    kid = [i for i in auth_client.get("/api/drive/trash").get_json()["items"]
-           if i["name"] == "孩子.txt"][0]
     r = auth_client.delete("/api/drive/%d" % kid["id"])       # 再删一次（已经在回收站里了）
     assert r.status_code == 404, "回收站里的东西不该还能再删一次"
     auth_client.post("/api/drive/trash/%d/restore" % top)

@@ -1,6 +1,6 @@
 """AI 工具按意图裁剪，以及「没干完」的标记（方案乙尾项）。
 
-34 个工具的 schema 每轮都发一遍，既是固定开销，也让模型在一堆相近的 list_*/get_*
+四十多个工具的 schema 每轮都发一遍，既是固定开销，也让模型在一堆相近的 list_*/get_*
 里挑。裁剪的红线是：**宁可多给，也不能让模型因为工具被裁而回一句「我做不到」**。
 """
 import mods.agent  # noqa: F401  写工具在这里注册，不导入的话注册表只有一半
@@ -82,3 +82,54 @@ def test_等用户确认删除不算没干完(monkeypatch):
     monkeypatch.setattr(agent, "tool_specs_for", lambda t, **k: [{"x": 1}])
     done = [p for k, p in agent.ai_chat_agentic_stream([], None, max_rounds=3) if k == "done"][-1]
     assert done["truncated"] is False
+
+
+# ---------------- 新工具必须挑得到（2026-08 扩了 10 个工具） ----------------
+# 这个函数只裁**读**工具。加了读工具却忘了加触发词，表现是「明明有这个工具，
+# 它却回一句我做不到」—— 比压根没有这个工具更让人火大，而且从日志里看不出来。
+
+def _picked(text):
+    """这句话会拿到哪些工具。（别叫 _names —— 文件开头已经有一个同名的，参数还不一样）"""
+    return {sp["function"]["name"] for sp in tool_specs_for(text)}
+
+
+def test_问真题要给真题工具():
+    for q in ["找几道言语理解的真题", "有没有考过基尼系数", "来两道逻辑填空练练",
+              "出几道类似的题"]:
+        assert "search_real_questions" in _picked(q), q
+
+
+def test_问考点要给讲义工具():
+    for q in ["工程问题书上怎么讲的", "削弱论证有哪些方法", "资料分析的速算技巧"]:
+        assert "search_basics" in _picked(q), q
+
+
+def test_问最近的事要给联网工具():
+    """漏掉这一组，模型会拿两年前的印象回答「最近怎么样」，而且答得很笃定。"""
+    for q in ["2026 国考公告出了吗", "最近有什么时政热点", "今年省考报名什么时候",
+              "帮我查一下网上怎么说"]:
+        assert "web_search" in _picked(q), q
+
+
+def test_问云盘要给云盘工具():
+    for q in ["我云盘里有没有申论的资料", "我上传过的那个文档讲了啥"]:
+        assert "list_drive" in _picked(q), q
+
+
+def test_问倒计时要给倒计时工具():
+    for q in ["还有多少天考试", "我的考试时间是什么时候"]:
+        assert "get_exam_countdown" in _picked(q), q
+
+
+def test_老的组没被新工具挤掉():
+    """加组是往上叠，不是替换 —— 原来能挑到的还得挑得到。"""
+    assert "list_wrong_questions" in _picked("看看我最近错的题")
+    assert "search_classics" in _picked("背两句古诗")
+    assert "get_today_review" in _picked("我今天该复习什么")
+
+
+def test_写和删的工具从来不裁():
+    """裁掉写工具 = 它突然不会做这件事了。用户明确要求时才会用到，没必要省这点 token。"""
+    n = _picked("看看我最近错的题")
+    for w in ("create_file", "deliver_file", "add_word", "create_note", "delete_note"):
+        assert w in n, w

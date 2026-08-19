@@ -1,5 +1,5 @@
 {
-  "version_code": 24,
-  "version_name": "3.3",
-  "notes": "修手机端录音打不开（补 MODIFY_AUDIO_SETTINGS 权限）；打不开时会实测麦克风，分清是被占用、没权限还是通道没接上。"
+  "version_code": 25,
+  "version_name": "3.4",
+  "notes": "聊天里的文件点一下先问「预览还是下载」；应用内预览（返回一次只退一级）；下载进度画在消息卡片上，下完/失败都有交代。"
 }

@@ -17,11 +17,12 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, ME, api, artIcon, esc, push, tbBadge, tbIsCur, tbItem, tbReset,
-   openAccount, openAllFeats, openChat, openCkBoard, openClassicDetail, openDoc,
-   openDraft, openDrafts, openDrive, openExam, openFanwen, openIdiom, openKb,
-   openMaterials, openNews, openNotes, openNotify, openPlanLog, openReview,
-   openTasks, openVideos */
+/* global $, ME, api, artIcon, dvGo, dvOpenFile, esc, push, tbBadge, tbIsCur,
+   tbItem, tbReset,
+   openAccount, openAiOut, openAllFeats, openChat, openCkBoard, openClassicDetail,
+   openDoc, openDraft, openDrafts, openDrive, openExam, openFanwenItem, openIdiom,
+   openKb, openMaterials, openNewsItem, openNotes, openNotify, openPlanLog,
+   openReview, openTasks, openVideos */
 
 /* 图标是描边的（方案 A）：浅色方块打底、1.7px 的线。
    也做过实色方块 + 白图形那一路（更响、小尺寸更清楚），但那套的重量和这个应用
@@ -45,6 +46,9 @@ const LB_TILES = [
     icon: TV_SVG('<path d="M6.5 19a4.5 4.5 0 0 1-.4-9A6.5 6.5 0 0 1 18.4 9.6 3.7 3.7 0 0 1 17.8 19z"/>') },
   { k: 'star', name: '收藏', tone: 'gold', go: () => openStars(),
     icon: TV_SVG('<polygon points="12 3.5 14.6 9 20.5 9.8 16.2 13.9 17.3 19.8 12 17 6.7 19.8 7.8 13.9 3.5 9.8 9.4 9"/>') },
+  // AI 产出跟其余六个并列，不藏在助手里面：它是「东西存在哪」的问题，跟小记云盘同一类
+  { k: 'aiout', name: 'AI 产出', tone: 'violet', go: () => openAiOut(),
+    icon: TV_SVG('<path d="M12 3.2 13.9 8l4.9 1.9-4.9 1.9L12 16.6 10.1 11.8 5.2 9.9 10.1 8z"/><path d="M18.4 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>') },
 ];
 
 /* 同一批形状的线描版，只给「宣纸与印」主题用（js/daylight.js 的 DL_ART.paper）。
@@ -66,19 +70,34 @@ const LB_LINE = {
   drive: TV_LINE(`<path d="M7 19.4a4.4 4.4 0 0 1-.5-8.8 6.4 6.4 0 0 1 12.1-1.3 3.7 3.7 0 0 1-1 10.1z"/>
     <path d="M12 16.4v-5.6M9.7 13.1 12 10.8l2.3 2.3"/>`),
   star: TV_LINE(`<path d="M12 3.4 14.7 8.9l6.1.9-4.4 4.3 1 6.1L12 17.3l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>`),
+  aiout: TV_LINE(`<path d="M11.6 3.8 13.4 8.3l4.5 1.8-4.5 1.8-1.8 4.5-1.8-4.5L5.8 10.1l4.5-1.8z"/>
+    <path d="M18.2 15.4l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>`),
 };
 
-// 「最近打开」里每条点了去哪。知识库文档和草稿能直接开到那一篇，
-// 小记/资料库/云盘只能开到列表 —— 它们没有单条的独立视图，硬跳会落到一个空壳上。
+/* 「最近打开」里每条点了去哪。第二个参数是接口给的整条记录 ——
+   云盘文件要靠它带的 extra（所在目录）和 title（文件名）才回得到原地。
+
+   小记和资料库仍然只能开到列表：它们真的没有单条的独立视图，硬跳会落在一个空壳上。
+   剩下的都能开到那一件东西本身。 */
 const LB_OPEN = {
   note: () => openNotes(),
   kbdoc: (id) => openDoc(id),
   draft: (id) => openDraft(id),
   material: () => openMaterials(),
-  drive: () => openDrive(),
+  drive: (id, it) => dvOpenFile(id, it.title, it.extra),
+  drivedir: (ref) => { openDrive(); dvGo(ref); },
+  aiout: () => openAiOut(),
+  classic: (id) => openClassicDetail(+id),
+  fanwen: (id) => openFanwenItem(+id),
+  news: (id) => openNewsItem(+id),
 };
 
 let lbData = null, lbAt = 0;
+
+/* 打点过就把缓存作废（core.js 的 libTouch 调这里）。
+   这一页有 20 秒缓存，而「打开一样东西」恰恰会改变这张列表 ——
+   不作废的话，看完一份文件切回库来，最近打开里没有它，人会以为没记上。 */
+function lbInvalidate() { lbAt = 0; }
 
 /* 骨架：占位块和真内容**同高同位**，数据回来就地替换，页面一格不跳。
    原来这里是一块灰底「加载中…」——它比真列表矮一大截，数据一到整页往下窜一截，
@@ -112,7 +131,7 @@ function lbRecent() {
   }
   return `<div class="tab-gh">最近打开</div><div class="tv-rows">` + its.map(it => {
     const go = LB_OPEN[it.kind];
-    const i = tbItem({ go: () => (go ? go(it.id) : null) });
+    const i = tbItem({ go: () => (go ? go(it.id, it) : null) });
     return `<div class="tv-row" data-tbi="${i}" tabindex="0" role="button">
       <span class="td-dot"></span>
       <span class="tv-name">${esc(it.title)}</span>
@@ -145,8 +164,8 @@ const ST_OPEN = {
   ck: (ref) => openCkBoard(ref || '收藏'),
   entry: () => openIdiom(),
   classic: (ref) => openClassicDetail(+ref),
-  fanwen: () => openFanwen(),
-  news: () => openNews(),
+  fanwen: (ref) => openFanwenItem(+ref),
+  news: (ref) => openNewsItem(+ref),
   video: () => openVideos(),
 };
 let stItems = [], stKind = '';

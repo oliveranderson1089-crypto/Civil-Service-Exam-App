@@ -15,7 +15,11 @@ from figgen import _gen_figure_q, _gen_ziliao   # 图形推理/资料分析：�
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
-CFG = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
+# 配置路径认 GONGKAO_CONFIG（跟其余 7 个定时器脚本、跟 aiclient/core 同一套口径）：
+# 写死 BASE/config.json 的话，测试进程明明把配置指到了临时目录，这里读的还是
+# 真机上那份——后台「档位控制」一降档，测试就会莫名其妙地红。
+CFG_PATH = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
+CFG = json.load(open(CFG_PATH, encoding="utf-8")) if os.path.exists(CFG_PATH) else {}
 # 模型档位：pro —— 命题：整卷出题，答案唯一性和解析质量最敏感
 # 真实模型名不写在这儿：aiclient 负责 档位→模型名 的映射，官方改名时只动 config.json。
 TIER = "pro"

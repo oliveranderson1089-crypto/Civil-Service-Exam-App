@@ -9,7 +9,8 @@
  */
 /* global $, ALL_BOARDS, BOARD_FEATURES, IC, IDIOM_BOARD, IS_MOBILE,
    Ink, KB, ME, SECTIONS, SECTION_EXTRA, SECTION_FEATURES,
-   aiBack, api, avoidFab, basicsFeats, c, chatConnect, closeSlideshow, dqPoll,
+   aiBack, api, avoidFab, basicsFeats, c, chatConnect, closeSlideshow, crCloseMenu,
+   crInfoClose, crSheetClose, dqPoll,
    openBasicsCmp, openBasicsTree, tbRailFill,
    esc, loadNotebook, loadSkin, matClose, matInited, mkInject,
    newDraft, openBoardKb, openChangkao, openChangshi, openChat, openCkBoard,
@@ -23,8 +24,8 @@
    openYyErr, openYyLib */
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'tab', 'allfeats', 'stars', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'bktree', 'bknode', 'bkcmp', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'exam', 'gaikuo', 'gongwen', 'yyerr', 'yylib', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'realq', 'realrun', 'realrec', 'realrecd', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'fanwen', 'fanwend', 'drive', 'chat'];
-const TITLES = { home: '公考助手', section: '', board: '', tab: '', allfeats: '全部功能', stars: '收藏', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', bktree: '', bknode: '', bkcmp: '考点对照', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', exam: '全国考情', gaikuo: '概括句积累', gongwen: '应用文上位词', yyerr: '应用文改错', yylib: '应用文素材库', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', realq: '历年真题', realrun: '', realrec: '做题记录', realrecd: '回看这一组', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', findwrong: '错题记录', videos: '每日新闻视频' };
+const VIEWS = ['home', 'section', 'board', 'tab', 'allfeats', 'stars', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'bktree', 'bknode', 'bkcmp', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'exam', 'gaikuo', 'gongwen', 'yyerr', 'yylib', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'realq', 'realrun', 'realrec', 'realrecd', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'aiout', 'aishare', 'fanwen', 'fanwend', 'drive', 'chat'];
+const TITLES = { home: '公考助手', section: '', board: '', tab: '', allfeats: '全部功能', stars: '收藏', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', drive: '云盘', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', bktree: '', bknode: '', bkcmp: '考点对照', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', exam: '全国考情', gaikuo: '概括句积累', gongwen: '应用文上位词', yyerr: '应用文改错', yylib: '应用文素材库', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', realq: '历年真题', realrun: '', realrec: '做题记录', realrecd: '回看这一组', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', findwrong: '错题记录', videos: '每日新闻视频', aiout: 'AI 产出', aishare: '分享的对话' };
 function render() {
   const st = stack[stack.length - 1];
   VIEWS.forEach(v => $('#view-' + v).classList.toggle('hidden', v !== st.view));
@@ -143,6 +144,19 @@ window.appBack = function () {
   //    附件来源开着时按返回会被 aiBack() 当成"退出会话"处理掉，而不是先关掉这个小菜单
   const sheets = [...document.querySelectorAll('.note-sheet:not(.hidden), .ctxmenu:not(.hidden)')];
   if (sheets.length) { sheets[sheets.length - 1].classList.add('hidden'); return true; }
+  /* 1) 聊天自己的浮层 —— 原来一个都没列在这儿，所以在聊天窗里开着看大图/消息菜单/
+     ＋号面板/会话信息时按返回，退掉的是**整个聊天窗**（一下退两级，回到会话列表）。
+     顺序＝叠放顺序：后开的先关，每按一次只关一层。 */
+  const fsheet = document.getElementById('cr-fsheet');       // 文件的「预览还是下载」
+  if (fsheet) { fsheet.remove(); return true; }
+  const lbx = document.getElementById('lbx');                // 看大图浮层
+  if (lbx) { lbx.remove(); return true; }
+  const cmenu = $('#cr-menu');                               // 消息长按菜单
+  if (cmenu && !cmenu.classList.contains('hidden')) { crCloseMenu(); return true; }
+  const csheet = $('#cr-sheet');                             // ＋号工具面板
+  if (csheet && !csheet.classList.contains('hidden')) { crSheetClose(); return true; }
+  const cinfo = $('#chat-info');                             // 会话信息栏（手机端是整屏盖上来的）
+  if (IS_MOBILE && cinfo && !cinfo.classList.contains('hidden')) { crInfoClose(); return true; }
   // AI 面板
   const aip = $('#ai-panel');
   if (aip && !aip.classList.contains('hidden')) { return aiBack(); }

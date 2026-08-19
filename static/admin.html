@@ -37,7 +37,11 @@
   .ai-f span{flex:0 0 74px;font-size:13px;color:#555;}
   .ai-f input{flex:1;padding:9px 11px;border:1.5px solid #e6e9ef;border-radius:8px;font-size:14px;outline:none;}
   .ai-f input:focus{border-color:var(--blue);}
-  .ai-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
+  /* 按钮行。**别叫 .ai-acts** —— 后台也 link 了主应用的 style.css，那边的 .ai-acts 是
+     AI 对话里「悬停才浮出来」的操作条（opacity:0，靠 .ai-row:hover 点亮）。后台没有
+     .ai-row，于是这一行按钮永远是透明的：DOM 在、位置也占着，就是看不见。
+     admin.html 只该用主应用没定义过的类名，撞车由 tests/test_admin_css.py 守着。 */
+  .aacts{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;}
   .ubtn.primary{background:var(--blue);border-color:var(--blue);color:#fff;}
   .ubtn.on{background:var(--blue);border-color:var(--blue);color:#fff;}
   .ai-msg2{font-size:13px;margin-top:10px;white-space:pre-wrap;line-height:1.6;}
@@ -71,6 +75,61 @@
   .model-chip{display:inline-block;background:#eef3fa;color:#1a6fb5;border:1px solid #d4e2f3;
     border-radius:6px;padding:3px 8px;font-size:12px;margin:3px 4px 0 0;cursor:pointer;}
   .model-chip:hover{background:#1a6fb5;color:#fff;}
+  /* ---- 档位控制 ---- */
+  .tr-head{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;
+    padding-bottom:13px;border-bottom:1px solid var(--line);margin-bottom:13px;}
+  .tr-headr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .tr-lab{font-size:12.5px;color:var(--muted);}
+  .tr-models{font-size:13px;color:var(--muted);}
+  .tr-models b{color:var(--text);font-weight:600;}
+  .seg{display:inline-flex;border:1.5px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;}
+  .seg button{border:none;background:#fff;padding:5px 11px;font-size:12.5px;color:#333;
+    border-left:1px solid var(--line);white-space:nowrap;cursor:pointer;}
+  .seg button:first-child{border-left:none;}
+  .seg button.on{background:var(--blue-fill);color:#fff;}
+  .seg.mini button{padding:3px 9px;font-size:12px;}
+  .seg.mini button.on[data-v=fast],.seg.mini button.on[data-v=free]{background:#0f766e;}
+  .seg.mini button.on[data-v=pro]{background:#a86a00;}
+  .seg button:disabled{opacity:.5;cursor:default;}
+  .tr-global{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:#f8fafc;
+    border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin-bottom:6px;}
+  .tr-global .t{flex:1 1 240px;min-width:0;}
+  .tr-global b{font-size:13.5px;}
+  .tr-global .d{font-size:12px;color:var(--muted);}
+  .tr-grp{margin-top:16px;}
+  .tr-grp h3{font-size:13px;color:var(--muted);margin:0 0 2px;font-weight:600;
+    display:flex;align-items:center;gap:8px;}
+  .tr-grp h3 i{flex:1 1 auto;height:1px;background:var(--line);font-style:normal;}
+  .srow{display:grid;grid-template-columns:18px minmax(0,1fr) 128px 186px;gap:10px;align-items:center;
+    padding:9px 4px;border-bottom:1px solid #eef1f5;font-size:13.5px;}
+  .srow:last-child{border-bottom:none;}
+  .srow.sel{background:rgba(26,111,181,.05);}
+  .srow .sname b{display:block;font-weight:600;}
+  .srow .sname .d{color:var(--muted);font-size:12px;margin-top:1px;}
+  .srow .use{font-size:12px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums;}
+  .srow .use .bar{height:4px;border-radius:3px;background:#eef1f5;margin-top:4px;overflow:hidden;}
+  .srow .use .bar i{display:block;height:100%;background:var(--blue-fill);}
+  .srow .use .bar i.rich{background:var(--gold);}
+  .srow .sub{grid-column:2/5;display:grid;grid-template-columns:minmax(0,1fr) 186px;gap:10px;
+    align-items:center;padding:6px 0 2px 12px;border-left:2px solid var(--line);
+    margin:2px 0 2px 2px;font-size:12.5px;}
+  .tr-tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:20px;margin-left:6px;vertical-align:1px;}
+  .tr-tag.rich{background:#fdf0d5;color:#a86a00;}
+  .tr-tag.cheap{background:#e2f2f0;color:#0f766e;}
+  .tr-tag.new{background:#e8eef6;color:#5a6b85;}
+  .tr-cur{font-size:11.5px;color:var(--muted);margin-top:3px;}
+  .tr-cur b{color:#c0392b;font-weight:600;}
+  .tr-cur.same b{color:#1f9d57;}
+  .tr-bulk{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    background:#fff;border-top:1px solid var(--line);padding:11px 2px;margin-top:12px;font-size:13px;}
+  .tr-bulk .cnt{font-weight:600;}
+  .tr-bulk .sp{flex:1 1 auto;}
+  @media(max-width:640px){
+    .srow{grid-template-columns:18px minmax(0,1fr);row-gap:6px;}
+    .srow .use{grid-column:2;text-align:left;}
+    .srow .tr-ctl{grid-column:2;}
+    .srow .sub{grid-column:1/3;grid-template-columns:minmax(0,1fr);}
+  }
   /* ---- 分栏导航 ---- */
   .anav{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;-webkit-overflow-scrolling:touch;}
   .anav::-webkit-scrollbar{display:none;}
@@ -215,6 +274,7 @@
   <nav class="anav">
     <button class="atab on" data-v="health">产出健康</button>
     <button class="atab" data-v="stats">AI 用量</button>
+    <button class="atab" data-v="tier">档位控制</button>
     <button class="atab" data-v="quality">内容质检</button>
     <button class="atab" data-v="capacity">备份容量</button>
     <button class="atab" data-v="usage">使用观测</button>
@@ -256,6 +316,40 @@
     </div>
   </div>
   <div id="st-body"><p class="ai-tip">加载中…</p></div>
+</section>
+
+<section class="aview" id="v-tier">
+  <h2 class="view-title">档位控制</h2>
+  <div class="ai-cfg">
+    <p class="ai-tip">档位是<b>成本旋钮</b>：低档便宜、旗舰档贵而稳。这里改的是<b>哪个服务用哪档</b>，
+      两个档位各自对应哪个模型在「AI 设置」里改。改完<b>立即生效</b>，不用重启——定时任务下次唤醒读到的就是新配置。
+      <br>把默认走旗舰的服务降下来<b>不会报错、只会悄悄变差</b>，所以降档会先问一句。</p>
+
+    <div class="tr-head">
+      <div class="tr-models" id="tr-models">加载中…</div>
+      <div class="tr-headr">
+        <span class="tr-lab">用量窗口</span>
+        <span class="seg mini" id="tr-win">
+          <button data-win="7d">7 天</button>
+          <button data-win="30d" class="on">30 天</button>
+          <button data-win="90d">90 天</button>
+        </span>
+        <button class="ubtn" id="tr-refresh">刷新</button>
+      </div>
+    </div>
+
+    <div class="tr-global" id="tr-global"></div>
+    <div id="tr-body"><p class="ai-tip" style="margin:0;">加载中…</p></div>
+    <div class="tr-bulk hidden" id="tr-bulk">
+      <span class="cnt" id="tr-cnt">已选 0 项</span>
+      <button class="ubtn" id="tr-none">取消选择</button>
+      <span class="sp"></span>
+      <button class="ubtn" data-bulk="">恢复默认</button>
+      <button class="ubtn" data-bulk="cheap">设为省钱档</button>
+      <button class="ubtn primary" data-bulk="rich">设为质量档</button>
+    </div>
+    <div id="tr-msg" class="ai-msg2"></div>
+  </div>
 </section>
 
 <section class="aview" id="v-quality">
@@ -309,7 +403,7 @@
     <label class="ai-f"><span>模型</span><input id="ai-model" type="text" placeholder="deepseek-v4-flash"></label>
     <label class="ai-f"><span>旗舰模型</span><input id="ai-model-pro" type="text" placeholder="deepseek-v4-pro（写作/批改/命题用）"></label>
     <label class="ai-f"><span>API Key</span><input id="ai-key" type="password" placeholder="留空=不改；已设会显示●●●" autocomplete="off"></label>
-    <div class="ai-acts">
+    <div class="aacts">
       <button class="ubtn" id="ai-clearkey">清除 Key</button>
       <button class="ubtn" id="ai-models">查可用模型</button>
       <button class="ubtn" id="ai-test">测试连通</button>
@@ -342,7 +436,7 @@
       <p class="ai-tip" style="margin:6px 0 0">装法：编译 whisper.cpp 得到 <b>whisper-cli</b>，再下一个 ggml 模型（中文建议 medium 起步），
         把两个路径填上面。转码要用到 <b>ffmpeg</b>。</p>
     </div>
-    <div class="ai-acts">
+    <div class="aacts">
       <button class="ubtn" id="asr-clearkey">清除 Key</button>
       <button class="ubtn" id="asr-test">测试连通</button>
       <button class="ubtn primary" id="asr-save">保存</button>
@@ -356,7 +450,7 @@
   <div class="ai-cfg">
     <p class="ai-tip">控制新用户能否自行注册。人齐之后建议<b>关闭</b>，防止陌生人注册账号消耗 AI 额度；现有账号登录不受影响，随时可重新开放。开放时可再设<b>邀请码</b>：填对暗号才能注册，把暗号私下发给朋友即可。</p>
     <label class="ai-f"><span>邀请码</span><input id="reg-invite" type="text" maxlength="32" placeholder="留空 = 开放注册时不需要邀请码" autocomplete="off"></label>
-    <div class="ai-acts" style="align-items:center;">
+    <div class="aacts" style="align-items:center;">
       <span id="reg-status" class="ai-msg2" style="margin:0 auto 0 0;"></span>
       <button class="ubtn" id="reg-save">保存邀请码</button>
       <button class="ubtn primary" id="reg-toggle">…</button>
@@ -794,6 +888,7 @@ document.querySelector('.anav').onclick = (e) => {
 </script>
 <script src="js/admin-health.js"></script>
 <script src="js/admin-stats.js"></script>
+<script src="js/admin-tier.js"></script>
 <script src="js/admin-quality.js"></script>
 <script src="js/admin-capacity.js"></script>
 <script src="js/admin-usage.js"></script>

@@ -144,3 +144,45 @@ def test_回收站报告占着多少空间(auth_client):
     before = _trash(auth_client)["held"]
     auth_client.delete("/api/drive/%d" % a["id"])
     assert _trash(auth_client)["held"] - before == 4096, "不告诉用户回收站占了多少，他不知道为什么配额不降"
+
+
+# ---- 大目录：删了 560 项之后还能不能整棵捞回来 ----
+
+def test_删掉的大目录在回收站里只列一行而且能整棵恢复(auth_client):
+    """用户实测：一个 560 项的资料文件夹删掉后，回收站被子项刷屏，
+    而**文件夹本身**（id 最小、排最后）被 LIMIT 500 截掉 —— 于是只能一个个恢复子项，
+    怎么点都只回来一个空壳文件夹。这条盯住「根必须列出来」和「恢复要带全子孙」。"""
+    for i in range(60):
+        _up(auth_client, "f%02d.txt" % i, "大目录/子层%d" % (i % 6))
+    top = _dir_id(auth_client, "大目录")
+    auth_client.delete("/api/drive/%d" % top)
+    tr = _trash(auth_client)
+    mine = [i for i in tr["items"] if i["id"] == top or "大目录" in (i["folder"] or "")]
+    assert [i["name"] for i in mine] == ["大目录"], "回收站该只列这一行（子项折进去）"
+    assert mine[0]["kids"] == 66, "没数清它带走了多少东西（6 个子目录 + 60 个文件）"
+    r = auth_client.post("/api/drive/trash/%d/restore" % top)
+    assert r.status_code == 200 and r.get_json()["n"] == 67
+    assert sorted(i["name"] for i in _ls(auth_client, "大目录/子层0")) == \
+        ["f%02d.txt" % i for i in range(0, 60, 6)], "子孙没跟着回来"
+    assert top not in [i["id"] for i in _trash(auth_client)["items"]]
+
+
+def test_恢复文件夹时原位已有同名的就并过去(auth_client):
+    """并发上传会在同一个目录下留下重复的同名壳（见 idx_drive_dir1 那条迁移）。
+    恢复时若硬把回收站里那行也放回来，列表里就会并排站着两个一模一样的文件夹。"""
+    _up(auth_client, "里面.txt", "并过去")
+    top = _dir_id(auth_client, "并过去")
+    auth_client.delete("/api/drive/%d" % top)
+    assert auth_client.post("/api/drive/folder", json={"name": "并过去"}).status_code == 200
+    auth_client.post("/api/drive/trash/%d/restore" % top)
+    assert [i["name"] for i in _ls(auth_client)].count("并过去") == 1, "多出一个同名空壳"
+    assert [i["name"] for i in _ls(auth_client, "并过去")] == ["里面.txt"], "内容没回到那个目录里"
+
+
+def test_同一个目录下建不出两个同名文件夹(auth_client):
+    """上传整个文件夹是并发请求，各自补中间目录、彼此看不见对方没提交的行。
+    库上的部分唯一索引是最后一道闸。"""
+    assert auth_client.post("/api/drive/folder", json={"name": "只此一个"}).status_code == 200
+    r = auth_client.post("/api/drive/folder", json={"name": "只此一个"})
+    assert r.status_code == 400
+    assert [i["name"] for i in _ls(auth_client)].count("只此一个") == 1

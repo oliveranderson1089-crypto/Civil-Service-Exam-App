@@ -14,10 +14,10 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, anchorMenu, api, appConfirm, applyPush, appPrompt, artEm, avoidFab, CAN_ABORT,
-   composing, convoAvatar, convoStick, createDock, errMsg, esc, growAndSync, IS_MOBILE,
+   composing, convoAvatar, convoStick, createDock, errMsg, esc, getAppClip, growAndSync, IS_MOBILE,
    loadClassics, loadDaily, loadEntries, loadFeed, loadPlan, loadWrongq, lsGet, lsSet,
    mdToHtml, navHomeCard, openAiChatMenu, stack, toast, uiError, voiceAsrEnabled,
-   voiceRecord, voiceSupported, voiceToText, voiceWhyNot */
+   voiceInsert, voiceLive, voiceRecord, voiceSupported, voiceToText, voiceWhyNot */
 
 /* ================= AI 助手 ================= */
 let aiMsgs = [], aiBusy = false, aiChatId = null, aiProjectId = null;
@@ -77,6 +77,7 @@ async function openAI(preset) {
   if (!aiChatId || preset) await aiNewChat(preset ? null : aiProjectId);
   if (preset) { $('#ai-text').value = preset; aiGrow(); }
   loadAiHome();
+  aiSyncClipChip();       // 面板常常是「复制完」才打开的，光等 appclip 事件会漏掉这一次
   setTimeout(() => { const el = aiAlive() && $('#ai-text'); if (el && !IS_MOBILE) el.focus(); }, 60);
 }
 
@@ -193,16 +194,134 @@ function openAiProject(pid) {
   const p = ($('#ai-panel')._projects || []).find(x => x.id === pid);
   if (!p) return;
   const chats = ($('#ai-panel')._chats || []).filter(c => c.project_id === pid);
-  if (!chats.length) { aiCurProject = p; aiNewChat(pid); return; }
   aiCurProject = p;
   aiHomeQ = ''; $('#aih-search').value = '';
+  /* 空项目以前是「点进去直接开新对话」，于是它的设置永远够不到 —— 而空项目恰恰
+     是最需要先把指令写好的那个。现在照常显示项目页，只是列表位置换成一句话。 */
   $('#aih-recents').innerHTML =
     `<div class="ais-sec">${AI_FOLDER} ${esc(p.name)}</div>` +
     (p.instructions ? `<p class="ais-tip">${artEm('📋')} ${esc(p.instructions)}</p>` : '') +
+    (p.files ? `<p class="ais-tip">${artEm('📎')} 挂着 ${p.files} 份参考资料，
+       这个项目下的每个对话都读得到</p>` : '') +
+    `<button class="ais-new ais-subnew" id="aipd-set">${artEm('⚙')} 项目设置（指令 / 参考资料）</button>` +
     '<button class="ais-new ais-subnew" id="aipd-new">＋ 在这个项目下开新对话</button>' +
-    chats.map(aiChatRow).join('') +
+    (chats.length ? chats.map(aiChatRow).join('')
+      : '<p class="ais-empty">这个项目下还没有对话。</p>') +
     '<button class="ais-back" id="ais-back">‹ 回到全部对话</button>';
 }
+
+/* ---------------- 项目设置：指令是这个项目每一轮的开场白，得随时改得动 ---------------- */
+async function openAiProjSet(pid) {
+  const p = ($('#ai-panel')._projects || []).find(x => x.id === pid);
+  if (!p) return;
+  const box = $('#ai-projsheet');
+  box.dataset.pid = pid;
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="cp-box"><div class="cp-head">项目设置<button data-psx>✕</button></div>
+    <div class="cp-list">
+      <label class="ps-l">项目名</label>
+      <input id="ps-name" maxlength="60" value="${esc(p.name || '')}">
+      <label class="ps-l">自定义指令</label>
+      <p class="mem-tip">这段话会加在<b>这个项目</b>每一轮对话的最前面。留空就是不加。</p>
+      <textarea id="ps-ins" rows="5" maxlength="4000"
+        placeholder="例：你是申论阅卷老师，对我提交的答案按采分点批改打分，先给分再说扣在哪">${esc(p.instructions || '')}</textarea>
+      <label class="ps-l">参考资料</label>
+      <p class="mem-tip">挂在<b>项目</b>上：这个项目下的<b>每一个对话</b>都读得到，
+        AI 需要时会自己去翻（跟输入框那个回形针不一样，那个只属于当时那一次对话）。
+        可以直接传 PDF / Word / 图片，也可以粘一段文字。大文件不会整段塞进对话，
+        AI 会按需一段段读。</p>
+      <div id="ps-files"><p class="empty">加载中…</p></div>
+      <input type="file" id="ps-upfile" class="hidden"
+        accept=".pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx,image/*">
+    </div>
+    <div class="mem-add"><button id="ps-addfile">＋ 传文件</button>
+      <button id="ps-addtext">＋ 粘贴文本</button>
+      <button id="ps-save" class="primary">保存</button></div></div>`;
+  await aiProjFiles(pid);        // await 着：调用方（和测试）能等到整个弹层真的画完
+}
+async function aiProjFiles(pid) {
+  const box = $('#ai-projsheet').querySelector('#ps-files'); if (!box) return;
+  try {
+    const d = await api('/api/aichat/projects/' + pid + '/files');
+    box.innerHTML = (d.files || []).length
+      ? d.files.map(f => `<div class="ai-mem"><div class="c"><div class="t">${esc(f.name)}</div>
+          <div class="s">${aiProjFileMeta(f)}</div></div>
+          <button class="x" data-psfdel="${f.id}">✕</button></div>`).join('')
+      : '<p class="empty">还没挂资料。</p>';
+  } catch (e) { box.innerHTML = uiError(e); }
+}
+function aiProjFileMeta(f) {
+  // 一行把「这份到底读进去了多少」说清楚。扫描件只认了前几页这件事**必须写在脸上**：
+  // 不写的话，用户以为整本都挂上了，AI 却只看得到前 20 页，谁也不知道差在哪。
+  const bits = [f.size + ' 字'];
+  if (f.pages) bits.push(f.pages + ' 页');
+  if (f.ocr_pages) bits.push('扫描件·已认前 ' + f.ocr_pages + ' 页，其余 AI 用到时现场识别');
+  if (f.orig_name) bits.push(esc(f.orig_name));
+  return bits.join(' · ');
+}
+async function aiProjUpload(pid, file) {
+  if (!file) return;
+  toast('正在读取「' + file.name + '」…');
+  try {
+    const fd = new FormData(); fd.append('file', file);
+    const d = await api('/api/aichat/projects/' + pid + '/files/upload', { method: 'POST', body: fd });
+    if (d.error) { toast(d.error, true); return; }
+    await aiProjFiles(pid);
+    toast(d.ocr_pages
+      ? ('已挂上，但这是扫描件：先认了前 ' + d.ocr_pages + ' 页，后面的 AI 要用时会现场识别')
+      : ('已挂上（' + (d.chars || 0) + ' 字），这个项目下的每个对话都读得到'), !!d.ocr_pages);
+  } catch (err) { toast(errMsg(err), true); }
+}
+$('#ai-projsheet').addEventListener('change', e => {
+  const inp = e.target.closest('#ps-upfile'); if (!inp) return;
+  const f = inp.files[0]; inp.value = '';        // 清空：同一个文件连传两次也要触发
+  aiProjUpload(+$('#ai-projsheet').dataset.pid, f);
+});
+$('#ai-projsheet').addEventListener('click', async e => {
+  const box = $('#ai-projsheet'), pid = +box.dataset.pid;
+  if (e.target.closest('[data-psx]') || e.target === box) { box.classList.add('hidden'); return; }
+  const del = e.target.closest('[data-psfdel]');
+  if (del) {
+    if (!(await appConfirm('删掉这份参考资料？'))) return;
+    try { await api('/api/aichat/projects/' + pid + '/files/' + del.dataset.psfdel, { method: 'DELETE' }); aiProjFiles(pid); }
+    catch (err) { toast(errMsg(err), true); }
+    return;
+  }
+  if (e.target.closest('#ps-addfile')) {
+    $('#ps-upfile').click();
+    return;
+  }
+  if (e.target.closest('#ps-addtext')) {
+    const name = await appPrompt('资料名', '例：申论评分标准');
+    if (!name || !name.trim()) return;
+    const text = await appPrompt('内容（直接粘贴进来）', '');
+    if (!text || !text.trim()) return;
+    try {
+      await api('/api/aichat/projects/' + pid + '/files', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), text: text })
+      });
+      aiProjFiles(pid);
+    } catch (err) { toast(errMsg(err), true); }
+    return;
+  }
+  if (e.target.closest('#ps-save')) {
+    const name = ($('#ps-name').value || '').trim();
+    if (!name) { toast('项目名不能为空', true); return; }
+    try {
+      await api('/api/aichat/projects/' + pid, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        // instructions 允许改成空串（= 这个项目不再加前缀），所以照原样发，别过滤掉空值
+        body: JSON.stringify({ name: name, instructions: $('#ps-ins').value || '' })
+      });
+      box.classList.add('hidden');
+      toast('已保存，下一轮对话就按新指令来');
+      await loadAiHome();
+      if (aiCurProject && aiCurProject.id === pid) openAiProject(pid);
+      aiSetSub();                       // 标题下那行也带着项目名
+    } catch (err) { toast(errMsg(err), true); }
+  }
+});
 
 /* 主动开场：打开助手先给一句基于今天复习/错题的判断 + 几个可点的起手式。
    空白输入框是最大的使用门槛。这一条不调模型（数字本来就在库里），所以立刻就出来。 */
@@ -247,13 +366,26 @@ function aiStepHtml(s, n) {
   </div>`;
 }
 /* 附件缩略图（AD5）：图片直接显示原图，文件给个类型角标。发出去之后气泡里也留着。 */
+/* 这份附件是不是只读到了一半。抽取那一步就可能截（字数上限），扫描件还可能只 OCR 了
+   前几页 —— 两种都得让用户看见：以前截了不吭声，AI 拿着半份资料给出的结论看着很确定，
+   谁也不知道它压根没读完。 */
+function aiAttCut(a) {
+  if (!a) return '';
+  const bits = [];
+  const got = (a.text || '').length;
+  if (a.total && a.total > got) bits.push('全文约 ' + a.total + ' 字，只读到前 ' + got + ' 字');
+  if (a.pages && a.ocr_pages && a.pages > a.ocr_pages) bits.push('共 ' + a.pages + ' 页，只识别了前 ' + a.ocr_pages + ' 页');
+  return bits.join('；');
+}
 function aiAttsHtml(atts, small) {
   if (!atts || !atts.length) return '';
   return '<div class="ai-attrow' + (small ? ' sm' : '') + '">' + atts.map((a, i) => {
     const img = a.image ? `<img src="/api/ai/img/${encodeURIComponent(a.image)}" alt="">`
       : `<span class="ai-attic">${/\.pdf$/i.test(a.name || '') ? '📕' : '📄'}</span>`;
-    return `<span class="ai-att" title="${esc(a.name || '')}">
+    const cut = aiAttCut(a);
+    return `<span class="ai-att${cut ? ' cut' : ''}" title="${esc((a.name || '') + (cut ? '（' + cut + '）' : ''))}">
       ${img}<span class="nm">${esc(a.name || '附件')}</span>
+      ${cut ? '<span class="cutflag" aria-hidden="true">半</span>' : ''}
       ${small ? '' : `<button class="x" data-aiattdel="${i}" title="移除">×</button>`}</span>`;
   }).join('') + '</div>';
 }
@@ -263,7 +395,11 @@ function aiActsHtml(m, i, last) {
     return `<div class="ai-acts uacts" data-mi="${i}"><button data-act="edit">✎ 改问题</button>` +
       '<button data-act="copy">复制</button></div>';
   }
-  if (m.kind === 'error') return '';
+  /* 失败那条不给「复制/分支/存进积累」（没有内容可存），但**一定要给「重试」** ——
+     以前这里返回空，用户只剩一句「请再发一次」，只能手动把刚才那句重打一遍。 */
+  if (m.kind === 'error') {
+    return last ? `<div class="ai-acts" data-mi="${i}"><button data-act="again">↻ 重试</button></div>` : '';
+  }
   return `<div class="ai-acts" data-mi="${i}">
     <button data-act="copy">${artEm('📋')} 复制</button>
     ${last ? '<button data-act="retry">↻ 重答</button>' : ''}
@@ -419,7 +555,11 @@ function aiPaint() {
 /* ---------------- 附件 ---------------- */
 let aiAtts = [];  // [{name, text, image}]
 function renderAiAtts() {
-  $('#ai-atts').innerHTML = aiAttsHtml(aiAtts, false);
+  // 角标只是提醒「这份没读全」，具体差多少写在下面这一行 —— 60×60 的小方块塞不下
+  const cuts = aiAtts.map(aiAttCut).filter(Boolean);
+  $('#ai-atts').innerHTML = aiAttsHtml(aiAtts, false)
+    + (cuts.length ? '<p class="ai-attcut">⚠ ' + esc(cuts.join('｜'))
+       + '。AI 会被告知它没看全，需要后面的内容就把文件存进资料库再让它按页读。</p>' : '');
   $('#ai-atts').classList.toggle('on', !!aiAtts.length);
 }
 $('#ai-atts').addEventListener('click', e => {
@@ -436,6 +576,23 @@ $('#ai-attsheet').addEventListener('click', e => {
   else if (b.dataset.aiatt === 'image') { $('#ai-attfile').accept = 'image/*'; $('#ai-attfile').click(); }
   else { $('#ai-attfile').accept = '.pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx'; $('#ai-attfile').click(); }
 });
+/* /api/ai/extract 的结果 → 一条附件。上传的文件和云盘/资料库里的文件走同一个出口，
+   免得提示语和「没读全」的角标在两处各写一份、日后慢慢走散。 */
+function aiPushAtt(d, fallbackName) {
+  // image 是留下来的原图文件名：带着它，这一轮就走视觉模型（模型真看得见图形和图表），
+  // 抽出来的文字继续当兜底一起发过去。
+  // total/pages 要一路带到服务端：注入给模型的正文靠它交代「这份文件其实有多大」
+  const att = { name: d.name || fallbackName || '附件', text: d.text || '', image: d.image || '',
+    total: d.total || 0, pages: d.pages || 0, ocr_pages: d.ocr_pages || 0 };
+  aiAtts.push(att);
+  renderAiAtts();
+  return att;
+}
+function aiAttDone(att, isImg) {
+  const cut = aiAttCut(att);
+  toast(cut ? ('已附加，但没读全：' + cut)
+    : (isImg ? '已附加，发送时 AI 会直接看这张图' : '已附加，发送时 AI 会读取其内容'), !!cut);
+}
 async function aiHandleAttach(file) {
   if (!file) return;
   toast('正在读取附件…');
@@ -443,13 +600,55 @@ async function aiHandleAttach(file) {
   try {
     const d = await api('/api/ai/extract', { method: 'POST', body: fd });
     if (d.error) { toast(d.error, true); return; }
-    // image 是留下来的原图文件名：带着它，这一轮就走视觉模型（模型真看得见图形和图表），
-    // 抽出来的文字继续当兜底一起发过去。
-    aiAtts.push({ name: d.name || file.name, text: d.text || '', image: d.image || '' });
-    renderAiAtts();
-    toast(d.image ? '已附加，发送时 AI 会直接看这张图' : '已附加，发送时 AI 会读取其内容');
+    aiAttDone(aiPushAtt(d, file.name), !!d.image);
   } catch (e) { toast(errMsg(e), true); }
 }
+
+/* 云盘 / 资料库里**已经有的**文件 → 直接挂成附件。
+   只把 id 发过去：文件本来就躺在服务器上，先下下来再原样传回去既慢又白烧一遍流量
+   （云盘里的讲义动辄几十 MB）。云盘右键「发给 AI 助手」和在助手里粘贴都走这里。
+   items: [{kind:'drive'|'material', id, name}]，返回成功的条数。 */
+async function aiAttachLib(items, opts) {
+  const list = (items || []).filter(it => it && it.id);
+  if (!list.length) return 0;
+  if (!(opts && opts.keepPanel)) await openAI();   // 从云盘/资料库点过来的，得先把助手打开
+  toast(list.length > 1 ? ('正在读取 ' + list.length + ' 个文件…') : '正在读取附件…');
+  let ok = 0, last = null;
+  for (const it of list) {
+    const body = it.kind === 'material' ? { material_id: it.id } : { drive_id: it.id };
+    try {
+      const d = await api('/api/ai/extract', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body), timeoutMs: 180000 });
+      if (d.error) { toast(d.error, true); continue; }
+      last = { att: aiPushAtt(d, it.name), img: !!d.image }; ok++;
+    } catch (e) { toast(errMsg(e), true); }
+  }
+  if (ok === 1 && last) aiAttDone(last.att, last.img);
+  else if (ok > 1) toast('已附加 ' + ok + ' 个文件，发送时 AI 会读取它们');
+  return ok;
+}
+
+/* 输入框上方那条「剪贴板里还有 N 个文件」的提示条。
+   右键菜单里的「粘贴」是 WebKit 自己的，够不着应用内剪贴板（它只认文本和图片）——
+   所以复制完给一个看得见、点得着的入口，不让人对着输入框反复右键。 */
+function aiSyncClipChip() {
+  const el = $('#ai-clipchip'); if (!el) return;
+  const clip = getAppClip();
+  el.classList.toggle('hidden', !clip.length);
+  if (!clip.length) return;
+  el.innerHTML = `<span>${artEm('📋')} 剪贴板里有 ${clip.length} 个文件</span>` +
+    '<button type="button" id="ai-clipadd">附给 AI</button>' +
+    '<button type="button" class="x" id="ai-clipx" title="不附">✕</button>';
+}
+document.addEventListener('appclip', aiSyncClipChip);
+$('#ai-clipchip').addEventListener('click', async e => {
+  if (e.target.closest('#ai-clipx')) { $('#ai-clipchip').classList.add('hidden'); return; }
+  if (!e.target.closest('#ai-clipadd')) return;
+  const clip = getAppClip();
+  // 附完不清空应用剪贴板：云盘那边还指望它粘文件（同一份剪贴板两处用），只把提示条收起来
+  if (await aiAttachLib(clip, { keepPanel: true })) $('#ai-clipchip').classList.add('hidden');
+});
 $('#ai-attfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
 $('#ai-camfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
 
@@ -580,9 +779,12 @@ const CAN_STREAM = !!(window.fetch && window.TextDecoder && typeof ReadableStrea
 const noStream = () => Object.assign(new Error('NO_STREAM'), { noStream: true });
 async function aiSendStream(content, atts) {
   let ctl = null, timer = 0;
-  /* 空闲超时，不是总超时：流式下每个 token 都是一次心跳，所以「45 秒一个字节都没有」
-     才叫连接死了。模型写得再长也不会被误杀 —— 这正是非流式做不到的。 */
-  const arm = () => { if (ctl) { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), 45000); } };
+  /* 空闲超时，不是总超时：任何一个字节（正文、推理段、心跳注释帧）都会把它重新上弦，
+     所以「这么久一个字节都没有」才叫连接死了。模型写得再长也不会被误杀。
+     这个数必须**大于服务端那份**（mods/agent.py 的 AI_TIMEOUT，两片之间 60 秒），
+     否则服务端还在合理等待，前端先把连接掐了 —— 用户看到的是「响应超时」，
+     而服务端那边其实马上就要出字。 */
+  const arm = () => { if (ctl) { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), 75000); } };
   if (CAN_ABORT) { ctl = new AbortController(); arm(); aiCtl = ctl; }   // 同一个 ctl 也给「停止生成」用
   let r;
   try {
@@ -703,7 +905,11 @@ async function aiSend() {
     if (partial) aiMsgs.push({ role: 'assistant', content: partial + (aiStopped ? '\n\n（已停止）' : ''), tier: aiTier });
     // 用户自己按的「停止生成」不是错误，别报「响应超时，请再发一次」
     if (!aiStopped) {
-      aiMsgs.push({ role: 'assistant', kind: 'error', content: '⚠️ ' + (e.name === 'AbortError' ? 'AI 响应超时（网络不稳），请再发一次' : e.message) });
+      /* 原话留一份：服务端**不一定**存下了这一轮 —— 流式那条在生成器里补存了一行
+         kind='error'，非流式那条（老 WebView）压根没落库。「重试」优先用服务端退回来的，
+         退不出来就用这份本地副本，两条路都不用你重打一遍。 */
+      aiLastFailed = { content: shown, atts: atts };
+      aiMsgs.push({ role: 'assistant', kind: 'error', content: '⚠️ ' + (e.name === 'AbortError' ? 'AI 响应超时（网络不稳），点下面的「重试」' : e.message) });
     } else if (!partial) {
       aiMsgs.push({ role: 'assistant', content: '（已停止）' });
     }
@@ -833,6 +1039,8 @@ $('#ai-msgs').addEventListener('click', async e => {
     catch (_) { toast('这个浏览器不让复制，长按选中吧', true); }
   } else if (act === 'retry') {
     aiRetry('');
+  } else if (act === 'again') {
+    aiRetryFailed();
   } else if (act === 'keep') {
     // 存进积累：把这段回答交给 AI 自己去落库（它手里有 add_entry / add_note 这些工具）
     aiToolSend('把上面这段整理成一条积累存起来（挑最值得记的那部分，标好板块）');
@@ -857,6 +1065,40 @@ $('#ai-msgs').addEventListener('click', async e => {
 });
 /* 重答 / 改问：先让服务端把历史退回到那一轮之前，再用（新的或原来的）问题正常重发。
    生成只有一条路（/stream），这里不复制一份对话逻辑。 */
+/* 落库的那句里带着「📎 文件名」那一行 —— 它是**给人看的显示串**，重发时 aiSend 会按
+   当前附件重新拼一遍。回填输入框前先把旧的那行摘掉，否则每重试一次就多叠一行。 */
+const aiStripClip = (t) => String(t || '').replace(/\n?📎 [^\n]*$/, '');
+
+let aiLastFailed = null;      // 最近一次失败的原话 {content, atts}，给「重试」兜底
+/* 「刚才那次失败了，再来一次」。跟「重答」不是一回事：重答是对**成功**的回答不满意，
+   这个是这一轮压根没答出来 —— 服务端得先把那半轮（问题 + 失败占位）退掉再重发，
+   否则会话里会留下一串「问一次、失败一次」的残骸。 */
+async function aiRetryFailed() {
+  if (aiBusy) return;
+  let content = '', atts = [];
+  if (aiChatId) {
+    try {
+      const d = await api('/api/aichat/chats/' + aiChatId + '/retry', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ failed: true })
+      });
+      if (d.rewound) { content = aiStripClip(d.content); atts = d.attachments || []; }
+    } catch (e) { toast(errMsg(e), true); return; }
+  }
+  if (!content && !atts.length && aiLastFailed) {          // 服务端没存下这轮 → 用本地那份
+    content = aiStripClip(aiLastFailed.content); atts = (aiLastFailed.atts || []).slice();
+  }
+  if (!content && !atts.length) { toast('找不到刚才那句话，直接再问一次吧', true); return; }
+  // 本地也退回去：把失败那一轮（用户那句 + 报错气泡）一起摘掉，别在屏幕上留一串残骸
+  for (let i = aiMsgs.length - 1; i >= 0; i--) {
+    if (aiMsgs[i].role === 'user') { aiMsgs = aiMsgs.slice(0, i); break; }
+  }
+  aiLastFailed = null;
+  aiAtts = atts; renderAiAtts();
+  $('#ai-text').value = content; aiGrow();
+  renderAI();
+  aiSend();
+}
 async function aiRetry(newContent, msgId) {
   if (aiBusy) return;
   try {
@@ -872,7 +1114,7 @@ async function aiRetry(newContent, msgId) {
     if (cut >= 0) aiMsgs = aiMsgs.slice(0, cut);
     aiAtts = (d.attachments || []).slice();
     renderAiAtts();
-    $('#ai-text').value = d.content || '';
+    $('#ai-text').value = aiStripClip(d.content);
     renderAI();
     aiSend();
   } catch (e) { toast(errMsg(e), true); }
@@ -1004,23 +1246,30 @@ function aiVoiceAvail() {
   $('#ai-voice').classList.toggle('hidden', !ok);
   $('#ai-mic2').classList.toggle('no-speech', !ok);
 }
-/* 录一段 → 传服务端识别 → 填进输入框（不自动发送：识别难免有错，让人先看一眼） */
+/* 录一段 → 传服务端识别 → 填进输入框（不自动发送：识别难免有错，让人先看一眼）
+   转写要好几秒，这中间用户可能接着打字、也可能切走会话，所以：
+   进度画在按钮上（别拿「识别中…」去占输入框，那也是在改用户的内容）、
+   结果回来先认会话、最后插到光标处而不是覆盖整个框。 */
 async function aiVoiceByServer() {
   const rec = await voiceRecord({ tip: '正在录音，说完点「完成」转成文字' });
   if (!rec) return;
-  const base = $('#ai-text').value;
-  $('#ai-text').value = base + (base ? ' ' : '') + '识别中…';
-  aiGrow();
+  const el = $('#ai-text'), chat = aiChatId;
+  aiVoiceWait(true);
   try {
     const txt = await voiceToText(rec.blob, rec.ext);
-    $('#ai-text').value = base + (base ? ' ' : '') + txt;
-    if (!txt) toast('没识别出内容');
+    if (chat !== aiChatId) { toast('会话已经切走了，这段话没填进去', true); return; }
+    if (!txt) { toast('没识别出内容'); return; }
+    voiceInsert(el, txt);
+    el.focus();
   } catch (e) {
-    $('#ai-text').value = base;
     toast(errMsg(e), true);
+  } finally {
+    aiVoiceWait(false);
+    aiGrow();
   }
-  aiGrow();
-  $('#ai-text').focus();
+}
+function aiVoiceWait(on) {   // 转写中：两颗麦克风都转成「在忙」，免得再点一次又录一段
+  document.querySelectorAll('#ai-voice, #ai-mic2').forEach(b => b.classList.toggle('rec', on));
 }
 let aiRec = null, aiRecOn = false;
 async function aiVoiceToggle() {
@@ -1034,11 +1283,11 @@ async function aiVoiceToggle() {
   const R = window.SpeechRecognition || window.webkitSpeechRecognition;
   aiRec = new R();
   aiRec.lang = 'zh-CN'; aiRec.interimResults = true; aiRec.continuous = true;
-  const base = $('#ai-text').value;
+  const live = voiceLive($('#ai-text'));   // 只改「自己写进去的那一段」，别重写整个框
   aiRec.onresult = (ev) => {
     let txt = '';
     for (let i = 0; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
-    $('#ai-text').value = (base ? base + ' ' : '') + txt;
+    live.set(txt);
     aiGrow();
   };
   aiRec.onend = () => { aiRecOn = false; aiVoicePaint(); };
@@ -1058,6 +1307,26 @@ $('#ai-titlebtn').onclick = () => { if ($('#ai-panel').dataset.shell !== 'desk')
 $('#ais-close').onclick = () => aiSideClose();
 $('#ai-sidemask').onclick = () => aiSideClose();
 $('#ai-newbtn').onclick = () => aiNewChat(aiProjectId);
+/* 汇总这段对话（第 10 条）。产物落进「AI 产出」，不是往聊天流里再塞一段
+   —— 纪要是要拿去用的东西，塞回对话里下次还得翻。 */
+$('#ai-sumbtn').onclick = async () => {
+  if (aiBusy) { toast('等这一轮答完再汇总'); return; }
+  if (!aiChatId || !aiMsgs.length) { toast('这段对话还是空的'); return; }
+  const btn = $('#ai-sumbtn');
+  btn.disabled = true;
+  toast('正在汇总…长对话会分段做，稍等一下');
+  try {
+    const d = await api('/api/aichat/chats/' + aiChatId + '/summary', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    });
+    // 汇总本身也贴回对话里给你当场看一眼；要拿去用就去 库 → AI 产出
+    aiMsgs.push({ role: 'assistant', content: d.body + '\n\n---\n已存进「库 → AI 产出」：**'
+      + d.title + '**' + (d.parts > 1 ? '（分 ' + d.parts + ' 段汇总后合并）' : '') });
+    aiNewCount++; renderAI();
+    toast('汇总好了，已存进「AI 产出」');
+  } catch (e) { toast(errMsg(e), true); }
+  btn.disabled = false;
+};
 $('#aih-new').onclick = () => aiNewChat();
 $('#ai-close').onclick = () => { $('#ai-panel').classList.add('hidden'); applyPush(); avoidFab(); };
 $('#ai-plus').onclick = aiSheetToggle;
@@ -1078,6 +1347,7 @@ $('#aip-new').onclick = async () => {
 $('#ai-panel').addEventListener('click', async e => {
   if (e.target.closest('#ai-stop')) { aiStop(); return; }
   if (e.target.closest('#aipd-new')) { if (aiCurProject) aiNewChat(aiCurProject.id); return; }
+  if (e.target.closest('#aipd-set')) { if (aiCurProject) openAiProjSet(aiCurProject.id); return; }
   if (e.target.closest('#ais-back')) { aiCurProject = null; renderAiList(); return; }
   if (e.target.closest('#aic-memopen')) { openAiMemories(); return; }
   const menu = e.target.closest('[data-aimenu]');

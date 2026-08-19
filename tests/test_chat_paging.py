@@ -136,3 +136,31 @@ def test_会话列表含文件传输助手且不受好友数影响(auth_client, 
     c = auth_client.get("/api/chat/conversations").get_json()
     assert c["conversations"][0].get("self") is True, "文件传输助手永远置顶"
     assert len(c["conversations"]) == 2      # 自己 + 一个好友
+
+
+def test_首屏带得出未读水位_一对一(auth_client, me):
+    """「以下是未读消息」那条线要能算得出来，而且进过一次就得往下走。
+
+    前端按 `!m.read` 找第一条未读；曾经它读的是后端根本不存在的 `read_at_self`，
+    取到永远是 undefined，于是每条对方的消息都算未读 —— 红线钉死在首屏第一条上，
+    每次点开会话都从一个月前那儿开始。这里钉住两点：首屏给的是**进来之前**的已读
+    状态（否则线永远无处可画），进过之后再拉就全是已读了。
+    """
+    _seed(me, 3)
+    first = auth_client.get("/api/chat/%d" % FRIEND).get_json()["messages"]
+    assert [m["read"] for m in first] == [False, False, False], "首屏必须是进来之前的状态"
+    again = auth_client.get("/api/chat/%d" % FRIEND).get_json()["messages"]
+    assert all(m["read"] for m in again), "读过的消息不该再被当成未读"
+
+
+def test_群首屏带得出未读水位(auth_client, me):
+    """群里没有逐条 read_at，线只能靠 my_read（我读到哪条）来画 —— 后端得把它返回来。"""
+    cid = auth_client.post("/api/chat/groups",
+                           json={"name": "小组", "members": [FRIEND]}).get_json()["id"]
+    _exec(*[("INSERT INTO chat_msgs(conv_id,from_uid,kind,body) VALUES(?,?,'text',?)",
+             (cid, FRIEND, "第%d条" % i)) for i in range(3)])
+    d = auth_client.get("/api/chat/g/%d" % cid).get_json()
+    assert d["my_read"] == 0, "第一次进群：水位在最前面，三条都在线下面"
+    ids = [m["id"] for m in d["messages"]]
+    d2 = auth_client.get("/api/chat/g/%d" % cid).get_json()
+    assert d2["my_read"] == max(ids), "进过一次之后水位要推到最新，线不该再停在原地"

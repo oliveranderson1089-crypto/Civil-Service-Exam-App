@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, emKey, errMsg, esc, injectReadBtns, mdToHtml, push, stack,
+/* global $, api, artEm, c, emKey, errMsg, esc, libTouch, injectReadBtns, mdToHtml, push, stack,
    toast, uiError */
 
 /* ============= 每日时政（爬虫 + AI 三行式；国内/四川/国际 三板块，全局共享） ============= */
@@ -144,6 +144,7 @@ function nwMarkup(content, marks) {
 }
 
 async function openNewsItem(id) {
+  libTouch('news', id);
   push({ view: 'newsd', title: '时政详情' });
   $('#news-wrap').innerHTML = '<p class="empty">加载中…</p>';
   try {

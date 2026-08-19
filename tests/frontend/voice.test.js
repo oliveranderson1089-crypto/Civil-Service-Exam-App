@@ -137,3 +137,77 @@ test('外壳实测「权限其实没给」→ 走去设置那条路，不是提�
   assert.strictEqual(opened, 1);
   assert.doesNotMatch(h.toasts.map(x => x.msg).join(' '), /占着/);
 });
+
+/* ===== 识别结果落进输入框：不许吞掉用户中途打的字 =====
+ * 转写要好几秒（录音 + 上传 + 识别），这中间用户完全可能接着打字。
+ * 老写法是「进来时存 base 快照 → 回来 el.value = base + txt」，等于把这几秒里
+ * 打的字全抹掉；正在用输入法拼的字还会被这一下打断，按原始字母上屏
+ * （手写板那次「切了中文还是打出 dfsdf」就是同一个形状，见 handwrite.test.js）。
+ */
+const say = (h, txt, ms) => h.run(`voiceRecord = async () => ({ blob: new Blob(["x"]), ext: ".webm" });
+  voiceToText = () => new Promise(r => setTimeout(() => r(${JSON.stringify(txt)}), ${ms || 20}));`);
+const tick = (ms) => new Promise(r => setTimeout(r, ms));
+
+test('转写这几秒里打的字要留住，识别结果插在光标处', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  say(h, '今天学了什么');
+  const ta = h.window.document.getElementById('ai-text');
+  const p = h.run('aiVoiceByServer()');
+  await tick(5);                       // 录音那步过去了，正在转写
+  ta.value = '帮我总结';               // 用户等不及，先打了几个字
+  ta.selectionStart = ta.selectionEnd = ta.value.length;
+  await p;
+  assert.strictEqual(ta.value, '帮我总结 今天学了什么',
+    '转写回来把用户中途打的字覆盖掉了');
+});
+
+test('转写没回来就切走了会话：不许再往新会话的输入框里塞字', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  say(h, '这段属于上一个会话');
+  const ta = h.window.document.getElementById('ai-text');
+  h.run('aiChatId = 7');
+  const p = h.run('aiVoiceByServer()');
+  await tick(5);
+  h.run('aiChatId = 8');               // 人已经切到另一个会话了
+  ta.value = '新会话里写的';
+  await p;
+  assert.strictEqual(ta.value, '新会话里写的', '上一个会话的语音串到新会话来了');
+  assert.ok(h.toasts.some(t2 => /切走/.test(t2.msg)), '静默丢掉了，用户不知道发生了什么');
+});
+
+test('聊天侧同样认会话（好友/群都换过才算数）', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  say(h, '给老王的话');
+  const ta = h.window.document.getElementById('cr-text');
+  h.run('crFid = 3; crGid = 0');
+  const p = h.run('crVoiceByServer()');
+  await tick(5);
+  h.run('crFid = 0; crGid = 9');       // 切到一个群里去了
+  await p;
+  assert.strictEqual(ta.value, '', '发给老王的话填进群聊输入框了');
+});
+
+test('实时识别只改自己写的那一段，用户在后面接着打的不受影响', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const ta = h.window.document.getElementById('ai-text');
+  ta.value = '已有';
+  ta.selectionStart = ta.selectionEnd = 2;
+  const live = h.run('voiceLive')(ta);
+  live.set('今');                       // 临时结果
+  ta.value += '（补一句）';             // 用户同时在后面打字
+  live.set('今天');                     // 更好的临时结果来了
+  assert.strictEqual(ta.value, '已有 今天（补一句）',
+    '新一轮临时结果把用户后面打的字冲掉了');
+});
+
+test('识别中不拿「识别中…」去占输入框（那也是在改用户的内容）', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  say(h, '正文', 40);
+  const ta = h.window.document.getElementById('ai-text');
+  const p = h.run('aiVoiceByServer()');
+  await tick(10);
+  assert.strictEqual(ta.value, '', `转写途中输入框被写进了「${ta.value}」`);
+  assert.ok(h.window.document.querySelector('#ai-voice').classList.contains('rec'),
+    '进度得画在触发它的那颗按钮上，不然用户会以为没反应、再点一次又录一段');
+  await p;
+});

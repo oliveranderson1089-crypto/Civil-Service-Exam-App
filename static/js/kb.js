@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, _svg, anchorMenu, api, appConfirm, artEm, back, c, composing, errMsg, esc,
+/* global $, _svg, anchorMenu, api, appConfirm, artEm, back, c, composing, errMsg, esc, libTouch,
    fmtSize, IC, iconFor, OFFICE_EXT, openAI, openSearch, openViewerUrl, push, stack, toast */
 
 /* ================= 知识库（笔记本 + 文档块编辑器） ================= */
@@ -263,6 +263,7 @@ function curB() { return DOC && DOC.blocks.find(x => x.id === DOC.curBlock); }
 async function openDoc(id) {
   try {
     const d = await api('/api/kb/nodes/' + id);
+    libTouch('kbdoc', id);
     let blocks = normalizeBlocks(d.content);
     if (!blocks.length) blocks = [newBlock('text')];
     DOC = { id, blocks, curBlock: blocks[0].id, history: [], hist_i: -1 };

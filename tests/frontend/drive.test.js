@@ -411,7 +411,8 @@ test('dvMenu：文件夹给「打包下载」，文件给「下载」', (t) => {
   assert.ok(dir.includes('dvm-zip') && !dir.includes('dvm-dl'), '文件夹给了单文件下载');
   assert.ok(file.includes('dvm-dl') && !file.includes('dvm-zip'));
   assert.ok(dir.includes('dvm-share'), '文件夹现在也能分享');
-  assert.ok(!dir.includes('dvm-send'), '文件夹发不了给好友（走的是单文件接口）');
+  // 文件夹也能发进聊天了 —— 后端先打包成 zip 再发（摊平逐个发会在对方会话里刷屏）
+  assert.ok(dir.includes('dvm-send') && file.includes('dvm-send'), '发送到聊天两种都该有');
 });
 
 test('排序：点按钮出自定义弹层，选中后回写标签', (t) => {

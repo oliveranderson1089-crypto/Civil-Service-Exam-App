@@ -137,19 +137,27 @@ def test_一个字都没出来时才重试(monkeypatch):
 
 # ---------------------------------------------------------------- 超时口径与预算
 def test_对话路径用短超时并且会重试(monkeypatch):
+    """口径从一个数拆成了两个（2026-08）。原先只有一份 40 秒，既当「等第一个字节」
+    又当「等下一片」用：死连接要等满 40 秒才重试，而写得稍慢的正常回答（实测最慢
+    34.5 秒）又差点被它误杀。现在等首字节的那份要明显更短。"""
     seen = []
     monkeypatch.setattr(aiclient, "stream", lambda messages, **kw: seen.append(kw) or iter([]))
     list(agent._ai_stream([{"role": "user", "content": "垣读什么？"}]))
-    assert seen[0]["timeout"] <= 40, "对话是用户盯着屏幕等的，不该沿用离线脚本的 120 秒"
+    assert seen[0]["first_byte"] <= 15, "等首字节等太久，死连接就发现不及时"
+    assert seen[0]["timeout"] <= 60, "对话是用户盯着屏幕等的，不该沿用离线脚本的 120 秒"
+    assert seen[0]["first_byte"] < seen[0]["timeout"], "两个口径该是分开的"
     assert seen[0]["retries"] >= 2, "一次网络抖动就该自己换连接重来，而不是直接失败"
 
 
 def test_单次调用不会把总预算撑成三倍(monkeypatch):
-    """timeout 是**每次尝试**的：带 2 次重试就是三份，必须摊开算。"""
+    """会被重试放大的**只有等首字节那一段** —— 重试只在一个字都没吐出去时发生。
+    所以要摊开算的是它；开始吐字之后不会再重试，那一段拿满剩余预算就行。
+    （原先连「等下一片」也一起除以三，30 秒预算落到每次调用只剩 10 秒。）"""
     seen = []
     monkeypatch.setattr(aiclient, "stream", lambda messages, **kw: seen.append(kw) or iter([]))
     list(agent._ai_stream([], deadline=time.time() + 30))
-    assert seen[0]["timeout"] * (seen[0]["retries"] + 1) <= 31
+    assert seen[0]["first_byte"] * (seen[0]["retries"] + 1) <= 31, "重试三次就把预算吃光了"
+    assert seen[0]["timeout"] <= 31, "单次等待不该超过整场对话的剩余预算"
 
 
 def _fake_stream(events):
@@ -341,7 +349,12 @@ def test_客户端中途断开也要把这一轮存下来(auth_client, monkeypat
     cid = auth_client.post("/api/aichat/chats", json={}).get_json()["id"]
     r = auth_client.post("/api/aichat/chats/%d/stream" % cid, json={"content": "收录筚路蓝缕"},
                          buffered=False)
-    next(iter(r.response))          # 只收第一帧
+    # 收到**第一段正文**再断开。不能只收第一帧：第一帧现在是那个立刻发出去的
+    # `: open` 注释帧（给 Cloudflare 隧道用的，见 aisession.gen），那时候一个字都还没生成。
+    it = iter(r.response)
+    for _ in range(20):
+        if "event: delta" in next(it).decode("utf-8", "ignore"):
+            break
     r.close()                       # …然后断开
     msgs = auth_client.get("/api/aichat/chats/%d" % cid).get_json()["msgs"]
     assert [m["role"] for m in msgs] == ["user", "assistant"], "断开后这一轮不能凭空消失"

@@ -13,8 +13,8 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, api, artIcon, basicsFeats, BOARD_FEATURES, esc, goHome, lbGet, lbView, ME,
-   meView, openAccount, openBoardFeat, openChangkao, openChangshi, openChat, openCkBoard,
+/* global $, api, artIcon, basicsFeats, BOARD_FEATURES, esc, goHome, LB_OPEN, lbGet, lbView, ME,
+   meView, openAccount, openAiOut, openBoardFeat, openChangkao, openChangshi, openChat, openCkBoard,
    openClassics, openDocqa, openDrafts, openDrill, openDrive, openDtest, openEssays,
    openExam, openFanwen, openFind, openGaikuo, openGongwen, openIdiom, openKb,
    openMaterials, openNews, openNotes, openPartyDict, openPlanLog, openPolicyDocs,
@@ -105,6 +105,9 @@ const RAIL_ICON = {
   word: TB_SVG('<path d="M4 19.2A2.3 2.3 0 0 1 6.3 17H20"/><path d="M6.3 2.5H20v19H6.3A2.3 2.3 0 0 1 4 19.2V4.8a2.3 2.3 0 0 1 2.3-2.3z"/>'),
   note: TB_SVG('<path d="M20.2 12.2a6 6 0 0 0-8.5-8.5L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/>'),
   folder: TB_SVG('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
+  /* AI 产出：一大一小两枚星芒，和「库」那一格（js/tabviews.js 的 LB_TILES）同一枚字形 ——
+     同一个功能在左栏和格子里不该长两个样。 */
+  aiout: TB_SVG('<path d="M12 3.2 13.9 8l4.9 1.9-4.9 1.9L12 16.6 10.1 11.8 5.2 9.9 10.1 8z"/><path d="M18.4 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>'),
   gear: TB_SVG('<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.06a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.06A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.06A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.06a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.06A1.7 1.7 0 0 0 19.4 15z"/>'),
 };
 
@@ -196,6 +199,9 @@ const TAB_DEFS = [
       { name: '资料库', icon: 'folder', go: () => openMaterials() },
       { name: '云盘', icon: 'layers', go: () => openDrive() },
       { name: '收藏', icon: 'target', go: () => openStars() },
+      /* 「库」那一页有七个格子，左栏原来只有六条 —— AI 产出在电脑端没有入口。
+         左栏和格子是同一份清单的两个形态，顺序也跟着格子走（tabviews.js 的 LB_TILES）。 */
+      { name: 'AI 产出', icon: 'aiout', go: () => openAiOut() },
     ],
   },
   {
@@ -551,21 +557,22 @@ function srRightFill() {
   if (recent.length) {
     html += '<div class="srr-h">最近打开</div>'
       + recent.slice(0, 4).map(it => srRow(it.title, '', () => {
-        const f = SR_R_OPEN[it.kind]; if (f) f(it.id);
+        const f = LB_OPEN[it.kind]; if (f) f(it.id, it);
       })).join('');
   }
   box.innerHTML = html;
   box.classList.toggle('srr-empty', !html);
 }
-// 「今日更新」和「最近打开」点进去分别是谁。key 跟 today.js 的 TD_GO / tabviews.js 的 LB_OPEN 对齐
+// 「今日更新」点进去是谁。key 跟 today.js 的 TD_GO 对齐
 const SR_R_GO = {
   news: () => openNews(), sucai: () => openSucai('全部'), fanwen: () => openFanwen(),
   videos: () => openVideos(), gaikuo: () => openGaikuo(), changshi: () => openChangshi(),
 };
-const SR_R_OPEN = {
-  note: () => openNotes(), doc: () => openMaterials(), kb: () => openKb(),
-  draft: () => openDrafts(), drive: () => openDrive(),
-};
+/* 「最近打开」这一段**直接借 tabviews.js 的 LB_OPEN**，不再自己抄一份。
+   原来这里有一张 SR_R_OPEN，注释也写着「跟 LB_OPEN 对齐」—— 实际上早就对不上了：
+   它认的是 doc / kb，接口给的却是 material / kbdoc，于是宽屏随手栏里
+   知识库文档和资料库那两条**点了毫无反应**（不报错，就是不动，所以一直没人发现）。
+   两份表只要分开写就会再飘一次，索性只留一份。 */
 /* 随手栏此刻是不是真的在屏幕上。
    有两个条件：这一页允许出（srRightSync）+ 窗口够宽（CSS 的 1360 断点）。
    首页要问这一句：待办和今日更新一旦进了随手栏，中间就不该再写一遍 ——

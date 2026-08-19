@@ -8,10 +8,11 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, anchorMenu, api, appConfirm, appPrompt, artEm, back, c, clipFiles, composing,
-   compressImage, convoAvatar, convoLongPress, convoStick, dvIcon, errMsg, esc, fSize,
+   chunkUpload, compressImage, convoAvatar, convoLongPress, convoStick, dvIcon,
+   DV_CHUNK_MIN, errMsg, esc, fSize,
    growAndSync, init, IS_MOBILE, lightbox, lsDel, lsGet, lsSet, mdToHtml, ME, openAI,
-   preview, push, SKIN, stack, state, toast, uiError, voiceAsrEnabled, voiceBubbleHtml,
-   voiceRecord, voiceSupported, voiceToggle, voiceToText, voiceWhyNot */
+   openViewerUrl, preview, push, SKIN, stack, state, toast, uiError, voiceAsrEnabled, voiceBubbleHtml,
+   voiceInsert, voiceLive, voiceRecord, voiceSupported, voiceToggle, voiceToText, voiceWhyNot */
 
 /* ================= 聊天 ================= */
 let chTab = 'convos', crFid = 0, crGid = 0, crName = '', crLastId = 0, crPoll = 0;
@@ -352,10 +353,14 @@ async function crLoad(first) {
         + '</p>');
     }
     /* 未读分割线：首屏时按「我上次读到哪」插一条红线，滚动停在它那儿而不是最底（CD5）。
-       水位取服务端给的 my_read（群）或第一条未读的前一条（一对一按 read_at 判）。 */
+       水位：群看服务端给的 my_read（我读到哪条），一对一看每条上的 read（= 我读没读过它）。
+       后端两处都是**先**把这一屏拼好、**再**把已读写库，所以首屏拿到的是进来之前的状态。
+       曾经这里读的是 m.read_at_self —— 后端从来没有这个字段，取到的永远是 undefined，
+       于是每条对方发的消息都算「未读」：红线钉死在首屏第一条上，每次进来都从一个月前开始。 */
     let unreadAt = 0;
     if (first) {
-      const un = d.messages.filter(m => !m.mine && (crGid ? (d.my_read !== undefined && m.id > d.my_read) : !m.read_at_self));
+      const un = d.messages.filter(m => !m.mine && !m.recalled
+        && (crGid ? (d.my_read !== undefined && m.id > d.my_read) : !m.read));
       if (un.length >= 2) unreadAt = un[0].id;
     }
     if (d.messages.length) { const e = box.querySelector('.empty'); if (e) e.remove(); }
@@ -373,6 +378,8 @@ async function crLoad(first) {
     }
     crApplyRead(d.read_upto);
     crApplyRecalled(d.recalled);
+    // 正在下的文件：这一批重绘会把卡片刷回静态样子，把进度补画回去
+    Object.keys(CR_DL).forEach(id => crDlPaint(+id));
     if (first) crRenderMore();
     if (d.messages.length) crStickBottom(box, first, fresh);
     crPaintAtJump();
@@ -529,7 +536,7 @@ function crMsgHtml(m) {
     inner = `<div class="cr-ai">${mdToHtml(m.body || '')}</div>`;
   } else if (m.kind === 'voice') inner = voiceBubbleHtml(m);
   else if (m.kind === 'image') inner = `<img class="cr-img" src="/api/chat/file/${m.file_id}?thumb=1" data-lbimg="/api/chat/file/${m.file_id}?inline=1">`;
-  else if (m.kind === 'file') inner = `<a class="cr-file" href="/api/chat/file/${m.file_id}" download><span class="cr-fic">${dvIcon((m.file_name || '').split('.').pop())}</span><span class="cr-fmid"><span class="cr-fn">${esc(m.file_name || '文件')}</span><em>${fSize(m.file_size)}</em></span></a>`;
+  else if (m.kind === 'file') inner = crFileCard(m.file_id, m.file_name, m.file_size, m.file_view);
   else inner = crText(m.body);
   if (m.quote) {
     inner = `<div class="cr-quote" data-jump="${m.quote.id}"><b>${esc(m.quote.who)}</b>：${esc(m.quote.text)}</div>` + inner;
@@ -586,7 +593,246 @@ function crTimeLabel(t) {
   if (d.toDateString() === yst.toDateString()) return '昨天 ' + hm;
   return t.slice(5, 10).replace('-', '月') + '日 ' + hm;
 }
-$('#cr-msgs').addEventListener('click', e => { const im = e.target.closest('[data-lbimg]'); if (im) lightbox(im.dataset.lbimg); });
+$('#cr-msgs').addEventListener('click', e => {
+  const im = e.target.closest('[data-lbimg]'); if (im) { lightbox(im.dataset.lbimg); return; }
+  const fb = e.target.closest('[data-cfile]'); if (fb) { e.preventDefault(); crFileTap(fb); }
+});
+
+/* ================= 聊天里的文件：预览 / 下载 / 转存 =================
+   原来这里只有一个 <a download>：点下去只有一种结果（下载），
+   没有「要预览还是要下载」的问询，也没有任何进度反馈 —— 安卓交给系统下载器，
+   进度只在通知栏，应用里一点动静没有，于是人就反复点、反复下同一份。
+   现在点击一律被拦下来，由下面这套接管；应用内预览直接复用资料库/云盘那个查看器
+   （openViewerUrl 自己会往导航栈压一层，所以返回一次就是回到聊天窗，不多退一级）。 */
+const CR_IMG_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'avif', 'svg'];
+const CR_DL = {};        // file_id → { state:'run'|'done'|'fail', pct, got, total, … }
+
+function crFileCard(id, name, size, viewable) {
+  return `<button type="button" class="cr-file" data-cfile="${id}"
+    data-cfn="${esc(name || '')}" data-cfsz="${size || 0}" data-cfv="${viewable ? 1 : 0}"
+    data-cfem="${esc(fSize(size))}">
+    <span class="cr-fic">${dvIcon((name || '').split('.').pop())}</span>
+    <span class="cr-fmid"><span class="cr-fn">${esc(name || '文件')}</span>
+      <em>${fSize(size)}</em><span class="cr-fbar hidden"><i></i></span></span>
+    <span class="cr-fact hidden"></span></button>`;
+}
+function crFileOf(el) {
+  return { id: +el.dataset.cfile, name: el.dataset.cfn || '文件', size: +el.dataset.cfsz || 0,
+    view: el.dataset.cfv === '1', meta: el.dataset.cfmeta || '' };
+}
+// 点这张卡：下载中→取消，失败→重试，下完（安卓）→打开，其余→弹动作卡
+function crFileTap(el) {
+  const f = crFileOf(el);
+  const j = CR_DL[f.id];
+  if (j && j.state === 'run') { crDlCancel(f.id); return; }
+  if (j && j.state === 'fail') { crDownload(f); return; }
+  if (j && j.state === 'done' && j.path) { crOpenLocal(j.path); return; }
+  crFileSheet(f);
+}
+/* ---- 动作卡（不用系统原生弹窗，样式跟应用走） ---- */
+function crFsClose() {
+  const b = document.getElementById('cr-fsheet');
+  if (b) { b.remove(); document.removeEventListener('keydown', crFsKey); }
+}
+function crFsKey(e) { if (e.key === 'Escape') crFsClose(); }
+function crFileSheet(f) {
+  crFsClose();
+  const ext = (f.name || '').split('.').pop().toLowerCase();
+  const box = document.createElement('div');
+  box.id = 'cr-fsheet'; box.className = 'cr-fsheet';
+  box.innerHTML = `<div class="cf-mask"></div>
+    <div class="cf-card" role="dialog" aria-label="${esc(f.name)}">
+      <div class="cf-f"><span class="cf-ic">${dvIcon(ext)}</span>
+        <span class="cf-t"><b>${esc(f.name)}</b>
+          <em>${fSize(f.size)}${f.meta ? ' · ' + esc(f.meta) : ''}</em></span></div>
+      ${f.view
+    ? `<button type="button" class="cf-b pri" data-cf="view"><span class="cf-k">${artEm('👁')}</span>在应用内预览</button>`
+    : `<button type="button" class="cf-b off" disabled><span class="cf-k">${artEm('👁')}</span>${ext ? '.' + esc(ext) + ' ' : ''}这种格式看不了，下载后再打开</button>`}
+      <button type="button" class="cf-b" data-cf="dl"><span class="cf-k">${artEm('⤓')}</span>下载到本机<span class="cf-s">下载文件夹</span></button>
+      <button type="button" class="cf-b" data-cf="save"><span class="cf-k">${artEm('↗')}</span>转存到我的云盘</button>
+      <button type="button" class="cf-b cancel" data-cf="x">取消</button>
+    </div>`;
+  document.body.appendChild(box);
+  box.addEventListener('click', e => {
+    if (e.target.closest('.cf-mask')) { crFsClose(); return; }
+    const b = e.target.closest('[data-cf]'); if (!b) return;
+    const a = b.dataset.cf;
+    crFsClose();
+    if (a === 'view') crPreview(f);
+    else if (a === 'dl') crDownload(f);
+    else if (a === 'save') crSaveToDrive(f);
+  });
+  document.addEventListener('keydown', crFsKey);
+  const first = box.querySelector('.cf-b:not([disabled])');
+  if (first) first.focus();
+}
+/* ---- 预览：图片走看图浮层，其余走查看器（pdf.js / 阅读模式 / 批注） ---- */
+function crPreview(f) {
+  const ext = (f.name || '').split('.').pop().toLowerCase();
+  const url = '/api/chat/file/' + f.id;
+  if (CR_IMG_EXT.includes(ext)) { lightbox(url + '?inline=1', f.name); return; }
+  openViewerUrl(url + '?view=1', f.name || '文件', '.' + ext, url, url + '?text=1');
+}
+/* ---- 转存到自己的云盘（内容按 sha256 共用，不重复占盘） ---- */
+async function crSaveToDrive(f) {
+  try {
+    const d = await api('/api/chat/file/' + f.id + '/save', { method: 'POST' });
+    toast(d.existed ? ('云盘里已经有了：' + (d.folder || '根目录'))
+      : ('已转存到云盘「' + (d.folder || '聊天文件') + '」'));
+  } catch (err) { toast(errMsg(err), true); }
+}
+/* ---- 下载：进度画在这条消息自己的卡片上 ---- */
+function crDlPaint(id) {
+  const j = CR_DL[id];
+  document.querySelectorAll('[data-cfile="' + id + '"]').forEach(el => {
+    const em = el.querySelector('em');
+    const bar = el.querySelector('.cr-fbar');
+    const act = el.querySelector('.cr-fact');
+    el.classList.remove('dl-run', 'dl-done', 'dl-fail');
+    if (!j) {                                   // 回到静态样子
+      if (em) em.textContent = el.dataset.cfem || '';
+      if (bar) bar.classList.add('hidden');
+      if (act) { act.classList.add('hidden'); act.textContent = ''; }
+      return;
+    }
+    el.classList.add('dl-' + j.state);
+    if (em) {
+      if (j.state === 'run') {
+        em.textContent = j.total
+          ? fSize(j.got) + ' / ' + fSize(j.total) + ' · ' + Math.max(0, j.pct) + '%'
+          : '下载中… ' + fSize(j.got);
+      } else if (j.state === 'done') em.textContent = '✓ ' + (j.where || '已保存');
+      else em.textContent = j.msg || '下载失败';
+    }
+    if (bar) {
+      bar.classList.toggle('hidden', j.state !== 'run');
+      const i = bar.querySelector('i');
+      // 拿不到总大小（没有 Content-Length）就画一条来回跑的条，别假装有百分比
+      if (i) { i.style.width = j.pct >= 0 ? j.pct + '%' : '100%'; }
+      bar.classList.toggle('indet', j.state === 'run' && j.pct < 0);
+    }
+    if (act) {
+      const t = j.state === 'run' ? '取消' : (j.state === 'fail' ? '重试' : (j.path ? '打开' : ''));
+      act.textContent = t;
+      act.classList.toggle('hidden', !t);
+    }
+  });
+}
+function crDlCancel(id) {
+  const j = CR_DL[id]; if (!j) return;
+  if (j.abort) { j.abort(); return; }            // 走 fetch 的：abort 之后在 catch 里收尾
+  if (j.native && window.GongkaoNative && GongkaoNative.cancelDownload) {
+    try { GongkaoNative.cancelDownload(String(id)); } catch (_) { /* 老壳没这个方法 */ }
+  }
+  delete CR_DL[id]; crDlPaint(id); toast('已取消下载');
+}
+function crDlLater(id) {                          // 完成/失败的状态留一分钟，然后恢复原样
+  setTimeout(() => {
+    const j = CR_DL[id];
+    if (j && j.state !== 'run') { delete CR_DL[id]; crDlPaint(id); }
+  }, 60000);
+}
+function crBlobSave(blob, name) {
+  const u = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = u; a.download = name || '';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 60000);   // 壳里的下载器可能还在读，别急着撤
+}
+async function crDownload(f) {
+  const id = f.id;
+  if (CR_DL[id] && CR_DL[id].state === 'run') { toast('这个文件正在下载'); return; }
+  const url = '/api/chat/file/' + id;
+  /* 安卓：交给原生下载（和更新包同一套流式下载），进度回调到下面的 __chatDl*。
+     没有这个桥的旧版 APK 会掉进下面 fetch 那条路 —— blob 存不下来，
+     所以旧版继续走 <a download>（系统下载器接管，通知栏里有进度）。 */
+  if (window.GongkaoNative && typeof GongkaoNative.downloadFile === 'function') {
+    CR_DL[id] = { state: 'run', pct: -1, got: 0, total: f.size || 0, name: f.name, native: true };
+    crDlPaint(id);
+    try { GongkaoNative.downloadFile(location.origin + url, f.name || '', String(id)); }
+    catch (err) {
+      CR_DL[id] = { state: 'fail', msg: '下载没能开始：' + errMsg(err) };
+      crDlPaint(id); crDlLater(id);
+    }
+    return;
+  }
+  if (window.GongkaoNative && !window.__desktop) {   // 旧版安卓壳：没有桥，退回系统下载器
+    crBlobSaveFallback(url, f.name);
+    return;
+  }
+  const ctl = ('AbortController' in window) ? new AbortController() : null;
+  CR_DL[id] = { state: 'run', pct: 0, got: 0, total: f.size || 0, name: f.name,
+    abort: ctl ? () => ctl.abort() : null };
+  crDlPaint(id);
+  try {
+    const r = await fetch(url, { credentials: 'same-origin', signal: ctl ? ctl.signal : undefined });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const total = +(r.headers.get('Content-Length') || 0) || f.size || 0;
+    const rd = r.body && r.body.getReader ? r.body.getReader() : null;
+    let blob;
+    if (!rd) {                                   // 没有流式 API 的老 WebView：至少别崩，只是没百分比
+      CR_DL[id].pct = -1; crDlPaint(id);
+      blob = await r.blob();
+    } else {
+      const parts = []; let got = 0, last = 0;
+      for (;;) {
+        const st = await rd.read();
+        if (st.done) break;
+        parts.push(st.value); got += st.value.length;
+        const now = Date.now();
+        if (now - last >= 120) {                 // 刷太密只是白烧 CPU，看不出区别
+          last = now;
+          Object.assign(CR_DL[id], { got, total,
+            pct: total ? Math.min(99, Math.floor(got * 100 / total)) : -1 });
+          crDlPaint(id);
+        }
+      }
+      blob = new Blob(parts, { type: r.headers.get('Content-Type') || 'application/octet-stream' });
+    }
+    crBlobSave(blob, f.name);
+    CR_DL[id] = { state: 'done', where: '已保存到「下载」' };
+    crDlPaint(id); crDlLater(id);
+  } catch (err) {
+    if (err && err.name === 'AbortError') { delete CR_DL[id]; crDlPaint(id); toast('已取消下载'); return; }
+    CR_DL[id] = { state: 'fail', msg: '下载中断：' + errMsg(err) };
+    crDlPaint(id); crDlLater(id);
+  }
+}
+// 旧壳兜底：老老实实用隐藏的 <a download>，让壳自己的下载器接管
+function crBlobSaveFallback(url, name) {
+  const a = document.createElement('a');
+  a.href = url; a.download = name || '';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('已交给系统下载器，进度看通知栏');
+}
+function crOpenLocal(path) {
+  if (window.GongkaoNative && GongkaoNative.openDownload) {
+    try { GongkaoNative.openDownload(path); return; } catch (_) { /* 老壳没这个方法 */ }
+  }
+  toast('文件在「下载」文件夹里');
+}
+/* 安卓原生下载的回调（三个都由壳在下载线程里调） */
+window.__chatDl = function (tag, pct, got, total) {
+  const id = +tag; const j = CR_DL[id]; if (!j) return;
+  Object.assign(j, { state: 'run', pct: +pct, got: +got || 0, total: +total || j.total });
+  crDlPaint(id);
+};
+window.__chatDlDone = function (tag, path) {
+  const id = +tag;
+  CR_DL[id] = { state: 'done', where: '已保存到「下载」', path: path || '' };
+  crDlPaint(id); crDlLater(id);
+};
+// 安卓 9 及以下没有 MediaStore.Downloads，壳把活儿交给了系统下载器
+window.__chatDlSys = function (tag) {
+  const id = +tag;
+  CR_DL[id] = { state: 'done', where: '已交给系统下载器，进度看通知栏' };
+  crDlPaint(id); crDlLater(id);
+};
+window.__chatDlFail = function (tag, msg) {
+  const id = +tag;
+  CR_DL[id] = { state: 'fail', msg: '下载失败：' + (msg || '未知原因') };
+  crDlPaint(id); crDlLater(id);
+};
 
 /* ---- 语音条：点一下放，再点停；进度画在气泡自己身上 ---- */
 function crVoiceState(key, st, ratio) {
@@ -864,15 +1110,24 @@ function crInfoToggle() {
 function crInfoHead(title) {
   return `<div class="ci-head"><b>${esc(title)}</b><button type="button" id="ci-x" title="收起">✕</button></div>`;
 }
+/* 信息栏的「共享文件」和气泡里的文件卡走**同一条路**：点一下先问预览还是下载。
+   原来这里是 <a target="_blank">，安卓 WebView 不开新窗口，同域链接就地导航 ——
+   整个单页应用被文件本身顶掉，window.appBack 跟着没了，左滑只能退到后台，
+   再进来就是重新加载 → 回首页。所以这里连 href 都不该有。 */
 function crFileRow(f) {
-  return `<a class="ci-file" href="/api/chat/file/${f.id}" target="_blank" rel="noopener">
+  const meta = (f.who || '') + ' · ' + (f.time || '').slice(5, 16);
+  return `<button type="button" class="ci-file" data-cfile="${f.id}"
+    data-cfn="${esc(f.name || '')}" data-cfsz="${f.size || 0}" data-cfv="${f.view ? 1 : 0}"
+    data-cfem="${esc(meta)}" data-cfmeta="${esc(meta)}">
     <span class="fi">${artEm('📄')}</span><span class="ci-fm"><b>${esc(f.name)}</b>
-    <em>${esc(f.who || '')} · ${esc((f.time || '').slice(5, 16))}</em></span></a>`;
+    <em>${esc(meta)}</em><span class="cr-fbar hidden"><i></i></span></span>
+    <span class="cr-fact hidden"></span></button>`;
 }
 function crImgGrid(imgs) {
   if (!imgs || !imgs.length) return '<p class="ci-empty">还没有图片。</p>';
+  // 格子里铺缩略图、点开才拿原图：一屏二十几张原图是几十 MB 的白等
   return '<div class="ci-imgs">' + imgs.map(i =>
-    `<img src="${i.url}" data-lb="${i.url}" alt="">`).join('') + '</div>';
+    `<img src="${i.thumb || i.url}" data-lb="${i.url}" alt="">`).join('') + '</div>';
 }
 async function crOpenInfo() {
   if (!crGid && !crFid) return;
@@ -928,6 +1183,8 @@ $('#chat-info').addEventListener('click', async e => {
   if (e.target.closest('#ci-x')) { crInfoClose(); return; }
   const img = e.target.closest('[data-lb]');
   if (img) { lightbox(img.dataset.lb); return; }
+  const cf = e.target.closest('[data-cfile]');
+  if (cf) { e.preventDefault(); crFileTap(cf); return; }   // 和气泡里的文件同一条路
   const ed = e.target.closest('[data-gedit]');
   if (ed) {
     const isName = ed.dataset.gedit === 'name';
@@ -1058,17 +1315,26 @@ function crVoiceAvail() {
 }
 crVoiceAvail();
 let crRec = null, crRecOn = false;
-/* 录一段传服务端识别（没有浏览器自带识别时走这条），文字填进输入框、不自动发 */
+/* 录一段传服务端识别（没有浏览器自带识别时走这条），文字填进输入框、不自动发。
+   转写要好几秒：这中间用户可能接着打字，也可能切去另一个会话 ——
+   所以结果回来先认会话，再插到光标处，不能拿开录时的快照覆盖整个输入框
+   （覆盖会吞掉刚打的字，还会打断输入法正在拼的字）。 */
 async function crVoiceByServer() {
   const rec = await voiceRecord({ tip: '正在录音，说完点「完成」转成文字' });
   if (!rec) return;
-  const base = $('#cr-text').value;
+  const el = $('#cr-text'), fid = crFid, gid = crGid;
+  const b = $('#cr-voice'); if (b) b.classList.add('rec');   // 转写中：按钮上有动静，别再点一次
   try {
     const txt = await voiceToText(rec.blob, rec.ext);
-    $('#cr-text').value = base + (base ? ' ' : '') + txt;
-    if (!txt) toast('没识别出内容');
-  } catch (e) { toast(errMsg(e), true); }
-  crGrow();
+    if (fid !== crFid || gid !== crGid) { toast('会话已经切走了，这段话没填进去', true); return; }
+    if (!txt) { toast('没识别出内容'); return; }
+    voiceInsert(el, txt);
+  } catch (e) {
+    toast(errMsg(e), true);
+  } finally {
+    if (b) b.classList.remove('rec');
+    crGrow();
+  }
 }
 async function crVoiceToggle() {
   const R = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1081,11 +1347,11 @@ async function crVoiceToggle() {
   if (crRecOn) { try { crRec.stop(); } catch (_) { /* 已经停了 */ } return; }
   crRec = new R();
   crRec.lang = 'zh-CN'; crRec.interimResults = true; crRec.continuous = true;
-  const base = $('#cr-text').value;
+  const live = voiceLive($('#cr-text'));   // 只改「自己写进去的那一段」，别重写整个框
   crRec.onresult = (ev) => {
     let txt = '';
     for (let i = 0; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
-    $('#cr-text').value = (base ? base + ' ' : '') + txt;
+    live.set(txt);
     crGrow();
   };
   crRec.onend = () => { crRecOn = false; crVoicePaint(); };
@@ -1113,6 +1379,12 @@ const crVs = $('#cr-vsend'); if (crVs) crVs.onclick = crVoiceSend;
 // 每个接口的分页参数名都不一样（entries 是 page_size 且默认才 5 条，classics 固定 10 条一页），
 // 所以这里逐个写清楚，别想当然套一个 limit。
 const CARD_META = {
+  /* AI 对话的分享。跟下面几种不一样：那几种是「应用里的一条」，点开直达我这边的数据；
+     这一种是**对方复制给我的一份快照**，点开是只读地看 + 可以接着往下问。
+     它没有 api/pick —— 分享是从 AI 面板那头发起的，不从聊天的 ＋ 里挑。
+     withId：这类卡片的打开函数**要**卡片 id；其余几种的 open 函数签名各不相同
+     （openNotes(board)、openSucai(kind)），无脑把 id 传过去会把它们弄坏。 */
+  aishare: { ic: '💬', name: 'AI 对话', open: 'openAiShare', withId: true },
   wrongq: { ic: '📓', name: '错题本', api: '/api/wrongq?page_size=30',
     pick: d => (d.items || []).map(x => ({ id: x.id, title: x.question || '', sub: [x.board, x.qtype].filter(Boolean).join(' · ') })),
     open: 'openWrongq' },
@@ -1175,7 +1447,9 @@ $('#cr-msgs').addEventListener('click', e => {
   const meta = CARD_META[c.dataset.card]; if (!meta) return;
   const fn = window[meta.open];
   if (typeof fn !== 'function') { toast('打不开这个内容', true); return; }
-  try { fn(); } catch (err) { console.error('[聊天卡片] 打开失败', err); toast('打开失败', true); }
+  // 只有声明了 withId 的才收 id：openNotes(board) / openSucai(kind) 收的是别的东西
+  try { fn(meta.withId ? (+c.dataset.cid || 0) : undefined); }
+  catch (err) { console.error('[聊天卡片] 打开失败', err); toast('打开失败', true); }
 });
 
 /* ---- 表情面板：聊天和 AI 助手共用一个 ----
@@ -1343,12 +1617,35 @@ async function crSendFiles(files) {
       try { blob = await compressImage(f); } catch (_) { blob = f; }
       if (blob !== f && !/\.jpe?g$/i.test(name)) name = name.replace(/\.[^.]+$/, '') + '.jpg';
     }
-    const fd = new FormData(); fd.append('file', blob, name);
-    try { await api(crUrl(), { method: 'POST', body: fd }); } catch (err) { toast(f.name + '：' + err.message, true); }
+    try {
+      if (blob.size > DV_CHUNK_MIN) await crSendBig(blob, name);
+      else {
+        const fd = new FormData(); fd.append('file', blob, name);
+        await api(crUrl(), { method: 'POST', body: fd });
+      }
+    } catch (err) { toast(f.name + '：' + errMsg(err), true); }
   }
   crSending = false;
   crLoad(false);
 }
+/* 大文件绕道云盘再发。
+
+   聊天这条路是「一整个请求发完」：200MB 封顶，走隧道时 100MB 就断，中途掉线还得从头来。
+   所以超过分片门槛的就先分片传进自己云盘的「聊天文件」，再让服务端把那一份发进当前
+   会话 —— 上限跟云盘一样，断了能续传，自己云盘里也留着一份（群消息本来就引用发送方
+   那一份，不额外占盘）。 */
+async function crSendBig(blob, name) {
+  const file = blob instanceof File ? blob : new File([blob], name, { type: blob.type || '' });
+  let shown = -1;
+  const row = await chunkUpload(file, { target: 'drive', folder: '聊天文件' }, n => {
+    const pct = Math.floor(n / (file.size || 1) * 10) * 10;    // 每 10% 报一次，别刷屏
+    if (pct > shown) { shown = pct; toast('正在发送 ' + name + '… ' + pct + '%'); }
+  });
+  await api('/api/drive/' + row.id + '/send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(crGid ? { groups: [crGid] } : { users: [crFid] }) });
+}
+
 /* ---- 发语音 ----
    走的还是文件那条通道（multipart），只是多带 voice=1 和时长：后端据此把这条
    存成 kind='voice'，音频本身照样进云盘「聊天文件」，想转发想下载都还在。 */

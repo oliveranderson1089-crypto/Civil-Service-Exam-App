@@ -27,9 +27,12 @@ def _ai_conf():
     必须传 CFG 而不是让 aiclient 自己读盘：后台改完 AI 设置是先改内存 CFG 再存盘，
     并发下盘上的可能还是旧值。
     """
-    fast = aiclient.conf("fast", CFG)
+    # who="" 是关掉「服务级档位覆盖」：这函数是给后台/前端**展示**用的（两个档位
+    # 各配了哪个模型），要的是配置原样。不关的话它会按调用栈把自己也当成一个服务，
+    # 显示的模型会跟着谁在问而变。
+    fast = aiclient.conf("fast", CFG, who="")
     return {"base": fast["base"], "model": fast["model"],
-            "pro": aiclient.conf("pro", CFG)["model"], "key": fast["key"]}
+            "pro": aiclient.conf("pro", CFG, who="")["model"], "key": fast["key"]}
 
 
 def ai_configured():
@@ -88,7 +91,13 @@ def _img_data_url(path, maxpx=1600):
 
 def vision_chat(text, images, prefer="free", temperature=0.2, max_tokens=1500, timeout=90, json_mode=False):
     """智谱视觉对话。images 为文件路径或 data-url 列表。
-    prefer='free' 先用免费 flash（省钱、读图够用），429/失败自动退到旗舰 glm-4.6v。"""
+    prefer='free' 先用免费 flash（省钱、读图够用），429/失败自动退到旗舰 glm-4.6v。
+
+    prefer 是**业务的建议**，管理员在「后台 → 档位控制」里能按服务改掉它——
+    和 DeepSeek 那两档同一个旋钮体系（键的形状、优先级、清除方式都一样）。
+    who 顺调用栈找，落到真正的业务模块（drill / docqa / attach），不是这个转发层。
+    """
+    prefer = aiclient.effective_vision(prefer, CFG, aimeter.caller())
     conf = _vision_conf()
     if not conf["key"] or not conf["base"]:
         raise RuntimeError("视觉模型未配置")

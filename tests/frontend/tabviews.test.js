@@ -39,14 +39,24 @@ const tap = (h, key) => $(h, `#tabbar [data-tb="${key}"]`).click();
 // 骨架是同步画的，数字要等一次 await —— 让微任务跑完再断言
 const settle = () => new Promise(r => setTimeout(r, 0));
 
-test('库：六个容器一个不少，点下去落到真视图', async (t) => {
+test('库：七个容器一个不少，点下去落到真视图', async (t) => {
   const h = bootTab(); t.after(() => h.close());
   tap(h, 'lib');
   const names = $$(h, '#tab-groups .lb-tile .lb-n').map(b => b.textContent);
-  assert.deepStrictEqual(names, ['小记', '知识库', '草稿本', '资料库', '云盘', '收藏']);
+  // AI 产出跟其余六个**并列**，不藏在助手里面：它是「东西存在哪」的问题
+  assert.deepStrictEqual(names,
+    ['小记', '知识库', '草稿本', '资料库', '云盘', '收藏', 'AI 产出']);
   $$(h, '#tab-groups .lb-tile')[4].click();       // 云盘
   assert.strictEqual(h.window.document.body.dataset.view, 'drive');
   await settle();      // 云盘自己的加载还在跑，等它跑完再关窗口
+});
+
+test('库：AI 产出格子点得进那一页', async (t) => {
+  const h = bootTab(); t.after(() => h.close());
+  tap(h, 'lib');
+  $$(h, '#tab-groups .lb-tile')[6].click();
+  assert.strictEqual(h.window.document.body.dataset.view, 'aiout');
+  await settle();
 });
 
 test('库：数字回来了填在格子上，最近打开按接口给的次序摆', async (t) => {
@@ -66,7 +76,7 @@ test('库：接口挂了照样能进各个库（导航不该给数字陪葬）',
   t.after(() => h.close());
   tap(h, 'lib');
   await settle();
-  assert.strictEqual($$(h, '#tab-groups .lb-tile').length, 6);
+  assert.strictEqual($$(h, '#tab-groups .lb-tile').length, 7);
   $$(h, '#tab-groups .lb-tile')[3].click();       // 资料库
   assert.strictEqual(h.window.document.body.dataset.view, 'materials');
   await settle();
@@ -88,6 +98,35 @@ test('库：最近打开的标题走转义（内容是用户自己写的）', as
   await settle();
   assert.strictEqual($(h, '#tab-groups img'), null, '小记标题里的 img 活了');
   assert.match($(h, '#tab-groups').textContent, /<img src=x/);
+});
+
+/* 「最近打开」这张列表的意义全在**点回去落到哪**。
+   云盘那条以前一律 openDrive() —— 从三层深的文件夹里点开的一份 PDF，
+   点回来站在云盘根目录，等于让人自己再找一遍。 */
+test('库：最近打开的云盘文件点回去，落到它所在的那一层', async (t) => {
+  const h = bootTab({ '/api/lib/home': { counts: {}, recent: [{
+    kind: 'drive', label: '云盘', id: 9001, title: '四色笔记.pdf',
+    extra: '内江资中县社区备考资料/5.社会实务（初级）', at: '2026-08-18 17:38:15', opened: true }] } });
+  t.after(() => h.close());
+  tap(h, 'lib');
+  await settle();
+  $(h, '#tab-groups .tv-row').click();
+  await settle();
+  assert.strictEqual(h.run('dvFolder'), '内江资中县社区备考资料/5.社会实务（初级）',
+    '点回一份深处的文件，人却站在云盘根目录');
+});
+
+test('库：最近打开里的云盘文件夹点得进去', async (t) => {
+  const h = bootTab({ '/api/lib/home': { counts: {}, recent: [{
+    kind: 'drivedir', label: '云盘', id: '内江资中县社区备考资料', title: '内江资中县社区备考资料',
+    extra: '', at: '2026-08-18 17:00:00', opened: true }] } });
+  t.after(() => h.close());
+  tap(h, 'lib');
+  await settle();
+  $(h, '#tab-groups .tv-row').click();
+  await settle();
+  assert.strictEqual(h.window.document.body.dataset.view, 'drive');
+  assert.strictEqual(h.run('dvFolder'), '内江资中县社区备考资料');
 });
 
 test('我的：九个入口一个不少（管理后台按身份出现）', async (t) => {

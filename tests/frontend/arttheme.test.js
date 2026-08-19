@@ -294,9 +294,9 @@ test('设置页：默认 + 这一端登记的全部主题都在，当前那格�
 
 /* 图标册（js/articons.js）。缺一枚**不会报错**：取用点会让那一枚静静退回默认图标，
    一屏里混进一枚别人家的字形，得盯着看才发现。所以这一条按槽位逐个数。 */
-test('图标册：每套主题都有一册，十三个槽位一个不缺，且各册字形不重样', (t) => {
+test('图标册：每套主题都有一册，十四个槽位一个不缺，且各册字形不重样', (t) => {
   const h = boot(); t.after(() => h.close());
-  const SLOTS = ['note', 'kb', 'draft', 'material', 'drive', 'star',
+  const SLOTS = ['note', 'kb', 'draft', 'material', 'drive', 'star', 'aiout',
     'today', 'drill', 'me', 'clock', 'check', 'cross', 'layers'];
   for (const m of ALL) {
     use(h, m);

@@ -93,7 +93,11 @@ def test_att_text_摊平与截断():
     out = aisession._att_text(raw)
     assert "【附件：a.txt】" in out and "内容乙" in out
     assert aisession._att_text("坏JSON") == ""
-    assert len(aisession._att_text(json.dumps([{"name": "x", "text": "字" * 999}]), limit=10)) < 40
+    # 截断**不是**默默砍短：正文照 limit 截，但必须附一句「后面还有」的交代。
+    # 少了这句，模型会把半份资料当整份读，然后自信地答错（"这份 PDF 里只有 12 个易混淆点"）。
+    cut = aisession._att_text(json.dumps([{"name": "x", "text": "字" * 999}]), limit=10)
+    assert cut.split("】\n", 1)[1] == "字" * 10, "正文该按 limit 截"
+    assert "后面还有没给你的内容" in cut, "截断没留痕，模型会拿这半截当全文下结论"
 
 
 def test_删除确认带上那条数据的原文(auth_client):

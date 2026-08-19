@@ -179,14 +179,34 @@ def _extract_text(path, ext):
     return ""
 
 
-def _pdf_text_or_ocr(path, ext):
-    """先按文本抽取；扫描件抽不出字就逐页 OCR（最多 30 页）。"""
+def pdf_pages(path):
+    """PDF 有多少页；问不出来就返回 0。
+
+    用来向用户和模型交代「这份文件一共多少页、你只看到了前几页」——
+    没有这个数，截断就是无声的（见 attach.py 那段注释）。"""
+    try:
+        out = subprocess.run(["pdfinfo", path], capture_output=True, timeout=20)
+        for line in out.stdout.decode("utf-8", "ignore").splitlines():
+            if line.startswith("Pages:"):
+                return int(line.split(":", 1)[1].strip())
+    except Exception:
+        log.debug("pdfinfo 取页数失败", exc_info=True)
+    return 0
+
+
+def _pdf_text_or_ocr(path, ext, max_pages=30):
+    """先按文本抽取；扫描件抽不出字就逐页 OCR。
+
+    max_pages 是 OCR 的页数上限（文本层抽取不受它限制——那个不花时间）。
+    调用方各有各的口径：资料库这类离线场景给得起 30 页，AI 附件是用户盯着等的，
+    只给 20 页（300dpi 一页要跑几秒）。
+    """
     txt = (_extract_text(path, ext) or "").strip()
     if len(txt) >= 200 or ext != ".pdf":
         return txt
     tmp = tempfile.mkdtemp(prefix="slocr_")
     try:
-        subprocess.run(["pdftoppm", "-r", "200", "-gray", "-png", "-l", "30", path,
+        subprocess.run(["pdftoppm", "-r", "200", "-gray", "-png", "-l", str(int(max_pages)), path,
                         os.path.join(tmp, "p")], check=True, timeout=900, capture_output=True)
         out = []
         for f in sorted(x for x in os.listdir(tmp) if x.endswith(".png")):

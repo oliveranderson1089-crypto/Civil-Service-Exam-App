@@ -54,13 +54,19 @@ TOOL_LABELS = {
     "search_sucai": "找素材", "list_bookmarks": "查你的收藏",
     "get_daily_news": "查今日时政", "search_classics": "找古诗文",
     "search_changshi": "查常识", "list_materials": "查资料库",
-    "search_kb": "查知识库", "get_study_stats": "查学习统计",
+    "search_kb": "查知识库",
+    "list_project_files": "查项目资料", "read_project_file": "读项目资料", "get_study_stats": "查学习统计",
+    "search_real_questions": "翻真题库", "search_basics": "查讲义知识点",
+    "list_drive": "查云盘", "read_drive_file": "读云盘文件",
+    "get_exam_countdown": "算考试倒计时",
+    "web_search": "上网搜", "web_fetch": "读网页",
     "add_word": "收录到成语词语积累", "open_feature": "打开功能",
     "create_note": "记一条小记", "add_wrong_question": "加进错题本",
     "update_wrong_question": "修改错题", "star_word": "收藏词条",
     "append_to_note": "追加到小记", "add_daily_task": "加每日任务",
     "complete_daily_task": "完成任务", "complete_plan_item": "完成计划项",
     "star_classic": "收藏古诗文", "remember_fact": "记住这件事",
+    "create_file": "生成文件", "deliver_file": "投放文件", "list_files": "查 AI 产出",
     "delete_entry": "删除收录的词",
     "delete_wrong_question": "删除错题", "delete_note": "删除小记",
 }
@@ -96,15 +102,44 @@ READ_GROUPS = (
     ("时政|新闻|政策|会议|讲话",
      ("get_daily_news", "search_sucai", "search_changshi")),
     ("资料|文件|讲义|知识库|题库|多少题",
-     ("list_materials", "search_kb", "get_library_stats")),
+     ("list_materials", "search_kb", "get_library_stats", "search_basics", "list_files",
+      "list_project_files", "read_project_file")),
+    # 项目资料是**挂在项目上、项目下所有对话共享**的那几份文件。这一组要宽：
+    # 在项目里问「这份怎么讲的」「按标准给我打分」，问句里常常连「资料」两个字都没有。
+    ("项目|挂的|挂了|参考资料|评分标准|模板|标准|原文|这份|那份|按标准|范文",
+     ("list_project_files", "read_project_file")),
+    # ↓ 下面这几组是随新工具一起加的。**加读工具必须同时加触发词**：这个函数只裁读工具，
+    #   漏了就等于「明明有这个工具，它却回一句我做不到」——比没有这个工具更让人火大。
+    ("真题|考过|历年|原题|类似的题|出几道|做几道|练几道|来一道|来几道",
+     ("search_real_questions", "search_yy", "list_wrong_questions")),
+    ("知识点|考点|讲义|书上|怎么讲|方法|技巧|公式|口诀|怎么做",
+     ("search_basics", "search_kb", "search_real_questions")),
+    ("云盘|网盘|我传的|上传过|存过|文档|附件",
+     ("list_drive", "read_drive_file", "list_materials", "list_files")),
+    ("还有多少天|倒计时|考试时间|什么时候考|几号考|考期",
+     ("get_exam_countdown", "get_plan_progress", "get_plan_today")),
+    # 联网这一组要**宽**：漏掉它的代价是模型拿两年前的印象回答「最近怎么样」，
+    # 而多给一个工具的代价只是多几百 token。
+    ("最新|最近|今年|今天|昨天|现在|目前|公告|官网|报名|职位表|大纲|上网|搜一下|查一下|新闻|时政|政策",
+     ("web_search", "web_fetch", "get_daily_news")),
+    ("生成|导出|存成|做成|写一份|整理成|PDF|文件|下载",
+     ("list_files", "list_materials")),
 )
 # 无论问什么都带上的读工具：总览 + 全局搜索是「不知道去哪找」时的兜底
 ALWAYS_READ = ("get_user_overview", "global_search")
 
 
-def tool_specs_for(text, min_tools=12):
+# 会话本身带来的工具：当前对话挂在某个项目下时，项目资料那两个**永远给**。
+# 它们是「随时调用挂在项目上的资料」的唯一途径，被意图裁掉的表现是模型回一句
+# 「我看不到你的文件」—— 而文件就挂在那儿，用户刚传完。
+PROJECT_TOOLS = ("list_project_files", "read_project_file")
+
+
+def tool_specs_for(text, min_tools=12, always=()):
     """按这句话的意图挑工具。命中不了任何主题就**原样全给**——宁可多给，
     也不能让模型因为工具被裁掉而回一句「我做不到」。
+
+    always 是**跟这句话无关、由会话上下文决定**要留的读工具（见 PROJECT_TOOLS）。
 
     动机：34 个工具的 schema 每轮都发一遍，既是固定开销，也让模型在一堆相近的
     list_*/get_* 里挑，选错的概率随数量上升。
@@ -116,7 +151,7 @@ def tool_specs_for(text, min_tools=12):
             hit.update(names)
     if not hit:
         return tool_specs()
-    keep = hit | set(ALWAYS_READ)
+    keep = hit | set(ALWAYS_READ) | set(always)
     out = [v["spec"] for k, v in TOOL_REGISTRY.items()
            if v["kind"] != "read" or k in keep]
     # 裁得只剩几个反而更容易选错（模型会硬套手上有的那个），太少就别裁了
@@ -577,6 +612,173 @@ def _t_materials(args, db):
     return _j({"count": len(rows), "items": rows}), None
 
 
+# ---- 项目资料 ----------------------------------------------------------------
+# 挂在「项目」上的参考资料（评分标准、讲义、真题卷）。跟对话附件的分界要说死：
+#   对话附件 = 这一轮临时给的，只有那个对话看得见；
+#   项目资料 = 挂在项目上的，项目下**每一个对话**都能随时读 —— 也就是这两个工具。
+# 每轮注入的只是清单 + 前一段（见 aisession._project_files），后面的靠它们按需取，
+# 否则一本几十万字的讲义要么塞爆上下文、要么被无声截掉半本。
+PROJ_PART = 6000        # 按段读时一段给多少字
+PROJ_OCR_MAX = 3        # 一次现场 OCR 最多几页
+# 现场 OCR 的时间闸。实测这台机器**稳态**一页 4~5 秒，但**冷的时候**（tesseract 头一次
+# 加载 chi_sim 模型）量到过一页 100 秒以上 —— 一轮对话的总预算只有 100 秒（agent.AI_BUDGET），
+# 光靠"最多几页"根本挡不住：页数是常数，耗时不是。所以两道闸都要，谁先到听谁的。
+PROJ_OCR_SECONDS = 25
+
+
+def _proj_file_row(db, fid):
+    """按 id 取一份项目资料。限本人；在项目对话里再限本项目 —— 别让 A 项目的对话
+    读到 B 项目的资料（同一个人，不是安全问题，但会答得驴唇不对马嘴）。"""
+    sql = "SELECT * FROM ai_project_files WHERE id=? AND user_id=?"
+    a = [fid, uid()]
+    cur = cur_project()
+    if cur:
+        sql += " AND project_id=?"
+        a.append(cur)
+    return db.execute(sql, a).fetchone()
+
+
+def cur_project():
+    """当前对话属于哪个项目（aisession._build 挂在 g 上）。拿不到就返回 0 = 不限。"""
+    try:
+        from flask import g
+        return int(getattr(g, "ai_project_id", 0) or 0)
+    except Exception:
+        return 0
+
+
+@tool("list_project_files",
+      ("列出**当前项目**挂着的参考资料（项目下所有对话共享的那些文件）。"
+       "用户说「我挂的资料/项目里的讲义/传上去的那份文件」时用它拿 id，再用 read_project_file 读。"),
+      {"type": "object", "properties": {}}, kind="read")
+def _t_list_proj_files(args, db):
+    cur = cur_project()
+    sql = ("SELECT f.id, f.name, LENGTH(f.text) n, COALESCE(f.pages,0) pages, "
+           "COALESCE(f.ocr_pages,0) ocr, p.name pname FROM ai_project_files f "
+           "LEFT JOIN ai_projects p ON p.id=f.project_id WHERE f.user_id=?")
+    a = [uid()]
+    if cur:
+        sql += " AND f.project_id=?"
+        a.append(cur)
+    rows = db.execute(sql + " ORDER BY f.id", a).fetchall()
+    if not rows:
+        return ("这个项目还没挂参考资料。" if cur else
+                "用户还没有在任何项目里挂参考资料（项目设置里可以传文件）。"), None
+    items = [{"id": r["id"], "名字": r["name"], "字数": r["n"],
+              "页数": r["pages"] or None, "只识别到第几页": r["ocr"] or None,
+              "项目": None if cur else r["pname"]} for r in rows]
+    return _j({"count": len(items), "items": items,
+               "提示": "用 read_project_file(id=…) 读正文，别凭名字猜内容"}), None
+
+
+@tool("read_project_file",
+      ("读项目参考资料的正文。先用 list_project_files 拿 id（每轮的系统提示里也带着 id）。\n"
+       "· 不给 part 就从头读，一次给一段，末尾会告诉你还有几段；\n"
+       "· 给 keyword 就直接定位到出现那个词的地方（找某条评分标准、某道题时优先用它）；\n"
+       "· 扫描件超出已识别页数的部分，给 page=页码 现场识别（慢，一次最多几页）。"),
+      {"type": "object", "properties": {
+          "id": {"type": "integer", "description": "资料 id"},
+          "part": {"type": "integer", "description": "第几段（1 起），默认 1"},
+          "keyword": {"type": "string", "description": "要找的词，给了就按它定位"},
+          "page": {"type": "integer", "description": "PDF 页码；只在这份是扫描件、"
+                                                     "且这一页超出已识别范围时才需要"}},
+          "required": ["id"]}, kind="read")
+def _t_read_proj_file(args, db):
+    try:
+        fid = int(args.get("id") or 0)
+    except (TypeError, ValueError):
+        return "id 得是数字。", None
+    r = _proj_file_row(db, fid)
+    if not r:
+        return "没有 id=%s 这份项目资料（用 list_project_files 看看有哪些）。" % fid, None
+    name, text = r["name"] or "资料", r["text"] or ""
+    page = args.get("page")
+    if page:
+        return _proj_page(r, page), None
+    kw = (args.get("keyword") or "").strip()
+    if kw:
+        hits = _proj_hits(text, kw)
+        if not hits:
+            return ("《%s》里没有出现「%s」（全文 %d 字，已经全文找过了 —— "
+                    "不要因此说「资料里可能有」）。" % (name, kw, len(text))), None
+        return "【%s：命中「%s」%d 处】\n%s" % (name, kw, len(hits), "\n…\n".join(hits)), None
+    parts = max(1, (len(text) + PROJ_PART - 1) // PROJ_PART)
+    try:
+        part = max(1, int(args.get("part") or 1))
+    except (TypeError, ValueError):
+        part = 1
+    if part > parts:
+        return "《%s》只有 %d 段，没有第 %d 段。" % (name, parts, part), None
+    seg = text[(part - 1) * PROJ_PART: part * PROJ_PART]
+    head = "【%s：第 %d/%d 段】" % (name, part, parts)
+    if part < parts:
+        head += "（后面还有 %d 段，需要就用 part=%d 接着读）" % (parts - part, part + 1)
+    elif r["ocr_pages"]:
+        head += "（这是扫描件，入库时只识别到第 %d 页；更后面的页用 page=页码 现场识别）" % r["ocr_pages"]
+    return head + "\n" + seg, None
+
+
+def _proj_hits(text, kw, span=400, limit=3):
+    """关键词命中处的上下文。给 limit 处就够了 —— 再多模型也只会挑着看，
+    还把上下文挤没了。"""
+    out, start = [], 0
+    low, lkw = text.lower(), kw.lower()
+    while len(out) < limit:
+        i = low.find(lkw, start)
+        if i < 0:
+            break
+        out.append(text[max(0, i - span): i + len(kw) + span])
+        start = i + len(kw) + span
+    return out
+
+
+def _proj_page(r, page):
+    """现场识别扫描件的某一页（及其后几页）。原件还在盘上才做得到 —— 这正是
+    上传时要留原件的理由。"""
+    import os
+    from core import AI_PROJ_DIR
+    from mods.files import _ocr_image_page
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        return "page 得是数字。"
+    if not (r["stored_name"] or "") or (r["ext"] or "").lower() != ".pdf":
+        return "《%s》不是 PDF 原件，按页识别对它不适用（用 part 按段读就行）。" % (r["name"] or "资料")
+    # 页码先判、文件后判：「这份只有 10 页」是模型该马上知道的事，
+    # 别让它先撞上一句「原件不在磁盘上」然后换个页码再试一遍。
+    total = int(r["pages"] or 0)
+    if total and (page < 1 or page > total):
+        return "《%s》一共 %d 页，没有第 %d 页。" % (r["name"] or "资料", total, page)
+    path = os.path.join(AI_PROJ_DIR, str(uid()), os.path.basename(r["stored_name"]))
+    if not os.path.exists(path):
+        return "《%s》的原件已经不在磁盘上了，只能读已入库的正文（用 part 按段读）。" % (r["name"] or "资料")
+    import tempfile
+    import time
+    out, last, t0 = [], page, time.time()
+    tmp = tempfile.mkdtemp(prefix="aipf_")
+    try:
+        for p in range(page, page + PROJ_OCR_MAX):
+            if total and p > total:
+                break
+            if out and time.time() - t0 > PROJ_OCR_SECONDS:
+                break                        # 已经有货了就先交差，别把这一轮拖死
+            t = (_ocr_image_page(path, p, tmp) or "").strip()
+            last = p
+            if t:
+                out.append("【第 %d 页】\n%s" % (p, t))
+    except Exception as e:
+        log.warning("项目资料按页识别失败：%r", e)
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    if not out:
+        return "第 %d 页没识别出文字（可能是纯图形页）。" % page
+    tail = ""
+    if not total or last < total:
+        tail = "\n（识别到第 %d 页；还要后面的就再给一次 page=%d）" % (last, last + 1)
+    return "【%s：现场识别】\n%s%s" % (r["name"] or "资料", "\n\n".join(out), tail)
+
+
 @tool("search_kb",
       "在用户的知识库文档里搜（标题/正文关键词）。用户问「我知识库里写过 XX 吗/找我那篇讲 XX 的文档」时调用。",
       {"type": "object", "properties": {
@@ -616,3 +818,217 @@ def _t_study_stats(args, db):
     return _j({"连续学习天数": st["streak"], "累计学习天数": st["total"],
                "刷题": {"总题数": total, "总正确率": rate, "场次": sessions, "分板块": by_board},
                "最近测验": tests}), None
+
+
+# ================================================================ 真题库（这个应用最硬的资产）
+# AI 以前完全够不着它：问「找几道类似的选词填空」，它只能从错题本和收录里翻。
+# 7600 道真题就在库里，不给它反而要它凭印象编题 —— 那正是最该避免的事。
+
+@tool("search_real_questions",
+      ("在**历年真题库**里找题（7000+ 道，按模块/题型/关键词）。用户说「找几道…真题」"
+       "「有没有考过…」「来道类似的」时用它。\n"
+       "**别自己编题**：这个库里有真题就用真题，编出来的题会把用户练坏。"),
+      {"type": "object", "properties": {
+          "keyword": {"type": "string", "description": "题干关键词，如「不负众望」「基尼系数」；不限就留空"},
+          "module": {"type": "string",
+                     "description": "模块：言语理解与表达 / 判断推理 / 常识判断 / 资料分析 / 数量关系"},
+          "qtype": {"type": "string", "description": "题型，如「逻辑填空」「图形推理」，不确定就留空"},
+          "limit": {"type": "integer", "description": "最多几道，默认 5，上限 10"}}}, kind="read")
+def _t_search_real(args, db):
+    kw = (args.get("keyword") or "").strip()
+    mod = (args.get("module") or "").strip()
+    qt = (args.get("qtype") or "").strip()
+    n = max(1, min(int(args.get("limit") or 5), 10))
+    sql = ["SELECT id, module, qtype, stem, options, answer, year_max FROM real_questions WHERE 1=1"]
+    a = []
+    # needs_asset：脱离图/材料就做不了的题，纯文字聊天里发出去是残的
+    sql.append("AND COALESCE(needs_asset,0)=0")
+    if kw:
+        sql.append("AND (stem LIKE ? ESCAPE '\\' OR options LIKE ? ESCAPE '\\')")
+        k = "%" + kw.replace("%", r"\%").replace("_", r"\_") + "%"
+        a += [k, k]
+    if mod:
+        sql.append("AND module LIKE ?")
+        a.append("%" + mod + "%")
+    if qt:
+        sql.append("AND qtype LIKE ?")
+        a.append("%" + qt + "%")
+    sql.append("ORDER BY COALESCE(year_max,0) DESC, id DESC LIMIT ?")
+    a.append(n)
+    rows = db.execute(" ".join(sql), a).fetchall()
+    if not rows:
+        return "真题库里没找到符合条件的题（关键词=%s 模块=%s 题型=%s）。" % (kw or "不限", mod or "不限", qt or "不限"), None
+    out = []
+    for r in rows:
+        out.append({"id": r["id"], "模块": r["module"], "题型": r["qtype"],
+                    "题干": (r["stem"] or "")[:400], "选项": (r["options"] or "")[:300],
+                    "答案": r["answer"] or "", "年份": r["year_max"]})
+    return json.dumps(out, ensure_ascii=False), None
+
+
+@tool("search_basics",
+      ("在**机构讲义的基础知识点**里查（优路/三色两套书的考点大纲和讲解正文）。"
+       "用户问某个考点「书上怎么讲的」「有哪些方法」时用它。"),
+      {"type": "object", "properties": {
+          "keyword": {"type": "string", "description": "考点关键词，如「工程问题」「削弱论证」"},
+          "limit": {"type": "integer", "description": "最多几条，默认 3，上限 6"}},
+          "required": ["keyword"]}, kind="read")
+def _t_search_basics(args, db):
+    kw = (args.get("keyword") or "").strip()
+    if not kw:
+        return "要给个关键词。", None
+    n = max(1, min(int(args.get("limit") or 3), 6))
+    k = "%" + kw.replace("%", r"\%").replace("_", r"\_") + "%"
+    rows = db.execute(
+        "SELECT n.id, n.board, n.source, n.title FROM basic_nodes n "
+        "WHERE n.title LIKE ? ESCAPE '\\' ORDER BY n.id LIMIT ?", (k, n)).fetchall()
+    if not rows:
+        # 标题没命中就翻正文：考点名和书里的说法常常对不上
+        rows = db.execute(
+            "SELECT n.id, n.board, n.source, n.title FROM basic_nodes n "
+            "WHERE EXISTS(SELECT 1 FROM basic_blocks b WHERE b.node_id=n.id "
+            "AND b.content_md LIKE ? ESCAPE '\\') ORDER BY n.id LIMIT ?", (k, n)).fetchall()
+    if not rows:
+        return "讲义里没找到「%s」相关的知识点。" % kw, None
+    out = []
+    for r in rows:
+        blocks = db.execute("SELECT kind, content_md FROM basic_blocks WHERE node_id=? "
+                            "ORDER BY sort LIMIT 6", (r["id"],)).fetchall()
+        body = "\n".join((b["content_md"] or "")[:400] for b in blocks)[:1200]
+        out.append({"id": r["id"], "板块": r["board"], "出处": r["source"],
+                    "考点": r["title"], "讲解": body})
+    return json.dumps(out, ensure_ascii=False), None
+
+
+@tool("list_drive",
+      "列出用户云盘里的文件（可按关键词筛）。用户问「我云盘里有没有…」时用它。",
+      {"type": "object", "properties": {
+          "keyword": {"type": "string", "description": "文件名关键词，不限就留空"},
+          "limit": {"type": "integer", "description": "最多几条，默认 15，上限 40"}}}, kind="read")
+def _t_list_drive(args, db):
+    kw = (args.get("keyword") or "").strip()
+    n = max(1, min(int(args.get("limit") or 15), 40))
+    sql = ("SELECT id, folder, name, ext, size, created_at FROM drive_files "
+           "WHERE owner_id=? AND is_dir=0 AND COALESCE(deleted_at,'')=''")
+    a = [uid()]
+    if kw:
+        sql += " AND name LIKE ? ESCAPE '\\'"
+        a.append("%" + kw.replace("%", r"\%").replace("_", r"\_") + "%")
+    sql += " ORDER BY id DESC LIMIT ?"
+    a.append(n)
+    rows = db.execute(sql, a).fetchall()
+    if not rows:
+        return "云盘里没有%s文件。" % ("匹配「%s」的" % kw if kw else ""), None
+    return json.dumps([dict(r) for r in rows], ensure_ascii=False), None
+
+
+@tool("read_drive_file",
+      ("读云盘里某个文件的正文（PDF/Word/文本会抽成文字；扫描件会 OCR 前几页）。"
+       "先用 list_drive 拿 id。文件很大时只会给开头一部分，**会明确告诉你截到哪**。"),
+      {"type": "object", "properties": {
+          "id": {"type": "integer", "description": "云盘文件 id（来自 list_drive）"}},
+          "required": ["id"]}, kind="read")
+def _t_read_drive(args, db):
+    import os
+    from core import UPLOADS
+    from mods.files import _pdf_text_or_ocr
+    fid = int(args.get("id") or 0)
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND COALESCE(deleted_at,'')=''", (fid, uid())).fetchone()
+    if not r:
+        return "云盘里没有这个文件（id=%s）。" % fid, None
+    path = os.path.join(UPLOADS, "drive", str(uid()), r["stored_name"] or "")
+    if not os.path.exists(path):
+        return "这个文件的内容已经不在磁盘上了。", None
+    try:
+        text = (_pdf_text_or_ocr(path, (r["ext"] or "").lower(), max_pages=20) or "").strip()
+    except Exception as e:
+        log.warning("读云盘文件失败：%r", e)
+        return "读不出这个文件的文字（%s）。" % e, None
+    if not text:
+        return "这个文件里没抽出文字（可能是纯图片或不支持的格式）。", None
+    LIMIT = 20000
+    head = "【云盘文件：%s】" % (r["name"] or "")
+    if len(text) > LIMIT:
+        # 跟附件那条路一个规矩：截断必须留痕，否则模型会拿半截当全文下结论
+        head += ("（全文约 %d 字，以下只给前 %d 字，后面还有。需要通读才能回答的问题，"
+                 "先说明你只看到了前面一部分）" % (len(text), LIMIT))
+    return head + "\n" + text[:LIMIT], None
+
+
+@tool("get_exam_countdown",
+      "查距离用户的考试还有多少天（来自他在「备考计划」里填的考试日期）。",
+      {"type": "object", "properties": {}}, kind="read")
+def _t_countdown(args, db):
+    from datetime import date
+    r = db.execute("SELECT exam, exam_date FROM plan_profile WHERE user_id=?", (uid(),)).fetchone()
+    if not r or not (r["exam_date"] or "").strip():
+        return "用户还没在「备考计划」里填考试日期，所以算不出倒计时（可以建议他去填）。", None
+    try:
+        y, m, d = [int(x) for x in str(r["exam_date"])[:10].replace("/", "-").split("-")[:3]]
+        days = (date(y, m, d) - date.today()).days
+    except Exception:
+        return "考试日期「%s」看不懂，算不出倒计时。" % r["exam_date"], None
+    name = (r["exam"] or "考试").strip() or "考试"
+    if days > 0:
+        return "距离%s（%s）还有 %d 天。" % (name, r["exam_date"], days), None
+    if days == 0:
+        return "%s就是今天（%s）。" % (name, r["exam_date"]), None
+    return "%s（%s）已经过去 %d 天了。" % (name, r["exam_date"], -days), None
+
+
+# ================================================================ 联网
+# DeepSeek 自己不带联网，所以这两个是我们接的。**分成两个**：只给摘要的话模型照样会
+# 顺着摘要编，得让它能真的把正文读回来再说。
+# 搜不到 ≠ 连不上：前者是事实（就说没有），后者是这台机器的网络问题（要说清楚，
+# 别让用户以为「网上没有这个东西」）。两种都绝不许退回「拿记忆冒充搜索结果」。
+
+@tool("web_search",
+      ("上网搜。当问题涉及**你不可能知道的信息**时用它：今天/最近发生的事、"
+       "具体的公告与时间、政策原文、某地某年的招考安排。\n"
+       "**规矩**：① 搜完必须在回答里说清哪几条来自网络（给标题和链接）；"
+       "② 只有摘要不足以下结论时，用 web_fetch 把正文读回来再答；"
+       "③ 搜不到就说搜不到，**绝不用你自己的印象顶替搜索结果**。"),
+      {"type": "object", "properties": {
+          "query": {"type": "string", "description": "搜索词，尽量具体（含地名、年份、机构名）"},
+          "count": {"type": "integer", "description": "要几条，默认 5，上限 8"}},
+          "required": ["query"]}, kind="read")
+def _t_web_search(args, db):
+    from mods.websearch import SearchError, search
+    q = (args.get("query") or "").strip()
+    if not q:
+        return "要给个搜索词。", None
+    try:
+        hits = search(q, args.get("count") or 5)
+    except SearchError as e:
+        # 把「去不了」原样说给模型，让它转告用户 —— 这不是「网上没有」
+        return "没能去搜（%s）。请如实告诉用户这一点，不要用你自己的印象代替搜索结果。" % e, None
+    except Exception as e:
+        log.warning("联网搜索异常：%r", e)
+        return "搜索出错了（%s）。请如实告诉用户，不要拿印象顶替。" % e, None
+    if not hits:
+        return "搜了「%s」，一条结果也没有。" % q, None
+    return json.dumps(hits, ensure_ascii=False), None
+
+
+@tool("web_fetch",
+      ("把某个网页的正文读回来（配合 web_search 用：先搜到链接，再读正文）。"
+       "网页很长时只给开头一部分，**会明确告诉你截到哪**。"),
+      {"type": "object", "properties": {
+          "url": {"type": "string", "description": "http/https 链接，通常来自 web_search 的结果"}},
+          "required": ["url"]}, kind="read")
+def _t_web_fetch(args, db):
+    from mods.websearch import SearchError, fetch
+    try:
+        title, body, cut = fetch(args.get("url") or "")
+    except SearchError as e:
+        return "读不了这个网页（%s）。如实告诉用户。" % e, None
+    except Exception as e:
+        log.warning("读网页异常：%r", e)
+        return "读这个网页时出错了（%s）。" % e, None
+    if not body.strip():
+        return "这个网页没读出正文（可能整页都靠脚本渲染）。", None
+    head = "【网页：%s】" % (title or args.get("url"))
+    if cut:
+        head += "（正文很长，以下只是开头一部分，后面还有）"
+    return head + "\n" + body, None

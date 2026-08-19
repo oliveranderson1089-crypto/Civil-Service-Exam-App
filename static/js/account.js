@@ -23,6 +23,13 @@ async function openAccount() {
     $('#acct-secq').innerHTML = qs.map(q => `<option ${q === d.sec_question ? 'selected' : ''}>${esc(q)}</option>`).join('');
     $('#acct-oldpw').value = ''; $('#acct-newpw').value = ''; $('#acct-seca').value = '';
     $('#acct-app').classList.toggle('hidden', !(IN_APP || IS_DESKTOP));
+    /* 「检查更新」在三端做的事不一样，按钮上的字也要跟着说实话：
+       壳里是查新版本，浏览器里是清离线缓存重载（见 update.js 的 webReload）。 */
+    const web = !(IN_APP || IS_DESKTOP);
+    $('#acct-update').textContent = web ? '重新加载（清离线缓存）' : '检查更新';
+    $('#acct-upd-hint').textContent = web
+      ? '网页版每次打开就是最新的。界面卡在旧版本时，用这个把离线缓存清掉再载一次。'
+      : '';
     $('#acct-app-t').textContent = IS_DESKTOP ? '💻 桌面版' : '📱 App';
     document.querySelectorAll('#acct-app .apk-only')            // 通知/切服务器只有安卓壳有
       .forEach(b => b.classList.toggle('hidden', !IN_APP));

@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, artEm, c, emKey, errMsg, esc, fmtDay, mdToHtml, push, stack, toast,
+/* global $, api, artEm, c, emKey, errMsg, esc, libTouch, fmtDay, mdToHtml, push, stack, toast,
    uiError */
 
 /* ================= 人民时评·申论范文（每日抓人民日报评论版） ================= */
@@ -73,6 +73,7 @@ $('#fw-list').addEventListener('click', async e => {
   const c = e.target.closest('[data-fw]'); if (c) openFanwenItem(+c.dataset.fw);
 });
 async function openFanwenItem(id) {
+  libTouch('fanwen', id);
   push({ view: 'fanwend', title: '范文精读' });
   $('#fw-wrap').innerHTML = '<p class="empty">加载中…</p>';
   try {

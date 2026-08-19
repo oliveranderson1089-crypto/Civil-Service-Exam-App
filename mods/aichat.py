@@ -26,7 +26,7 @@ def ai_status():
     except Exception:
         today = 0
     return jsonify({"configured": ai_configured(), "model": _ai_conf()["model"],
-                    "model_pro": aiclient.conf("pro").get("model", ""),
+                    "model_pro": aiclient.conf("pro", CFG, who="").get("model", ""),
                     "today": today, "vision": vision_configured()})
 
 
@@ -88,7 +88,7 @@ def admin_ai_models():
     if not ids:
         return jsonify({"error": "拉不到模型清单：Key 无效、网络不通，或该接口不支持 /v1/models",
                         "models": []}), 502
-    cur = {t: aiclient.conf(t, CFG)["model"] for t in ("fast", "pro")}
+    cur = {t: aiclient.conf(t, CFG, who="")["model"] for t in ("fast", "pro")}
     return jsonify({
         "models": ids,
         "current": cur,

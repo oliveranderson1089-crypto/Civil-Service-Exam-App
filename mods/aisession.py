@@ -4,18 +4,21 @@
 """
 
 import json
+import os
 import re
 import threading
+import uuid
 
 from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
 import aiclient
-from core import CFG, get_db, log, open_db, uid
+from core import AI_PROJ_DIR, CFG, get_db, log, open_db, uid
 from mods.agent import _ai_agentic_or_error, ai_chat_agentic_stream
 from mods.agent_tools import TOOL_REGISTRY, exec_tool, tool_label
 from mods.ai import vision_chat, vision_configured
 from mods.aichat import _user_stats
-from mods.attach import ai_img_path
+from mods.attach import ATT_OCR_PAGES, ai_img_path, extract_file, guess_ext
+from mods.files import _extract_text
 
 bp = Blueprint("aisession", __name__)
 
@@ -69,7 +72,10 @@ def aichat_home():
         args + [page * 50]).fetchall()
     projects = db.execute(
         "SELECT p.id, p.name, p.instructions,"
-        "(SELECT COUNT(*) FROM ai_chats c WHERE c.project_id=p.id) cnt "
+        "(SELECT COUNT(*) FROM ai_chats c WHERE c.project_id=p.id) cnt, "
+        # 挂了几份资料要在项目页上看得见 —— 「这些资料是全项目共享的」这句话，
+        # 光写在设置弹层里没人会翻，写在项目页上才是一眼可见的事实。
+        "(SELECT COUNT(*) FROM ai_project_files f WHERE f.project_id=p.id) files "
         "FROM ai_projects p WHERE p.user_id=? ORDER BY p.id DESC", (uid(),)).fetchall()
     return jsonify({"chats": [dict(r) for r in chats], "projects": [dict(r) for r in projects]})
 
@@ -189,6 +195,24 @@ def aichat_retry(cid):
     if not c:
         return jsonify({"error": "会话不存在"}), 404
     mid = int(data.get("msg_id") or 0)
+    if data.get("failed"):
+        """「刚才那次失败了，重试一下」。
+
+        不能直接按「退最后一轮」处理：失败有两条路径，落库与否并不一样 ——
+        流式那条在生成器里补存了一行 kind='error'，非流式那条（老 WebView）压根没落库。
+        照旧退最后一轮，后者就会把上一轮**成功的**问答删掉，用户还以为只是重试了一下。
+        所以这里只认「末尾确实是一条失败占位」这一种情况，其余原样不动、告诉前端没退。
+        """
+        last = db.execute("SELECT id, role, COALESCE(kind,'text') kind FROM ai_msgs "
+                          "WHERE chat_id=? ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
+        if not (last and last["role"] == "assistant" and last["kind"] == "error"):
+            return jsonify({"content": "", "attachments": [], "rewound": False})
+        mid = db.execute("SELECT MAX(id) FROM ai_msgs WHERE chat_id=? AND role='user' AND id<?",
+                         (cid, last["id"])).fetchone()[0] or 0
+        if not mid:
+            return jsonify({"content": "", "attachments": [], "rewound": False})
+        content, atts = _rewind(db, cid, mid)
+        return jsonify({"content": content or "", "attachments": atts or [], "rewound": True})
     if not mid:      # 不指定就退最后一轮
         mid = db.execute("SELECT MAX(id) FROM ai_msgs WHERE chat_id=? AND role='user'",
                          (cid,)).fetchone()[0] or 0
@@ -234,7 +258,12 @@ def aichat_del(cid):
     return jsonify({"ok": True})
 
 
-ATT_LIMIT = 8000        # 单轮注入的附件全文上限（字符）
+# 附件注入的两道闸，口径不同，别拿一个数糊过去：
+# ATT_LIMIT 管**这一轮新传的**附件（用户正等着它被读完，给得起）；
+# ATT_HIST 管**历史里回放的**那一份（只回放最近一条，再多就是每轮重发一篇 PDF）。
+# 还有第三道在 mods/attach.py（抽取时的 ATT_TEXT_MAX）—— 三道闸任何一道单独改都白改。
+ATT_LIMIT = 24000       # 本轮附件注入上限（字符）
+ATT_HIST = 8000         # 历史附件回放上限（字符）
 CTX_BUDGET = 24000      # 上下文预算（字符口径，见 _fits）。DeepSeek 上下文远大于此，
                         # 这个数是「给历史留多少」的自律线：留太多既慢又贵，还容易
                         # 把真正相关的东西挤到模型注意力之外。
@@ -248,18 +277,37 @@ def _size(s):
 
 
 def _att_text(raw, limit=ATT_LIMIT):
-    """把一条消息的 attach（JSON 列）摊成给模型看的附件正文。取不到就空串。"""
+    """把一条消息的 attach（JSON 列）摊成给模型看的附件正文。取不到就空串。
+
+    **截断一定要留痕。** 这里曾经是默默地 `text[:limit]`，模型于是把半份资料当成
+    整份来读，然后自信地给出「这份 PDF 里只有 12 个易混淆点」这种结论 —— 它没撒谎，
+    它就是只拿到了那么多，而没人告诉它后面还有。所以只要没给全，就在这一段的开头
+    写清楚「共多少字、给到了第几字、后面还有」，并明确要求它别据此下结论。
+    """
     try:
         atts = json.loads(raw or "[]")
     except Exception:
         return ""
     out, left = [], limit
     for a in atts if isinstance(atts, list) else []:
-        t = (a.get("text") or "")[:max(0, left)]
+        full = a.get("text") or ""
+        t = full[:max(0, left)]
         if not t:
             continue
         left -= len(t)
-        out.append("【附件：%s】\n%s" % (a.get("name") or "文件", t))
+        head = "【附件：%s" % (a.get("name") or "文件")
+        # total 是抽取那一步报的原始字数（attach.py 可能已经先截过一刀），
+        # 没有就退回这里看到的长度 —— 两处都可能截，取大的才是真实规模。
+        total = max(int(a.get("total") or 0), len(full))
+        pages = int(a.get("pages") or 0)
+        if pages:
+            head += "，共 %d 页" % pages
+        if len(t) < total:
+            head += ("；全文约 %d 字，**以下只是前 %d 字，后面还有没给你的内容**。"
+                     "凡是「一共有几个/有哪些」这类需要通读全文才能回答的问题，"
+                     "务必先说明你只看到了前面一部分，不要拿这半截当成全文下结论。"
+                     % (total, len(t)))
+        out.append(head + "】\n" + t)
     return "\n\n".join(out)
 
 
@@ -301,21 +349,55 @@ def _memories(db, u, q=""):
             + "\n".join("· " + (r["text"] or "") for r in rows))
 
 
+PROJ_INJECT = 12000     # 项目资料**每轮整段注入**的预算（字符）。超出的不是丢掉，
+                        # 而是转成「用 read_project_file 去读」——见 _project_files。
+
+
 def _project_files(db, pid):
-    """项目挂的参考资料。整段注入而不做检索：一个项目撑死挂几份，
-    真到了要检索的量级再说——先能用，别为想象中的规模上索引。"""
-    rows = db.execute("SELECT name, text FROM ai_project_files WHERE project_id=? ORDER BY id",
-                      (pid,)).fetchall()
+    """项目挂的参考资料 —— 这是**项目级**的东西：同一个项目下的每一个对话都拿到它，
+    不像对话附件那样只跟着一轮消息走。
+
+    两段式，因为「一份讲义」和「几行评分标准」不该用同一种给法：
+      1. **清单永远给全**（id / 名字 / 多少字 / 多少页）。哪怕正文一个字都注不进去，
+         模型也知道这个项目挂了哪些资料、id 是多少，于是能自己去读。
+      2. 正文按预算给：预算内的整段给（短资料照旧，跟以前一样开箱即用）；
+         给不下的只给开头，并**写明截到哪、后面怎么拿**。
+
+    以前是单纯 `text[:12000]` 一刀切且不留痕：第二份往后的资料在模型眼里根本不存在，
+    它还会很肯定地说「你这个项目里只挂了评分标准」。截断留痕 + 按需续读，
+    才是「挂上去的资料随时调得动」。
+    """
+    rows = db.execute(
+        "SELECT id, name, text, COALESCE(pages,0) pages, COALESCE(ocr_pages,0) ocr_pages "
+        "FROM ai_project_files WHERE project_id=? ORDER BY id", (pid,)).fetchall()
     if not rows:
         return ""
-    out, left = [], 12000
+    lines = ["\n\n【本项目的参考资料】（挂在项目上，这个项目下的**每一个对话**都能用；"
+             "下面没给全的，用 read_project_file(id=…) 按段续读，别猜、别凭印象说）"]
     for r in rows:
-        t = (r["text"] or "")[:max(0, left)]
+        n = len(r["text"] or "")
+        meta = "%d 字" % n
+        if r["pages"]:
+            meta += "，共 %d 页" % r["pages"]
+        if r["ocr_pages"]:
+            meta += ("（扫描件，入库时只认了前 %d 页；后面的页用 read_project_file(id=%d, page=页码) "
+                     "现场识别）" % (r["ocr_pages"], r["id"]))
+        lines.append("· id=%d 《%s》%s" % (r["id"], r["name"] or "资料", meta))
+    out, left = [], PROJ_INJECT
+    for r in rows:
+        full = r["text"] or ""
+        t = full[:max(0, left)]
         if not t:
-            break
+            out.append("【项目资料：%s（id=%d）】\n（正文这轮没给你，需要就用 "
+                       "read_project_file(id=%d) 读）" % (r["name"] or "资料", r["id"], r["id"]))
+            continue
         left -= len(t)
-        out.append("【项目资料：%s】\n%s" % (r["name"] or "资料", t))
-    return ("\n\n" + "\n\n".join(out)) if out else ""
+        head = "【项目资料：%s（id=%d）" % (r["name"] or "资料", r["id"])
+        if len(t) < len(full):
+            head += ("；全文 %d 字，**以下只是前 %d 字**，后面的用 read_project_file(id=%d, part=2) "
+                     "接着读。需要通读才能回答的问题，先把没读全这件事说出来" % (len(full), len(t), r["id"]))
+        out.append(head + "】\n" + t)
+    return "\n".join(lines) + "\n\n" + "\n\n".join(out)
 
 
 def _trace_brief(raw):
@@ -382,6 +464,10 @@ def _build(cid, content, atts=None):
                   "并顺手判断板块/题型、能定的话给出答案与简要解析；加完简短告诉用户已收录。\n"
                   "· 如果**拿不准这是不是题目**、或内容残缺（只有半道题、只是知识点/材料），**不要**调用工具，"
                   "而是用一句话反问用户：「这看起来像是……，需要我把它加入错题本吗？」等用户确认再决定。")
+    # 当前对话属于哪个项目：工具（list_project_files / read_project_file）靠它把
+    # 「项目资料」限定在本项目内。放 g 上而不是往工具参数里塞——模型不该负责记住
+    # 自己在哪个项目里，那是服务端知道的事，交给模型只会多一种猜错的可能。
+    g.ai_project_id = c["project_id"] or 0
     if c["project_id"]:
         p = db.execute("SELECT * FROM ai_projects WHERE id=?", (c["project_id"],)).fetchone()
         if p and (p["instructions"] or "").strip():
@@ -411,7 +497,7 @@ def _build(cid, content, atts=None):
         body = r["content"] or ""
         if r["attach"]:
             if att_left > 0:
-                t = _att_text(r["attach"])
+                t = _att_text(r["attach"], ATT_HIST)
                 if t:
                     body = t + "\n\n" + body
                     att_left -= 1
@@ -489,8 +575,20 @@ def _req_atts(data):
             continue
         img = str(a.get("image") or "")[:120]
         if (a.get("text") or "").strip() or img:
-            out.append({"name": str(a.get("name") or "文件")[:80],
-                        "text": (a.get("text") or "")[:ATT_LIMIT], "image": img})
+            txt = (a.get("text") or "")[:ATT_LIMIT]
+            item = {"name": str(a.get("name") or "文件")[:80], "text": txt, "image": img}
+            # total/pages 只拿来向模型交代「这份文件有多大、你看到了多少」，
+            # 不参与任何取数或鉴权，所以夹一道范围就够了。
+            try:
+                total = int(a.get("total") or 0)
+                if len(txt) < total <= 100000000:
+                    item["total"] = total
+                pages = int(a.get("pages") or 0)
+                if 0 < pages <= 100000:
+                    item["pages"] = pages
+            except (TypeError, ValueError):
+                pass
+            out.append(item)
     return out
 
 
@@ -581,6 +679,10 @@ def aichat_stream(cid):
         db = g._db = open_db()
         buf, saved = [], False
         try:
+            # **立刻**发出第一个字节。中间隔着 Cloudflare 隧道，它掐的是「多久没有响应」，
+            # 而我们这条路要先开库、可能还要跑视觉模型，第一帧本来能拖到几十秒后。
+            # 一个注释帧就够 —— 前端解帧时没有 data: 行会直接跳过，不影响任何逻辑。
+            yield ": open\n\n"
             # 带图：走视觉模型。它不是流式的，所以一次性把整段推出去（前端照常收 done）
             vreply, verr = _vision_answer(atts, content)
             if verr or vreply:
@@ -594,6 +696,11 @@ def aichat_stream(cid):
                 return
             for kind, p in ai_chat_agentic_stream(full, db, temperature=0.6, max_tokens=2000,
                                                   tier=_tier(c)):
+                if kind == "ping":
+                    # 上游还活着、只是还没有字可发。转成注释帧：隧道和前端的空闲超时
+                    # 都靠「有没有字节流动」判断，光靠正文的话，模型一想久就被判死。
+                    yield ": ping\n\n"
+                    continue
                 if kind == "delta":
                     buf.append(p)
                 if kind == "done":
@@ -623,10 +730,16 @@ def aichat_stream(cid):
             # 手机切后台、隧道抖一下，客户端就不读了 —— 这里会被 GeneratorExit 打断，
             # 上面的 done 分支根本走不到。可工具的副作用（词已入库）是**已经发生**的事实，
             # 这一轮要是不落库，用户回头看只见自己问了、AI 没答，再问一遍就重复收录。
-            if not saved and buf:
+            if not saved:
+                half = "".join(buf).strip()
                 try:
+                    # 一个字都还没吐出来就断了，同样要把**用户问的那句**留下 —— 尤其是走隧道
+                    # 的时候，断在开头是最常见的一种。留成 kind='error'：界面上看得见、
+                    # 可以直接点「重试」，又不会被当成 AI 真答过的话喂回下一轮。
                     _persist(db, cid, c, content,
-                             "".join(buf).strip() + "\n\n（连接中断，回答可能不完整）", atts)
+                             (half + "\n\n（连接中断，回答可能不完整）") if half
+                             else "（本次回答失败：连接中断）",
+                             atts, kind="" if half else "error")
                 except Exception:
                     log.warning("AI 对话中断后补存失败", exc_info=True)
             db.close()
@@ -638,6 +751,79 @@ def aichat_stream(cid):
     resp.headers["Cache-Control"] = "no-cache"
     resp.headers["X-Accel-Buffering"] = "no"   # 别让中间代理攒着不发，那就白流式了
     return resp
+
+
+SUM_CHUNK = 12000       # 分段汇总时每段喂多少字（远小于 CTX_BUDGET，留出提示词的地方）
+
+
+def _sum_call(prompt, text):
+    return (aiclient.chat([{"role": "system", "content": prompt},
+                           {"role": "user", "content": text}],
+                          tier="fast", temperature=0.3, max_tokens=1500, cfg=CFG) or "").strip()
+
+
+@bp.post("/api/aichat/chats/<int:cid>/summary")
+def aichat_summary(cid):
+    """把整段对话汇总成一份纪要，落进「AI 产出」。
+
+    要点是**结构化**而不是流水账重述：结论 / 待办 / 暴露出来的易错点 / 提到的题。
+    流水账用户自己往上翻就有了，纪要的价值在于把散在十几轮里的结论收成一页。
+
+    长对话**不能整段塞**：上下文预算就那么多（CTX_BUDGET）。所以按段先各出要点，
+    再把要点合成一份 —— 一段也没超就只调一次，别为短对话平白多花一次钱。
+    """
+    db = get_db()
+    c = db.execute("SELECT * FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
+    if not c:
+        return jsonify({"error": "会话不存在"}), 404
+    rows = db.execute("SELECT role, content, COALESCE(kind,'text') kind, meta FROM ai_msgs "
+                      "WHERE chat_id=? AND COALESCE(kind,'text') IN ('text','tool') ORDER BY id",
+                      (cid,)).fetchall()
+    lines = []
+    for r in rows:
+        if r["kind"] == "tool":
+            # 工具轨迹要进来：「查了错题本发现资料分析错得最多」这种结论就藏在里面
+            brief = _trace_brief(r["meta"])
+            if brief:
+                lines.append("（助手查了：%s）" % brief.replace("\n", "；")[:300])
+            continue
+        if not (r["content"] or "").strip():
+            continue
+        lines.append(("我：" if r["role"] == "user" else "助手：") + r["content"])
+    if not lines:
+        return jsonify({"error": "这段对话还是空的，没什么可汇总的"}), 400
+
+    body = "\n\n".join(lines)
+    chunks, cur = [], ""
+    for ln in lines:
+        if cur and len(cur) + len(ln) > SUM_CHUNK:
+            chunks.append(cur)
+            cur = ""
+        cur += ln + "\n\n"
+    if cur.strip():
+        chunks.append(cur)
+
+    ask = ("把下面这段「我」和「助手」的对话整理成一份复习纪要，用简体中文 Markdown。"
+           "按这四个小标题写，**没有内容的小标题就整条略去，不要写「无」**：\n"
+           "## 结论\n## 待办\n## 易错点\n## 涉及的题\n"
+           "要求：只写对话里**真实出现过**的内容，不要补充发挥、不要复述寒暄；"
+           "把关键结论加粗；同一件事只说一遍。")
+    try:
+        if len(chunks) <= 1:
+            text = _sum_call(ask, body)
+        else:
+            parts = [_sum_call("把下面这段对话里**值得记的信息**逐条列出来（结论、待办、易错点、"
+                               "提到的题）。只列真实出现过的，不要发挥。", ch) for ch in chunks]
+            text = _sum_call(ask, "\n\n".join(p for p in parts if p))
+    except Exception as e:
+        return jsonify({"error": aiclient.error_message(e)}), 502
+    if not text:
+        return jsonify({"error": "汇总没出来，稍后再试"}), 502
+
+    from mods.aiout import create_output
+    title = ((c["title"] or "对话").strip()[:40]) + " · 纪要"
+    oid = create_output(db, uid(), title, text, kind="md", chat_id=cid)
+    return jsonify({"id": oid, "title": title, "body": text, "parts": len(chunks)})
 
 
 @bp.post("/api/aichat/chats/<int:cid>/title")
@@ -776,9 +962,81 @@ def aichat_opener():
 @bp.get("/api/aichat/projects/<int:pid>/files")
 def aipf_list(pid):
     rows = get_db().execute(
-        "SELECT id, name, LENGTH(text) size, created_at FROM ai_project_files "
+        "SELECT id, name, LENGTH(text) size, COALESCE(orig_name,'') orig_name, "
+        "COALESCE(ext,'') ext, COALESCE(pages,0) pages, COALESCE(ocr_pages,0) ocr_pages, "
+        "created_at FROM ai_project_files "
         "WHERE project_id=? AND user_id=? ORDER BY id", (pid, uid())).fetchall()
     return jsonify({"files": [dict(r) for r in rows]})
+
+
+# 项目资料原件存在 core.AI_PROJ_DIR 下。跟 AI_IMG_DIR（对话附件的图，3 天就扫掉）
+# 不是一回事：这些是用户**长期挂在项目上**的东西，只有他自己删才会没。
+# 一份项目资料入库时最多存多少字。比对话附件那道闸（ATT_TEXT_MAX=6 万）宽得多——
+# 附件是每轮都要往上下文里塞的，这里存下来只是**候选**，真正每轮注入多少由
+# PROJ_INJECT 决定，剩下的靠 read_project_file 按需读。一本讲义几十万字也放得下。
+PROJ_TEXT_MAX = 400000
+
+
+@bp.post("/api/aichat/projects/<int:pid>/files/upload")
+def aipf_upload(pid):
+    """直接把文件（PDF / Word / 图片 / 文本）挂到项目上。
+
+    跟对话输入框那个回形针的区别，正是用户要的那一条：那边传的东西**只属于那一次对话**，
+    这里传的属于**项目**，项目下每个对话都看得到、随时读得到（见 _project_files）。
+
+    原件留在磁盘上：扫描件入库时只认前 ATT_OCR_PAGES 页，后面的页要靠原件现场 OCR。
+    """
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "没有文件"}), 400
+    db = get_db()
+    if not db.execute("SELECT 1 FROM ai_projects WHERE id=? AND user_id=?", (pid, uid())).fetchone():
+        return jsonify({"error": "项目不存在"}), 404
+    is_img, ext = guess_ext(f.filename, f.mimetype)
+    stored = uuid.uuid4().hex + ext
+    d = os.path.join(AI_PROJ_DIR, str(uid()))
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, stored)
+    f.save(path)
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0
+    text, pages, err = extract_file(path, ext, is_img)
+    if not text:
+        # 一个字都没抽出来的原件留着没用（既不能注入也不能续读），别在盘上积灰
+        try:
+            os.remove(path)
+        except OSError:
+            log.debug("项目资料清理失败", exc_info=True)
+        return jsonify({"error": err or "没能从这个文件里提取到文字"}), 400
+    name = (request.form.get("name") or "").strip() or os.path.splitext(f.filename)[0]
+    # ocr_pages 只在**真的走了 OCR**时才有意义（有文字层的 PDF 是整本抽到的，
+    # 记上它反而会让模型以为后面还有没读的页，白白多跑几次现场识别）。
+    ocred = ATT_OCR_PAGES if (pages and pages > ATT_OCR_PAGES and _looks_ocred(path, ext)) else 0
+    cur = db.execute(
+        "INSERT INTO ai_project_files(project_id,user_id,name,text,orig_name,ext,size,"
+        "stored_name,pages,ocr_pages) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (pid, uid(), name[:80], text[:PROJ_TEXT_MAX], f.filename[:200], ext, size,
+         stored, pages, ocred))
+    db.commit()
+    return jsonify({"ok": True, "id": cur.lastrowid, "name": name[:80], "chars": len(text),
+                    "pages": pages, "ocr_pages": ocred,
+                    "truncated": len(text) > PROJ_TEXT_MAX}), 201
+
+
+def _looks_ocred(path, ext):
+    """这份 PDF 是不是靠 OCR 才读出来的（= 没有文字层的扫描件）。
+
+    判据跟 _pdf_text_or_ocr 里那条线一致（文字层不足 200 字就转 OCR）：两处必须同口径，
+    否则会出现「入库时走了 OCR，却记成整本都读到了」这种自欺。
+    """
+    if ext != ".pdf":
+        return False
+    try:
+        return len((_extract_text(path, ext) or "").strip()) < 200
+    except Exception:
+        return False
 
 
 @bp.post("/api/aichat/projects/<int:pid>/files")
@@ -796,12 +1054,28 @@ def aipf_add(pid):
     return jsonify({"ok": True, "id": cur.lastrowid}), 201
 
 
+def _drop_proj_blobs(rows):
+    """删项目资料时把原件也从盘上抹掉。**只删自己那一份**：stored_name 是每次上传
+    现取的 uuid，不像云盘那样按 sha256 共用，所以不用数引用。"""
+    for r in rows:
+        stored = os.path.basename(r["stored_name"] or "")
+        if not stored:
+            continue
+        try:
+            os.remove(os.path.join(AI_PROJ_DIR, str(uid()), stored))
+        except OSError:
+            log.debug("项目资料原件删除失败", exc_info=True)
+
+
 @bp.delete("/api/aichat/projects/<int:pid>/files/<int:fid>")
 def aipf_del(pid, fid):
     db = get_db()
+    rows = db.execute("SELECT stored_name FROM ai_project_files "
+                      "WHERE id=? AND project_id=? AND user_id=?", (fid, pid, uid())).fetchall()
     db.execute("DELETE FROM ai_project_files WHERE id=? AND project_id=? AND user_id=?",
                (fid, pid, uid()))
     db.commit()
+    _drop_proj_blobs(rows)
     return jsonify({"ok": True})
 
 
@@ -818,10 +1092,45 @@ def aiproj_new():
     return jsonify({"id": cur.lastrowid, "name": name}), 201
 
 
+@bp.put("/api/aichat/projects/<int:pid>")
+def aiproj_update(pid):
+    """改项目名 / 改自定义指令。
+
+    以前只有「建」和「删」：指令在新建那一刻问过一次，之后没有任何改法 ——
+    想调一句话只能删了重建，而删项目会把底下所有对话解绑。
+
+    instructions 允许改成空串（= 不再给这个项目加前缀），所以判的是「键在不在」
+    而不是「值真不真」；name 则不接受空串（列表里会变成一行看不见的东西）。
+    """
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    if not db.execute("SELECT 1 FROM ai_projects WHERE id=? AND user_id=?",
+                      (pid, uid())).fetchone():
+        return jsonify({"error": "项目不存在"}), 404
+    if "name" in data:
+        name = (data.get("name") or "").strip()[:60]
+        if not name:
+            return jsonify({"error": "请输入项目名"}), 400
+        db.execute("UPDATE ai_projects SET name=? WHERE id=? AND user_id=?", (name, pid, uid()))
+    if "instructions" in data:
+        ins = (data.get("instructions") or "").strip()[:4000]
+        db.execute("UPDATE ai_projects SET instructions=? WHERE id=? AND user_id=?",
+                   (ins, pid, uid()))
+    db.commit()
+    r = db.execute("SELECT id, name, instructions FROM ai_projects WHERE id=?", (pid,)).fetchone()
+    return jsonify(dict(r))
+
+
 @bp.delete("/api/aichat/projects/<int:pid>")
 def aiproj_del(pid):
     db = get_db()
     db.execute("UPDATE ai_chats SET project_id=NULL WHERE project_id=? AND user_id=?", (pid, uid()))
+    # 挂在项目上的资料跟着项目走：项目没了，这些资料再没有任何入口能看到它们
+    #（它们只在项目设置里列出），留着就是盘上和库里的孤儿。
+    rows = db.execute("SELECT stored_name FROM ai_project_files WHERE project_id=? AND user_id=?",
+                      (pid, uid())).fetchall()
+    db.execute("DELETE FROM ai_project_files WHERE project_id=? AND user_id=?", (pid, uid()))
     db.execute("DELETE FROM ai_projects WHERE id=? AND user_id=?", (pid, uid()))
     db.commit()
+    _drop_proj_blobs(rows)
     return jsonify({"ok": True})

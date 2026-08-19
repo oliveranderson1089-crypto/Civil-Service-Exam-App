@@ -7,8 +7,8 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, artEm, c, composing, createDock, deskMsg, errMsg, esc,
-   fmtTime, IC, iconFor, IS_MOBILE, KB, lsGet, lsSet, mdToHtml, OFFICE_EXT, openAI,
+/* global $, api, appConfirm, artEm, c, composing, createDock, deskMsg, errMsg, esc, libTouch,
+   fmtTime, IC, iconFor, IN_APP, IS_MOBILE, KB, lsGet, lsSet, mdToHtml, OFFICE_EXT, openAI,
    openViewerUrl, push, SECTIONS, stack, toast */
 
 /* ================= 小记（仿语雀） ================= */
@@ -143,6 +143,7 @@ function closeComposerM() {
   document.body.classList.remove('cp-open-lock');
 }
 function loadDraft(n) {
+  libTouch('note', n.id);          // 小记没有独立详情页，载进编辑器就是打开
   draft = {
     id: n.id, content: n.content, board: n.board || '',
     images: n.img_files.map((f, i) => ({ kind: 'old', file: f, url: n.images[i] })),
@@ -649,7 +650,7 @@ function feedCard(n) {
   const tags = n.tags.length ? `<div class="fc-tags">${n.tags.map(t => `<span class="fc-tag"># ${esc(t)}</span>`).join('')}</div>` : '';
   return `<div class="feed-card" data-id="${n.id}">
     <div class="fc-time">更新于 ${fmtTime(n.updated_at)}
-      <span class="fc-acts"><button class="fc-edit" data-edit="${n.id}" title="编辑">${IC.edit}</button><button class="fc-del" data-del="${n.id}" title="删除">${IC.del}</button></span>
+      <span class="fc-acts"><button class="fc-edit" data-edit="${n.id}" title="编辑">${IC.edit}</button><button class="fc-exp" data-exp="${n.id}" title="导出这条">${IC.dl}</button><button class="fc-del" data-del="${n.id}" title="删除">${IC.del}</button></span>
     </div>
     ${n.content ? `<div class="fc-text md">${mdToHtml(n.content, { breaks: true })}</div>` : ''}
     ${todos}${imgs}${files}${tags}
@@ -668,6 +669,8 @@ $('#feed').addEventListener('click', async e => {
   }
   const ed = e.target.closest('[data-edit]');
   if (ed) { const it = (box._items || []).find(x => x.id == ed.dataset.edit); if (it) loadDraft(it); return; }
+  const ex = e.target.closest('[data-exp]');
+  if (ex) { openNoteExport([+ex.dataset.exp]); return; }
   const dl = e.target.closest('[data-del]');
   if (dl) {
     if (!(await appConfirm('删除这条小记？'))) return;
@@ -900,4 +903,105 @@ $('#qn-save').onclick = async () => {
     if ((stack[stack.length - 1] || {}).view === 'notes') { loadFeed(); refreshNoteCounts(); }
   } catch (e) { toast(errMsg(e), true); }
   b.disabled = false; b.textContent = '记下';
+};
+
+/* ---- 导出 ----
+   六种格式不是同一件事换皮，用途差得远（见 mods/notes_export.py 顶上那段），
+   所以选完格式下面那行说明要跟着换 —— 光摆六个名字，用户没法判断该点哪个。
+
+   导出的**范围**默认就是屏幕上这些（板块 + 标签 + 搜索词照搬当前筛选）：
+   人点「导出」时脑子里想的是眼前这一屏，而不是库里所有小记。 */
+const NX_FMTS = [
+  { id: 'md', name: 'Markdown', ext: '.md',
+    tip: '带走去别的笔记软件（Obsidian / 语雀 / Notion 都认这个）。图片和附件不随单个文件走，要图请选压缩包。' },
+  { id: 'txt', name: '纯文本', ext: '.txt',
+    tip: '剥掉所有 Markdown 记号，只剩字。适合打印，或者直接贴进聊天框发人。' },
+  { id: 'html', name: '网页', ext: '.html',
+    tip: '一个文件双击就能看，图片已经内嵌在里面，不依赖本服务，发给别人也能打开。' },
+  { id: 'pdf', name: 'PDF', ext: '.pdf',
+    tip: '版式固定，适合打印和存档，图片会排进正文。' },
+  { id: 'json', name: 'JSON', ext: '.json',
+    tip: '字段原样导出，用来备份和迁移，给机器读的。' },
+  { id: 'zip', name: '压缩包', ext: '.zip',
+    tip: '唯一带得走附件原件的：Markdown + JSON + images/ + files/，包内文件名按小记编号排好。' },
+];
+let nxFmt = lsGet('nx_fmt') || 'md';
+let nxIds = null;               // 非空 = 只导这几条（从卡片上点进来的）
+
+function nxRenderFmts() {
+  if (!NX_FMTS.some(f => f.id === nxFmt)) nxFmt = 'md';
+  $('#nx-fmts').innerHTML = NX_FMTS.map(f =>
+    `<button type="button" class="nx-fmt${f.id === nxFmt ? ' on' : ''}" data-fmt="${f.id}">`
+    + `${esc(f.name)}<i>${esc(f.ext)}</i></button>`).join('');
+  $('#nx-tip').textContent = (NX_FMTS.find(f => f.id === nxFmt) || {}).tip || '';
+  // 这个格式装不下的东西就置灰（md 带不了图、只有 zip 有附件原件），
+  // 藏起来反而让人以为「导出丢了图」。
+  $('#nx-imgs-l').classList.toggle('nx-off', !['html', 'pdf', 'zip'].includes(nxFmt));
+  $('#nx-atts-l').classList.toggle('nx-off', nxFmt !== 'zip');
+}
+function openNoteExport(ids) {
+  nxIds = (ids && ids.length) ? ids : null;
+  const n = ($('#feed')._items || []).length;
+  const narrowed = !!(curNoteBoard || curTag || noteSearchQ);
+  $('#nx-scope').innerHTML =
+    (nxIds ? `<option value="sel">这 ${nxIds.length} 条</option>` : '')
+    + `<option value="cur">${narrowed ? '当前筛选的' : '当前列表'} ${n} 条</option>`
+    + '<option value="all">全部小记</option>';
+  nxRenderFmts();
+  $('#nx-modal').classList.remove('hidden');
+}
+$('#feed-export').onclick = () => openNoteExport(null);
+$('#nx-cancel').onclick = () => $('#nx-modal').classList.add('hidden');
+$('#nx-modal').addEventListener('click', e => {
+  if (e.target.id === 'nx-modal') $('#nx-modal').classList.add('hidden');
+});
+$('#nx-fmts').addEventListener('click', e => {
+  const b = e.target.closest('[data-fmt]'); if (!b) return;
+  nxFmt = b.dataset.fmt; lsSet('nx_fmt', nxFmt); nxRenderFmts();
+});
+$('#nx-go').onclick = async () => {
+  const scope = $('#nx-scope').value;
+  const body = { fmt: nxFmt, order: $('#nx-order').value,
+                 todos: $('#nx-todos').checked, tags: $('#nx-tags').checked,
+                 time: $('#nx-time').checked,
+                 imgs: $('#nx-imgs').checked, atts: $('#nx-atts').checked };
+  if (scope === 'sel') body.ids = nxIds;
+  else if (scope === 'cur') { body.board = curNoteBoard; body.tag = curTag; body.q = noteSearchQ; }
+  // body.board 只有一个意思：**筛选用的板块名**。「正文里标不标板块」跟着 time 走
+  // （同一行小字），别再往 body 里塞第二个同名的布尔 —— 接口那边两者是同一层。
+  const b = $('#nx-go'); b.disabled = true;
+  try {
+    if (IN_APP) {
+      // 桌面/安卓壳（WebKit）保存不了 fetch 出来的 blob，只能让它自己去下这个地址
+      const p = new URLSearchParams();
+      p.set('fmt', nxFmt); p.set('order', body.order || '');
+      ['todos', 'tags', 'time', 'imgs', 'atts'].forEach(k => p.set(k, body[k] ? 1 : 0));
+      if (scope === 'sel') p.set('ids', nxIds.join(','));
+      else if (scope === 'cur') {
+        if (curNoteBoard) p.set('board', curNoteBoard);
+        if (curTag) p.set('tag', curTag);
+        if (noteSearchQ) p.set('q', noteSearchQ);
+      }
+      $('#nx-modal').classList.add('hidden');
+      toast('正在导出…');
+      window.location.href = '/api/notes/export?' + p.toString();
+      b.disabled = false; return;
+    }
+    toast('正在导出…');
+    const r = await fetch('/api/notes/export', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || '导出失败'); }
+    const blob = await r.blob();
+    const cd = r.headers.get('content-disposition') || '';
+    let name = '小记' + (NX_FMTS.find(f => f.id === nxFmt) || {}).ext;
+    const m = cd.match(/filename\*=UTF-8''([^;]+)/);
+    if (m) { try { name = decodeURIComponent(m[1]); } catch (_) { /* 服务端名字取不出就用本地拼的 */ } }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+    $('#nx-modal').classList.add('hidden');
+    toast('已导出 ' + name);
+  } catch (e) { toast(errMsg(e), true); }
+  b.disabled = false;
 };

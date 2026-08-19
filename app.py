@@ -27,7 +27,10 @@ from core import CFG, STATIC, THREADS, UPLOADS, close_db, users_count
 from mods.admin import bp as admin_bp
 from mods.aichat import bp as aichat_bp
 from mods.aisession import bp as aisession_bp
+from mods.aiout import bp as aiout_bp
+from mods.aishare import bp as aishare_bp
 from mods.aistats import bp as aistats_bp
+from mods.aitier import bp as aitier_bp
 from mods.annots import bp as annots_bp
 from mods.asr import bp as asr_bp
 from mods.attach import bp as attach_bp
@@ -62,6 +65,7 @@ from mods.materials import bp as materials_bp
 from mods.me import bp as me_bp
 from mods.news import bp as news_bp
 from mods.notes import bp as notes_bp
+from mods.notes_export import bp as notes_export_bp
 from mods.notifications import bp as notifications_bp
 from mods.ocr import bp as ocr_bp
 from mods.ops import bp as ops_bp
@@ -107,7 +111,10 @@ app.teardown_appcontext(close_db)
 app.register_blueprint(admin_bp)
 app.register_blueprint(aichat_bp)
 app.register_blueprint(aisession_bp)
+app.register_blueprint(aiout_bp)
+app.register_blueprint(aishare_bp)
 app.register_blueprint(aistats_bp)
+app.register_blueprint(aitier_bp)
 app.register_blueprint(annots_bp)
 app.register_blueprint(asr_bp)
 app.register_blueprint(attach_bp)
@@ -142,6 +149,7 @@ app.register_blueprint(materials_bp)
 app.register_blueprint(me_bp)
 app.register_blueprint(news_bp)
 app.register_blueprint(notes_bp)
+app.register_blueprint(notes_export_bp)
 app.register_blueprint(notifications_bp)
 app.register_blueprint(ocr_bp)
 app.register_blueprint(ops_bp)

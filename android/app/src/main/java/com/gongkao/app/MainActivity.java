@@ -439,6 +439,125 @@ public class MainActivity extends Activity {
         runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
     }
 
+    /** 聊天文件下载的进度/结果回传给网页（网页把它画在那条消息自己的卡片上）。 */
+    private void chatDlJs(String fn, String tag, String arg2, long a, long b, long c) {
+        final String t = tag == null ? "" : tag.replaceAll("[^0-9A-Za-z_]", "");
+        final String js;
+        if ("__chatDl".equals(fn)) {
+            js = "window.__chatDl && window.__chatDl('" + t + "'," + a + "," + b + "," + c + ")";
+        } else {
+            String q = arg2 == null ? "" : arg2.replace("\\", "\\\\").replace("'", "\\'")
+                    .replace("\n", " ").replace("\r", " ");
+            js = "window." + fn + " && window." + fn + "('" + t + "','" + q + "')";
+        }
+        runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
+    }
+
+    /** 取消标记：网页点了「取消」就往这里放一个，下载线程读到就收手。 */
+    private final java.util.Set<String> dlCancelled =
+            java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+
+    /**
+     * 聊天文件下载：自己拉 HTTP、自己报进度，落进系统「下载」目录。
+     *
+     * 为什么不继续用 DownloadManager：它的进度只在系统通知栏，应用里一点动静没有 ——
+     * 人看不见反馈就会反复点，同一份文件下三四遍。这条路和更新包那套是同一个写法
+     * （见 updateApp），区别只是把百分比回调给网页而不是通知栏。
+     * 安卓 10 以下没有 MediaStore.Downloads，写公共目录要另外申请权限，不值当，
+     * 那种老机器仍旧交给 DownloadManager（通知栏里有进度）。
+     */
+    @android.annotation.TargetApi(29)      // 调用方按 SDK_INT 分流，见 Bridge.downloadFile
+    private void chatDownload(String url, String name, String tag) {
+        String safe = (name == null || name.trim().isEmpty())
+                ? ("文件_" + System.currentTimeMillis())
+                : name.replaceAll("[/\\\\:*?\"<>|]", "_");
+        dlCancelled.remove(tag);
+        HttpURLConnection conn = null;
+        InputStream in = null;
+        OutputStream out = null;
+        Uri target = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            String cookie = CookieManager.getInstance().getCookie(url);
+            if (cookie != null) conn.setRequestProperty("Cookie", cookie);
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(300000);
+            int code = conn.getResponseCode();
+            if (code / 100 != 2) throw new java.io.IOException("HTTP " + code);
+            long total = conn.getContentLength();          // 没有就是 -1，网页画来回跑的条
+            String mime = conn.getContentType();
+            if (mime != null && mime.contains(";")) mime = mime.substring(0, mime.indexOf(';')).trim();
+            android.content.ContentValues cv = new android.content.ContentValues();
+            cv.put(MediaStore.Downloads.DISPLAY_NAME, safe);
+            if (mime != null && !mime.isEmpty()) cv.put(MediaStore.Downloads.MIME_TYPE, mime);
+            cv.put(MediaStore.Downloads.IS_PENDING, 1);
+            target = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+            if (target == null) throw new java.io.IOException("写不进「下载」文件夹");
+            out = getContentResolver().openOutputStream(target);
+            if (out == null) throw new java.io.IOException("写不进「下载」文件夹");
+            in = conn.getInputStream();
+            byte[] buf = new byte[65536];
+            long got = 0, lastAt = 0;
+            int n, last = -2;
+            while ((n = in.read(buf)) > 0) {
+                if (dlCancelled.contains(tag)) throw new InterruptedException("已取消");
+                out.write(buf, 0, n);
+                got += n;
+                int pct = total > 0 ? (int) (got * 100 / total) : -1;
+                long now = System.currentTimeMillis();
+                if ((pct != last || pct < 0) && now - lastAt >= 200) {
+                    last = pct; lastAt = now;
+                    chatDlJs("__chatDl", tag, null, pct, got, total);
+                }
+            }
+            out.flush();
+            out.close(); out = null;
+            in.close(); in = null;
+            android.content.ContentValues fin = new android.content.ContentValues();
+            fin.put(MediaStore.Downloads.IS_PENDING, 0);
+            getContentResolver().update(target, fin, null, null);
+            chatDlJs("__chatDlDone", tag, target.toString(), 0, 0, 0);
+        } catch (InterruptedException cancel) {
+            // 网页那边已经把这张卡恢复原样了，这里只负责别留下半个文件
+            closeQuietly(out); closeQuietly(in);
+            out = null; in = null;
+            if (target != null) {
+                try { getContentResolver().delete(target, null, null); } catch (Exception ignore) { }
+            }
+        } catch (Exception e) {
+            closeQuietly(out); closeQuietly(in);
+            out = null; in = null;
+            if (target != null) {
+                try { getContentResolver().delete(target, null, null); } catch (Exception ignore) { }
+            }
+            chatDlJs("__chatDlFail", tag, String.valueOf(e.getMessage()), 0, 0, 0);
+        } finally {
+            closeQuietly(out); closeQuietly(in);
+            if (conn != null) conn.disconnect();
+            dlCancelled.remove(tag);
+        }
+    }
+
+    private static void closeQuietly(java.io.Closeable c) {
+        if (c != null) { try { c.close(); } catch (Exception ignore) { } }
+    }
+
+    /** 老老实实交给系统下载器（安卓 9 及以下，或 MediaStore 那条路走不通时）。 */
+    private void chatDownloadBySystem(String url, String name, String tag) {
+        try {
+            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+            String cookie = CookieManager.getInstance().getCookie(url);
+            if (cookie != null) req.addRequestHeader("Cookie", cookie);
+            String fn = (name == null || name.trim().isEmpty()) ? "下载的文件" : name;
+            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fn);
+            ((DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE)).enqueue(req);
+            chatDlJs("__chatDlSys", tag, "", 0, 0, 0);
+        } catch (Exception e) {
+            chatDlJs("__chatDlFail", tag, String.valueOf(e.getMessage()), 0, 0, 0);
+        }
+    }
+
     /** 读一个很小的伴随文件（ETag / Last-Modified）；没有或读不了都当没有。 */
     private static String readSmall(File f) {
         try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
@@ -727,6 +846,38 @@ public class MainActivity extends Activity {
          *   · **报进度**：真要下的时候把百分比回调给网页，让它显示在 toast 上。
          *     原来只有一句「正在准备分享…」，几十秒里看不出是在跑还是卡死了。
          */
+        /** 下载聊天里的文件，进度回调给网页（网页画在那条消息的卡片上）。 */
+        @android.webkit.JavascriptInterface
+        public void downloadFile(final String url, final String name, final String tag) {
+            if (url == null || url.isEmpty()) return;
+            if (android.os.Build.VERSION.SDK_INT < 29) {   // 老机器没有 MediaStore.Downloads
+                new Thread(() -> chatDownloadBySystem(url, name, tag)).start();
+                return;
+            }
+            new Thread(() -> chatDownload(url, name, tag)).start();
+        }
+
+        @android.webkit.JavascriptInterface
+        public void cancelDownload(String tag) { if (tag != null) dlCancelled.add(tag); }
+
+        /** 打开刚下好的那份文件（网页点卡片上的「打开」）。 */
+        @android.webkit.JavascriptInterface
+        public void openDownload(final String uri) {
+            if (uri == null || uri.isEmpty()) return;
+            runOnUiThread(() -> {
+                try {
+                    Uri u = Uri.parse(uri);
+                    Intent i = new Intent(Intent.ACTION_VIEW);
+                    String mime = getContentResolver().getType(u);
+                    i.setDataAndType(u, mime == null ? "*/*" : mime);
+                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "没有能打开它的应用", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
         @android.webkit.JavascriptInterface
         public void shareFile(String url, String name) {
             new Thread(() -> {

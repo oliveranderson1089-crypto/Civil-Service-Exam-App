@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global KB */
+/* global KB, lbInvalidate */
 
 'use strict';
 const $ = (s) => document.querySelector(s);
@@ -115,6 +115,19 @@ const DESKTOP_VER = String(window.__desktopVer || '');
 // 手机端：安卓壳内 或 窄屏。手机端与网页端使用不同的「小记」界面
 const IS_MOBILE = IN_APP || window.matchMedia('(max-width:760px)').matches;
 document.body.classList.toggle('mobile-ui', IS_MOBILE);
+/* 平板：装了 App 就一律算手机（IS_MOBILE 里 IN_APP 直接为真）。这对底部标签栏那套是对的，
+   对「AI 面板能不能拖大/全屏」却是错的 —— 平板有的是地方，却连停靠手柄都看不到。
+   所以**不动 IS_MOBILE**（它是全站开关，底部标签栏、抽屉、录音都挂在上面），
+   另给一个只按尺寸算的判定，谁需要谁用。
+
+   按**短边**而不是宽度：手机横过来宽度也能到 900，那不叫平板；平板短边普遍 600 起。
+   而且它是**活的** —— IS_MOBILE 在加载时就算死了，平板一转屏、网页端一拖窗口就不准了。 */
+const TABLET_MIN = 600;
+const isTablet = () => Math.min(innerWidth, innerHeight) >= TABLET_MIN;
+function syncTabletUi() { document.body.classList.toggle('tablet-ui', IS_MOBILE && isTablet()); }
+syncTabletUi();
+addEventListener('resize', syncTabletUi);
+addEventListener('orientationchange', syncTabletUi);
 const PAGE_SIZE = 5;
 
 window.toast = toast;   // 桌面壳出错时要能弹提示
@@ -188,6 +201,32 @@ function fmtSize(n) {
   return (n / 1048576).toFixed(1) + ' MB';
 }
 function fmtTime(s) { return (s || '').slice(5, 16); }
+/* ---- 「最近打开」打点 ----
+   「库」首屏那张列表读的就是这些记录（后端 mods/tabhome.py + lib_visits 表）。
+   在这之前它读的是各表的 updated_at/created_at，也就是「最近新增/改过」——
+   云盘文件传上去时间就定死了，翻一下午也不会动一格。
+
+   规矩是：**只在真的把一样东西打开了的地方调**。点进云盘、进资料库列表都不算，
+   那只是走到了柜子跟前；不然这张表最后只会记着六个容器的名字。
+
+   三条都是为了「打点绝不能碍着正事」——调用它的下一句往往就是渲染：
+   · 不 await：多等一个来回对用户没有任何好处；
+   · 吞掉所有异常：接口挂了、离线了，最坏只是这次没记上，不该为它弹红条；
+   · 同一样东西 1 秒内只发一次：有的入口会连着触发两次（点一下、返回栈恢复时再画一次）。 */
+const _touched = new Map();
+function libTouch(kind, ref, extra) {
+  if (!kind || ref == null || ref === '') return;
+  const k = kind + ':' + ref, now = Date.now();
+  if (now - (_touched.get(k) || 0) < 1000) return;
+  _touched.set(k, now);
+  api('/api/lib/touch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, ref: String(ref), extra: extra || '' }),
+  }).catch(() => {});
+  // 「库」那一页缓存 20 秒，而打开一样东西恰恰会改变它那张列表。
+  // 定义在 tabviews.js（同一个 bundle 里，但 core.js 先加载），所以探一下再调。
+  if (typeof lbInvalidate === 'function') lbInvalidate();
+}
 /* 从 paste 事件里掏出文件。截图走 items（有些浏览器不进 files），复制的文件走 files ——
    两条都得看，只看一条就会出现「有的图粘得进、有的粘不进」。两者不叠加，免得同一张图收两遍。 */
 function clipFiles(e) {
@@ -197,6 +236,18 @@ function clipFiles(e) {
   if (fs.length) return fs;
   return [...(cd.items || [])].filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean);
 }
+/* ---- 应用内剪贴板 ----
+   云盘里点「复制」放进来的是**应用里的文件**（只有一个 id），系统剪贴板碰不到它：
+   桌面壳的 WebKit 右键菜单只认文本和图片，navigator.clipboard 又是被拒的。
+   所以自己存一份，粘到哪儿由接收方决定 —— 云盘里粘 = 复制文件，AI 助手里粘 = 当附件。
+   变动时发一个 appclip 事件，界面上那些「剪贴板里有 N 项」的提示靠它自己刷新。 */
+let APPCLIP = [];                 // [{kind:'drive'|'material', id, name}]
+function setAppClip(items) {
+  APPCLIP = (items || []).slice();
+  try { document.dispatchEvent(new CustomEvent('appclip')); } catch (_) { /* 老壳没有 CustomEvent 就算了 */ }
+}
+function getAppClip() { return APPCLIP.slice(); }
+
 /* 锚定小菜单：把 el 弹在 btn 附近（贴左对齐、贴下方 4px）；
    靠近视口底部/右侧时翻到上方/收边，别让菜单探出屏幕。⋮ 菜单、+号面板共用这一套。 */
 function anchorMenu(el, btn) {
@@ -246,6 +297,7 @@ const IC = {
      （全国考情那个 📣 换成了上面的 flag。） */
   cloud: _svg('<path d="M6.8 19.4a4.6 4.6 0 0 1-.5-9.2 6.6 6.6 0 0 1 12.5-1.3 3.9 3.9 0 0 1-1 10.5z"/><path d="M12 16.6v-6M9.6 12.9 12 10.5l2.4 2.4"/>'),
   chat: _svg('<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.6 9.6 0 0 1-2.9-.4L3 21l1.6-4.6A8 8 0 0 1 3.6 11.5a8.4 8.4 0 0 1 9-8.4 8.4 8.4 0 0 1 8.4 8.4z"/>'),
+  dl: _svg('<path d="M12 3v12"/><polyline points="8 11 12 15 16 11"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>'),
 };
 // 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
 const BOARD_FEATURES = {

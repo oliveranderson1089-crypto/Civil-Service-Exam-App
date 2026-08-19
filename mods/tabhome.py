@@ -9,7 +9,7 @@
 import re
 from datetime import datetime, timedelta
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from core import _study_stats, get_db, uid
 
@@ -65,7 +65,126 @@ _RECENT = [
     ("drive", "云盘",
      "SELECT id, COALESCE(name,''), created_at FROM drive_files "
      "WHERE owner_id=? AND is_dir=0 AND COALESCE(deleted_at,'')='' ORDER BY id DESC LIMIT 6"),
+    ("aiout", "AI 产出",
+     "SELECT id, COALESCE(title,''), created_at FROM ai_outputs "
+     "WHERE user_id=? ORDER BY id DESC LIMIT 6"),
 ]
+
+
+# ---------------- 「最近打开」的打点 ----------------
+#
+# 上面那份 _RECENT 是**最近新增/改过**，不是打开。两者差得最远的是云盘和资料库：
+# 它们只有 created_at，东西传上去时间就定死了，翻一下午也不会动一格。
+# 真正的「打开」记在 lib_visits 里（见 schema.py），这里是它的读写两头。
+#
+# 三元组：(显示用的分类名, 拿标题的 SQL, 这张表认不认人)
+# **每次都去源表查标题，不在打点时存快照**：改了名要跟着变，删掉的东西要从列表里消失。
+# 一屏最多 8 条、全是主键点查，比留一份会过期的快照划算得多。
+# 查不到行 = 这东西没了（删了 / 进了回收站 / 换了主人），那一条直接不出现，
+# 不用去 lib_visits 里清理 —— 清理是写操作，而这是个只读接口。
+_VISIT = {
+    "note": ("小记", "SELECT COALESCE(content,''), COALESCE(images,'') FROM notes "
+                     "WHERE id=? AND user_id=?", True),
+    "kbdoc": ("知识库", "SELECT COALESCE(NULLIF(title,''),'无标题文档') FROM kb_nodes "
+                        "WHERE id=? AND user_id=? AND type='doc'", True),
+    "draft": ("草稿本", "SELECT COALESCE(NULLIF(title,''),'未命名草稿') FROM drafts "
+                        "WHERE id=? AND user_id=?", True),
+    "material": ("资料库", "SELECT COALESCE(NULLIF(title,''),COALESCE(orig_name,'')) FROM materials "
+                           "WHERE id=? AND user_id=?", True),
+    "drive": ("云盘", "SELECT COALESCE(name,'') FROM drive_files "
+                      "WHERE id=? AND owner_id=? AND is_dir=0 AND COALESCE(deleted_at,'')=''", True),
+    # 文件夹的身份是路径，不是 id。drive_files 里存的是「父目录 + 名字」两截，
+    # 这里拼回完整路径来对 —— 根目录下的文件夹 folder 是空串，拼的时候不能多带一个斜杠。
+    "drivedir": ("云盘", "SELECT COALESCE(name,'') FROM drive_files "
+                         "WHERE (CASE WHEN COALESCE(folder,'')='' THEN name "
+                         "            ELSE folder||'/'||name END)=? "
+                         "AND owner_id=? AND is_dir=1 AND COALESCE(deleted_at,'')=''", True),
+    "aiout": ("AI 产出", "SELECT COALESCE(title,'') FROM ai_outputs WHERE id=? AND user_id=?", True),
+    # 收藏那一格里的东西：它们躺在公共表里（大家读的是同一篇时评），没有 user_id 可对。
+    # 打点仍然是按人记的 —— 分人的是 lib_visits 那一行，不是内容本身。
+    "classic": ("古诗文", "SELECT COALESCE(title,'') FROM classics WHERE id=?", False),
+    "fanwen": ("人民时评", "SELECT COALESCE(title,'') FROM essay_models WHERE id=?", False),
+    "news": ("时政", "SELECT COALESCE(title,'') FROM news_items WHERE id=?", False),
+}
+
+
+def _visit_title(db, kind, ref, u):
+    """按 kind 去源表要一个现在的标题。东西没了就返回 None（这条不进列表）。"""
+    label, sql, need_user = _VISIT[kind]
+    rows = _rows(db, sql, (ref, u) if need_user else (ref,))
+    if not rows:
+        return None
+    r = rows[0]
+    if kind == "note":
+        return _brief(r[0], "图片小记" if len(r) > 1 and r[1] not in ("", "[]") else "无标题")
+    return r[0] or "无标题"
+
+
+@bp.post("/api/lib/touch")
+def lib_touch():
+    """记一次「打开」。前端在每个真正打开东西的地方调它。
+
+    **它坏了也不许影响正在打开的那个东西**：kind 不认、表没建好、ref 是空的，
+    一律安静返回 ok:false，不返 4xx/5xx —— 前端那边 api() 一见非 2xx 就抛，
+    而调用方是「点开一篇文档」这种路径，为一次记录失败弹个红条完全不成比例。
+    """
+    d = request.get_json(silent=True) or {}
+    kind = str(d.get("kind") or "")
+    ref = str(d.get("ref") or "").strip()
+    if kind not in _VISIT or not ref:
+        return jsonify({"ok": False})
+    try:
+        db = get_db()
+        db.execute(
+            "INSERT INTO lib_visits(user_id,kind,ref,extra,n,at) "
+            "VALUES(?,?,?,?,1,datetime('now','localtime')) "
+            "ON CONFLICT(user_id,kind,ref) DO UPDATE SET "
+            "  n=n+1, at=datetime('now','localtime'), "
+            # 目录会变（文件被挪走过），每次覆盖成最新的一次。
+            # 但空的 extra 不许把已有的覆盖掉：有的入口拿不到目录，别让它把好数据抹了
+            "  extra=CASE WHEN excluded.extra='' THEN lib_visits.extra ELSE excluded.extra END",
+            (uid(), kind, ref, str(d.get("extra") or "")))
+        db.commit()
+    except Exception:
+        return jsonify({"ok": False})
+    return jsonify({"ok": True})
+
+
+def _recent(db, u, want=8):
+    """「最近打开」这一列：先真打开过的，不够再拿最近新增的垫底。
+
+    为什么要垫底：打点是从这一版才开始记的，老用户库里塞满了东西、lib_visits 却是空的。
+    如果只读打点表，升级后第一眼看到的是「库里还没有东西」—— 比原来那份不准的列表更糟。
+    真打开的记录攒够 8 条之后，垫底的自然就被挤没了。
+    """
+    out, seen = [], set()
+    for r in _rows(db, "SELECT kind, ref, COALESCE(extra,''), at FROM lib_visits "
+                       "WHERE user_id=? ORDER BY at DESC LIMIT 40", (u,)):
+        # 取 40 不取 8：删掉的东西会在下面被筛掉，只取 8 条的话
+        # 删几个文件就能把这张列表打出一片空白
+        kind = r[0]
+        if kind not in _VISIT or (kind, str(r[1])) in seen:
+            continue
+        title = _visit_title(db, kind, r[1], u)
+        if title is None:
+            continue
+        seen.add((kind, str(r[1])))
+        out.append({"kind": kind, "label": _VISIT[kind][0], "id": r[1],
+                    "title": title, "at": r[3] or "", "extra": r[2], "opened": True})
+        if len(out) >= want:
+            return out
+
+    fill = []
+    for kind, label, sql in _RECENT:
+        for r in _rows(db, sql, (u,)):
+            if (kind, str(r[0])) in seen:
+                continue
+            title = _brief(r[1], "图片小记" if len(r) > 3 and r[3] not in ("", "[]") else "无标题") \
+                if kind == "note" else (r[1] or "无标题")
+            fill.append({"kind": kind, "label": label, "id": r[0],
+                         "title": title, "at": r[2] or "", "extra": "", "opened": False})
+    fill.sort(key=lambda x: x["at"], reverse=True)
+    return out + fill[:want - len(out)]
 
 
 @bp.get("/api/lib/home")
@@ -81,16 +200,9 @@ def lib_home():
         "drive": _num(db, "SELECT COUNT(*) FROM drive_files WHERE owner_id=? AND is_dir=0 "
                           "AND COALESCE(deleted_at,'')=''", (u,)),
         "star": _star_count(db, u),
+        "aiout": _num(db, "SELECT COUNT(*) FROM ai_outputs WHERE user_id=?", (u,)),
     }
-    recent = []
-    for kind, label, sql in _RECENT:
-        for r in _rows(db, sql, (u,)):
-            title = _brief(r[1], "图片小记" if len(r) > 3 and r[3] not in ("", "[]") else "无标题") \
-                if kind == "note" else (r[1] or "无标题")
-            recent.append({"kind": kind, "label": label, "id": r[0],
-                           "title": title, "at": r[2] or ""})
-    recent.sort(key=lambda x: x["at"], reverse=True)
-    return jsonify({"counts": counts, "recent": recent[:8]})
+    return jsonify({"counts": counts, "recent": _recent(db, u)})
 
 
 # 收藏散在六个模块里，各存各的表 —— 这是把它们并成一张单子的地方。

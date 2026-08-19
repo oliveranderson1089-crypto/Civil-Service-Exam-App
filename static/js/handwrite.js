@@ -14,6 +14,8 @@
 const hwEl = {}; let hwTarget = null, hwStrokes = [], hwCur = null, hwT0 = 0, hwDrawing = false, hwTimer = null;
 let hwAuto = lsGet('hwAuto') !== '0';   // 自动上屏首选字（默认开），连续写更快
 let hwCommitted = null;                                 // 刚自动上屏的字，可点别的候选替换
+let hwSess = 0;    // 会话代数：开板/关板各加一。识别是异步的，关板后回来的结果按代数作废
+                   // ——不然那一下 value 赋值会打断输入法正在拼的字，拼音直接按字母上屏
 let hwFs = lsGet('hwFs') === '1';        // 全屏透明手写：看得到后面正在填入的答案
 let hwEngine = lsGet('hwEng') || 'cloud';  // 默认云端 Google(准)；'local'=端上ML Kit/本地Zinnia(快)
 function hwInit() {
@@ -55,7 +57,9 @@ function hwInit() {
     const w = cv.clientWidth, h = cv.clientHeight;
     bctx.clearRect(0, 0, w, h);
     bctx.save();
-    bctx.strokeStyle = document.body.classList.contains('dark') ? '#2a3446' : '#e3e8f0';
+    // 田字格底改成透明之后（评审方案 02），格线是压在题目文字上的 —— 原来那两个
+    // 浅色值放在白底上正好，放在字上就糊了，各加深一档才分得清哪儿是格、哪儿是字
+    bctx.strokeStyle = document.body.classList.contains('dark') ? '#3d4a5f' : '#cbd4e2';
     bctx.lineWidth = 1; bctx.setLineDash([6, 6]);
     bctx.beginPath();
     bctx.moveTo(w / 2, 6); bctx.lineTo(w / 2, h - 6);
@@ -190,7 +194,7 @@ async function hwCall(payload) {
 }
 // 自动模式：把这个字入队、立刻清空画布接着写下一个；识别在后台排队跟上、按顺序填字
 function hwFlush() {
-  if (!hwStrokes.length) return;
+  if (!hwStrokes.length || !hwTarget) return;
   hwQueue.push(hwInk());
   hwCommitted = null;
   hwStrokes = []; hwCur = null; hwRedraw();
@@ -200,16 +204,21 @@ async function hwPump() {
   if (hwBusy || !hwQueue.length) return;
   hwBusy = true;
   const job = hwQueue.shift();
+  const sess = hwSess;                 // 这一笔属于哪次手写会话
   const cands = await hwCall(job);
-  if (cands.length) { hwLastCands = cands; hwInsert(cands[0]); hwCommitted = cands[0]; hwSetCands(cands, cands[0]); }
   hwBusy = false;
+  if (sess !== hwSess) return;         // 板已经关了（或换了输入框）：这次结果作废，绝不能再动输入框
+  if (cands.length) { hwLastCands = cands; hwInsert(cands[0]); hwCommitted = cands[0]; hwSetCands(cands, cands[0]); }
   hwPump();     // 处理队列里下一个字
 }
 // 手动模式：识别后展示候选，等你点（不清画布）
 async function hwRecognizeManual() {
   if (!hwStrokes.length) return;
   hwSetCands(null);
-  hwLastCands = await hwCall(hwInk());
+  const sess = hwSess;
+  const cands = await hwCall(hwInk());
+  if (sess !== hwSess) return;         // 同上：板关了就别再改候选区
+  hwLastCands = cands;
   hwSetCands(hwLastCands);
 }
 function hwSetCands(list, picked) {
@@ -238,6 +247,7 @@ function openHandwrite(targetId) {
   hwTarget = document.getElementById(targetId);
   if (!hwTarget) return;
   hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
+  hwSess++;
   hwResetTools();
   try { if (hwEngine === 'local' && window.GongkaoNative && GongkaoNative.hwPrepare) GongkaoNative.hwPrepare(); } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }  // 仅"更快"模式才预下载端上模型
   hwEl.modal.classList.remove('hidden');
@@ -247,8 +257,10 @@ function openHandwrite(targetId) {
 function hwClose() {
   hwEl.modal.classList.add('hidden');
   clearTimeout(hwTimer); hwStrokes = []; hwCur = null; hwQueue = []; hwBusy = false; hwCommitted = null;
+  hwSess++;
   hwResetTools();
-  hwTarget && hwTarget.focus();
+  const t = hwTarget; hwTarget = null;   // 断开：在飞的识别回来时 hwInsert 直接空转
+  if (t) requestAnimationFrame(() => t.focus());   // 等面板真的收起来再还焦点，输入法上下文才接得上
 }
 function hwResetTools() {   // 收起标点条、退出滑动模式，避免上次残留
   hwEl.modal && hwEl.modal.classList.remove('hw-pan-on');

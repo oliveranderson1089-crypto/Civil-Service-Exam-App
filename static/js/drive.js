@@ -7,9 +7,9 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, appPrompt, artEm, back, clipFiles, copyText, DESKTOP_VER,
-   errMsg, esc, IS_DESKTOP, KB, lsDel, lsGet, lsSet, openViewerUrl, push, stack, toast,
-   uiError */
+/* global $, aiAttachLib, api, appConfirm, appPrompt, artEm, back, clipFiles, copyText,
+   DESKTOP_VER, errMsg, esc, libTouch, IS_DESKTOP, KB, lsDel, lsGet, lsSet, openViewerUrl, push, render,
+   setAppClip, stack, toast, uiError */
 
 /* ================= 云盘 ================= */
 let dvFolder = '';
@@ -37,8 +37,21 @@ function dvLeaveTrash() {          // 回收站是个独立视图，离开它得
 function openDrive() {
   dvFolder = ''; dvQuery = ''; $('#dv-search').value = '';
   dvLeaveTrash();                  // 不复位的话 loadDrive 会短路去 loadTrash：
-  push({ view: 'drive', title: '云盘', folder: '' });   // 云盘打开是回收站，上传完也看不见文件
+  dvPush('云盘', '');                                   // 云盘打开是回收站，上传完也看不见文件
   loadDrive();
+}
+
+/* 压栈前先看看这一层是不是已经在栈里了 —— 在就退回去，不再往上堆。
+   云盘的入口不止一个（侧栏、库页、面包屑），来回走几趟栈里就会攒出一串
+   「云盘 › 资料 › 云盘 › 资料 › …」，顶部面包屑被撑成两三行，返回键也要按十几次。 */
+function dvPush(title, folder) {
+  for (let i = stack.length - 1; i >= 0; i--) {
+    if (stack[i].view !== 'drive' || (stack[i].folder || '') !== folder) continue;
+    stack = stack.slice(0, i + 1);
+    render();
+    return;
+  }
+  push({ view: 'drive', title, folder });
 }
 
 function dvRow(it) {
@@ -87,7 +100,7 @@ function dvTrashRow(it) {
     <span class="dv-ic">${it.is_dir ? artEm('📁') : dvIcon(it.ext)}</span>
     <div class="dv-info">
       <div class="dv-name">${esc(it.name)}</div>
-      <div class="dv-meta">${it.is_dir ? '文件夹' : fSize(it.size)} · 删于 ${esc((it.deleted_at || '').slice(5, 16))}${it.folder ? ' · 原在 ' + artEm('📁') + ' ' + esc(it.folder) : ''}</div>
+      <div class="dv-meta">${it.is_dir ? '文件夹' + (it.kids ? '（含 ' + it.kids + ' 项）' : '') : fSize(it.size)} · 删于 ${esc((it.deleted_at || '').slice(5, 16))}${it.folder ? ' · 原在 ' + artEm('📁') + ' ' + esc(it.folder) : ''}</div>
     </div>
     <span class="dv-acts">
       <button class="dv-act" data-dvrestore="${it.id}" title="恢复">↩︎ 恢复</button>
@@ -150,8 +163,26 @@ async function loadDrive() {
 /* 进目录 = 往导航栈压一层，于是全局「返回」自然是退到**上一级目录**，
    而不是一步跳回首页。回到栈里已有的层级（点面包屑）则出栈，别把栈越堆越高。 */
 function dvGo(folder) {
+  // 进文件夹算打开。'' 是云盘根目录，libTouch 见空 ref 自己会跳过 ——
+  // 「打开了云盘」不是一件值得记的事，那是柜子不是东西。
+  // 只挂在 dvGo 上，不挂 __dvShow：按返回键退回上一级是**离开**，不是打开。
+  libTouch('drivedir', folder);
+  dvJump(folder);
+}
+// 不打点的那一半。给「先落到某层目录、要打开的其实是里面那份文件」用（dvOpenFile）——
+// 走 dvGo 的话点一次文件会连带记一条文件夹，「最近打开」里就成双成对地长草。
+function dvJump(folder) {
   dvQuery = ''; $('#dv-search').value = ''; dvLeaveTrash();
-  push({ view: 'drive', title: folder ? folder.split('/').pop() : '云盘', folder });
+  dvPush(folder ? folder.split('/').pop() : '云盘', folder);
+}
+/* 从「库 → 最近打开」点回一份云盘文件。
+   先落到它所在的那一层目录再开预览器：只开预览器的话，关掉之后人站在云盘根目录，
+   而他明明是从三层深的文件夹里点进来的。 */
+function dvOpenFile(id, name, folder) {
+  dvJump(folder || '');
+  const ext = (String(name || '').match(/\.[^.]+$/) || [''])[0].toLowerCase();
+  openViewerUrl('/api/drive/' + id + '/view', name, ext,
+                '/api/drive/' + id + '/download', '/api/drive/' + id + '/view?text=1');
 }
 $('#dv-crumb').addEventListener('click', e => {
   const a = e.target.closest('[data-dvcd]');
@@ -178,7 +209,11 @@ window.__dvShow = (st) => {
 $('#dv-list').addEventListener('click', async e => {
   const back = e.target.closest('[data-dvrestore]');
   if (back) {
-    try { await api('/api/drive/trash/' + back.dataset.dvrestore + '/restore', { method: 'POST' }); toast('已恢复'); loadTrash(); }
+    try {
+      const d = await api('/api/drive/trash/' + back.dataset.dvrestore + '/restore', { method: 'POST' });
+      toast(d && d.n > 1 ? '已恢复 ' + d.n + ' 项' : '已恢复');
+      loadTrash();
+    }
     catch (err) { toast(errMsg(err), true); }
     return;
   }
@@ -201,6 +236,7 @@ $('#dv-list').addEventListener('click', async e => {
   const view = e.target.closest('[data-dvview]');
   if (view) {                      // 预览走资料库那套查看器：md/txt 阅读模式、pdf/office 走 pdf.js
     const id = view.dataset.dvview;
+    libTouch('drive', id, dvFolder);   // 带上所在目录，「最近打开」里点回来才落得回这一层
     openViewerUrl('/api/drive/' + id + '/view', view.textContent, view.dataset.ext,
                   '/api/drive/' + id + '/download', '/api/drive/' + id + '/view?text=1');
     return;
@@ -342,7 +378,12 @@ let dvClip = [];          // 剪贴板里存的是云盘文件 id
 
 function dvSetClip(ids) {
   dvClip = ids.slice();
-  toast(dvClip.length ? '已复制 ' + dvClip.length + ' 项，去目标文件夹点「粘贴」' : '没选中东西');
+  /* 同一份东西也放进应用内剪贴板：AI 助手那边认它 —— 复制完直接在助手里粘（或点
+     输入框上方那条提示）就能把文件当附件带给 AI，不用先下下来再传上去。
+     系统剪贴板指望不上：桌面壳的 WebKit 右键菜单只认文本和图片。 */
+  setAppClip(dvClip.map(id => ({ kind: 'drive', id: +id })));
+  toast(dvClip.length ? '已复制 ' + dvClip.length + ' 项：去目标文件夹点「粘贴」，或在 AI 助手里粘成附件'
+                      : '没选中东西');
 }
 
 async function dvPaste() {
@@ -369,6 +410,7 @@ async function dvPaste() {
   toast(fail ? '粘贴 ' + ok + ' 项，失败 ' + fail + ' 项' : '已粘贴 ' + ok + ' 项', fail > 0 && !ok);
   loadDrive();
 }
+$('#dv-bsend').onclick = () => driveSend([...dvSel]);
 $('#dv-copy').onclick = () => { dvSetClip([...dvSel]); };
 $('#dv-paste').onclick = dvPaste;
 
@@ -382,13 +424,17 @@ function dvMenu(x, y, id, name, viewable, isDir) {
     rows.push(['dvm-share', '🔗 分享链接'], ['dvm-copy', '📄 复制'], ['dvm-ren', '✏️ 重命名']);
     // 文件夹没有单文件下载（/download 只认 is_dir=0），给它的是整个打包成 zip
     rows.push(isDir ? ['dvm-zip', '📦 打包下载'] : ['dvm-dl', '⬇ 下载']);
-    if (!isDir) rows.push(['dvm-send', '📤 发给好友']);
+    // 文件夹也给这一项：后端会先打包成 zip 再发（摊平逐个发会在对方会话里刷屏）
+    rows.push(['dvm-send', isDir ? '📤 打包发送到聊天…' : '📤 发送到聊天…']);
+    // 文件夹给不了：附件是一份份读的，一个目录塞进去只会把上下文冲爆
+    if (!isDir) rows.push(['dvm-ai', '🤖 发给 AI 助手']);
     rows.push(['dvm-del', '🗑 删除']);
   }
   rows.push(['dvm-paste', '📋 粘贴' + (dvClip.length ? '（' + dvClip.length + ' 项）' : '')]);
   el.innerHTML = rows.map(([k, t]) => `<button data-dvm="${k}">${t}</button>`).join('');
   el.dataset.id = id || '';
   el.dataset.name = name || '';
+  el.dataset.dir = isDir ? '1' : '';
   el.classList.remove('hidden');
   // 靠右/靠下时翻到另一侧，别让菜单跑到屏幕外
   const w = el.offsetWidth || 150, h = el.offsetHeight || 180;
@@ -430,13 +476,14 @@ $('#dv-menu').addEventListener('click', async e => {
   const b = e.target.closest('[data-dvm]');
   if (!b) return;
   const el = $('#dv-menu');
-  const id = +el.dataset.id, name = el.dataset.name;
+  const id = +el.dataset.id, name = el.dataset.name, isDir = el.dataset.dir === '1';
   dvMenuHide();
   switch (b.dataset.dvm) {
     case 'dvm-view': $(`[data-dvview="${id}"]`).click(); break;
     case 'dvm-copy': dvSetClip([id]); break;
     case 'dvm-share': dvShare(id); break;
-    case 'dvm-send': driveSend(id); break;
+    case 'dvm-send': driveSend([id], isDir); break;
+    case 'dvm-ai': aiAttachLib([{ kind: 'drive', id, name }]); break;
     case 'dvm-zip': dvDownload('/api/drive/' + id + '/zip', name + '.zip'); break;
     case 'dvm-paste': dvPaste(); break;
     case 'dvm-ren': dvRename(id, name); break;
@@ -521,8 +568,21 @@ async function dvRetry(fn) {
   }
 }
 
-async function dvUploadChunked(file, folder, onProg) {
-  const key = dvUpKey(file, folder);
+/* 分片上传通道。opts.target 决定这份文件最后落到哪：
+     'drive'     → 云盘的 opts.folder 目录（默认）
+     'materials' → 资料库的 opts.board 分类
+   后端是同一条路（init → 每片 → done），done 按会话里记下的 target 分流。
+   资料库原先是「一整个请求发完」，撞的是 64MB 全局上限、走隧道时更是 100MB 就断；
+   接到这条通道上，顺带白拿断点续传。 */
+async function chunkUpload(file, opts, onProg) {
+  const o = opts || {};
+  const target = o.target || 'drive';
+  const folder = o.folder || '';
+  /* 续传的 key 要把目标也算进去：同一个文件传去云盘和传去资料库是两回事，
+     共用一个 upload_id 会把「已经收到的块」张冠李戴。
+     云盘那支照旧只用 folder —— 换了写法就等于把大家浏览器里**正传到一半**的会话号
+     全变成认不出来的孤儿，下次打开只能从头再传一遍。 */
+  const key = dvUpKey(file, target === 'materials' ? 'materials:' + (o.board || '') : folder);
   let id = lsGet(key), had = new Set();
   if (id) {
     try {                                  // 会话还在就接着传
@@ -532,7 +592,8 @@ async function dvUploadChunked(file, folder, onProg) {
   if (!id) {
     const init = await api('/api/drive/chunk/init', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: file.name, folder, size: file.size, mime: file.type || '' }) });
+      body: JSON.stringify({ name: file.name, folder, size: file.size, mime: file.type || '',
+                             target, board: o.board || '', title: o.title || '' }) });
     id = init.upload_id;
     had = new Set(init.received || []);
     lsSet(key, id);
@@ -563,6 +624,11 @@ async function dvUploadOne(file, folder, onProg) {
   return file.size > DV_CHUNK_MIN
     ? dvUploadChunked(file, folder, onProg)
     : dvUploadWhole(file, folder, onProg);
+}
+
+// 云盘这一侧的老名字留着：它就是「落点 = 云盘」的 chunkUpload，调用方和测试都还认它
+function dvUploadChunked(file, folder, onProg) {
+  return chunkUpload(file, { target: 'drive', folder }, onProg);
 }
 
 function dvUploadWhole(file, folder, onProg) {
@@ -719,28 +785,70 @@ $('#dv-newfolder').onclick = async () => {
   try { await api('/api/drive/folder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), parent: dvFolder }) }); loadDrive(); }
   catch (err) { toast(errMsg(err), true); }
 };
-async function driveSend(fid) {
-  try {
-    const d = await api('/api/friends');
-    if (!d.friends.length) { toast('你还没有好友，先去「聊天 → 加好友」', true); return; }
-    const pick = await pickFriend(d.friends, '发给谁');
-    if (!pick) return;
-    await api('/api/drive/' + fid + '/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: pick }) });
-    toast('已发送');
-  } catch (e) { toast(errMsg(e), true); }
+/* 发送到聊天。ids 是云盘条目（可以是一批），isDir 只用来在提示里说清楚会打包。
+   接口是按条目一个个发的，一次选好对象、循环发完，别让人对每个文件都选一遍。 */
+async function driveSend(ids, isDir) {
+  const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean);
+  if (!list.length) return;
+  const pick = await pickChatTargets(list.length > 1 ? '发送这 ' + list.length + ' 项到' : '发送到',
+                                     isDir ? '文件夹会先打包成 zip 再发出去。' : '');
+  if (!pick) return;
+  let ok = 0, fail = 0;
+  for (const id of list) {
+    try {
+      await api('/api/drive/' + id + '/send', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pick) });
+      ok++;
+    } catch (e) { fail++; toast(errMsg(e), true); }
+  }
+  if (ok) toast(fail ? ('已发送 ' + ok + ' 项，失败 ' + fail + ' 项') : sentText(ok, pick));
 }
-// 选好友（复用小记那种底部面板）
-function pickFriend(friends, title) {
+const sentText = (n, pick) => '已发送' + (n > 1 ? ' ' + n + ' 项' : '') + '给 '
+  + [pick.users.length ? pick.users.length + ' 位好友' : '',
+     pick.groups.length ? pick.groups.length + ' 个小组' : ''].filter(Boolean).join('、');
+
+/* 选发送对象：好友 + 我在的小组，可多选、可跨组，一次发多个目标。
+   云盘、资料库、聊天里的「发送到聊天…」共用这一个 —— 它们发的本来就是同一件事。
+   返回 {users:[], groups:[]}，取消返回 null。 */
+async function pickChatTargets(title, hint) {
+  let d;
+  try { d = await api('/api/chat/targets'); }
+  catch (e) { toast(errMsg(e), true); return null; }
+  const friends = d.friends || [], groups = d.groups || [];
+  if (!friends.length && !groups.length) {
+    toast('还没有好友、也不在任何小组里。先去「聊天」加个好友或建个小组', true);
+    return null;
+  }
   return new Promise(res => {
     const el = $('#mat-share-sheet');
+    const rows = (kind, list, icon, label, sub) => list.map(x => `
+      <label class="ms-row"><input type="checkbox" data-tk="${kind}" value="${x.id}">
+        <span class="ms-ic">${artEm(icon)}</span><span>${esc(label(x))}</span>
+        ${sub && sub(x) ? `<span class="ms-sub">${esc(sub(x))}</span>` : ''}</label>`).join('');
     el.innerHTML = `<div class="ns-mask" data-sheet-close></div><div class="ns-panel">
-      <div class="ns-handle"></div><div class="ns-title">${esc(title || '选择好友')}</div>
-      <div class="ms-list">${friends.map(f => `<button class="ms-frow" data-fp="${f.id}">👤 ${esc(f.username)}</button>`).join('')}</div>
-      <div class="ms-acts"><button class="btn" id="fp-cancel">取消</button></div></div>`;
+      <div class="ns-handle"></div><div class="ns-title">${esc(title || '发送到')}</div>
+      <p class="acct-hint" style="padding:0 16px;margin:0 0 6px">${esc(hint || '')}选中的每一个都会收到一条文件消息，好友和小组可以一起选。</p>
+      <div class="ms-list">
+        ${friends.length ? '<div class="ms-grp">好友</div>' + rows('u', friends, '👤', f => f.username) : ''}
+        ${groups.length ? '<div class="ms-grp">我的小组</div>'
+          + rows('g', groups, '👥', g => g.title, g => (g.n || 0) + ' 人') : ''}
+      </div>
+      <div class="ms-acts">
+        <button class="btn" id="tk-cancel">取消</button>
+        <button class="btn primary" id="tk-ok" disabled>发送</button>
+      </div></div>`;
     el.classList.remove('hidden');
     const done = v => { el.classList.add('hidden'); res(v); };
+    const picked = k => [...el.querySelectorAll(`input[data-tk="${k}"]:checked`)].map(i => +i.value);
+    // 一个都没选就不该点得动「发送」——否则点下去只能弹一句报错
+    const sync = () => {
+      const n = picked('u').length + picked('g').length;
+      $('#tk-ok').disabled = !n;
+      $('#tk-ok').textContent = n ? '发送（' + n + '）' : '发送';
+    };
+    el.querySelectorAll('input[data-tk]').forEach(i => { i.onchange = sync; });
     el.querySelector('.ns-mask').onclick = () => done(null);
-    $('#fp-cancel').onclick = () => done(null);
-    el.querySelectorAll('[data-fp]').forEach(b => b.onclick = () => done(+b.dataset.fp));
+    $('#tk-cancel').onclick = () => done(null);
+    $('#tk-ok').onclick = () => done({ users: picked('u'), groups: picked('g') });
   });
 }

@@ -1039,6 +1039,26 @@ def init_db():
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_drafts ON drafts(user_id, updated_at DESC);
+        -- 「库」首屏那张「最近打开」的打点表（mods/tabhome.py）。
+        --
+        -- 在它之前，那张列表读的是各容器自己的 updated_at / created_at，也就是
+        -- 「最近新增或改过」——名字却叫「最近打开」。差别在云盘上最刺眼：文件传上去
+        -- 时间就定死了，点开一百次也不动一格，于是列表长年被「改一下就刷新时间」的
+        -- 小记霸榜，翻了一下午的 PDF 一条都不在里面。真的「打开过」只能单独记。
+        --
+        -- ref 存字符串而不是整数：云盘**文件夹**没有自己的行 id，它的身份就是那条路径。
+        -- 一条 (user_id, kind, ref) 只留一行、原地更新时间——同一篇文档翻十遍
+        -- 不该把列表刷成十行一模一样的东西。
+        CREATE TABLE IF NOT EXISTS lib_visits(
+            user_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,                -- note/kbdoc/draft/material/drive/drivedir/aiout/…
+            ref TEXT NOT NULL,                 -- 行 id 或云盘目录路径
+            extra TEXT DEFAULT '',             -- 跳回去还缺什么：云盘文件记它所在目录，否则只能落到根目录
+            n INTEGER DEFAULT 1,               -- 打开次数。列表不按它排（翻得勤 ≠ 最近在看），留着做统计
+            at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY(user_id, kind, ref)
+        );
+        CREATE INDEX IF NOT EXISTS idx_lib_visits ON lib_visits(user_id, at DESC);
     """)
     # ↓↓ 到这里为止所有表都建好了，下面才开始「补列」（ALTER）。
     # 顺序很要紧：changkao_items / hyper_items / xiyu_items 的建表在上面第二个 executescript 里，
@@ -1144,7 +1164,55 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_aipf ON ai_project_files(project_id);
+        -- AI 产出：助手生成的东西（对话汇总、写的文档、出的题）先落在这里，
+        -- 再由用户决定投到哪（资料库 / 云盘 / 聊天 / 下载）。
+        --
+        -- **它是中转站，不是第二个云盘**：默认只留 30 天，主动「归档」才进正式容器。
+        -- 不这么定位的话，半年后这里会堆满谁也不记得的东西，还跟云盘互相打架。
+        -- chat_id/msg_id 留着是为了「这是哪次对话生成的」点得回去 —— 产出脱离上下文
+        -- 就只是一坨没头没尾的文本。
+        CREATE TABLE IF NOT EXISTS ai_outputs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            chat_id INTEGER, msg_id INTEGER,  -- 来源对话（可为空：定时任务也可能产出）
+            kind TEXT DEFAULT 'md',           -- md / txt / pdf
+            title TEXT NOT NULL,
+            body TEXT,                        -- 文本类直接存正文
+            path TEXT,                        -- 二进制类（pdf）存相对 uploads 的路径
+            size INTEGER DEFAULT 0,
+            kept INTEGER DEFAULT 0,           -- 1=用户归过档，不再受 30 天清理
+            sent TEXT DEFAULT '',             -- 投放过哪儿的人话记录，给界面显示
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_aiout ON ai_outputs(user_id, id DESC);
+        -- 分享出去的 AI 对话：存的是**快照**（只读副本），不是指向原对话的引用。
+        -- 快照而非引用有两个理由：① 分享之后原对话继续聊，不会跟着漏给对方；
+        -- ② 对方点「接着问」是在他自己名下开一条新会话，跟原对话从此各走各的。
+        --
+        -- to_uid 是收件人，读权限就按它判（owner 或 to_uid）。不做成「好友都能看」：
+        -- 那样谁都能顺着 id 翻别人的分享。
+        CREATE TABLE IF NOT EXISTS ai_shares(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER NOT NULL, to_uid INTEGER,
+            conv_id INTEGER,                  -- 发进小组时记小组会话 id（组员都能看）
+            title TEXT, msgs TEXT,            -- msgs: JSON [{role, content}]
+            n INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_aishare ON ai_shares(owner_id, id DESC);
     """)
+    # 项目资料原来只有 name/text 两列 —— 只能手打/粘贴文本，传不了文件。
+    # 补上「这份资料是从哪个文件来的」：
+    #   orig_name/ext/size  原文件名与格式（列表里要显示，读的时候要按格式抽）
+    #   stored_name         原件落盘名（uploads/_aiproj/<user_id>/ 下）。**必须留原件**：
+    #                       抽出来的正文对扫描件只有前几页，后面的页要靠原件现场 OCR，
+    #                       没有它就成了「AI 说它没看全，而且也没有办法看全」。
+    #   pages/ocr_pages     PDF 总页数 / 已 OCR 到第几页（0=有文字层，全抽到了）
+    for col, decl in (("orig_name", "TEXT"), ("ext", "TEXT"), ("size", "INTEGER DEFAULT 0"),
+                      ("stored_name", "TEXT"), ("pages", "INTEGER DEFAULT 0"),
+                      ("ocr_pages", "INTEGER DEFAULT 0")):
+        if col not in _cols(con, "ai_project_files"):
+            con.execute("ALTER TABLE ai_project_files ADD COLUMN %s %s" % (col, decl))
     # 应用文比大作文多一层：得先有「文种 + 发文场景 + 我是谁 + 写给谁」才谈得上选素材
     if "spec" not in _cols(con, "daily_essays"):
         con.execute("ALTER TABLE daily_essays ADD COLUMN spec TEXT")
@@ -1247,6 +1315,27 @@ def init_db():
         if col not in _cols(con, "drive_shares"):
             con.execute("ALTER TABLE drive_shares ADD COLUMN %s %s" % (col, decl))
     con.execute("CREATE INDEX IF NOT EXISTS idx_drive_del ON drive_files(owner_id, deleted_at)")
+    # 同一个目录下不许有两个同名文件夹。
+    #   上传整个文件夹是很多个并发请求，每个请求各自 _ensure_folder_path 补中间目录：
+    #   彼此看不见对方**还没提交**的那一行，于是同一个目录被建了好几遍（实测「内江资中县
+    #   社区备考资料」建出 3 行）。表现很唬人 —— 删掉「那个」文件夹，列表里还剩两个同名的
+    #   空壳，看着像「删了没删干净」或「恢复只恢复了个空壳」。
+    #   靠库来兜底：部分唯一索引 + 插入时吞掉 IntegrityError（见 _ensure_folder_path）。
+    #   建索引前先合并历史重复行：文件挂在**路径字符串**上，跟具体是哪一行无关，
+    #   所以留 id 最小的那行、其余删掉，一个文件都不会丢。分享链接指过去。
+    dup = con.execute(
+        "SELECT owner_id, folder, name, MIN(id) AS keep, COUNT(*) AS n FROM drive_files "
+        "WHERE is_dir=1 AND deleted_at IS NULL GROUP BY owner_id, folder, name HAVING n>1"
+    ).fetchall()
+    for d in dup:
+        ids = [r[0] for r in con.execute(
+            "SELECT id FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND is_dir=1 "
+            "AND deleted_at IS NULL AND id<>?", (d[0], d[1], d[2], d[3])).fetchall()]
+        for i in ids:
+            con.execute("UPDATE drive_shares SET file_id=? WHERE file_id=?", (d[3], i))
+            con.execute("DELETE FROM drive_files WHERE id=?", (i,))
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_drive_dir1 ON drive_files"
+                "(owner_id, folder, name) WHERE is_dir=1 AND deleted_at IS NULL")
     # 外观定制：头像 / 应用内壁纸 / 登录页壁纸（存文件名，图片放 uploads/skin/<uid>/）
     for col in ("avatar", "wall_app", "wall_login"):
         if col not in _cols(con, "users"):

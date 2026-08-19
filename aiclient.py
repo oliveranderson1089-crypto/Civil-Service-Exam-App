@@ -102,9 +102,70 @@ def normalize(name):
     return n
 
 
-def conf(tier="fast", cfg=None):
-    """解析出一次调用需要的全部东西：接口地址、真实模型名、Key。"""
+# ---------------------------------------------------------------- 服务级档位覆盖（管理员控成本）
+# config.json 的 ai_tiers：{"服务": "fast|pro|"}，空串/缺席 = 跟随代码里写的默认档。
+# 为什么放在这一层而不是去改各业务的调用点：调用点有三十多处、还分散在 13 个
+# 没人 import 的定时器脚本里（见 [[gongkao-timer-scripts]] 那次事故）。档位是
+# 「成本旋钮」，旋钮只该有一个，而全站唯一都要经过的地方就是这儿。
+OVERRIDE_KEY = "ai_tiers"
+
+# 键的三种写法，按这个顺序取第一个命中的（精确的赢）：
+#   "write:pro"  只改这个服务里**本来走 pro** 的那些调用（降级批改但不动它的提取）
+#   "write"      这个服务的全部调用
+#   "*"          全站兜底（一键省钱模式）
+def _override(who, tier, cfg, key, allowed):
+    ov = (cfg or {}).get(key)
+    if not isinstance(ov, dict):
+        return ""
+    for k in ("%s:%s" % (who, tier), who, "*"):
+        v = ov.get(k)
+        v = v.strip().lower() if isinstance(v, str) else ""
+        if v in allowed:
+            return v
+    return ""
+
+
+def _resolve(tier, cfg, who, key, allowed):
+    if who == "":
+        return tier
     c = cfg if cfg is not None else load_cfg()
+    return _override(who if who is not None else aimeter.caller(), tier, c, key, allowed) or tier
+
+
+def effective_tier(tier="fast", cfg=None, who=None):
+    """业务要的档位 → 管理员实际允许的档位。
+
+    who=None 表示自己顺调用栈找发起方（跟记账用的是同一套口径，所以后台报表里
+    看到的服务名，和这里能设置的服务名天然对得上）；who="" 表示不查覆盖——
+    「当前配的是哪个模型」这类**展示**用途要的是原样，不能被覆盖染色。
+    """
+    return _resolve(tier, cfg, who, OVERRIDE_KEY, TIERS)
+
+
+# ---------------------------------------------------------------- 视觉模型的同款旋钮
+# 读图走的是另一家（智谱，配置在 vision_* 那几个键），但「成本旋钮」的道理一样，
+# 所以键的形状、优先级、清除方式都跟上面一致，后台一页管两家。
+#   free —— 免费的 flash 档优先，读图/OCR 够用（vision_chat 会在它失败时自己退到旗舰）
+#   pro  —— 直接上旗舰，图形推理这类硬任务用
+# 真实模型名不在这儿：视觉那两个名字住在 mods/ai.py 的 _vision_conf，这里只管档位。
+VISION_KEY = "ai_vision_tiers"
+VISION_TIERS = ("free", "pro")
+
+
+def effective_vision(prefer="free", cfg=None, who=None):
+    return _resolve(prefer if prefer in VISION_TIERS else "free",
+                    cfg, who, VISION_KEY, VISION_TIERS)
+
+
+def conf(tier="fast", cfg=None, who=None):
+    """解析出一次调用需要的全部东西：接口地址、真实模型名、Key。
+
+    默认会应用管理员在后台设的服务级档位覆盖（who 的含义见 effective_tier）。
+    脚本里 `_AI = aiclient.conf(TIER, CFG)` 这种模块级常量也因此自动跟随——
+    它们是每次定时唤醒新起的进程，读的就是当时的配置。
+    """
+    c = cfg if cfg is not None else load_cfg()
+    tier = effective_tier(tier, c, who)
     key, fallback = TIERS.get(tier) or TIERS["fast"]
     base = (c.get("ai_base") or DEFAULT_BASE).rstrip("/")
     model = normalize(c.get(key) or "") or fallback
@@ -128,7 +189,7 @@ def chat_url(base):
 
 
 def configured(cfg=None):
-    return bool(conf("fast", cfg)["key"])
+    return bool(conf("fast", cfg, who="")["key"])
 
 
 # ---------------------------------------------------------------- 探活：官方现在到底有哪些模型
@@ -140,7 +201,7 @@ def list_models(cfg=None, timeout=20, ttl=300):
     now = time.time()
     if _models_cache["ids"] and now - _models_cache["at"] < ttl:
         return _models_cache["ids"]
-    c = conf("fast", cfg)
+    c = conf("fast", cfg, who="")
     if not c["key"]:
         return []
     url = c["base"] + ("/models" if c["base"].endswith("/v1") else "/v1/models")
@@ -242,6 +303,12 @@ def _starved(d):
 # TCP 连上就不会再换地址了（它只在**连接失败**时才往下一个走，握手失败不算）。
 # 原来的重试次次撞在同一个 IP 上，所以才会一连失败三次。
 CONNECT_TIMEOUT = 8         # 实测握手 0.05~0.11 秒，8 秒是 70 倍余量；卡死的一秒也等不出结果
+# 读取阶段同样有两个口径，混用一个数是 2026-08 那批超时的直接原因：
+#   · 等**第一个字节** —— 正常 1~3 秒。等久了不是「模型在想」，是这条 TCP 已经死了。
+#   · 等**下一片** —— 已经在吐字了，模型写长文本时片与片之间空几十秒是正常的。
+# 以前两者共用一个 40 秒：既没能早点发现死连接（要等满 40 秒才重试，重试完预算也没了），
+# 又只比「最慢的一次成功」（实测 34.5 秒）高 16%，稍慢一点的正常回答直接被误杀。
+FIRST_BYTE_TIMEOUT = 12     # 12 秒还没有第一个字节 → 判定这条连接死了，换一条重来
 CONNECT_TRIES = 3           # 最坏 24 秒，仍远小于任何一处的读取预算
 
 _addr_cache = {"host": "", "at": 0.0, "ips": []}
@@ -277,6 +344,25 @@ class _Pinned(http.client.HTTPSConnection):
         self._create_connection = (
             lambda address, timeout, source_address:
             socket.create_connection((ip, address[1]), timeout, source_address))
+
+
+def _retime(r, sec):
+    """把这条响应底下 socket 的读超时改成 sec，返回改没改成。
+
+    用途只有一个：收到第一个字节之后，把「等首字节」那份小超时换成「等下一片」那份
+    大超时。找不到 socket 就当没发生 —— 超时仍然是开着的，只是还用着旧的那份，
+    行为不比改之前差。
+    """
+    for path in (("fp", "raw", "_sock"), ("fp", "_sock"), ("_sock",)):
+        o = r
+        try:
+            for a in path:
+                o = getattr(o, a)
+            o.settimeout(sec)
+            return True
+        except Exception:
+            continue
+    return False
 
 
 class _Resp:
@@ -425,15 +511,18 @@ def chat(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=120,
         没有它的话，换成推理模型之后全站几十处按老模型定的额度会一处一处地炸，
         且报出来的都是「AI 返回格式异常」这种查不出根因的话。
     """
-    c = conf(tier, cfg)
+    # 谁发起的这次调用，在进循环前就问清楚：记账点在下面的 except 里，
+    # 那时的调用栈已经是异常处理栈，caller() 未必还能看到业务模块那一帧。
+    # 档位也要它——管理员是按「服务」调档位的（后台 → 档位控制）。
+    who = aimeter.caller()
+    cfg = cfg if cfg is not None else load_cfg()
+    tier = effective_tier(tier, cfg, who)
+    c = conf(tier, cfg, who="")          # 覆盖上一行已经解析过了，别再查一次
     if not c["key"]:
         raise RuntimeError("AI 未配置，请管理员在「后台 → AI 设置」填写 API Key")
     model, healed = c["model"], False
     cap, grown = budget(model, max_tokens), False
     tried = 0
-    # 谁发起的这次调用，在进循环前就问清楚：记账点在下面的 except 里，
-    # 那时的调用栈已经是异常处理栈，caller() 未必还能看到业务模块那一帧。
-    who = aimeter.caller()
     while True:
         payload = {"model": model, "messages": messages, "temperature": temperature,
                    "max_tokens": cap, "stream": False}
@@ -520,11 +609,12 @@ def _merge_tool_calls(slots, deltas):
 
 
 def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
-           cfg=None, retries=2, extra=None):
+           cfg=None, retries=2, extra=None, first_byte=FIRST_BYTE_TIMEOUT):
     """流式调用：边生成边往外吐。产出 (kind, payload) 二元组：
 
         ("reasoning", 片段)  推理段（v4 这类推理模型才有；正文之前的「它在想」）
         ("content",   片段)  正文
+        ("ping",      "")    上游的心跳注释帧，原样转出去（见下面「为什么要转」）
         ("done",      message)  完整的 assistant message，含拼好的 tool_calls
 
     为什么值得单独写一条而不是复用 chat()：非流式下，「模型在写」和「连接已经死了」
@@ -533,14 +623,22 @@ def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
     用户也不用对着「思考中…」干等。
 
     重试只在**一个字都还没吐出去**时做：已经吐了一半再重来会出现重复的半截话。
+    这也正是 first_byte 和 timeout 分开的理由：会被重试放大的只有「等首字节」这一段，
+    所以只有它需要按尝试次数分摊；开始吐字之后不会再重试，那一段拿满预算就行。
+
+    ping：上游本来就会发 `: keep-alive` 这样的注释帧，我们以前直接丢掉。转出去是为了
+    让**我们自己**发给浏览器的那条 SSE 也一直有字节流动 —— 中间隔着 Cloudflare 隧道，
+    静默太久会被边缘掐断（前端还有一层空闲超时），而模型在想的时候本来就没有正文可发。
     """
-    c = conf(tier, cfg)
+    who = aimeter.caller()
+    cfg = cfg if cfg is not None else load_cfg()
+    tier = effective_tier(tier, cfg, who)
+    c = conf(tier, cfg, who="")
     if not c["key"]:
         raise RuntimeError("AI 未配置，请管理员在「后台 → AI 设置」填写 API Key")
     model, healed = c["model"], False
     cap, grown = budget(model, max_tokens), False
     tried = 0
-    who = aimeter.caller()
     while True:
         payload = {"model": model, "messages": messages, "temperature": temperature,
                    "max_tokens": cap, "stream": True,
@@ -552,11 +650,17 @@ def stream(messages, tier="fast", temperature=0.4, max_tokens=1600, timeout=40,
         text, slots, finish, usage = [], {}, "", {}
         t = aimeter.Timer()
         try:
-            with t, _open(c, payload, timeout) as r:
+            # 先按「等首字节」那份小预算开；收到第一行就换成「等下一片」那份。
+            with t, _open(c, payload, min(first_byte, timeout) if first_byte else timeout) as r:
+                widened = not first_byte or first_byte >= timeout
                 for raw in r:
+                    if not widened:
+                        widened = _retime(r, timeout) or True   # 换不成也只试这一次
                     line = raw.decode("utf-8", "ignore").strip()
                     if not line.startswith("data:"):
-                        continue                      # 空行是帧分隔，": ping" 是心跳
+                        if line.startswith(":"):
+                            yield "ping", ""          # 上游心跳：转出去，别让下游静默太久
+                        continue                      # 空行是帧分隔
                     body = line[5:].strip()
                     if body == "[DONE]":
                         break

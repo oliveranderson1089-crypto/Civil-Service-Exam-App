@@ -13,6 +13,7 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
@@ -146,7 +147,10 @@ def friends_del(fid):
 
 # ---- 云盘 ----
 # 两个上限都能在 config.json 里调（改完重启服务生效）
-DRIVE_MAX = int(CFG.get("drive_max_mb", 200)) * 1024 * 1024        # 单文件上限
+DRIVE_MAX = int(CFG.get("drive_max_mb", 200)) * 1024 * 1024        # 单请求上限（一整个请求发完的那条路）
+# 分片通道的上限。分片之后单个请求只有 4MB，隧道那 100MB 和内存都不再是约束，
+# 200MB 这个数是单请求时代留下的，没有理由继续压着分片。真正兜底的是下面的配额。
+BIG_MAX = int(CFG.get("drive_big_max_mb", 2048)) * 1024 * 1024
 DRIVE_QUOTA = int(CFG.get("drive_quota_mb", 20480)) * 1024 * 1024  # 每人云盘总配额（默认 20GB）
 
 
@@ -282,8 +286,14 @@ def _ensure_folder_path(db, owner, path):
         if not db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? "
                           "AND is_dir=1 AND deleted_at IS NULL",
                           (owner, parent, seg)).fetchone():
-            db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) "
-                       "VALUES(?,?,?,1,'drive')", (owner, parent, seg))
+            try:
+                db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) "
+                           "VALUES(?,?,?,1,'drive')", (owner, parent, seg))
+            except sqlite3.IntegrityError:
+                # 传整个文件夹 = 很多个并发请求，各自补中间目录。上面那句 SELECT 看不见
+                # 别的请求**还没提交**的行，于是同一个目录被建好几遍（实测建出 3 行同名的）。
+                # 库上的部分唯一索引挡下来，这里认账用人家建好的那行就行。
+                pass
         parent = (parent + "/" + seg) if parent else seg
     return parent
 
@@ -416,24 +426,44 @@ def _sweep_stale(owner):
             log.debug("清理上传暂存失败", exc_info=True)
 
 
+# 分片通道的落点：不止云盘。资料库原先是「一整个请求发完」，撞的是 app.py 那个 64MB
+# 全局上限（social 的 _relax_body_limit 只放宽云盘/聊天两条路），走隧道时更是 100MB 就断。
+# 与其给资料库再造一套分片，不如认下这条通道本来就跟「传到哪」无关。
+CHUNK_TARGETS = ("drive", "materials")
+
+
+def _materials_used(db, owner):
+    """资料库占的盘。跟云盘各算各的额度 —— 把两处并成一个数，会让现在资料库里
+    已经放了几个 G 的人一觉醒来发现云盘可用空间凭空少了一截。"""
+    return db.execute("SELECT COALESCE(SUM(size),0) FROM materials WHERE user_id=?",
+                      (owner,)).fetchone()[0]
+
+
 @bp.post("/api/drive/chunk/init")
 def chunk_init():
     data = request.get_json(silent=True) or {}
     size = int(data.get("size") or 0)
     name = os.path.basename((data.get("name") or "").replace("\\", "/")) or "未命名"
     folder = (data.get("folder") or "").strip().strip("/")
-    if size <= 0 or size > DRIVE_MAX:
-        return jsonify({"error": "文件超过 %d MB" % (DRIVE_MAX // (1024 * 1024))}), 400
+    target = data.get("target") if data.get("target") in CHUNK_TARGETS else "drive"
+    if size <= 0 or size > BIG_MAX:
+        return jsonify({"error": "文件超过 %d MB" % (BIG_MAX // (1024 * 1024))}), 400
     db = get_db()
-    if _drive_used(db, uid()) + size > DRIVE_QUOTA:
-        return jsonify({"error": "云盘空间不足（配额 %d MB）" % (DRIVE_QUOTA // (1024 * 1024))}), 400
+    used = _materials_used(db, uid()) if target == "materials" else _drive_used(db, uid())
+    if used + size > DRIVE_QUOTA:
+        return jsonify({"error": "%s空间不足（配额 %d MB）"
+                        % ("资料库" if target == "materials" else "云盘",
+                           DRIVE_QUOTA // (1024 * 1024))}), 400
     _sweep_stale(uid())
     upload_id = uuid.uuid4().hex
     d = _chunk_dir(uid(), upload_id)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as fp:
         json.dump({"name": name, "folder": folder, "size": size,
-                   "mime": data.get("mime") or ""}, fp, ensure_ascii=False)
+                   "mime": data.get("mime") or "", "target": target,
+                   # 资料库那边没有目录，归类靠「分类（board）」，随会话一起记下来
+                   "board": str(data.get("board") or "")[:20],
+                   "title": str(data.get("title") or "")[:120]}, fp, ensure_ascii=False)
     return jsonify({"upload_id": upload_id, "received": []}), 201
 
 
@@ -497,7 +527,18 @@ def chunk_done(upload_id):
     if os.path.getsize(tmp) != meta.get("size"):
         os.remove(tmp)
         return jsonify({"error": "拼出来的大小和说好的对不上，请重传"}), 400
-    row, err = _finish_upload(get_db(), meta.get("folder") or "", meta.get("name") or "未命名",
+    name = meta.get("name") or "未命名"
+    if meta.get("target") == "materials":
+        # 资料库那条：不进云盘，直接落成一行资料。函数放在 materials.py（表是它的），
+        # 在这里晚 import 是为了不跟它绕成 import 环。
+        from mods.materials import finish_material_upload
+        row, err = finish_material_upload(get_db(), tmp, name, meta.get("board") or "",
+                                          meta.get("title") or "", meta.get("mime") or "")
+        shutil.rmtree(d, ignore_errors=True)
+        if err:
+            return err
+        return jsonify(row), 201
+    row, err = _finish_upload(get_db(), meta.get("folder") or "", name,
                               tmp, meta.get("mime") or "")
     shutil.rmtree(d, ignore_errors=True)
     if err:
@@ -517,8 +558,11 @@ def drive_mkdir():
     if db.execute("SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND is_dir=1 "
                   "AND deleted_at IS NULL", (uid(), parent, name)).fetchone():
         return jsonify({"error": "已有同名文件夹"}), 400
-    db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) VALUES(?,?,?,1,'drive')",
-               (uid(), parent, name))
+    try:
+        db.execute("INSERT INTO drive_files(owner_id,folder,name,is_dir,source) VALUES(?,?,?,1,'drive')",
+                   (uid(), parent, name))
+    except sqlite3.IntegrityError:      # 上面查过一遍了，走到这儿说明是并发同名
+        return jsonify({"error": "已有同名文件夹"}), 400
     db.commit()
     return jsonify({"ok": True, "path": path})
 
@@ -962,9 +1006,9 @@ TRASH_DAYS = int(CFG.get("drive_trash_days", 30))
 def _kids_of(db, owner, r):
     """一个文件夹在这次删除批次里带走的所有子孙（靠 del_batch 认，不靠时间戳）。"""
     sub = r["name"] if not r["folder"] else (r["folder"] + "/" + r["name"])
-    return db.execute("SELECT id, stored_name FROM drive_files WHERE owner_id=? AND "
-                      "(folder=? OR folder LIKE ? ESCAPE '\\') AND del_batch=? "
-                      "AND del_batch IS NOT NULL",
+    return db.execute("SELECT id, folder, name, is_dir, stored_name FROM drive_files "
+                      "WHERE owner_id=? AND (folder=? OR folder LIKE ? ESCAPE '\\') "
+                      "AND del_batch=? AND del_batch IS NOT NULL",
                       (owner,) + _subtree(sub) + (r["del_batch"],)).fetchall()
 
 
@@ -993,20 +1037,78 @@ def _purge_expired(db, owner):
         db.commit()
 
 
+def _batch_key(r):
+    """一行属于哪次删除。老数据没有 del_batch，退回用时间戳分组（同秒串批也认了，
+    总比整批认不出来强）。"""
+    return r["del_batch"] or ("t:" + (r["deleted_at"] or ""))
+
+
+def _trash_root(r, dirs):
+    """这行属于同批次里的哪个已删文件夹（取**最外层**那个）。不属于任何一个 = 它自己就是根。"""
+    key = _batch_key(r)
+    acc = ""
+    for seg in (r["folder"] or "").split("/"):
+        if not seg:
+            continue
+        acc = (acc + "/" + seg) if acc else seg
+        if (key, acc) in dirs:
+            return (key, acc)
+    return None
+
+
 @bp.get("/api/drive/trash")
 def drive_trash():
     db = get_db()
     _purge_expired(db, uid())          # 顺手把过期的清了，不额外挂定时器
     rows = db.execute(
-        "SELECT id, folder, name, ext, mime, size, is_dir, source, created_at, deleted_at "
-        "FROM drive_files WHERE owner_id=? AND deleted_at IS NOT NULL "
-        "ORDER BY deleted_at DESC, id DESC LIMIT 500", (uid(),)).fetchall()
+        "SELECT id, folder, name, ext, mime, size, is_dir, source, created_at, deleted_at, "
+        "del_batch FROM drive_files WHERE owner_id=? AND deleted_at IS NOT NULL "
+        "ORDER BY deleted_at DESC, id DESC", (uid(),)).fetchall()
+    # 删一个文件夹 = 底下所有东西都进回收站。全平铺出来有两个坏处：
+    #   1. 刷屏（实测一个资料文件夹 560 条），
+    #   2. **文件夹本身反而看不见** —— 它 id 最小，按 id DESC 排在最后，
+    #      原来还有个 LIMIT 500，正好被截掉。于是用户只能一个个恢复子项，
+    #      点谁都只回来「一个空壳文件夹」，那个能整棵捞回来的按钮根本没出现过。
+    # 所以只列每批的根，子孙折进 kids 里给个数目。
+    dirs = {(_batch_key(r), (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"])
+            for r in rows if r["is_dir"]}
+    tops, kids = [], {}
+    for r in rows:
+        root = _trash_root(r, dirs)
+        if root is None:
+            tops.append(r)
+        else:
+            kids[root] = kids.get(root, 0) + 1
+    items = []
+    for r in tops[:500]:
+        d = _drive_row(r)
+        d.pop("del_batch", None)
+        d["kids"] = kids.get((_batch_key(r), (r["folder"] + "/" + r["name"]) if r["folder"]
+                              else r["name"]), 0)
+        items.append(d)
     held = db.execute(
         "SELECT COALESCE(SUM(size),0) FROM ("
         "  SELECT DISTINCT stored_name, size FROM drive_files"
         "  WHERE owner_id=? AND is_dir=0 AND deleted_at IS NOT NULL"
         "    AND stored_name IS NOT NULL AND stored_name<>'')", (uid(),)).fetchone()[0]
-    return jsonify({"items": [_drive_row(r) for r in rows], "days": TRASH_DAYS, "held": held})
+    return jsonify({"items": items, "days": TRASH_DAYS, "held": held,
+                    "total": len(rows), "more": max(0, len(tops) - 500)})
+
+
+def _revive(db, owner, row):
+    """把一行放回原处；返回 1 = 真放回去了。
+
+    文件夹要是在原位已经有一个活着的同名的（并发上传留下的重复壳、或者用户又新建了
+    一个同名的），就**并过去**：目录只是路径上的一个名字，子孙认的是路径字符串，
+    并掉这一行内容照样回到那个目录里 —— 硬恢复反而多出一个同名空壳，还会撞唯一索引。
+    """
+    if row["is_dir"] and db.execute(
+            "SELECT 1 FROM drive_files WHERE owner_id=? AND folder=? AND name=? AND is_dir=1 "
+            "AND deleted_at IS NULL", (owner, row["folder"], row["name"])).fetchone():
+        db.execute("DELETE FROM drive_files WHERE id=?", (row["id"],))
+        return 0
+    db.execute("UPDATE drive_files SET deleted_at=NULL, del_batch=NULL WHERE id=?", (row["id"],))
+    return 1
 
 
 @bp.post("/api/drive/trash/<int:fid>/restore")
@@ -1018,12 +1120,10 @@ def trash_restore(fid):
         return jsonify({"error": "回收站里没有它"}), 404
     # 原来所在的目录可能也被删了 —— 补回来，否则恢复出来的东西列表里根本看不见
     _ensure_folder_path(db, uid(), r["folder"])
-    if r["is_dir"]:
-        for k in _kids_of(db, uid(), r):
-            db.execute("UPDATE drive_files SET deleted_at=NULL, del_batch=NULL WHERE id=?", (k["id"],))
-    db.execute("UPDATE drive_files SET deleted_at=NULL, del_batch=NULL WHERE id=?", (fid,))
+    n = sum(_revive(db, uid(), k) for k in (_kids_of(db, uid(), r) if r["is_dir"] else []))
+    n += _revive(db, uid(), r)
     db.commit()
-    return jsonify({"ok": True, "folder": r["folder"]})
+    return jsonify({"ok": True, "folder": r["folder"], "n": n})
 
 
 @bp.delete("/api/drive/trash/<int:fid>")
@@ -1050,25 +1150,220 @@ def trash_empty():
     return jsonify({"ok": True, "n": len(rows)})
 
 
+# ---- 发送到聊天 ----
+# 云盘和资料库都要「发给好友、也发进小组」，两边是同一件事：拿一份磁盘上的文件，
+# 在若干会话里各落一条文件消息。所以下面这几个函数不认「它是云盘的还是资料库的」，
+# 只认 (名字, stored_name, 大小, 所在目录)。
+
+TARGET_MAX = 30          # 一次最多发多少个目标，防手滑全选几百个
+
+
+class QuotaFull(Exception):
+    """云盘满了。抛出来而不是 return 一个响应：_register_blob 埋在两层调用里，
+    让每一层都记得转发错误响应，迟早有一层忘了。"""
+
+
+def _pick_targets(db, me, data):
+    """请求体里的收件人 → (好友 id 列表, 小组 id 列表)，越权的一律丢掉。
+
+    老客户端（安卓壳 / 桌面壳的旧版本）发的是 {"to": 3}，继续认 —— 它们不会跟着
+    应用一起更新，这里断了就是「装着旧壳的人从此发不出文件」。
+    """
+    users, groups = [], []
+    raw_users = data.get("users")
+    if raw_users is None and data.get("to"):
+        raw_users = [data.get("to")]
+    for x in (raw_users or [])[:TARGET_MAX]:
+        try:
+            x = int(x)
+        except (TypeError, ValueError):
+            continue
+        if x and x not in users and _are_friends(db, me, x):
+            users.append(x)
+    for x in (data.get("groups") or [])[:TARGET_MAX]:
+        try:
+            x = int(x)
+        except (TypeError, ValueError):
+            continue
+        if x and x not in groups and _is_member(db, x, me):
+            groups.append(x)
+    return users, groups
+
+
+def _file_kind(name, mime):
+    ext = os.path.splitext(name or "")[1].lower()
+    return "image" if (mime or "").startswith("image/") or ext in IMAGE_EXT else "file"
+
+
+def _register_blob(db, me, name, src_path, mime, digest=None):
+    """把一份不在云盘里的文件（资料库的、临时打好的 zip）登记进自己云盘的「聊天文件」。
+
+    发进小组必须有这一步：群消息只存**发送方**那一份，file_id 指的就是发送方云盘里的
+    行。按 sha256 去重，命中就共用同一个 stored_name，不会真的多占一份盘。
+    返回 (drive_files 行 id, stored_name)。
+    """
+    digest = digest or _sha256_file(src_path)
+    size = os.path.getsize(src_path)
+    dup = _dedup_stored(db, me, digest)
+    if dup:
+        stored = dup
+    else:
+        # 这一步是真往云盘里放东西（打包出来的 zip、从资料库搬过来的一份），
+        # 该跟正常上传一样受配额约束 —— 否则「发文件」就是一条绕开配额的暗路。
+        if _drive_used(db, me) + size > DRIVE_QUOTA:
+            raise QuotaFull()
+        stored = uuid.uuid4().hex + os.path.splitext(name)[1].lower()
+        shutil.copyfile(src_path, os.path.join(_drive_dir(me), stored))
+    cur = db.execute(
+        "INSERT INTO drive_files(owner_id,folder,name,stored_name,ext,mime,size,is_dir,source,sha256) "
+        "VALUES(?,?,?,?,?,?,?,0,'chat',?)",
+        (me, "聊天文件", name, stored, os.path.splitext(name)[1].lower(), mime or "", size, digest))
+    return cur.lastrowid, stored
+
+
+def _group_send_file(db, cid, me, myname, name, fid, size, mime):
+    """把发送方云盘里的一行文件发进小组。返回 (mid, 组名, 预览文案)。"""
+    gname = (db.execute("SELECT title FROM conversations WHERE id=?", (cid,)).fetchone()
+             or {"title": "小组"})["title"]
+    kind = _file_kind(name, mime)
+    mid = db.execute(
+        "INSERT INTO chat_msgs(from_uid,to_uid,conv_id,kind,body,file_id,file_name,file_size,"
+        "file_mime,reply_to) VALUES(?,0,?,?,NULL,?,?,?,?,NULL)",
+        (me, cid, kind, fid, name, size, mime or "")).lastrowid
+    prev = "[图片]" if kind == "image" else "[文件] " + (name or "")
+    for u in _conv_peers(db, cid, me):
+        _chat_center_notify_group(db, u, cid, gname, "%s：%s" % (myname, prev), mid)
+    _mark_read(db, cid, me, mid)
+    return mid, gname, prev
+
+
+def _fanout_file(db, me, users, groups, name, stored, size, mime, src_dir,
+                 digest=None, drive_fid=None):
+    """一份文件 → 若干好友 + 若干小组，各落一条消息。返回 (成功条数, 推送清单)。
+
+    推送清单要等 db.commit() 之后再发：提交前就秒推，对方可能立刻回来拉，扑个空。
+    """
+    myname = uname(db, me)
+    pushes, n = [], 0
+    prev = ("[图片] " if _file_kind(name, mime) == "image" else "[文件] ") + (name or "")
+    for to in users:
+        mid = _chat_send_file(db, me, to, name, stored, size, mime, src_dir, digest)
+        if not mid:
+            continue
+        _chat_center_notify(db, to, me, myname, prev, mid)
+        pushes.append((to, {"type": "msg", "from": me, "name": myname, "preview": prev}))
+        n += 1
+    if groups and drive_fid:
+        for cid in groups:
+            _mid, gname, gprev = _group_send_file(db, cid, me, myname, name, drive_fid, size, mime)
+            for u in _conv_peers(db, cid, me):
+                pushes.append((u, {"type": "msg", "group": cid, "name": gname,
+                                   "preview": "%s：%s" % (myname, gprev[:50])}))
+            n += 1
+    return n, pushes
+
+
+def _sent_reply(n, users, groups):
+    if not n:
+        return jsonify({"error": "没有选中任何能发送的对象"}), 400
+    return jsonify({"ok": True, "n": n, "users": len(users), "groups": len(groups)})
+
+
+@bp.get("/api/chat/targets")
+def chat_targets():
+    """能发给谁：好友 + 我在的小组。发送选择器用这一条把两边一次取齐。"""
+    db, me = get_db(), uid()
+    friends = [{"id": r["id"], "username": r["username"]} for r in db.execute(
+        "SELECT u.id, u.username FROM friends f JOIN users u ON u.id=f.friend_id "
+        "WHERE f.user_id=? ORDER BY u.username", (me,))]
+    groups = [{"id": r["id"], "title": r["title"] or "小组", "n": r["n"]} for r in db.execute(
+        "SELECT c.id, c.title, (SELECT COUNT(*) FROM conv_members m2 WHERE m2.conv_id=c.id) AS n "
+        "FROM conversations c JOIN conv_members m ON m.conv_id=c.id "
+        "WHERE m.user_id=? AND c.kind='group' ORDER BY c.id DESC", (me,))]
+    return jsonify({"friends": friends, "groups": groups})
+
+
 @bp.post("/api/drive/<int:fid>/send")
 def drive_send(fid):
-    """把云盘里的一个文件发给某个好友（走聊天）。"""
-    to = int((request.get_json(silent=True) or {}).get("to") or 0)
-    db = get_db()
-    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
-                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
+    """把云盘里的东西发进聊天：可以同时发给多个好友和多个小组。
+
+    文件夹是先打包成 zip 再发的 —— 摊平逐个发会在对方会话里刷出一串没有层级的文件。
+    打好的包同时留一份在自己云盘的「聊天文件」里（群消息要引用发送方那一行）。
+    """
+    data = request.get_json(silent=True) or {}
+    db, me = get_db(), uid()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND deleted_at IS NULL",
+                   (fid, me)).fetchone()
     if not r:
         return jsonify({"error": "文件不存在"}), 404
-    if not _are_friends(db, uid(), to):
-        return jsonify({"error": "对方不是你的好友"}), 400
-    me = uid()
-    mid = _chat_send_file(db, me, to, r["name"], r["stored_name"], r["size"], r["mime"], _drive_dir(me))
-    myname = uname(db, me)
-    _chat_center_notify(db, to, me, myname, "[文件] " + (r["name"] or ""), mid or 0)
+    users, groups = _pick_targets(db, me, data)
+    if not users and not groups:
+        return jsonify({"error": "选一个好友或小组再发"}), 400
+
+    if r["is_dir"]:
+        tmp, err = _zip_folder(db, me, r)
+        if err:
+            return err
+        name = (r["name"] or "文件夹") + ".zip"
+        try:
+            drive_fid, stored = _register_blob(db, me, name, tmp, "application/zip")
+            size = os.path.getsize(tmp)
+        except QuotaFull:
+            return jsonify({"error": "云盘空间不足，打好的包放不下（配额 %d MB）"
+                            % (DRIVE_QUOTA // (1024 * 1024))}), 400
+        finally:
+            _remove_blob(tmp)
+        n, pushes = _fanout_file(db, me, users, groups, name, stored, size,
+                                 "application/zip", _drive_dir(me), drive_fid=drive_fid)
+    else:
+        n, pushes = _fanout_file(db, me, users, groups, r["name"], r["stored_name"], r["size"],
+                                 r["mime"], _drive_dir(me), digest=r["sha256"], drive_fid=fid)
     db.commit()
-    _notify_chat(to, {"type": "msg", "from": me, "name": myname,
-                      "preview": "[文件] " + (r["name"] or "")})     # 提交后再秒推
-    return jsonify({"ok": True})
+    for u, payload in pushes:
+        _notify_chat(u, payload)
+    return _sent_reply(n, users, groups)
+
+
+@bp.post("/api/materials/<int:mid>/send")
+def material_send(mid):
+    """把资料库里的一份资料发进聊天。
+
+    路由挂在 /api/materials 下、代码却在这个文件里：它九成九是聊天的活儿（建会话、
+    落消息、写通知、推送），搬到 materials.py 只会让那边反过来 import 这里一大串。
+    资料存在 uploads/<用户>/ 而不是云盘目录，所以发小组时要先登记进云盘（sha256 去重）。
+    """
+    data = request.get_json(silent=True) or {}
+    db, me = get_db(), uid()
+    # 自己的，或队友共享给我的（那些我本来就能下载，能下载就能转发）
+    r = db.execute(
+        "SELECT m.* FROM materials m WHERE m.id=? AND ("
+        "  m.user_id=? OR EXISTS(SELECT 1 FROM material_shares s "
+        "                        WHERE s.material_id=m.id AND s.to_user=?))",
+        (mid, me, me)).fetchone()
+    if not r:
+        return jsonify({"error": "资料不存在"}), 404
+    src_dir = os.path.join(UPLOADS, str(r["user_id"]))
+    path = os.path.join(src_dir, r["stored_name"])
+    if not os.path.exists(path):
+        return jsonify({"error": "文件丢失"}), 404
+    users, groups = _pick_targets(db, me, data)
+    if not users and not groups:
+        return jsonify({"error": "选一个好友或小组再发"}), 400
+    name = r["orig_name"] or r["title"] or "资料"
+    drive_fid, stored, sdir = None, r["stored_name"], src_dir
+    if groups:
+        try:
+            drive_fid, stored = _register_blob(db, me, name, path, r["mime"])
+        except QuotaFull:
+            return jsonify({"error": "云盘空间不足（配额 %d MB）—— 发进小组要先在自己云盘留一份"
+                            % (DRIVE_QUOTA // (1024 * 1024))}), 400
+        sdir = _drive_dir(me)                      # 登记之后大家读的都是云盘那一份
+    n, pushes = _fanout_file(db, me, users, groups, name, stored, r["size"], r["mime"], sdir,
+                             drive_fid=drive_fid)
+    db.commit()
+    for u, payload in pushes:
+        _notify_chat(u, payload)
+    return _sent_reply(n, users, groups)
 
 
 # ---- 聊天 ----
@@ -1239,6 +1534,9 @@ CARD_KINDS = {
     "sucai": ("素材", "openSucai"),
     "note": ("小记", "openNotes"),
     "entry": ("收录的词", "openIdiom"),
+    # AI 对话的快照。跟上面几种的区别：那几种是「应用里的一条」，点开直达我这边的数据；
+    # 这一种是**我复制给你的一份**，你点开能接着往下问（见 mods/aishare.py）。
+    "aishare": ("AI 对话", "openAiShare"),
 }
 
 
@@ -1279,6 +1577,10 @@ def _msg_out(r, me, quoted=None):
     m = {"id": r["id"], "mine": r["from_uid"] == me, "kind": r["kind"],
          "body": r["body"] or "", "file_id": r["file_id"], "file_name": r["file_name"],
          "file_size": r["file_size"], "time": r["created_at"], "read": bool(r["read_at"])}
+    # 能不能在应用内预览由**服务端**说了算：后缀表只有一份（mods/files.py），
+    # 前端再抄一份迟早对不上（同一个 .pptx 这边说能看、那边说不能）。
+    if r["kind"] == "file" and r["file_id"]:
+        m["file_view"] = _name_viewable(r["file_name"])
     if r["kind"] == "voice":
         v = _voice_of(r)
         m["dur"], m["text"], m["body"] = v["dur"], v["text"], ""
@@ -1554,22 +1856,36 @@ def _conv_prefs(db, me, kind, peer):
     return {"pinned": bool(r and r["pinned"]), "muted": bool(r and r["muted"])}
 
 
+def _name_viewable(name):
+    """按文件名后缀判断能不能在应用内预览（和云盘用的是同一张表）。"""
+    return _viewable(os.path.splitext(name or "")[1].lower())
+
+
 def _conv_files(db, cid, limit=20):
-    """这个会话里传过的文件（图片单独走 _conv_images，不混在一张列表里）。"""
+    """这个会话里传过的文件（图片单独走 _conv_images，不混在一张列表里）。
+
+    ⚠️ 给前端的 id 必须是 **drive_files 的 id**（/api/chat/file/<id> 认的就是它）。
+    原来这里给的是 chat_msgs.id，两张表的 id 根本对不上 —— 信息栏里「共享文件」
+    点开一律 403、「图片」全是碎图，从上线起就没通过。
+    """
     rows = db.execute(
-        "SELECT m.id, m.file_name, m.file_size, m.created_at, u.username FROM chat_msgs m "
-        "LEFT JOIN users u ON u.id=m.from_uid "
-        "WHERE m.conv_id=? AND m.kind='file' AND m.recalled_at IS NULL "
+        "SELECT m.id, m.file_id, m.file_name, m.file_size, m.created_at, u.username "
+        "FROM chat_msgs m LEFT JOIN users u ON u.id=m.from_uid "
+        "WHERE m.conv_id=? AND m.kind='file' AND m.recalled_at IS NULL AND m.file_id IS NOT NULL "
         "ORDER BY m.id DESC LIMIT ?", (cid, limit)).fetchall()
-    return [{"id": r["id"], "name": r["file_name"] or "", "size": r["file_size"] or 0,
+    return [{"id": r["file_id"], "mid": r["id"], "name": r["file_name"] or "",
+             "size": r["file_size"] or 0, "view": _name_viewable(r["file_name"]),
              "who": r["username"] or "", "time": r["created_at"]} for r in rows]
 
 
 def _conv_images(db, cid, limit=24):
     rows = db.execute(
-        "SELECT id FROM chat_msgs WHERE conv_id=? AND kind='image' AND recalled_at IS NULL "
+        "SELECT id, file_id FROM chat_msgs WHERE conv_id=? AND kind='image' "
+        "AND recalled_at IS NULL AND file_id IS NOT NULL "
         "ORDER BY id DESC LIMIT ?", (cid, limit)).fetchall()
-    return [{"id": r["id"], "url": "/api/chat/file/%d" % r["id"]} for r in rows]
+    return [{"id": r["file_id"], "mid": r["id"],
+             "url": "/api/chat/file/%d?inline=1" % r["file_id"],
+             "thumb": "/api/chat/file/%d?thumb=1" % r["file_id"]} for r in rows]
 
 
 @bp.get("/api/chat/groups/<int:cid>")
@@ -1770,6 +2086,10 @@ def group_history(cid):
     recalled = [x[0] for x in db.execute(
         "SELECT id FROM chat_msgs WHERE conv_id=? AND recalled_at IS NOT NULL "
         "AND recalled_at > datetime('now','localtime','-1 day')", (cid,)).fetchall()]
+    # 「以下是未读消息」那条线画在哪：必须在 _mark_read 把水位推上去**之前**读，
+    # 否则每次进群拿到的都是「刚推到最新」的水位，线永远无处可画。
+    my_read = (db.execute("SELECT last_read_id FROM conv_members WHERE conv_id=? AND user_id=?",
+                          (cid, me)).fetchone() or {"last_read_id": 0})["last_read_id"] or 0
     if not before:
         _mark_read(db, cid, me)
         db.execute("DELETE FROM notifications WHERE user_id=? AND kind='chat' AND link=?",
@@ -1777,6 +2097,7 @@ def group_history(cid):
         db.commit()
     c = db.execute("SELECT title, announce FROM conversations WHERE id=?", (cid,)).fetchone()
     return jsonify({"messages": out, "me": me, "has_more": has_more, "recalled": recalled,
+                    "my_read": my_read,
                     "name": c["title"] if c else "", "announce": (c["announce"] if c else "") or "",
                     "members": [{"id": k, "username": v} for k, v in names.items()]})
 
@@ -2157,12 +2478,72 @@ def chat_file(fid):
                 return _no_script(send_file(tp, mimetype="image/jpeg"))
         except Exception:
             log.info("聊天图缩略失败，退回原图", exc_info=True)
+    path = os.path.join(_drive_dir(owner), r["stored_name"] or "")
+    ext = (r["ext"] or "").lower()
+    # 应用内预览：和云盘 /api/drive/<id>/view 是同一套（Office 转 PDF、Range、阅读模式取文字），
+    # 只是权限判定换成上面那条「你是这条消息的收发双方之一」。
+    if request.args.get("text") == "1":
+        if not os.path.exists(path):
+            return jsonify({"error": "文件丢失"}), 404
+        return jsonify({"text": _extract_text(path, ext) or ""})
+    if request.args.get("view") == "1":
+        if not os.path.exists(path):
+            return jsonify({"error": "文件丢失"}), 404
+        mime = r["mime"] or ""
+        if ext in OFFICE_EXT:
+            pdf = _office_to_pdf(path)
+            if not pdf:
+                return jsonify({"error": "这个格式转不了，下载后再看"}), 415
+            path, mime = pdf, "application/pdf"
+        elif not _viewable(ext):
+            return jsonify({"error": "这个格式不支持预览"}), 415
+        # conditional=True 才响应 Range —— 没有它视频拖不动进度条
+        return _cacheable(_no_script(send_file(
+            path, as_attachment=False, download_name=r["name"],
+            mimetype=mime or None, conditional=True)))
     inline = request.args.get("inline") == "1"
-    resp = send_file(os.path.join(_drive_dir(owner), r["stored_name"]),
-                     as_attachment=not inline, download_name=r["name"],
+    resp = send_file(path, as_attachment=not inline, download_name=r["name"],
                      mimetype=r["mime"] or "application/octet-stream")
     # 聊天文件是**别人**发过来的，内联打开时更要挡住里面夹带的脚本
     return _no_script(resp) if inline else resp
+
+
+@bp.post("/api/chat/file/<int:fid>/save")
+def chat_file_save(fid):
+    """把聊天里收到的文件转存进自己的云盘（「聊天文件」目录）。
+
+    内容不搬家：按 sha256 去重，命中就和原件共用同一个 stored_name，转存是瞬时的、
+    也不重复吃盘。自己发的那一份本来就在自己云盘里，直接告诉用户在哪儿就行。
+    """
+    db, me = get_db(), uid()
+    r = db.execute("SELECT * FROM drive_files WHERE id=?", (fid,)).fetchone()
+    if not r:
+        return jsonify({"error": "文件不存在"}), 404
+    owner = r["owner_id"]
+    if owner != me:
+        party = db.execute(
+            "SELECT 1 FROM chat_msgs WHERE file_id=? AND (from_uid=? OR to_uid=? "
+            "OR conv_id IN (SELECT conv_id FROM conv_members WHERE user_id=?))",
+            (fid, me, me, me)).fetchone()
+        if not party:
+            return jsonify({"error": "无权访问"}), 403
+    if owner == me:
+        return jsonify({"ok": True, "folder": r["folder"] or "", "existed": True})
+    mine = db.execute("SELECT id, folder FROM drive_files WHERE owner_id=? AND sha256=? "
+                      "AND is_dir=0 AND deleted_at IS NULL", (me, r["sha256"] or "")).fetchone()
+    if r["sha256"] and mine:
+        return jsonify({"ok": True, "folder": mine["folder"] or "", "existed": True})
+    path = os.path.join(_drive_dir(owner), r["stored_name"] or "")
+    if not os.path.exists(path):
+        return jsonify({"error": "文件已丢失"}), 404
+    size = r["size"] or os.path.getsize(path)
+    if not _dedup_stored(db, me, r["sha256"] or "") and _drive_used(db, me) + size > DRIVE_QUOTA:
+        return jsonify({"error": "云盘空间不足（配额 %d MB）"
+                                 % (DRIVE_QUOTA // (1024 * 1024))}), 400
+    _ensure_folder_path(db, me, "聊天文件")
+    new_id, _stored = _register_blob(db, me, r["name"], path, r["mime"] or "", r["sha256"] or None)
+    db.commit()
+    return jsonify({"ok": True, "id": new_id, "folder": "聊天文件"})
 
 
 @bp.get("/api/chat/unread")

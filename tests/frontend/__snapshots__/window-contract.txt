@@ -1,5 +1,9 @@
 Reader
 __bmView
+__chatDl
+__chatDlDone
+__chatDlFail
+__chatDlSys
 __dvShow
 __hwNative
 __mkView

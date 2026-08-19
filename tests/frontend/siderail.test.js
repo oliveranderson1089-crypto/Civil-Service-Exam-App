@@ -105,6 +105,20 @@ test('分组标题常驻，不跟着「哪个标签开着」忽隐忽现', (t) =
   assert.deepStrictEqual(names(), before, '进了二级页左栏又变了');
 });
 
+/* 「库」那一页的格子和左栏的条目是同一份清单的两个形态。AI 产出当初只加进了格子，
+   电脑端左栏就少一个入口 —— 这种缺失谁也不会主动去查，钉一条按名字逐个对。 */
+test('库：左栏条目和「库」页的格子一一对应', (t) => {
+  const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  const tiles = h.plain('LB_TILES.map(x => x.name)');
+  const rail = h.plain("TAB_DEFS.find(t => t.key === 'lib').rail().map(x => x.name)");
+  assert.deepStrictEqual(rail, tiles, '左栏和格子对不上 —— 有一边漏加了');
+  const names = $$(h, '#siderail .sr-i i').map(b => b.textContent);
+  tiles.forEach(n => assert.ok(names.includes(n), `左栏少了「${n}」`));
+  // 每一条都得有图标，别只剩一行字
+  const lib = h.plain("TAB_DEFS.find(t => t.key === 'lib').rail().map(x => !!RAIL_ICON[x.icon])");
+  assert.ok(lib.every(Boolean), '库的左栏有条目没登记图标（RAIL_ICON 里没有这一枚）');
+});
+
 /* 顶栏的「首页 / 账户 / 后台」三个按钮被 style.css 收掉了，替代入口一律走「我的」。
    手机端「我的」页里有「管理后台」那条，电脑端左栏当初漏了 —— 管理员在宽屏上
    就完全没有后台入口（顶栏那个按钮是 display:none）。这两条守住它别再掉。 */

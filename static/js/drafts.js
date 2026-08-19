@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, appPrompt, artEm, c, draft, errMsg, esc, padCur, padDraftId,
+/* global $, api, appConfirm, appPrompt, artEm, c, draft, errMsg, esc, libTouch, padCur, padDraftId,
    padInit, padInited, padMode, padOnView, padOpen, padRebuild, padSave, padSetData,
    padStatus, push, toast */
 
@@ -57,6 +57,7 @@ $('#dr-fab').onclick = async () => {
 async function openDraft(id) {
   try {
     const d = await api('/api/drafts/' + id);
+    libTouch('draft', id);
     if (!padInited) padInit();
     if (padMode !== 'draft') padSave();                            // 先把随手草稿纸存好，等下还要还原
     padMode = 'draft'; padDraftId = id; padCur = null;

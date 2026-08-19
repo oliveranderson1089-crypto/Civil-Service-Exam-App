@@ -122,7 +122,27 @@ async function checkUpdate(manual) {
   if (window.GongkaoNative && typeof GongkaoNative.appVersion === 'function') return checkApkUpdate(manual);
   if (manual) toast('网页版会自动更新，无需手动升级');
 }
-$('#acct-update').onclick = () => checkUpdate(true);
+/* 网页端的「检查更新」不是查版本号，而是**把离线缓存清干净再重载**。
+   sw.js 走的是网络优先，正常情况下不会卡旧版；但缓存里存过一份坏响应、
+   或 Service Worker 自己卡在旧版本时，光按刷新是绕不开的，得有这么一个出口。 */
+async function webReload() {
+  toast('正在清理离线缓存…');
+  try {
+    if (window.caches && caches.keys) {
+      const ks = await caches.keys();
+      await Promise.all(ks.map(k => caches.delete(k)));
+    }
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      const rs = await navigator.serviceWorker.getRegistrations();
+      // 先让它自己更新；更新这条路走不通再注销（注销只丢离线能力，重进就会重新注册）
+      await Promise.all(rs.map(r => r.update().catch(() => r.unregister().catch(() => {}))));
+    }
+  } catch (e) {
+    console.warn('[更新] 清离线缓存没成功，直接重载：', e);
+  }
+  location.reload();
+}
+$('#acct-update').onclick = () => { if (IS_DESKTOP || IN_APP) checkUpdate(true); else webReload(); };
 window.checkUpdate = checkUpdate;
 
 if (IS_DESKTOP || IN_APP) {

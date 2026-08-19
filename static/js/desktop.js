@@ -11,7 +11,7 @@
    而这张表只列「定义在别处」的符号。列进来 eslint 会报 no-redeclare —— 那不是误报，
    是在提醒这份依赖清单和实际情况对不上了。 */
 /* global $, addDraftFiles, addDraftImages, aiHandleAttach, bindImgDrop, bindImgPaste,
-   c, compressImage, crFid, crSendFiles, deskMsg, dvOpenAndUpload, dvUpload,
+   c, compressImage, crInRoom, crSendFiles, deskMsg, dvOpenAndUpload, dvUpload,
    openAI, push, qnAddFiles, qnAddImgs, slUploadPaper, stack,
    toast, uploadDropped */
 
@@ -69,7 +69,7 @@ function focusTarget() {
   if (ae.closest('#qnote') && shown('#qnote')) return 'qnote';
   if (ae.closest('.composer')) return 'notes';                  // 小记编辑器（含 #cp-content）
   if (ae.closest('#ai-panel') && shown('#ai-panel')) return 'ai';
-  if (ae.closest('#chat-main') && crFid) return 'chatroom';     // 聊天窗（含 #cr-text）
+  if (ae.closest('#chat-main') && crInRoom()) return 'chatroom'; // 聊天窗（含 #cr-text）
   if (ae.closest('#view-drive')) return 'drive';
   if (ae.closest('#view-materials')) return 'materials';
   return '';
@@ -81,7 +81,13 @@ function viewTarget() {
   if (st.view === 'notes') return 'notes';          // 小记页 → 进编辑器的图片区
   if (st.view === 'materials') return 'materials';
   if (st.view === 'shenlun') return 'shenlun';
-  if (st.view === 'chat' && crFid) return 'chatroom';  // 正开着聊天窗 → 直接发给对方
+  /* 正开着会话（单聊**或**群聊）→ 直接发给对方。
+     原来这里只认单聊的 crFid，群聊的 crGid 没算进去 —— 目标算不出来就落到
+     __onPickedFiles 的兜底「收进云盘」，而且一声不吭：人拖进群聊窗口的文件，
+     悄悄变成了云盘里的一份。浏览器那条路（chat.js 的 #chat-main drop）一直是
+     两个都认的，这里对齐它。 */
+  if (st.view === 'chat' && crInRoom()) return 'chatroom';
+  if (st.view === 'chat') return 'chatnone';          // 在聊天页但没打开会话 → 提示，别偷偷进云盘
   if (st.view === 'drive') return 'drive';          // 云盘 → 传到当前文件夹
   return '';
 }
@@ -96,9 +102,20 @@ function dropTarget(mode) {
   if (f) return f;
   // 随手记开着 → 它就是焦点，优先级**高于** AI 面板（人正在那儿写字）
   if (shown('#qnote')) return 'qnote';
-  if (mode === 'paste') return viewTarget() || (shown('#ai-panel') ? 'ai' : '');
+  if (mode === 'paste') {
+    /* 'chatnone'（在聊天页但没打开会话）不算「有去处」：粘贴时若旁边开着 AI 面板，
+       仍旧归 AI —— 那是这一页此刻唯一能收东西的地方。都没有才提示先开会话。 */
+    const vp = viewTarget();
+    if (vp && vp !== 'chatnone') return vp;
+    return shown('#ai-panel') ? 'ai' : vp;
+  }
+  /* AI 面板是可以一直挂在旁边的侧栏，而聊天窗是人此刻正看着的那一屏：
+     正开着会话时聊天优先，否则「边聊边挂着 AI」的人拖进来的文件全被 AI 截走。
+     要给 AI，点一下 AI 输入框即可（走上面的焦点判定）。 */
+  const v = viewTarget();
+  if (v === 'chatroom') return v;
   if (shown('#ai-panel')) return 'ai';
-  return viewTarget();
+  return v;
 }
 window.__onDragOver = () => {
   const t = dropTarget();
@@ -107,13 +124,14 @@ window.__onDragOver = () => {
   else if (t === 'qnote') $('#qnote').classList.add('drop-on');
   else if (t === 'notes') { const c = document.querySelector('.composer'); if (c) c.classList.add('drop-on'); }
   else if (t === 'chatroom') $('#chat-main').classList.add('cr-drop');
+  else if (t === 'chatnone') $('#chat-main').classList.add('cr-nodrop');
 };
 window.__onDragLeave = () => {
   $('#view-materials').classList.remove('drag-on');
   $('#view-shenlun').classList.remove('drag-on');
   const q = $('#qnote'); if (q) q.classList.remove('drop-on');
   const c = document.querySelector('.composer'); if (c) c.classList.remove('drop-on');
-  const cm = $('#chat-main'); if (cm) cm.classList.remove('cr-drop');
+  const cm = $('#chat-main'); if (cm) cm.classList.remove('cr-drop', 'cr-nodrop');
 };
 const isImg = (f) => /^image\//.test(f.type || '') || /\.(jpe?g|png|gif|webp|bmp|heic)$/i.test(f.name || '');
 /* 收到的文件该交给谁 —— **只此一份分发表**。
@@ -135,6 +153,7 @@ function dropRoute(t, files) {
   else if (t === 'shenlun') slUploadPaper(files[0]);             // 真题页 → 上传真题卷
   else if (t === 'materials') uploadDropped(files);              // 资料库 → 传进当前分类
   else if (t === 'chatroom') crSendFiles(files);                 // 聊天窗口 → 直接发给对方
+  else if (t === 'chatnone') toast('先打开一个会话，再把文件拖进来', true);
   else if (t === 'drive') return dvUpload(files);                // 云盘 → 上传到当前文件夹
   else toast('把文件拖到「资料库」「真题批改」「小记」「聊天」「云盘」，或先打开 AI / 随手记', true);
   return null;
@@ -160,7 +179,10 @@ window.__onPickedFiles = (items, intent) => {
   let p;
   if (t === 'drive') p = dvUpload(list);                 // 只有云盘认得「相对目录」
   else if (t) p = dropRoute(t, list.map(x => x.file));   // 别的目标没有目录概念，摊平
-  else p = dvOpenAndUpload(list);                        // 没有明确目标 → 才收进云盘
+  else {                                                // 没有明确目标 → 才收进云盘
+    toast('没看出要放哪儿，先收进云盘');
+    p = dvOpenAndUpload(list);
+  }
   Promise.resolve(p).then(done, done);
 };
 window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」（壳里的粘贴也走这条路）
@@ -174,7 +196,7 @@ window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」（
     else if (t === 'ai') { toast('正在读取图片…'); aiHandleAttach(f); }
     else if (t === 'chatroom') { toast('正在发送图片…'); crSendFiles([f]); }
     else if (t === 'drive') { toast('正在上传到云盘…'); dvUpload([f]); }
-    else if (t) dropRoute(t, [f]);                  // materials / shenlun
+    else if (t) dropRoute(t, [f]);                  // materials / shenlun / chatnone
     else { openAI(); toast('正在读取图片…'); aiHandleAttach(f); }   // 没有明确去处：开 AI 并附上
   }).catch(() => toast('粘贴失败', true));
 };

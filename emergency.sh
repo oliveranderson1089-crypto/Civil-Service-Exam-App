@@ -9,6 +9,8 @@
 #   ./emergency.sh check                 体检：模型名对不对、服务活着没
 #   ./emergency.sh autofix               问接口要现有模型名，自动写回配置并重启
 #   ./emergency.sh model <fast> [pro]    手动指定模型名，写回配置并重启
+#   ./emergency.sh tiers                 看后台设过的服务档位覆盖
+#   ./emergency.sh tiers reset           清空全部覆盖，各服务回到代码里写的默认档
 #   ./emergency.sh restart [单元...]      不带参数=重启全部 gongkao 单元
 #   ./emergency.sh logs [单元]            看日志（默认主服务）
 #   ./emergency.sh rollback              把配置回滚到本脚本上次改动之前
@@ -53,6 +55,40 @@ print("  备份: %s" % bak)
 PYEOF
 }
 
+# ---------------------------------------------------------------- 档位覆盖
+# 后台「档位控制」把服务级档位写在 config.json 的 ai_tiers / ai_vision_tiers 里。
+# 认不出的键值一律当没设（见 aiclient._override），所以这儿只要两件事：
+# 「看一眼谁被改过」和「一键回到默认」——出事时最想做的就是先回默认再说。
+show_tiers() {
+  "$PY" - "$CFG" "$BAK" "${1:-show}" <<'PYEOF'
+import json, os, shutil, sys
+cfg_path, bak, action = sys.argv[1:4]
+KEYS = (("ai_tiers", "文字"), ("ai_vision_tiers", "读图"))
+with open(cfg_path, encoding="utf-8") as f:
+    cfg = json.load(f)          # 读不出来就让它抛——绝不拿空字典去覆盖
+if action == "reset":
+    shutil.copy2(cfg_path, bak)     # 先留退路，再动手
+    for k, _ in KEYS:
+        cfg.pop(k, None)
+    tmp = cfg_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+        f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, cfg_path)
+    print("  已清空全部档位覆盖，各服务回到代码里写的默认档")
+    print("  备份: %s" % bak)
+else:
+    for k, label in KEYS:
+        ov = cfg.get(k) or {}
+        if not isinstance(ov, dict) or not ov:
+            print("  %s：没有覆盖，全部跟随代码默认" % label)
+            continue
+        print("  %s：" % label)
+        for kk in sorted(ov):
+            print("    %-24s → %s" % (kk, ov[kk]))
+PYEOF
+}
+
 restart_units() {
   local list=("$@")
   [ ${#list[@]} -eq 0 ] && mapfile -t list < <(units)
@@ -68,10 +104,14 @@ restart_units() {
 case "${1:-check}" in
 
 check)
-  echo "═══ 1/2 AI 配置体检 ═══"
+  echo "═══ 1/3 AI 配置体检 ═══"
   "$PY" "$APP/aiclient.py"; ai_rc=$?
   echo
-  echo "═══ 2/2 服务状态 ═══"
+  # 「AI 变笨了」查到最后往往是这儿：后台把某个服务降了档，代码却一个字没改。
+  echo "═══ 2/3 服务档位覆盖 ═══"
+  show_tiers show
+  echo
+  echo "═══ 3/3 服务状态 ═══"
   printf '%-32s %-10s %s\n' 单元 状态 说明
   while read -r u; do
     printf '%-32s %-10s %s\n' "$u" \
@@ -117,6 +157,15 @@ model)
   echo "重启服务…"; restart_units
   ;;
 
+tiers)
+  if [ "${2:-show}" = "reset" ]; then
+    show_tiers reset || exit 1
+    echo "重启服务…"; restart_units
+  else
+    show_tiers show
+  fi
+  ;;
+
 restart)
   shift || true
   echo "重启中…"; restart_units "$@"
@@ -133,7 +182,7 @@ rollback)
   ;;
 
 *)
-  sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+  sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
   exit 1
   ;;
 esac

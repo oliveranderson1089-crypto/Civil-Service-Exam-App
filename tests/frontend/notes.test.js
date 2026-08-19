@@ -138,3 +138,72 @@ test('顺序完全按服务端给的来，前端不再自己排', (t) => {
   const out = [...box.querySelectorAll('.tagchip')].map(c => c.dataset.tag);
   assert.deepStrictEqual(out, ['', '乙', '甲', '丙'], '前端一旦自己排，就会和服务端的口径打架');
 });
+
+
+/* 导出弹窗。盯两件事：
+   ① 范围默认是**屏幕上这些** —— 人点导出想的是眼前这一屏，不是整个库；
+   ② 这个格式装不下的东西要置灰（md 带不了图、只有 zip 有附件原件），
+      藏起来会让人以为「导出把图弄丢了」。 */
+function openExport(h, { items = 2, board = '', tag = '', q = '', ids = null } = {}) {
+  h.run(`document.getElementById('feed')._items = ${JSON.stringify(Array.from({ length: items }, (_, i) => ({ id: i + 1 })))};
+         curNoteBoard = ${JSON.stringify(board)}; curTag = ${JSON.stringify(tag)}; noteSearchQ = ${JSON.stringify(q)};
+         openNoteExport(${JSON.stringify(ids)});`);
+  return h.window.document;
+}
+
+test('导出：范围默认跟着当前筛选走，条数说清楚', (t) => {
+  const h = boot(); t.after(() => h.close());
+  let d = openExport(h, { items: 7 });
+  assert.ok(!d.getElementById('nx-modal').classList.contains('hidden'), '弹窗没打开');
+  let opts = [...d.getElementById('nx-scope').options];
+  assert.deepStrictEqual(opts.map(o => o.value), ['cur', 'all']);
+  assert.match(opts[0].textContent, /7 条/);
+  assert.match(opts[0].textContent, /当前列表/, '没筛选时别说「当前筛选的」');
+
+  d = openExport(h, { items: 3, tag: '行测' });
+  assert.match(d.getElementById('nx-scope').options[0].textContent, /当前筛选的 3 条/);
+});
+
+test('导出：从卡片点进来时，范围多一条「这 N 条」并排在最前', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const d = openExport(h, { items: 9, ids: [5] });
+  const opts = [...d.getElementById('nx-scope').options];
+  assert.deepStrictEqual(opts.map(o => o.value), ['sel', 'cur', 'all']);
+  assert.match(opts[0].textContent, /这 1 条/);
+});
+
+test('导出：装不下的选项置灰而不是藏起来', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const d = openExport(h);
+  const off = id => d.getElementById(id).classList.contains('nx-off');
+  const pick = fmt => h.run(`nxFmt = '${fmt}'; nxRenderFmts();`);
+
+  pick('md');
+  assert.ok(off('nx-imgs-l') && off('nx-atts-l'), 'md 带不走图片和附件');
+  pick('html');
+  assert.ok(!off('nx-imgs-l') && off('nx-atts-l'), 'html 内嵌图片，但没有附件原件');
+  pick('zip');
+  assert.ok(!off('nx-imgs-l') && !off('nx-atts-l'), 'zip 是唯一什么都带得走的');
+  // 置灰的是 label，不是 display:none —— 选项还看得见，只是点不动
+  assert.ok(d.getElementById('nx-atts'), '别把选项从 DOM 里删掉');
+});
+
+test('导出：选中的格式要有说明，六种用途差得远', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const d = openExport(h);
+  const tip = () => d.getElementById('nx-tip').textContent;
+  assert.strictEqual(d.querySelectorAll('.nx-fmt').length, 6);
+  h.run("nxFmt = 'pdf'; nxRenderFmts();");
+  const pdfTip = tip();
+  h.run("nxFmt = 'json'; nxRenderFmts();");
+  assert.ok(pdfTip && tip() && pdfTip !== tip(), '换了格式说明也得换');
+  assert.strictEqual(d.querySelector('.nx-fmt.on').dataset.fmt, 'json', '选中态要跟上');
+});
+
+test('导出：卡片上有单条导出按钮，且带小记 id', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const box = render(h, { content: '随便写点' });
+  const btn = box.querySelector('[data-exp]');
+  assert.ok(btn, '卡片上没有导出按钮');
+  assert.strictEqual(btn.dataset.exp, '1');
+});
