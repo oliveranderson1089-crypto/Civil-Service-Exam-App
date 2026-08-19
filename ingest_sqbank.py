@@ -149,6 +149,95 @@ def _scan_answers(tail):
     return answers
 
 
+# 答案**紧跟在每道题后面**的写法（时政押题那几份就是）：
+#     1.推动…必须坚持的…分别是()
+#     A.… B.… C.… D.…
+#     答案： D
+# 这种没有卷末的「参考答案」区，得按题切、答案就地取。
+_ANS_INLINE = re.compile(r"^[\s　]*(?:正确)?答案[：:\s]*([A-EＡ-Ｅ√×对错]{1,5})[\s　]*$", re.M)
+# `【答案】B。A 项错误，…` —— 答案后面直接跟着整段解析。**必须要求答案字母后面
+# 是句号/顿号/空白**，否则「【答案】B」和正文里的「B 项正确」分不开。
+_ANS_BRACKET = re.compile(r"^[\s　]*[【\[]答案[】\]][\s　]*([A-EＡ-Ｅ√×对错]{1,5})"
+                          r"(?=[。．，,、\s　]|$)", re.M)
+
+
+def parse_inline(text):
+    """答案跟在题后面的题册。返回 (题目列表, 体检单)，形状和 parse_bank 一致。"""
+    items, cur, kind = [], None, "single"
+    for raw in text.splitlines():
+        ln = raw.rstrip()
+        if not ln.strip() or _JUNK.search(ln):
+            continue
+        ms = _SEC.match(ln)
+        if ms:
+            kind = next((v for k, v in _SEC_KIND.items() if ms.group(1).startswith(k)), "single")
+            continue
+        ma = _ANS_INLINE.match(ln) or _ANS_BRACKET.match(ln)
+        if ma and cur is not None:
+            a = _half(ma.group(1)).upper()
+            cur["answer"] = "T" if a in ("√", "对") else ("F" if a in ("×", "错") else a)
+            # 多选/单选按**答案字母个数**回判，不看章节标题 —— 这几份押题里
+            # 单选多选是混排的，标题靠不住
+            if cur["answer"] not in ("T", "F"):
+                cur["part"] = "multi" if len(cur["answer"]) > 1 else "single"
+            items.append(cur)
+            cur = None
+            continue
+        mo = _OPT.match(ln)
+        if mo and cur is not None and len(cur["options"]) < 5:
+            L = _half(mo.group(1)).upper()
+            if L == "ABCDE"[len(cur["options"])]:
+                cur["options"].append(R.norm(mo.group(2)))
+                continue
+        mq = _Q.match(ln)
+        if mq:
+            cur = {"no": int(mq.group(1)), "part": kind, "chap": "",
+                   "stem": R.norm(mq.group(2)), "options": [], "answer": ""}
+            continue
+        if cur is not None:
+            if cur["options"]:
+                cur["options"][-1] += R.norm(ln)
+            else:
+                cur["stem"] += R.norm(ln)
+
+    # 这几份押题是**混排**的：有的题四个选项一行一个，有的题四个挤在同一行
+    # （`A.2 项 B. 3 项 C. 4 项 D. 5 项`）。挤成一行的那种，上面只会抠出一个选项 A，
+    # 交给现成的 realbank._split_options 再切一次 —— 那个函数就是为「四个挤一行」写的。
+    for it in items:
+        # 选项**混在题干那一行**里的（`2、社会工作是一种（）。 A 自发助人活动`）：
+        # 从题干里把它们切出来。和下面「四个挤一行」是同一类混排，只是位置不同。
+        if not it["options"] and re.search(r"[\s　][A-EＡ-Ｅ][\s　]*[.、．]?[\s　]*\S", it["stem"]):
+            st2, opts = R._split_options(it["stem"])
+            if len(opts) >= 2 and len(st2) >= 6:
+                it["stem"], it["options"] = st2, opts
+        if len(it["options"]) == 1 and re.search(r"[B-EＢ-Ｅ][\s　]*[.、．]", it["options"][0]):
+            # 前面垫一句占位题干：_split_options 的合理性检查要求题干至少 6 个字
+            # （那条检查是防「题干里的 A 股被当成选项 A」的，对我们这儿不适用），
+            # 直接传 "A.…" 会因为题干为空被判不合理而拒绝切分。
+            _stem, opts = R._split_options("本题选项如下：A." + it["options"][0])
+            if len(opts) >= 2:
+                it["options"] = opts
+
+    ok, bad = [], []
+    for it in items:
+        n_opt = len(it["options"])
+        if it["part"] == "judge":
+            (ok if it["answer"] in ("T", "F") else bad).append(
+                it if it["answer"] in ("T", "F") else (it, "判断题答案不是 √/×"))
+            continue
+        if n_opt < 2:
+            bad.append((it, "选项少于 2 个"))
+        elif any(c not in "ABCDE"[:n_opt] for c in it["answer"]):
+            bad.append((it, "答案 %s 超出本题 %d 个选项" % (it["answer"], n_opt)))
+        else:
+            ok.append(it)
+    rate = len(ok) / len(items) if items else 0.0
+    return ok, {"n_all": len(items), "n_ok": len(ok), "n_ans": len(items), "n_skip": 0,
+                "rate": rate, "bad": bad,
+                "kinds": {k: sum(1 for i in ok if i["part"] == k)
+                          for k in ("single", "multi", "judge")}}
+
+
 def parse_bank(text, answer_text=None):
     """→ (题目列表, 体检单)。题干区和答案区**分开扫**，最后按（章, 题型, 题号）对齐。
 
@@ -345,6 +434,12 @@ def main():
         if len(text.strip()) < 500:
             continue
         items, rep = parse_bank(text)
+        # 卷末没有「参考答案」区、却每题后面跟着「答案：X」的，换内联模式再试一次。
+        # 判据是**结果**不是文件名：按对齐率挑更好的那一版，规则认不出的自然被闸门挡下。
+        if rep["rate"] < a.min and (_ANS_INLINE.search(text) or _ANS_BRACKET.search(text)):
+            it2, rep2 = parse_inline(text)
+            if rep2["rate"] > rep["rate"]:
+                items, rep = it2, rep2
         if rep["n_all"] < 5:
             continue
         flag = "✓" if rep["rate"] >= a.min else "✗"

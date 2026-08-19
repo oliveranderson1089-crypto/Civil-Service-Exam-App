@@ -573,6 +573,45 @@ class Test备考方向:
         assert r.status_code == 400
 
 
+class Test题库混排:
+    """这批册子是**混排**的：答案有三种写法、选项有三种摆法。
+       靠对齐率判断该不该收，不靠文件名猜格式。"""
+
+    def _i(self, text):
+        import ingest_sqbank as B
+        return B.parse_inline(text)
+
+    def test_答案跟在题后面(self):
+        items, rep = self._i("1.甲问题（ ）\nA.a\nB.b\nC.c\nD.d\n答案： C\n")
+        assert items and items[0]["answer"] == "C"
+
+    def test_方括号答案后面跟着整段解析(self):
+        # `【答案】B。A 项错误，…` —— 要求字母后面是句号/顿号，
+        # 否则和正文里的「B 项正确」分不开
+        items, _ = self._i("1.甲（ ）\nA.a\nB.b\nC.c\nD.d\n"
+                           "【答案】B。A 项错误，某某；B 项正确，某某。\n")
+        assert items and items[0]["answer"] == "B"
+
+    def test_四个选项挤在一行(self):
+        items, _ = self._i("1.下列表述正确的有几项?\nA.2 项 B. 3 项 C. 4 项 D. 5 项\n答案： C\n")
+        assert items and items[0]["options"] == ["2 项", "3 项", "4 项", "5 项"]
+
+    def test_选项混在题干那一行(self):
+        items, _ = self._i("1、社会工作是一种（）。 A 自发助人活动 B 营利活动 "
+                           "C 专业助人活动 D 其他活动\n正确答案：C\n")
+        assert items and len(items[0]["options"]) == 4
+        assert "社会工作是一种" in items[0]["stem"]
+
+    def test_多选按答案字母个数回判题型(self):
+        # 这几份押题里单选多选混排，章节标题靠不住
+        items, _ = self._i("一、单选题\n1.甲（ ）\nA.a\nB.b\nC.c\nD.d\n答案： ABC\n")
+        assert items[0]["part"] == "multi"
+
+    def test_答案越界的题照样不要(self):
+        items, rep = self._i("1.甲（ ）\nA.a\nB.b\n答案： D\n")
+        assert items == [] and rep["n_ok"] == 0
+
+
 class Test裁决台:
     def test_体检单只数客观题(self, auth_client, paper):
         # 主观题没有客观答案可校、压根不过这道闸；算进 todo 会显示成
