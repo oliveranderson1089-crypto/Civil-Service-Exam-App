@@ -135,7 +135,7 @@
 - **前端**：原生 HTML/CSS/JS 单页应用 + PWA，按职责拆成 81 个模块，服务端启动时合成 **2 个 bundle**（首屏 74 个脚本请求 → 2 个）：`core` 同步加载只装外壳与今日仪表盘，其余走 `defer` 的 `rest` 包，首屏阻塞字节 537 KB → **337 KB**；主题那支要在第一帧就位，标 `data-early` 不进包。JS 和 CSS 都挂内容指纹，改了必然重取
 - **安卓**：WebView 壳 + JS 桥接；**桌面版**：Linux 用 GTK + WebKit2GTK，Windows 用 Electron（两个壳共用同一套 JS 桥）
 - **部署**：systemd 用户服务 + Cloudflare 命名隧道
-- **测试**：pytest 1633 条 + node:test（jsdom）600 条 + eslint
+- **测试**：pytest 1636 条 + node:test（jsdom）602 条 + eslint
 
 ---
 

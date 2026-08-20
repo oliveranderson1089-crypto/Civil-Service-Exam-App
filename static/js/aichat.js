@@ -785,22 +785,31 @@ async function aiSendStream(content, atts) {
      否则服务端还在合理等待，前端先把连接掐了 —— 用户看到的是「响应超时」，
      而服务端那边其实马上就要出字。 */
   const arm = () => { if (ctl) { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), 75000); } };
-  if (CAN_ABORT) { ctl = new AbortController(); arm(); aiCtl = ctl; }   // 同一个 ctl 也给「停止生成」用
+  /* 切后台去用别的应用时，WebView 的 JS 和定时器被系统一起按住：这 75 秒不在后台走完，
+     而是**回到前台那一刻集中兑现** —— 一解锁就看见「响应超时」，连接其实可能还好好的。
+     所以看不见时把弦卸掉，回到前台重新上，从「你真的在看」那一刻起重新算。
+     真死了也不会一直挂着：回前台 75 秒内没有字节照样判死，再由 aiRecoverAnswered 对账。 */
+  const onVis = () => { if (!ctl) return; if (document.hidden) clearTimeout(timer); else arm(); };
+  const stopArm = () => { clearTimeout(timer); document.removeEventListener('visibilitychange', onVis); };
+  if (CAN_ABORT) {                       // 同一个 ctl 也给「停止生成」用
+    ctl = new AbortController(); arm(); aiCtl = ctl;
+    document.addEventListener('visibilitychange', onVis);
+  }
   let r;
   try {
     r = await fetch('/api/aichat/chats/' + aiChatId + '/stream', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: content, attachments: atts || [] }), signal: ctl ? ctl.signal : undefined
     });
-  } catch (e) { clearTimeout(timer); throw e; }
-  if (r.status === 401) { clearTimeout(timer); location.href = '/login'; throw new Error('未登录'); }
+  } catch (e) { stopArm(); throw e; }
+  if (r.status === 401) { stopArm(); location.href = '/login'; throw new Error('未登录'); }
   if (!r.ok) {
-    clearTimeout(timer);
+    stopArm();
     let msg = '请求失败';
     try { msg = (await r.json()).error || msg; } catch (_) { /* 不是 JSON 就用默认话术 */ }
     throw new Error(msg);
   }
-  if (!r.body || !r.body.getReader) { clearTimeout(timer); throw noStream(); }
+  if (!r.body || !r.body.getReader) { stopArm(); throw noStream(); }
   const reader = r.body.getReader(), dec = new TextDecoder();
   let buf = '', done = null, err = '';
   for (;;) {
@@ -835,7 +844,7 @@ async function aiSendStream(content, atts) {
       else if (ev === 'error') { err = d.error || 'AI 调用失败'; }
     }
   }
-  clearTimeout(timer);
+  stopArm();
   if (err) throw new Error(err);
   // 把服务端 done 里的东西**整包带走**，别一个个挑：漏掉 user_mid/msg_id 会让
   // 「改问题 / 分支」在流式路径（也就是所有现代浏览器）上永远报「还没同步好」，
@@ -901,6 +910,15 @@ async function aiSend() {
     loadAiHome();                     // 列表里这条要跳到最前面
     return;
   } catch (e) {
+    /* 断了先问服务端一句：这一轮到底答完没有。流式的 done 分支可能早把问答落了库，
+       只是最后那帧没送到（客户端超时、切后台、隧道抖）。直接报「失败」的话，用户点
+       「重试」就会把同一个问题原样再问一遍 —— 模型看见自己刚讲完、用户又发一次，
+       就会另作解释，实测它把这当成「你是要收录这个词」，真去写了库。 */
+    if (!aiStopped && await aiRecoverAnswered()) {
+      aiStreamText = ''; aiBusy = false; aiStopped = false; aiCtl = null;
+      toast('刚才那轮其实答完了，已经取回来');
+      return;
+    }
     const partial = aiStreamText;     // 断在半截时，已经出来的字是真的，别连它一起丢掉
     if (partial) aiMsgs.push({ role: 'assistant', content: partial + (aiStopped ? '\n\n（已停止）' : ''), tier: aiTier });
     // 用户自己按的「停止生成」不是错误，别报「响应超时，请再发一次」
@@ -915,6 +933,20 @@ async function aiSend() {
     }
   }
   aiStreamText = ''; aiBusy = false; aiStopped = false; aiCtl = null; renderAI();
+}
+/* 跟服务端对账：这一轮答完了没有。probe 只问不动（不会退历史），
+   答完了就整段取回来 —— 服务端那份比本地半截的完整。 */
+async function aiRecoverAnswered() {
+  if (!aiChatId) return false;
+  try {
+    const d = await api('/api/aichat/chats/' + aiChatId + '/retry', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ probe: true })
+    });
+    if (!d.answered) return false;
+    await aiOpenChat(aiChatId);
+    return true;
+  } catch (_) { return false; }      // 对不上账就照常报失败，别把错误咽掉
 }
 /* 停止生成：复用流式那条 AbortController。按钮现在是**固定件**（钉在输入栏上方），
    不再跟着消息流走 —— 旧版你翻上去就找不着它了（AD8）。 */
@@ -1082,6 +1114,11 @@ async function aiRetryFailed() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ failed: true })
       });
+      if (d.answered) {           // 服务端答完了，只是刚才没送到 —— 取回来，不能重发
+        await aiOpenChat(aiChatId);
+        toast('刚才那轮其实答完了，已经取回来');
+        return;
+      }
       if (d.rewound) { content = aiStripClip(d.content); atts = d.attachments || []; }
     } catch (e) { toast(errMsg(e), true); return; }
   }

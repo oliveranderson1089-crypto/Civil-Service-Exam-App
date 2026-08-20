@@ -74,6 +74,42 @@ def test_末尾不是失败占位时一条都不许删(chat):
     assert len(_q("SELECT 1 FROM ai_msgs WHERE chat_id=?", (cid,))) == 2, "成功的那一轮被误删了"
 
 
+def test_服务端其实答完了要让前端取回而不是重发(chat):
+    """客户端超时 ≠ 服务端没答完：done 分支早把这一轮落了库，只是最后那帧没送到。
+
+    这时候放前端去重发，会话里就会出现**同一个问题问两遍**——模型看见自己刚讲完、
+    用户又原样发一次，只能另作解释：实测它把这理解成「你是要收录这个词」，
+    真调 add_word 写了库（真实会话里连着中过两次）。所以这一步必须明说「已经答完了」。
+    """
+    c, cid = chat
+    _add(cid, "user", "社会工作伦理")
+    _add(cid, "assistant", "「社会工作伦理」是社工考试的价值观基础……")
+    d = c.post("/api/aichat/chats/%d/retry" % cid, json={"failed": True}).get_json()
+    assert d["answered"] is True, "答完了却没告诉前端，它就会把问题再问一遍"
+    assert d["rewound"] is False and d["content"] == ""
+    assert len(_q("SELECT 1 FROM ai_msgs WHERE chat_id=?", (cid,))) == 2
+
+
+def test_对账是只问不动(chat):
+    """probe 是断线后前端先来对一次账用的，绝不能顺手把失败那半轮退掉——
+    对完账前端还要靠那条占位显示「重试」。"""
+    c, cid = chat
+    _add(cid, "user", "C、B、B")
+    _add(cid, "assistant", "（本次回答失败：网络超时）", "error")
+    d = c.post("/api/aichat/chats/%d/retry" % cid, json={"probe": True}).get_json()
+    assert d["answered"] is False and d["rewound"] is False
+    assert len(_q("SELECT 1 FROM ai_msgs WHERE chat_id=?", (cid,))) == 2, "对账不许动历史"
+
+
+def test_对账认出答完的那一轮(chat):
+    c, cid = chat
+    _add(cid, "user", "社会工作伦理")
+    _add(cid, "assistant", "讲完了")
+    d = c.post("/api/aichat/chats/%d/retry" % cid, json={"probe": True}).get_json()
+    assert d["answered"] is True
+    assert len(_q("SELECT 1 FROM ai_msgs WHERE chat_id=?", (cid,))) == 2
+
+
 def test_普通重答不受影响(chat):
     c, cid = chat
     _add(cid, "user", "原来的问题")

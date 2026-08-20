@@ -195,8 +195,8 @@ def aichat_retry(cid):
     if not c:
         return jsonify({"error": "会话不存在"}), 404
     mid = int(data.get("msg_id") or 0)
-    if data.get("failed"):
-        """「刚才那次失败了，重试一下」。
+    if data.get("failed") or data.get("probe"):
+        """「刚才那次失败了，重试一下」。probe=只问不动，用于前端断线后先对一次账。
 
         不能直接按「退最后一轮」处理：失败有两条路径，落库与否并不一样 ——
         流式那条在生成器里补存了一行 kind='error'，非流式那条（老 WebView）压根没落库。
@@ -205,6 +205,15 @@ def aichat_retry(cid):
         """
         last = db.execute("SELECT id, role, COALESCE(kind,'text') kind FROM ai_msgs "
                           "WHERE chat_id=? ORDER BY id DESC LIMIT 1", (cid,)).fetchone()
+        if last and last["role"] == "assistant" and last["kind"] != "error":
+            # 客户端超时/切后台/隧道断 ≠ 服务端没答完：done 分支早把这一轮落了库，
+            # 只是最后那帧没送到。这时候重发＝**把同一个问题问两遍**，模型看见上一条
+            # 自己刚讲完、用户又原样发一次，就只能另作解释——实测它会理解成
+            # 「你是要收录这个词」，然后真去写库（会话 78 连着中过两次）。
+            # 所以这里明说：别重发，把已经答好的那一轮取回去。
+            return jsonify({"content": "", "attachments": [], "rewound": False, "answered": True})
+        if data.get("probe"):
+            return jsonify({"content": "", "attachments": [], "rewound": False, "answered": False})
         if not (last and last["role"] == "assistant" and last["kind"] == "error"):
             return jsonify({"content": "", "attachments": [], "rewound": False})
         mid = db.execute("SELECT MAX(id) FROM ai_msgs WHERE chat_id=? AND role='user' AND id<?",

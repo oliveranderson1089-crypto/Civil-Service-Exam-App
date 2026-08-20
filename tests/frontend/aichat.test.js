@@ -103,3 +103,49 @@ test('删除仍然照旧警告不可撤销', async (t) => {
   await h.run(`aiConfirm({ type: 'confirm', tool: 'delete_note', label: '删除小记', args: { id: 3 } })`);
   assert.match(h.window.__msg, /不可撤销/);
 });
+
+/* 「重试」不能变成「把同一个问题再问一遍」。
+ *
+ * 真实事故（会话 78）：问「社会工作伦理」，服务端答完并落了库，客户端那边超时报错。
+ * 用户点重试 —— 老逻辑发现末尾不是失败占位，就退回本地副本把原话重发，于是历史里
+ * 出现两条一模一样的提问。模型看见自己刚讲完、用户又原样发一次，改判成
+ * 「你是要收录这个词」，真调 add_word 写了库。用户要的只是再看一眼回答。
+ */
+test('服务端其实答完了：重试要把那一轮取回来，不许重发', async (t) => {
+  const h = boot({
+    fetch: (url, o) => {
+      if (url.includes('/retry')) return { json: { answered: true, rewound: false, content: '', attachments: [] } };
+      if (o && o.method === 'GET' || !o) {
+        return { json: { id: 78, title: '社会工作伦理', tier: 'fast',
+          msgs: [{ role: 'user', content: '社会工作伦理' },
+                 { role: 'assistant', content: '「社会工作伦理」是社工考试的价值观基础……' }] } };
+      }
+      return { json: {} };
+    },
+  });
+  t.after(() => h.close());
+  h.run('aiChatId = 78; aiMsgs = [{ role: "user", content: "社会工作伦理" }, { role: "assistant", kind: "error", content: "⚠️ AI 响应超时" }];');
+  await h.run('aiRetryFailed()');
+  const urls = h.calls.map(c => c.url);
+  assert.ok(!urls.some(u => u.includes('/stream') || u.includes('/send')),
+    '答完了还重发一次 —— 会话里就有两条一样的提问，模型会改判成「要收录」：' + urls.join(' , '));
+  const msgs = h.plain('aiMsgs');
+  assert.strictEqual(msgs.length, 2, '该把服务端那一轮整段取回来');
+  assert.strictEqual(msgs[1].content, '「社会工作伦理」是社工考试的价值观基础……');
+  assert.ok(h.toasts.some(x => /取回/.test(x.msg)), '得告诉用户回答已经找回来了');
+});
+
+test('真失败那一轮：重试照旧退历史再重发', async (t) => {
+  const h = boot({
+    fetch: (url) => {
+      if (url.includes('/retry')) return { json: { answered: false, rewound: true, content: 'C、B、B', attachments: [] } };
+      return { json: {} };
+    },
+  });
+  t.after(() => h.close());
+  h.run('window.__sent = 0; aiSend = () => { window.__sent++; };');
+  h.run('aiChatId = 78; aiMsgs = [{ role: "user", content: "C、B、B" }, { role: "assistant", kind: "error", content: "⚠️ 失败" }];');
+  await h.run('aiRetryFailed()');
+  assert.strictEqual(h.window.__sent, 1, '真失败的那轮还是要重发，不然用户得自己重打');
+  assert.strictEqual(h.run('$("#ai-text").value'), 'C、B、B', '原话要回填');
+});

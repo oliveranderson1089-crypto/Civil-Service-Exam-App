@@ -21,7 +21,7 @@ const EXPORTS = [
   'lsSet', 'lsGet', 'lsDel', '_lsWarned',
   'SYNC_REFRESH', 'saveDoc', 'matSave', 'matLoad', 'matStrokes', 'matKey',
   'wrSwitch', 'api', 'esc', 'fmtSize', 'fmtTime', 'composing',
-  'checkSync', '_syncEditing', 'aiRunActions',
+  'checkSync', '_syncEditing', 'aiRunActions', 'aiRetryFailed',
   'Ink', 'annCtx', 'annLocate', 'annPosOf', 'annRangeOf',
   'rvShow', 'rvSelect', 'RV_INTERVALS', 'RV_LNAME', 'rvQueue',
   'mdToHtml', 'mdSafeHref',
