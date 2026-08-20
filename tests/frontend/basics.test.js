@@ -29,3 +29,32 @@ test('没补充要点时显示引导文案，不是空白', (t) => {
   h.run(`bkbData = { ai: '', points: [] }; renderBkb();`);
   assert.match(h.window.document.querySelector('#bkb-wrap').textContent, /还没有补充|写点自己/);
 });
+
+/* 树有几层是资料决定的：优路/三色两层（章 → 考点），社区线三层（书 → 章/节 → 考点）。
+   写死两层那版把社区线 2590 个考点全藏在了第三层，界面上一个都点不到。 */
+test('三层资料的考点要露出来，不能只画到章节为止', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run(`bkTree = { meta: {}, title: '重点笔记', nodes: [
+    { id: 1, title: '社会工作实务重点笔记', level: 1, parent_id: null, kids: 1, blocks: 0 },
+    { id: 2, title: '第一节 接案', level: 2, parent_id: 1, kids: 2, blocks: 0 },
+    { id: 3, title: '接案的步骤', level: 3, parent_id: 2, kids: 0, blocks: 2 },
+    { id: 4, title: '收集资料的方法', level: 3, parent_id: 2, kids: 0, blocks: 1 }
+  ] }; renderBkTree();`);
+  const box = h.window.document.querySelector('#bktree-wrap');
+  assert.match(box.textContent, /接案的步骤/, '第三层的考点没画出来');
+  assert.match(box.textContent, /收集资料的方法/);
+  assert.ok(box.querySelector('[data-bknode="3"]'), '考点得能点开');
+  assert.ok(box.querySelector('[data-bksweep="2"]'), '章节上该有速览入口');
+});
+
+test('两层资料照旧画成章 → 考点，不多长一层', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run(`bkTree = { meta: {}, title: '优路讲义', nodes: [
+    { id: 1, title: '第一章 增长率', level: 1, parent_id: null, kids: 2, blocks: 0 },
+    { id: 2, title: '增长量', level: 2, parent_id: 1, kids: 0, blocks: 3 },
+    { id: 3, title: '基期量', level: 2, parent_id: 1, kids: 0, blocks: 2 }
+  ] }; renderBkTree();`);
+  const box = h.window.document.querySelector('#bktree-wrap');
+  assert.strictEqual(box.querySelectorAll('.bk-sub').length, 0, '两层资料不该长出中间层');
+  assert.ok(box.querySelector('[data-bknode="2"]'));
+});

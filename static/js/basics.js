@@ -68,6 +68,9 @@ const BK_KIND = {
   concept: { t: '', cls: '' },
   example: { t: '例题', cls: 'bk-ex' },
   answer: { t: '解析', cls: 'bk-ans' },
+  /* 扫描件笔记里的表格（家庭类型、人生八阶段这些对照表）。mdToHtml 本来就认
+     markdown 表格，这里只是给它一个标签和自己的边距。 */
+  table: { t: '对照表', cls: 'bk-table' },
 };
 
 /* 正文块。带 sid 时每块挂一个「看原书这一页」——图形推理的图、数量/资料的分式
@@ -132,21 +135,43 @@ async function openBasicsTree(board, source) {
   } catch (e) { $('#bktree-wrap').innerHTML = uiError(e); }
 }
 
+/* 树有几层是**资料决定的**，不是写死的：
+   优路/三色一板块一册，树是「章 → 考点」两层；
+   社区那条线一个板块摞着十几册，树是「书 → 章/节 → 考点」三层。
+   早先这儿写死了两层，社区线 2590 个考点全长在第三层 —— 界面上一个都看不到，
+   点开章节只有一片空白。所以按「有没有孩子」决定摆成组还是摆成叶子，别数层号。 */
 function renderBkTree() {
   const d = bkTree, tops = d.nodes.filter(n => !n.parent_id);
   const kids = id => d.nodes.filter(n => n.parent_id === id);
   const leaf = n => `<div class="bk-leaf" data-bknode="${n.id}">
       <span class="bk-leaf-t">${esc(n.title)}</span>
       <span class="bk-leaf-n">${n.blocks || 0} 段</span></div>`;
+  // 中间层：自己有正文就也能点开读（章前面常有一段引子），下面再列它的考点
+  const branch = n => {
+    const sub = kids(n.id);
+    if (!sub.length) return leaf(n);
+    return `<div class="bk-sub">
+      <div class="bk-sub-h" data-bkfold="${n.id}">
+        <span class="bk-sub-t">${esc(n.title)}</span>
+        <button class="bk-sweep-btn" data-bksweep="${n.id}"
+          title="把这一节的考点摊开成清单">速览</button>
+        <span class="bk-leaf-n">${sub.length}</span>
+      </div>
+      <div class="bk-group-b" id="bkg-${n.id}">${sub.map(leaf).join('')}</div>
+    </div>`;
+  };
   const groups = tops.map(t => {
     const sub = kids(t.id);
+    const deep = sub.some(n => kids(n.id).length);
     return `<div class="bk-group">
       <div class="bk-group-h" data-bkfold="${t.id}">
         <span class="bk-group-t">${esc(t.title)}</span>
+        ${sub.length ? `<button class="bk-sweep-btn" data-bksweep="${t.id}"
+          title="把整本/整章的考点摊开成清单">速览</button>` : ''}
         <span class="bk-leaf-n">${sub.length || (t.blocks || 0)}</span>
       </div>
       <div class="bk-group-b" id="bkg-${t.id}">
-        ${sub.length ? sub.map(leaf).join('') : leaf(t)}
+        ${sub.length ? sub.map(deep ? branch : leaf).join('') : leaf(t)}
       </div></div>`;
   }).join('');
   $('#bktree-wrap').innerHTML = `
@@ -155,6 +180,8 @@ function renderBkTree() {
 }
 
 $('#bktree-wrap').addEventListener('click', e => {
+  const sw = e.target.closest('[data-bksweep]');
+  if (sw) { openBasicsSweep(+sw.dataset.bksweep); return; }
   const f = e.target.closest('[data-bkfold]');
   if (f) { $('#bkg-' + f.dataset.bkfold).classList.toggle('fold'); f.classList.toggle('fold'); return; }
   const n = e.target.closest('[data-bknode]');
@@ -188,6 +215,48 @@ $('#bknode-wrap').addEventListener('click', e => {
   if (q) { bkStartPractice(bkNodePr, +q.dataset.bkq); return; }
   const n = e.target.closest('[data-bknode]');
   if (n) { stack.pop(); openBasicsNode(+n.dataset.bknode); }   // 前后翻不叠栈
+});
+
+/* ---------------- 整章速览 ----------------
+   这批速记资料印出来本来就是「考点名｜要点串」一行一条的（见 12.社会工作综合能力
+   重点笔记），考前扫的就是这个节奏。逐个点开读是精读的用法，两种都要有。 */
+function bkSweepItem(it) {
+  // 正文只有一段、而且短，就贴着标题排成两列；多段或带表格的老老实实竖着放，
+  // 挤进右栏会把表格压成一条缝。
+  const solo = (it.blocks || []).length === 1 && it.blocks[0].kind === 'concept'
+    && (it.blocks[0].md || '').length <= 160 && !(it.kids || []).length;
+  const body = solo
+    ? `<div class="bk-sw-b">${bkMd(it.blocks[0].md)}</div>`
+    : `<div class="bk-sw-b bk-sw-wide">${(it.blocks || []).map(b =>
+      b.kind === 'table' ? bkMd(b.md) : `<p>${bkMd(b.md)}</p>`).join('')}
+       ${(it.kids || []).map(k => `<div class="bk-sw-sub">
+          <span class="bk-sw-subt">${esc(k.title)}</span>
+          ${(k.blocks || []).map(b => bkMd(b.md)).join('')}</div>`).join('')}</div>`;
+  return `<div class="bk-sw-item${solo ? '' : ' bk-sw-stack'}" data-bknode="${it.id}">
+      <div class="bk-sw-n">${esc(it.title)}</div>${body}</div>`;
+}
+
+async function openBasicsSweep(nid) {
+  push({ view: 'bksweep', title: '加载中…' });
+  $('#bksweep-wrap').innerHTML = '<p class="empty">加载中…</p>';
+  try {
+    const d = await api('/api/basics/sweep?nid=' + nid);
+    $('#top-title').textContent = d.title;
+    const empty = !d.items.length && !(d.blocks || []).length;
+    $('#bksweep-wrap').innerHTML = `
+      <div class="bk-head"><div class="bk-head-d">${esc(d.book || '')} · 速览</div>
+        <div class="bk-head-t">${esc(d.title)}</div></div>
+      ${(d.blocks || []).length ? `<div class="bk-sw-intro">${
+      (d.blocks || []).map(b => bkMd(b.md)).join('')}</div>` : ''}
+      ${empty ? '<p class="empty">这一章还没有正文</p>'
+    : `<div class="bk-sw">${d.items.map(bkSweepItem).join('')}</div>`}
+      <p class="bk-sw-tip">点任意一条可以进到它的精读页（带原书页码和练习）。</p>`;
+  } catch (e) { $('#bksweep-wrap').innerHTML = uiError(e); }
+}
+
+$('#bksweep-wrap').addEventListener('click', e => {
+  const n = e.target.closest('[data-bknode]');
+  if (n) openBasicsNode(+n.dataset.bknode);
 });
 
 /* ---------------- 考点对照 ---------------- */

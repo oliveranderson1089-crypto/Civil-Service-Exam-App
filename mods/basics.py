@@ -30,7 +30,7 @@ SOURCE_META = {
     "sanse": {"name": "三色笔记 · 速记", "icon": "target",
               "desc": "浓缩框架：三色标重点，适合快速过"},
     "shequ": {"name": "社区速记 · 考点清单", "icon": "compass",
-              "desc": "公告点名的范围：社工初级 + 社区建设 + 基层治理 + 法律常识"},
+              "desc": "公告点名的范围：社工初级 + 社区建设 + 基层治理 + 党建 + 法律常识 + 时政"},
 }
 
 
@@ -45,9 +45,14 @@ def basics_entries():
     """每个板块有哪几套资料可用 —— 前端拿它决定板块页摆几张卡片。"""
     db = get_db()
     out = {}
+    # 只数**叶子**，不数分组节点：优路/三色的树是「章 → 考点」两层，level 2 就是叶子；
+    # 社区线是「书 → 章/节 → 考点」三层，把 309 个章节也算进去的话，
+    # 板块页上的考点数会凭空多出一成，而那些章节点开是分组、不是内容。
     for r in db.execute(
             "SELECT n.board, n.source, COUNT(*) c FROM basic_nodes n "
-            "WHERE n.level>=2 GROUP BY n.board, n.source"):
+            "WHERE n.level>=2 AND NOT EXISTS("
+            "  SELECT 1 FROM basic_nodes k WHERE k.parent_id=n.id) "
+            "GROUP BY n.board, n.source"):
         out.setdefault(r["board"], {})[r["source"]] = r["c"]
     for r in db.execute("SELECT board, COUNT(*) c FROM basic_topics GROUP BY board"):
         out.setdefault(r["board"], {})["compare"] = r["c"]
@@ -150,6 +155,38 @@ def basics_node(nid):
         "practice": _practice(db, n["topic_id"]),
         "prev": dict(sib[i - 1]) if i > 0 else None,
         "next": dict(sib[i + 1]) if 0 <= i < len(sib) - 1 else None})
+
+
+@bp.get("/api/basics/sweep")
+def basics_sweep():
+    """整章速览：一个章节下所有考点连正文一次给全。
+
+    和 /node 的分工：那个是「一个考点一屏、读完点下一个」，适合精读；这个是
+    「一章摊开、一屏扫到底」，对的是速记资料原本的用法 —— 那些笔记本来就是
+    印成「考点名｜要点串」一行一条的，考前扫的就是这个节奏，一条条点开反而慢。
+
+    只往下取两层（章 → 考点 → 考点的子条目），再深的层级在这批资料里没出现过；
+    真出现了也不该在速览里摊开，那是精读该干的事。
+    """
+    db = get_db()
+    nid = request.args.get("nid", type=int)
+    n = db.execute("SELECT * FROM basic_nodes WHERE id=?", (nid,)).fetchone() if nid else None
+    if not n:
+        return jsonify({"error": "章节不存在"}), 404
+    kids = db.execute("SELECT * FROM basic_nodes WHERE parent_id=? ORDER BY sort",
+                      (nid,)).fetchall()
+    items = []
+    for k in kids:
+        sub = db.execute("SELECT * FROM basic_nodes WHERE parent_id=? ORDER BY sort",
+                         (k["id"],)).fetchall()
+        items.append({"id": k["id"], "title": k["title"], "page": k["page_from"],
+                      "blocks": _blocks(db, k["id"]),
+                      "kids": [{"id": x["id"], "title": x["title"],
+                                "blocks": _blocks(db, x["id"])} for x in sub]})
+    book = db.execute("SELECT title FROM basic_sources WHERE id=?", (n["source_id"],)).fetchone()
+    return jsonify({"id": nid, "title": n["title"], "board": n["board"],
+                    "source_id": n["source_id"], "book": book["title"] if book else "",
+                    "blocks": _blocks(db, nid), "items": items})
 
 
 @bp.get("/api/basics/compare")

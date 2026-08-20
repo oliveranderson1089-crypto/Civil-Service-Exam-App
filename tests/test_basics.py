@@ -214,3 +214,84 @@ class Test解析器不变量:
         first = blocks[0]
         assert (first["page"], first["page_to"]) == (3, 4), \
             "跨页块要记起止，不能记 flush 那一刻的页（那是下一节的页）"
+
+
+class Test整章速览:
+    """一次把一章的考点连正文全给出来 —— 速记资料印出来就是这个读法。
+
+    盯的是「摊开」这件事本身：章下面的考点、考点自己的子条目、以及挂在章上的
+    引子正文，少任何一层界面上都会缺一块，而接口照样返回 200。
+    """
+
+    def test_一章的考点连正文一次给全(self, seeded):
+        c, ids = seeded
+        d = c.get("/api/basics/sweep?nid=%d" % ids["youlu"]["chapter"]).get_json()
+        assert d["title"] == "第一章"
+        assert [it["title"] for it in d["items"]] == ["增长率"]
+        kinds = [b["kind"] for b in d["items"][0]["blocks"]]
+        assert kinds == ["concept", "example"]          # 正文和例题都要，顺序照书里的
+        assert "增长量/基期" in d["items"][0]["blocks"][0]["md"]
+
+    def test_带上出自哪本书(self, seeded):
+        c, ids = seeded
+        d = c.get("/api/basics/sweep?nid=%d" % ids["youlu"]["chapter"]).get_json()
+        assert d["book"] == "优路讲义"                   # 同名考点在多册里都有，得说清是哪本
+
+    def test_考点的子条目也摊开(self, seeded):
+        c, ids = seeded
+        with appmod.app.app_context():
+            db = get_db()
+            sub = db.execute(
+                "INSERT INTO basic_nodes(source_id,source,board,parent_id,level,title,"
+                "sort,page_from,nkey) SELECT source_id,source,board,?,3,'基期量',0,3,"
+                "'资料分析|3|基期量|0|youlu' FROM basic_nodes WHERE id=?",
+                (ids["youlu"]["leaf"], ids["youlu"]["leaf"])).lastrowid
+            db.execute("INSERT INTO basic_blocks(node_id,sort,kind,content_md,page) "
+                       "VALUES(?,0,'concept','基期量=现期量/(1+r)',3)", (sub,))
+            db.commit()
+        d = c.get("/api/basics/sweep?nid=%d" % ids["youlu"]["chapter"]).get_json()
+        kids = d["items"][0]["kids"]
+        assert [k["title"] for k in kids] == ["基期量"]
+        assert "1+r" in kids[0]["blocks"][0]["md"]
+
+    def test_章节不存在时说清楚而不是给空壳(self, seeded):
+        c, _ids = seeded
+        r = c.get("/api/basics/sweep?nid=99999")
+        assert r.status_code == 404
+
+
+class Test三层树:
+    """社区那条线一个板块摞十几册，树是「书 → 章/节 → 考点」三层。
+
+    早先前端把树写死成两层，2590 个考点全长在第三层 —— 界面上一个都看不到，
+    点开章节只有一片空白。接口这边要保证：三层结构原样给出去，
+    而板块页的考点计数只数叶子（章节是分组，不是考点）。
+    """
+
+    @pytest.fixture
+    def deep(self, seeded):
+        c, ids = seeded
+        with appmod.app.app_context():
+            db = get_db()
+            # 在「增长率」下面再挂一层考点，把 youlu 那本变成三层
+            db.execute(
+                "INSERT INTO basic_nodes(source_id,source,board,parent_id,level,title,"
+                "sort,page_from,nkey) SELECT source_id,source,board,?,3,'基期量',0,4,"
+                "'资料分析#1|3|基期量|0' FROM basic_nodes WHERE id=?",
+                (ids["youlu"]["leaf"], ids["youlu"]["leaf"]))
+            db.commit()
+        return c, ids
+
+    def test_树把三层都给出来(self, deep):
+        c, ids = deep
+        d = c.get("/api/basics/tree?board=资料分析&source=youlu").get_json()
+        lv = sorted({n["level"] for n in d["nodes"]})
+        assert lv == [1, 2, 3]
+        mid = next(n for n in d["nodes"] if n["level"] == 2)
+        assert mid["kids"] == 1          # 前端据此决定摆成分组还是摆成叶子
+
+    def test_考点计数只数叶子(self, deep):
+        c, _ids = deep
+        d = c.get("/api/basics/entries").get_json()
+        # 「增长率」现在是分组不是考点，youlu 这边只剩「基期量」一个叶子
+        assert d["boards"]["资料分析"]["youlu"] == 1

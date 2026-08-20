@@ -4132,10 +4132,60 @@ body.dark .fr-s.near{background:#4a3418;}
   border-radius:6px;padding:1px 7px;margin-bottom:6px;}
 .bk-block.bk-ex .bk-tag{background:#c99a2e;}
 .bk-block.bk-ans .bk-tag{background:#3f9c68;}
+/* 扫描件笔记里的对照表（家庭类型、人生八阶段）。表格自己带 md-tablewrap 会横向
+   滚动，这里只把内边距收窄一点，别让表格四周浪费半屏宽度。 */
+.bk-block.bk-table{padding:11px 12px;}
+.bk-block.bk-table .bk-tag{background:#5b7ba6;}
+.bk-block.bk-table .md-tablewrap{margin:.2em 0;}
+.bk-block.bk-table .md-table{font-size:.9em;}
+.bk-block.bk-table .md-table td:first-child{font-weight:600;white-space:nowrap;}
 /* 三色笔记的红蓝绿：原书就是靠颜色分层的，这是这套资料的核心，别改成统一色 */
 mark.bk-r{background:none;color:#d92b2b;font-weight:600;}
 mark.bk-b{background:none;color:#1f4fa8;font-weight:600;}
 mark.bk-g{background:none;color:#2f8a4a;font-weight:600;}
+/* ---- 三层树的中间层（社区线的「章/节」）：比章浅一档、比考点重一档 ---- */
+.bk-sub{border-bottom:1px solid var(--line);}
+.bk-sub:last-child{border-bottom:none;}
+.bk-sub-h{display:flex;align-items:center;gap:8px;padding:11px 16px 11px 14px;
+  cursor:pointer;background:var(--bg);}
+.bk-sub-h::before{content:'▾';color:var(--muted);font-size:11px;transition:.15s;}
+.bk-sub-h.fold::before{transform:rotate(-90deg);}
+.bk-sub-t{font-size:14px;font-weight:600;color:var(--text);flex:1;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bk-sub .bk-leaf{padding-left:34px;}            /* 缩进一档，一眼看出是它下面的 */
+.bk-sub .bk-sweep-btn{margin-left:0;}
+body.dark .bk-sub-h{background:#1e2229;}
+body.dark .bk-sub{border-bottom-color:#2f3543;}
+
+/* ---- 整章速览：左列考点名、右列要点串，和纸质笔记同一个节奏 ---- */
+.bk-sweep-btn{margin-left:auto;margin-right:8px;font-size:11px;font-weight:700;color:var(--blue);
+  background:none;border:1px solid #c3d7ea;border-radius:7px;padding:2px 9px;cursor:pointer;}
+.bk-sweep-btn:hover{background:#eef5fb;}
+.bk-sw{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:4px 16px;box-shadow:var(--shadow);}
+.bk-sw-intro{font-size:14px;color:var(--muted);line-height:1.8;margin:0 0 12px;padding:0 2px;}
+.bk-sw-item{display:grid;grid-template-columns:minmax(0,168px) minmax(0,1fr);gap:16px;
+  padding:11px 2px;border-bottom:1px dotted var(--line);cursor:pointer;align-items:baseline;}
+.bk-sw-item:last-child{border-bottom:none;}
+.bk-sw-item:hover{background:rgba(0,0,0,.02);}
+.bk-sw-item.bk-sw-stack{display:block;}          /* 带表格/子条目的竖着排，别挤进右栏 */
+.bk-sw-n{font-size:14.5px;font-weight:700;color:var(--text);line-height:1.65;word-break:break-word;}
+.bk-sw-stack .bk-sw-n{margin-bottom:5px;}
+.bk-sw-b{font-size:14px;color:#444;line-height:1.8;word-break:break-word;}
+.bk-sw-b p{margin:.25em 0;}
+.bk-sw-sub{margin:6px 0 0 12px;padding-left:10px;border-left:2px solid var(--line);}
+.bk-sw-subt{display:block;font-size:13px;font-weight:600;color:var(--text);}
+.bk-sw-tip{font-size:12.5px;color:var(--muted);text-align:center;margin:12px 0 0;}
+@media(max-width:560px){
+  .bk-sw-item{grid-template-columns:1fr;gap:2px;}
+  .bk-sw{padding:4px 12px;}
+}
+body.dark .bk-sw{background:#232833;border-color:#2f3543;}
+body.dark .bk-sw-b{color:#c2cad7;}
+body.dark .bk-sw-item{border-bottom-color:#2f3543;}
+body.dark .bk-sw-item:hover{background:rgba(255,255,255,.03);}
+body.dark .bk-sweep-btn{border-color:#3a5170;}
+body.dark .bk-sweep-btn:hover{background:#28303d;}
 .bk-nav{display:flex;justify-content:space-between;gap:10px;margin-top:14px;}
 .bk-nav .btn{max-width:47%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 /* 对照：宽屏并排，窄屏上下（优路在上、三色在下，和「先详解后速记」的读法一致） */
@@ -4149,6 +4199,7 @@ body.dark .bk-block{background:#232833;border-color:#2f3543;}
 body.dark .bk-block .bk-body{color:#c9d1de;}
 body.dark .bk-block.bk-ex{background:#2b2921;border-color:#3d3830;}
 body.dark .bk-block.bk-ans{background:#1f2a24;border-color:#2c3d33;}
+body.dark .bk-block.bk-table .bk-tag{background:#41618c;}
 body.dark .bk-group,body.dark #view-bkcmp .bk-leaf{background:#232833;border-color:#2f3543;}
 body.dark mark.bk-r{color:#ff7b7b;} body.dark mark.bk-b{color:#79aaff;} body.dark mark.bk-g{color:#6cc98a;}
 .bk-pagebtn{margin-top:10px;font-size:12px;color:var(--blue);background:none;border:1px dashed #c3d7ea;
