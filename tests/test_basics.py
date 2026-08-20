@@ -295,3 +295,80 @@ class Test三层树:
         d = c.get("/api/basics/entries").get_json()
         # 「增长率」现在是分组不是考点，youlu 这边只剩「基期量」一个叶子
         assert d["boards"]["资料分析"]["youlu"] == 1
+
+
+class Test原书页文字版:
+    """「原书这一页」原先只给一张图 —— 看得见、搜不着、复制不了。文字本来就在
+    basic_raw 里，这几条盯的是排版：这批资料一册一个写法，规则只要偏向其中一种，
+    另外几种就排成一地碎行。
+    """
+
+    from mods.basics import page_markdown as _md
+
+    def test_标题跨行接回去(self):
+        """居中的大标题被 pdftotext 按视觉行切开，不接回去标题就是断的。"""
+        md = Test原书页文字版._md("第一部分 公共管理与社会工作基\n              础知识\n")
+        assert md == "## 第一部分 公共管理与社会工作基础知识"
+
+    def test_段落的软换行合并成一段(self):
+        md = Test原书页文字版._md(
+            "一、公共管理的概念\n\n  公共管理是以政府为核心的公共部门整合社会的各种力量，广泛\n\n"
+            "运用政治的、经济的方法，强化政府的治理能力。\n")
+        assert "#### 一、公共管理的概念" in md
+        assert "各种力量，广泛运用政治的" in md, "软换行没接回去"
+        assert md.count("\n\n") == 1, "一段话被拆成了几段"
+
+    def test_阶梯状的并列枚举并回一句(self):
+        """「政治职能：（1）军事保卫；（2）外交…」原书排成阶梯状好几行，
+        拆成列表就不是原文那句话了。"""
+        md = Test原书页文字版._md(
+            "  政治职能：\n      （1）军事保卫；\n             （2）外交；\n"
+            "                  （3）治安；\n                       （4）民主管理。\n")
+        assert md == "**政治职能：**（1）军事保卫；（2）外交；（3）治安；（4）民主管理。"
+
+    def test_法条的条号单独成标题正文不被截断(self):
+        """法条是「第 N 条」后面直接跟正文。整行当标题的话，标题会拖着半句正文
+        且在行尾被截断。"""
+        md = Test原书页文字版._md(
+            "第九条   地方党委领导本地区信访工作，贯彻落实党中央关于信访工作的方\n\n"
+            "针政策和决策部署，统筹信访工作责任体系构建。\n")
+        assert "#### 第九条" in md
+        assert "关于信访工作的方针政策和决策部署" in md, "正文在行尾被截断了"
+
+    def test_序号条目每条独立成段(self):
+        """党章知识点是「N. 名称：内容」一行一条。按长度分成「短的是标题、
+        长的是正文」的话，同一种东西会得到两种待遇。"""
+        md = Test原书页文字版._md(
+            "12. 立国之本：四项基本原则\n13. 强国之路：改革开放\n"
+            "14. 我国的根本政治制度：人民代表大会制度\n")
+        assert md.count("\n\n") == 2, md
+        assert md.startswith("12. 立国之本：四项基本原则")
+
+    def test_一行一条的笔记不糊成一大段(self):
+        """扫描件笔记是「考点名：要点串」一行一条，按软换行规则会把整页糊成一段。"""
+        md = Test原书页文字版._md(
+            "人类行为的类型: 本能行为和习得行为; 亲社会行为和反社会行为;\n"
+            "人类行为的特点: 适应性、多样性、可控性、发展性、整合性;\n")
+        assert md.count("\n\n") == 1, md
+        assert "**人类行为的类型：**" in md and "**人类行为的特点：**" in md
+
+    def test_页码页眉不进正文(self):
+        md = Test原书页文字版._md("2\n一、公共管理的概念\n第 3 页 共 36 页\n")
+        assert md == "#### 一、公共管理的概念"
+
+    def test_接口给出markdown(self, seeded):
+        c, ids = seeded
+        with appmod.app.app_context():
+            db = get_db()
+            sid = db.execute("SELECT source_id FROM basic_nodes WHERE id=?",
+                             (ids["youlu"]["leaf"],)).fetchone()["source_id"]
+            db.execute("INSERT INTO basic_raw(source_id,page,text) VALUES(?,7,?)",
+                       (sid, "一、增长率\n\n增长率是增长量与基期量之比。\n"))
+            db.commit()
+        d = c.get("/api/basics/pagetext?source_id=%d&page=7" % sid).get_json()
+        assert d["empty"] is False
+        assert d["md"].startswith("#### 一、增长率")
+
+    def test_没存原文的页说清楚而不是给空串(self, seeded):
+        c, _ids = seeded
+        assert c.get("/api/basics/pagetext?source_id=1&page=999").status_code == 404

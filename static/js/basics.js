@@ -79,8 +79,14 @@ function bkBlocks(blocks, sid) {
   return (blocks || []).map(b => {
     const k = BK_KIND[b.kind] || BK_KIND.concept;
     const to = b.page_to || b.page;
+    const rng = to > b.page ? `P${b.page}-P${to}` : 'P' + b.page;
+    // 两个入口：**文字版**能搜能复制、手机上不用放大，是日常读的那个；
+    // **原图**留着，因为图形推理的图、数量资料的竖式分式只有图救得回来。
     const pg = (sid && b.page)
-      ? `<button class="bk-pagebtn" data-bkpage="${sid}:${b.page}:${to}">${artEm('🖼')} 原书 ${to > b.page ? `P${b.page}-P${to}` : 'P' + b.page}</button>` : '';
+      ? `<div class="bk-pagebtns">
+           <button class="bk-pagebtn" data-bktext="${sid}:${b.page}:${to}">${artEm('📄')} 原书 ${rng} · 文字</button>
+           <button class="bk-pagebtn" data-bkpage="${sid}:${b.page}:${to}">${artEm('🖼')} 原图</button>
+         </div>` : '';
     return `<div class="bk-block ${k.cls}">${k.t ? `<span class="bk-tag">${k.t}</span>` : ''}
       <div class="bk-body">${bkMd(b.md)}</div>${pg}</div>`;
   }).join('') || '<p class="empty">这一节没有正文</p>';
@@ -101,6 +107,32 @@ function bkPractice(p) {
 function bkStartPractice(p, n) {
   if (!window.rqStart) { toast('真题模块还没就绪'); return; }
   rqStart({ mode: 'type', module: p.module, qtypes: p.qtypes, n: n }, p.name);
+}
+
+/* 点开原书页的**文字版**：就地展开，再点收起。和图片走同一套「展开/收起」的手感，
+   区别只在于这份能选中、能搜、能复制，而且窄屏上不用横着拖。 */
+async function bkTogglePageText(btn) {
+  const [sid, from, to] = btn.dataset.bktext.split(':').map(Number);
+  let next = btn.parentElement.nextElementSibling;
+  if (next && next.classList.contains('bk-pagetext')) {
+    while (next && next.classList.contains('bk-pagetext')) {
+      const gone = next; next = next.nextElementSibling; gone.remove();
+    }
+    return;
+  }
+  const box = document.createElement('div');
+  box.className = 'bk-pagetext';
+  box.innerHTML = '<p class="empty">加载中…</p>';
+  btn.parentElement.insertAdjacentElement('afterend', box);
+  try {
+    const parts = [];
+    for (let p = from; p <= to; p++) {
+      const d = await api(`/api/basics/pagetext?source_id=${sid}&page=${p}`);
+      parts.push(`<div class="bk-pagetext-h">原书第 ${p} 页</div>`
+        + (d.empty ? '<p class="empty">这一页没有可提取的文字（多半是整页的图）</p>' : bkMd(d.md)));
+    }
+    box.innerHTML = parts.join('');
+  } catch (e) { box.innerHTML = uiError(e); }
 }
 
 /* 点开原书页：就地展开一张图，再点收起（不跳页，读到哪看到哪） */
@@ -209,6 +241,8 @@ async function openBasicsNode(id) {
 }
 
 $('#bknode-wrap').addEventListener('click', e => {
+  const tx = e.target.closest('[data-bktext]');
+  if (tx) { bkTogglePageText(tx); return; }
   const p = e.target.closest('[data-bkpage]');
   if (p) { bkTogglePage(p); return; }
   const q = e.target.closest('[data-bkq]');
@@ -298,6 +332,8 @@ async function openBasicsTopic(tid) {
 }
 
 $('#bkcmp-wrap').addEventListener('click', e => {
+  const tx = e.target.closest('[data-bktext]');
+  if (tx) { bkTogglePageText(tx); return; }
   const p = e.target.closest('[data-bkpage]');
   if (p) { bkTogglePage(p); return; }
   const q = e.target.closest('[data-bkq]');

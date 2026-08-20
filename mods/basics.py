@@ -12,6 +12,7 @@
 """
 import json
 import os
+import re
 import subprocess
 
 from flask import Blueprint, jsonify, request, send_file
@@ -260,6 +261,170 @@ def basics_page():
             log.warning("basics 渲染原书页失败 sid=%s page=%s: %s", sid, page, e)
             return jsonify({"error": "渲染失败"}), 500
     return send_file(out, mimetype="image/png", max_age=86400)
+
+
+# ---------------------------------------------------------------- 原书页 → Markdown
+# 只认**四种资料都靠得住**的标题：部分/篇 → 章/节 → 第 N 条 → 一、 → （一）。
+# `1.` 和 `（1）` **一律不当标题**，只作分段 —— 这批资料一册一个写法，
+# 照着教材排版定的「短的算小标题、长的算正文」，套到党章知识点上就成了
+# 「12. 立国之本」是标题、「10. 基本路线：…」是正文，同一种东西两种待遇。
+_PG_PART = re.compile(r"^\s*第\s*[一二三四五六七八九十百零〇\d]{1,4}\s*(?:部\s*分|篇|编)\s*[：:、.]?\s*\S*")
+_PG_CHAP = re.compile(r"^\s*(第\s*[一二三四五六七八九十百零〇\d]{1,4}\s*[章节])\s*[”“\"'：:、.]*\s*(.*)$")
+_PG_ART = re.compile(r"^\s*(第\s*[一二三四五六七八九十百零〇\d]{1,5}\s*条)\s*[”“\"'：:、.]*\s*(.*)$")
+_PG_CN = re.compile(r"^\s*([一二三四五六七八九十]{1,3}\s*、)\s*(\S.*)$")
+_PG_SUB = re.compile(r"^\s*[（(]\s*([一二三四五六七八九十]{1,3})\s*[)）]\s*(\S.*)$")
+# 分段（不是标题）：序号条目、括号数字项、以及「考点名：要点串」那种一行一条的写法
+_PG_NUM = re.compile(r"^\s*(\d{1,3})\s*[.、．]\s*(\S.*)$")
+_PG_PAREN = re.compile(r"^\s*[（(]\s*(\d{1,2})\s*[)）]\s*(\S.*)$")
+_PG_TERM = re.compile(r"^\s*([\u4e00-\u9fa5][\u4e00-\u9fa5A-Za-z（）()·、]{2,23})\s*[：:]\s*(\S.{5,})$")
+_PG_JUNK = re.compile(r"^\s*(?:\d{1,4}|第?\s*\d{1,4}\s*页\s*共\s*\d{1,4}\s*页|[-－]\s*\d{1,4}\s*[-－])\s*$")
+_PG_END = re.compile(r"[。；;！？!?：:）)】\]…]\s*$")
+_PG_ANY_HEAD = re.compile(r"^\s*(?:第\s*[一二三四五六七八九十百零〇\d]{1,5}\s*(?:部\s*分|[篇编章节条])"
+                          r"|[一二三四五六七八九十]{1,3}\s*、"
+                          r"|[（(]\s*[一二三四五六七八九十\d]{1,3}\s*[)）]"
+                          r"|\d{1,3}\s*[.、．])")
+
+
+def page_markdown(text):
+    """原书一页的文本 → Markdown。
+
+    为什么要有这个：「原书这一页」原先只给一张**图片** —— 看得见、搜不着、
+    复制不了、手机上还得放大。而每一页的文字本来就存在 basic_raw 里，
+    只是从没拿出来过。图片仍然留着（图形推理的图、竖式分式只有图救得回来），
+    这里多给一个文字版。
+
+    三件必须先做的事，缺一样排出来就是一地碎行：
+
+      ① **标题跨行要接回去。** 居中的大标题被 pdftotext 按视觉行切开
+         （`第一部分 公共管理与社会工作基` / `础知识`）。
+      ② **段落的软换行要合并。** 这批书每行之间都空一行，逐行渲染的话
+         一段话会碎成四五段。
+      ③ **一行一条的写法要分开。** 扫描件笔记是「考点名：要点串」一行一条，
+         按软换行规则会把整页糊成一大段 —— 和 ② 正好相反的需求，
+         所以「短名词 + 冒号 + 长内容」单独作为分段信号。
+    """
+    lines = [ln.rstrip() for ln in (text or "").splitlines()]
+    lines = [ln for ln in lines if ln.strip() and not _PG_JUNK.match(ln)]
+
+    merged, i = [], 0
+    while i < len(lines):
+        cur = lines[i]
+        if (_PG_PART.match(cur) or _PG_CHAP.match(cur)) and not _PG_END.search(cur):
+            while (i + 1 < len(lines) and len(lines[i + 1].strip()) <= 12
+                   and not _PG_ANY_HEAD.match(lines[i + 1])):
+                i += 1
+                cur += lines[i].strip()
+        merged.append(cur)
+        i += 1
+
+    out, para = [], []
+
+    def flush():
+        """收一段。**「名词：内容」的加粗统一在这里做**，不在各个分支里各做各的 ——
+        「政治职能：」和「经济职能：」在原书里一个占整行、一个和内容同行，
+        走的是不同分支，分头加粗的结果就是同一页里一个粗一个不粗。"""
+        if not para:
+            return
+        txt = "".join(para)
+        if not txt.startswith("**"):
+            mt = _PG_TERM.match(txt)
+            if mt:
+                txt = "**%s：**%s" % (mt.group(1).strip(), mt.group(2).strip())
+        out.append(txt)
+        para.clear()
+
+    for ln in merged:
+        t = ln.strip()
+        if _PG_PART.match(t):
+            flush()
+            out.append("## " + t)
+            continue
+        m = _PG_CHAP.match(t)
+        if m:
+            flush()
+            out.append("### %s %s" % (m.group(1).replace(" ", ""), m.group(2).strip()))
+            continue
+        m = _PG_ART.match(t)                       # 法规原文：条即一节
+        if m:
+            flush()
+            # 法条是「第 N 条」后面**直接跟正文**，不像章节那样标题独占一行。
+            # 整行当标题的话，标题会拖着半句正文、而且在行尾被截断
+            # （`#### 第九条 地方党委领导本地区信访工作，贯彻落实党中央关于信访工作的方`）。
+            # 所以条号单独成小标题，正文进 para 走正常的续行合并。
+            out.append("#### " + m.group(1).replace(" ", ""))
+            body = m.group(2).strip()
+            if body:
+                para.append(body)
+            continue
+        m = _PG_CN.match(t)
+        if m:
+            flush()
+            out.append("#### %s%s" % (m.group(1).replace(" ", ""), m.group(2).strip()))
+            continue
+        m = _PG_SUB.match(t)
+        if m:
+            # 「（一）公共管理的主体」是小标题；法条里的「（一）研究分析全国信访形势；」
+            # 是分项，短的算标题、长的算分项段落
+            body = m.group(2).strip()
+            flush()
+            if len(body) <= 20:
+                out.append("**（%s）%s**" % (m.group(1), body))
+            else:
+                # 法条里的分项是长句，常常还要跨行 —— 进 para 才能和续行合并，
+                # 直接写进 out 的话「…事关党和国家工作大局、」和它的下半句会成两段
+                para.append("（%s）%s" % (m.group(1), body))
+            continue
+        m = _PG_PAREN.match(t)
+        if m:
+            body = m.group(2).strip()
+            # 「（1）军事保卫；（2）外交；…」是一句话里的并列枚举，原书排成了阶梯状
+            # 的好几行。判据只用一条：**上一段还没收尾，这句话就还没说完**。
+            if para and not re.search(r"[。！？!?]\s*$", para[-1]):
+                para.append("（%s）%s" % (m.group(1), body))
+                if re.search(r"[。！？!?]\s*$", body):
+                    flush()
+                continue
+            flush()
+            para.append("（%s）%s" % (m.group(1), body))
+            if len(body) <= 24:                     # 「（1）含义」是小标题式的，别把正文粘上来
+                flush()
+            continue
+        m = _PG_NUM.match(t)
+        if m:                                       # 序号条目：每条独立成段，不分标题正文
+            flush()
+            body = m.group(2).strip()
+            para.append("%s. %s" % (m.group(1), body))
+            # 短条目（「1. 政府职能」这种小标题式的）当场收尾，否则下一行的
+            # 「（1）含义」会认为「这句话还没说完」而并进来，粘成一长条
+            if len(body) <= 24:
+                flush()
+            continue
+        if _PG_TERM.match(t):                       # 「考点名：要点串」一行一条
+            flush()
+            para.append(t)
+            continue
+        para.append(t)
+        if _PG_END.search(t) and len(t) > 24:
+            flush()
+    flush()
+    return "\n\n".join(x for x in out if x.strip())
+
+
+@bp.get("/api/basics/pagetext")
+def basics_pagetext():
+    """原书某一页的**文字版**（Markdown）。图片那份仍在 /api/basics/page。"""
+    db = get_db()
+    sid = request.args.get("source_id", type=int)
+    page = request.args.get("page", type=int)
+    if not sid or not page or page < 1:
+        return jsonify({"error": "参数无效"}), 400
+    r = db.execute("SELECT text FROM basic_raw WHERE source_id=? AND page=?",
+                   (sid, page)).fetchone()
+    if r is None:
+        return jsonify({"error": "这一页没有存原文"}), 404
+    md = page_markdown(r["text"])
+    return jsonify({"source_id": sid, "page": page, "md": md,
+                    "empty": not md.strip()})
 
 
 @bp.get("/api/boardkb")

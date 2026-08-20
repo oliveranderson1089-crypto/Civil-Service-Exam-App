@@ -58,3 +58,24 @@ test('两层资料照旧画成章 → 考点，不多长一层', (t) => {
   assert.strictEqual(box.querySelectorAll('.bk-sub').length, 0, '两层资料不该长出中间层');
   assert.ok(box.querySelector('[data-bknode="2"]'));
 });
+
+/* 原书那一页给两个入口：文字版（能搜能复制、窄屏不用横拖）和原图（图形推理的图、
+   竖式分式只有图救得回来）。两个都得在，少哪个都是退步。 */
+test('正文块下面同时给出文字版和原图两个入口', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run(`document.querySelector('#bknode-wrap').innerHTML =
+    bkBlocks([{ kind: 'concept', md: '公共管理是…', page: 2, page_to: 2 }], 11);`);
+  const box = h.window.document.querySelector('#bknode-wrap');
+  assert.ok(box.querySelector('[data-bktext="11:2:2"]'), '没有文字版入口');
+  assert.ok(box.querySelector('[data-bkpage="11:2:2"]'), '没有原图入口');
+  assert.match(box.textContent, /原书 P2/);
+});
+
+test('跨页的块，两个入口都带上整段页范围', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run(`document.querySelector('#bknode-wrap').innerHTML =
+    bkBlocks([{ kind: 'concept', md: '一道题跨了两页', page: 5, page_to: 6 }], 11);`);
+  const box = h.window.document.querySelector('#bknode-wrap');
+  assert.ok(box.querySelector('[data-bktext="11:5:6"]'));
+  assert.match(box.textContent, /原书 P5-P6/);
+});

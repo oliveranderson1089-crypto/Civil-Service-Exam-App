@@ -4202,8 +4202,22 @@ body.dark .bk-block.bk-ans{background:#1f2a24;border-color:#2c3d33;}
 body.dark .bk-block.bk-table .bk-tag{background:#41618c;}
 body.dark .bk-group,body.dark #view-bkcmp .bk-leaf{background:#232833;border-color:#2f3543;}
 body.dark mark.bk-r{color:#ff7b7b;} body.dark mark.bk-b{color:#79aaff;} body.dark mark.bk-g{color:#6cc98a;}
+.bk-pagebtns{display:flex;gap:8px;flex-wrap:wrap;}
 .bk-pagebtn{margin-top:10px;font-size:12px;color:var(--blue);background:none;border:1px dashed #c3d7ea;
   border-radius:8px;padding:4px 10px;cursor:pointer;}
+/* 原书那一页的文字版：正文用衬线，和上面的考点正文拉开，一眼看出「这是原书」 */
+.bk-pagetext{margin-top:10px;padding:14px 16px;background:var(--bg);border:1px solid var(--line);
+  border-radius:10px;font-size:14.5px;line-height:1.95;color:#333;}
+.bk-pagetext-h{font-size:11.5px;color:var(--muted);letter-spacing:.06em;margin:14px 0 8px;
+  padding-bottom:5px;border-bottom:1px dashed var(--line);}
+.bk-pagetext-h:first-child{margin-top:0;}
+.bk-pagetext h2{font-size:16px;font-weight:700;margin:14px 0 8px;}
+.bk-pagetext h3{font-size:15px;font-weight:700;margin:12px 0 7px;}
+.bk-pagetext h4{font-size:14.5px;font-weight:700;margin:11px 0 6px;color:var(--blue);}
+.bk-pagetext p{margin:.5em 0;text-align:justify;}
+.bk-pagetext strong{color:var(--text);}
+body.dark .bk-pagetext{background:#1e2229;border-color:#2f3543;color:#c2cad7;}
+body.dark .bk-pagetext strong{color:#e2e8f0;}
 .bk-pageimg{display:block;width:100%;margin-top:10px;border:1px solid var(--line);border-radius:9px;background:#fff;}
 body.dark .bk-pagebtn{border-color:#37506b;} body.dark .bk-pageimg{border-color:#2f3543;}
 /* 学完就练：考点正文和对照页底部的真题入口 */
