@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, ALL_BOARDS, BOARD_FEATURES, IC, IDIOM_BOARD, IS_MOBILE,
+/* global $, ALL_BOARDS, BOARD_FEATURES, IC, IDIOM_BOARD, IS_MOBILE, LINE,
    Ink, KB, ME, SECTIONS, SECTION_EXTRA, SECTION_FEATURES,
    aiBack, api, avoidFab, basicsFeats, c, chatConnect, closeSlideshow, crCloseMenu,
    crInfoClose, crSheetClose, dqPoll,
@@ -485,11 +485,14 @@ $('#board-grid').addEventListener('click', e => {
   if (x) {
     if (x.dataset.secgo === 'shenlun') openShenlun();
     else if (x.dataset.secgo === 'find') openFind();
-    else if (x.dataset.secgo === 'sqreal') openSqReal();
-    else if (x.dataset.secgo === 'sqcheck') openSqCheck();
-    else if (x.dataset.secgo === 'sqlocal') openSqLocal();
-    else if (x.dataset.secgo === 'sqsub') openSqSub();
-    else if (x.dataset.secgo === 'sqdrill') openSqDrill();
+    /* 社区这五个走 window.* —— 和下面 openBoardFeat 里那五个同一个理由：
+       shequ.js 在 defer 的 rest 包里，首屏包不该出现指向它的裸标识符。
+       成员调用不建立那层依赖，rest 还没到时也只是点了没反应，不会炸。 */
+    else if (x.dataset.secgo === 'sqreal') { if (window.openSqReal) window.openSqReal(); }
+    else if (x.dataset.secgo === 'sqcheck') { if (window.openSqCheck) window.openSqCheck(); }
+    else if (x.dataset.secgo === 'sqlocal') { if (window.openSqLocal) window.openSqLocal(); }
+    else if (x.dataset.secgo === 'sqsub') { if (window.openSqSub) window.openSqSub(); }
+    else if (x.dataset.secgo === 'sqdrill') { if (window.openSqDrill) window.openSqDrill(); }
     return;
   }
   const c = e.target.closest('[data-board]'); if (!c) return;

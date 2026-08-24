@@ -17,7 +17,7 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, ME, api, artIcon, dvGo, dvOpenFile, esc, push, tbBadge, tbIsCur,
+/* global $, ME, api, artIcon, dvGo, dvOpenFile, esc, push, tbBadge, tbIsCur, LINE,
    tbItem, tbReset,
    openAccount, openAiOut, openAllFeats, openChat, openCkBoard, openClassicDetail,
    openDoc, openDraft, openDrafts, openDrive, openExam, openFanwenItem, openIdiom,

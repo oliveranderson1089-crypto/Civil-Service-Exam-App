@@ -13,7 +13,7 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, api, artIcon, basicsFeats, BOARD_FEATURES, esc, goHome, LB_OPEN, lbGet, lbView, ME,
+/* global $, api, artIcon, basicsFeats, BOARD_FEATURES, esc, goHome, LB_OPEN, lbGet, lbView, ME, switchLine,
    meView, openAccount, openAiOut, openBoardFeat, openChangkao, openChangshi, openChat, openCkBoard,
    openClassics, openDocqa, openDrafts, openDrill, openDrive, openDtest, openEssays,
    openExam, openFanwen, openFind, openGaikuo, openGongwen, openIdiom, openKb,
@@ -137,7 +137,9 @@ const TAB_DEFS = [
         { name: '题库', desc: '四川省考卷面 · 每周自动更新', go: () => openQuiz() },
         { name: '模拟卷', desc: '整卷计时 · 卷面还原', go: () => openQuizSets() },
         { name: '申论真题批改', desc: 'AI 逐点批改', go: () => openShenlun() },
-        { name: '资中社区真题', desc: '2023 / 2025 原卷 · 100 分整卷', go: () => openSqReal() },
+        // shequ.js 在 rest 包，首屏包里不写裸名（同 shell.js 里那五个）
+        { name: '资中社区真题', desc: '2023 / 2025 原卷 · 100 分整卷',
+          go: () => window.openSqReal && window.openSqReal() },
       ] },
       { name: '专项突破', icon: 'layers', items: tbDrillBoards() },
       { name: '申论小题与成文', icon: 'pen', items: [
