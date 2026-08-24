@@ -58,6 +58,13 @@ function boot(opts = {}) {
                           addListener() {}, removeListener() {} });
   w.scrollTo = () => {};
   if (!w.HTMLCanvasElement.prototype.getContext) w.HTMLCanvasElement.prototype.getContext = () => null;
+  // jsdom 没有 objectURL（浏览器和安卓 WebView 都有）。缺了它，凡是先给本地文件
+  // 做个缩略图再上传的代码在测试里都会当场抛，测的就不是真实那条路了。
+  if (!w.URL.createObjectURL) {
+    let n = 0;
+    w.URL.createObjectURL = () => 'blob:jsdom/' + (++n);
+    w.URL.revokeObjectURL = () => {};
+  }
 
   // 记录所有发出去的请求 + 可编程的响应
   const calls = [];

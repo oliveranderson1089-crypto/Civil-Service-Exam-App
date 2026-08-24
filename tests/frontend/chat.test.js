@@ -143,6 +143,101 @@ test('下载进度画在这条消息自己的卡片上', (t) => {
   assert.strictEqual(card.querySelector('.cr-fact').textContent, '重试');
 });
 
+/* ---- 下完之后那枚「打开」----
+   进度记录（CR_DL）一分钟后就会被清掉，卡片要变回原样；但「本机已经有这一份」是
+   跨会话的事实。原来两者一起清，于是下完一分钟「打开」就再也找不到，只能重下一遍；
+   网页端和桌面端更早一步 —— 它们那条下载路根本没记路径，「打开」从来没出现过。 */
+test('下完一分钟后进度状态清掉了，「打开」还得在', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const doc = h.window.document;
+  doc.getElementById('cr-msgs').innerHTML = h.run("crFileCard(12, '讲义.pdf', 3200000, true)");
+  h.run("window.__chatDlDone('12', 'content://downloads/77')");
+  h.run('delete CR_DL[12]; crDlPaint(12)');            // = crDlLater 一分钟后干的事
+  const card = doc.querySelector('[data-cfile="12"]');
+  assert.strictEqual(card.querySelector('.cr-fact').textContent, '打开',
+                     '进度一清「打开」就没了 —— 想打开只能重下一遍');
+  assert.match(card.querySelector('em').textContent, /3\.\d MB|3 MB|MB/, '文案该回到文件大小');
+});
+
+test('重进会话新画的卡片也认账：本机有那一份就带上「打开」', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run("window.__chatDlDone('12', 'content://downloads/77')");
+  const html = h.run("crFileCard(12, '讲义.pdf', 3200000, true)");   // 重画一张全新的卡
+  const box = h.window.document.createElement('div'); box.innerHTML = html;
+  assert.strictEqual(box.querySelector('.cr-fact').textContent, '打开',
+                     'crDlPaint 只在下载途中被调，重画的卡片得自己认这笔账');
+});
+
+test('点卡身还是弹动作卡，只有点「打开」才直接开', (t) => {
+  const h = boot(); t.after(() => h.close());
+  const doc = h.window.document;
+  h.run("window.__chatDlDone('12', 'content://downloads/77')");
+  h.run('delete CR_DL[12]');
+  doc.getElementById('cr-msgs').innerHTML = h.run("crFileCard(12, '讲义.pdf', 3200000, true)");
+  const card = doc.querySelector('[data-cfile="12"]');
+  card.dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  assert.ok(doc.getElementById('cr-fsheet'), '点卡身该弹动作卡（预览/下载/转存都在那儿）');
+  assert.match(doc.getElementById('cr-fsheet').innerHTML, /打开本机的这一份|在新标签打开/,
+               '动作卡里也该给一条「打开本机那份」');
+  h.run("document.getElementById('cr-fsheet').remove()");
+
+  let opened = '';
+  h.run("window.open = (u) => { window.__opened = u; return null; }");
+  card.querySelector('.cr-fact').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  opened = h.window.__opened || '';
+  assert.strictEqual(doc.getElementById('cr-fsheet'), null, '点「打开」不该再弹一次动作卡');
+  assert.match(opened, /\/api\/chat\/file\/12\?inline=1/,
+               '浏览器里碰不到本机文件，「打开」该在新标签开服务器上那一份');
+});
+
+/* 桌面壳下完只喊一声 __onDownloaded(路径)，并不知道是谁点的下载 —— 那个回调本来是
+   给更新包和云盘用的。聊天要认领它，否则桌面端永远拿不到路径，也就永远没有「打开」。 */
+test('桌面壳：聊天发起的下载由卡片认领，不再叠一个「下载完成」弹框', (t) => {
+  const h = boot({ window: { __desktop: true, __desktopVer: '6.3' } }); t.after(() => h.close());
+  const doc = h.window.document;
+  doc.getElementById('cr-msgs').innerHTML = h.run("crFileCard(12, '讲义.pdf', 3200000, true)");
+  h.run("crDeskWait = { id: 12, name: '讲义.pdf', at: Date.now() }");
+  assert.strictEqual(h.run("window.__chatDlAdopt('/home/me/下载/讲义.pdf')"), true);
+  assert.strictEqual(doc.querySelector('[data-cfile="12"] .cr-fact').textContent, '打开');
+  // 不是这一份就交还给原来那条路（更新包、云盘打包下载还得靠它）
+  h.run("crDeskWait = { id: 12, name: '讲义.pdf', at: Date.now() }");
+  assert.strictEqual(h.run("window.__chatDlAdopt('/home/me/下载/gongkao_6.3_amd64.deb')"), false);
+});
+
+/* ---- 「回来时还站在原地」----
+   下完文件按返回怎么回首页了：浏览器/壳把当前标签导航到文件本身，单页应用被顶掉，
+   回来是重新加载，而导航栈只活在内存里。这层兜底把「人在哪个会话」记进 sessionStorage。 */
+test('看文件那一层不动记录，自己走回列表才清掉', (t) => {
+  const h = boot(); t.after(() => h.close());
+  h.run("crFid = 7; crGid = 0; crName = '小李'; window.__chatResumeMark('chat')");
+  assert.ok(h.window.sessionStorage.getItem('chatResume'), '在会话里就该记一笔');
+  h.run("window.__chatResumeMark('viewer')");
+  assert.ok(h.window.sessionStorage.getItem('chatResume'),
+            '看文件时把记录清了 —— 正好丢在最容易被顶掉的地方');
+  h.run("window.__chatResumeMark('home')");
+  assert.strictEqual(h.window.sessionStorage.getItem('chatResume'), null,
+                     '自己走回首页的，就别再把人拽回会话里');
+});
+
+test('重新加载后回到刚才那个会话；隔太久的记录不认', async (t) => {
+  const h = boot({ fetch: () => ({ json: { messages: [], me: 1, has_more: false, recalled: [] } }) });
+  t.after(() => h.close());
+  h.window.sessionStorage.setItem('chatResume',
+    JSON.stringify({ f: 7, g: 0, n: '小李', at: Date.now() }));
+  h.run("stack = [{ view: 'home' }]");
+  assert.strictEqual(h.run('window.__chatResume()'), true);
+  assert.strictEqual(h.run('crFid'), 7, '没回到那个会话');
+  assert.strictEqual(h.run("stack[stack.length - 1].view"), 'chat');
+  assert.strictEqual(h.window.sessionStorage.getItem('chatResume'), null, '用过就该清掉，只兜这一次');
+  // 收尾：openChatroom 起了一趟拉消息和一个轮询，不等它们落地就关窗口会炸在测试之外
+  await new Promise(r => setImmediate(r));
+  h.run('clearInterval(crPoll); crPoll = 0');
+
+  h.window.sessionStorage.setItem('chatResume',
+    JSON.stringify({ f: 9, g: 0, n: '老王', at: Date.now() - 20 * 60 * 1000 }));
+  assert.strictEqual(h.run('window.__chatResume()'), false, '二十分钟前的记录还往回拽人');
+});
+
 /* ---- 「以下是未读消息」那条红线 ----
    进会话时线要落在第一条没读过的消息前面，读过之后就不该再出现。曾经这里读的是
    `m.read_at_self` —— 后端从来没有这个字段，`!undefined` 恒真，于是每条对方发的

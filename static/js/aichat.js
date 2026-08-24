@@ -14,7 +14,8 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, anchorMenu, api, appConfirm, applyPush, appPrompt, artEm, avoidFab, CAN_ABORT,
-   composing, convoAvatar, convoStick, createDock, errMsg, esc, getAppClip, growAndSync, IS_MOBILE,
+   composing, compressImage, convoAvatar, convoStick, createDock, errMsg, esc, getAppClip,
+   growAndSync, IS_MOBILE,
    loadClassics, loadDaily, loadEntries, loadFeed, loadPlan, loadWrongq, lsGet, lsSet,
    mdToHtml, navHomeCard, openAiChatMenu, stack, toast, uiError, voiceAsrEnabled,
    voiceInsert, voiceLive, voiceRecord, voiceSupported, voiceToText, voiceWhyNot */
@@ -380,13 +381,17 @@ function aiAttCut(a) {
 function aiAttsHtml(atts, small) {
   if (!atts || !atts.length) return '';
   return '<div class="ai-attrow' + (small ? ' sm' : '') + '">' + atts.map((a, i) => {
-    const img = a.image ? `<img src="/api/ai/img/${encodeURIComponent(a.image)}" alt="">`
+    // pending = 本地这份还在压缩 / 上传 / 识别。先拿本地 objectURL 占住位子：
+    // 这一段合起来常有几十秒（手机照片走隧道更久），中间一片空白的话，
+    // 用户看到的就是「选完图没动静」，只会反复再选一次。
+    const src = a.pending ? (a.url || '') : (a.image ? '/api/ai/img/' + encodeURIComponent(a.image) : '');
+    const img = src ? `<img src="${esc(src)}" alt="">`
       : `<span class="ai-attic">${/\.pdf$/i.test(a.name || '') ? '📕' : '📄'}</span>`;
     const cut = aiAttCut(a);
-    return `<span class="ai-att${cut ? ' cut' : ''}" title="${esc((a.name || '') + (cut ? '（' + cut + '）' : ''))}">
-      ${img}<span class="nm">${esc(a.name || '附件')}</span>
+    return `<span class="ai-att${cut ? ' cut' : ''}${a.pending ? ' busy' : ''}" title="${esc((a.name || '') + (cut ? '（' + cut + '）' : ''))}">
+      ${img}<span class="nm">${a.pending ? '读取中…' : esc(a.name || '附件')}</span>
       ${cut ? '<span class="cutflag" aria-hidden="true">半</span>' : ''}
-      ${small ? '' : `<button class="x" data-aiattdel="${i}" title="移除">×</button>`}</span>`;
+      ${(small || a.pending) ? '' : `<button class="x" data-aiattdel="${i}" title="移除">×</button>`}</span>`;
   }).join('') + '</div>';
 }
 function aiActsHtml(m, i, last) {
@@ -593,15 +598,40 @@ function aiAttDone(att, isImg) {
   toast(cut ? ('已附加，但没读全：' + cut)
     : (isImg ? '已附加，发送时 AI 会直接看这张图' : '已附加，发送时 AI 会读取其内容'), !!cut);
 }
+/* 选图 / 拍照 / 选文件都走这里。三件事必须都做，缺一件在手机上就是「选完没动静」：
+   ① 图片先在本地缩到 2000px 再传 —— 手机原图动辄 5~10MB，实测 8.4MB 走隧道光上传
+      就要 22 秒（还没算服务端 20~30 秒的识别）。聊天、小记、云盘早就都先压了，
+      只有这条路一直在传原图。2000px 视觉模型看得清，OCR 也够用。
+   ② 选完立刻在输入框上方摆一个「读取中」的位子，别让这几十秒里屏幕上什么都不变。
+   ③ 请求给超时 —— api() 默认不超时，隧道一断这个 fetch 就永远挂着，
+      连那句错误提示都等不到。 */
 async function aiHandleAttach(file) {
   if (!file) return;
-  toast('正在读取附件…');
-  const fd = new FormData(); fd.append('file', file);
+  const isImg = /^image\//.test(file.type || '');
+  // 缩略图只是让人看见「进来了」。createObjectURL 拿不到就空着显示个文件图标 ——
+  // 占位失败绝不能把上传本身带下去（老 WebView 上真有没有它的）。
+  let url = '';
+  if (isImg) { try { url = URL.createObjectURL(file); } catch (_) { url = ''; } }
+  const ph = { name: file.name || (isImg ? '图片' : '附件'), pending: true, url: url };
+  aiAtts.push(ph); renderAiAtts();
+  const drop = () => {
+    const i = aiAtts.indexOf(ph);
+    if (i >= 0) aiAtts.splice(i, 1);
+    if (ph.url) { try { URL.revokeObjectURL(ph.url); } catch (_) { /* 撤不掉就算了 */ } }
+    renderAiAtts();
+  };
+  let blob = file, name = file.name || 'image.jpg';
+  if (isImg) {
+    try { blob = await compressImage(file, 2000, 0.85); } catch (_) { blob = file; }
+    if (blob !== file && !/\.jpe?g$/i.test(name)) name = name.replace(/\.[^.]+$/, '') + '.jpg';
+  }
+  const fd = new FormData(); fd.append('file', blob, name);
   try {
-    const d = await api('/api/ai/extract', { method: 'POST', body: fd });
+    const d = await api('/api/ai/extract', { method: 'POST', body: fd, timeoutMs: 180000 });
+    drop();
     if (d.error) { toast(d.error, true); return; }
     aiAttDone(aiPushAtt(d, file.name), !!d.image);
-  } catch (e) { toast(errMsg(e), true); }
+  } catch (e) { drop(); toast(errMsg(e), true); }
 }
 
 /* 云盘 / 资料库里**已经有的**文件 → 直接挂成附件。
@@ -859,6 +889,8 @@ async function aiSendStream(content, atts) {
 async function aiSend() {
   const t = $('#ai-text').value.trim();
   if ((!t && !aiAtts.length) || aiBusy) return;
+  // 占位的那份还没变成真附件（里头没有 text/image），跟着发出去 AI 就是拿着个空壳
+  if (aiAtts.some(a => a.pending)) { toast('附件还在读取，等它读完再发', true); return; }
   /* 附件全文**不再拼进问题正文**。以前 payload（含整篇 PDF）既发出去又落库，而屏幕上
      显示的是精简的 shown —— 刷新会话后自己那句话就变成了几千字的正文。
      现在两者分开：content 是人看的那句，附件走 attachments 单独传、单独存。 */

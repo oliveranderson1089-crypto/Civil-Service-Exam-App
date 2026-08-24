@@ -484,7 +484,7 @@ test('CSS：八套主题各自的模块图标规则都在，清变量的清单�
   assert.ok(css.includes('body.art-paper .lb-gl'), '宣纸主题没把线描字形放出来');
   // 横构图那套布局必须锁在宽屏里：窄窗口下电脑那四套已经不生效，布局不该还留着
   const deskSeg = css.slice(css.indexOf('横构图的启动屏'));
-  assert.ok(/@media\(min-width:761px\)\{[\s\S]*?body\.art-desk #splash/.test(
+  assert.ok(/@media ?\(min-width:761px\)\{[\s\S]*?body\.art-desk #splash/.test(
     css.slice(css.indexOf('电脑端专用的四套'))),
   '横构图的启动屏布局没锁在 761px 以上');
   assert.ok(deskSeg.includes('body.art-studio #splash'), '白台的贴线排版没写');

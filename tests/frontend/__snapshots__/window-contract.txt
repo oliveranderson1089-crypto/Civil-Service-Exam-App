@@ -1,11 +1,15 @@
 Reader
 __bmView
 __chatDl
+__chatDlAdopt
 __chatDlDone
 __chatDlFail
 __chatDlSys
+__chatResume
+__chatResumeMark
 __dvShow
 __hwNative
+__ieHide
 __mkView
 __onDownloaded
 __onDragLeave
@@ -25,6 +29,7 @@ __tabView
 __ttsEnd
 __ttsEvent
 __updProgress
+__viewerTheme
 appBack
 checkUpdate
 fabClose

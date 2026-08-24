@@ -356,8 +356,8 @@
   <!-- ===== 文件查看器 ===== -->
   <section id="view-viewer" class="view hidden">
     <div class="viewer-bar">
-      <!-- 手机端全屏看文件时，唯一的退路本来只有系统手势，而 pdf.js 的 iframe 会吃掉边缘滑动 -->
-      <button id="viewer-back" class="btn vb-back" title="返回上一级">‹ 返回</button>
+      <!-- 这里原来还有一个「‹ 返回」：顶栏已经有一个（#nav-back），上下两行各写一遍是同一句话说两遍。
+           全屏时这条 bar 整条隐藏，退路是右下角的 #viewer-exit，加上返回键（appBack 里先退全屏）。 -->
       <span id="viewer-name"></span>
       <span class="reader-tools hidden" id="reader-tools">
         <button id="rd-fontminus" title="字号减小">A-</button>
@@ -370,12 +370,54 @@
       <button id="viewer-play" class="btn hidden" title="幻灯片播放">▶ 播放</button>
       <button id="viewer-full" class="btn" title="全屏"><span class="em-sw"><span class="em-e">⛶</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 9V4.6a1 1 0 0 1 1-1H9M15 3.6h4.4a1 1 0 0 1 1 1V9M20.4 15v4.4a1 1 0 0 1-1 1H15M9 20.4H4.6a1 1 0 0 1-1-1V15"/></svg></span></span> 全屏</button>
       <button id="viewer-mode" class="btn hidden">阅读模式</button>
+      <button id="viewer-fit" class="btn hidden" title="在「整张放进窗口」和「原始大小」之间切换">🔍 原始大小</button>
+      <button id="viewer-edit" class="btn hidden" title="旋转、裁剪、打码">✏️ 编辑</button>
       <a id="viewer-dl" class="btn" download>下载</a>
     </div>
     <div id="viewer-reader" class="reader hidden"></div>
+    <div id="viewer-img" class="hidden"><img alt="图片预览"></div>
     <iframe id="viewer-frame" title="文件预览"></iframe>
     <button id="viewer-exit" title="退出全屏"><span class="em-sw"><span class="em-e">✕</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></span></span></button>
   </section>
+
+  <!-- ===== 图片编辑（浮在查看器之上；七个看图的入口共用） ===== -->
+  <div id="imgedit" class="imgedit hidden">
+    <div class="ie-bar" id="ie-bar">
+      <button class="btn tiny" data-ie="rotl" title="逆时针 90°">↺ 左转</button>
+      <button class="btn tiny" data-ie="rotr" title="顺时针 90°">↻ 右转</button>
+      <button class="btn tiny" data-ie="flip" title="左右翻转">⇋ 翻转</button>
+      <span class="ie-sep"></span>
+      <button class="btn tiny" data-ietool="crop">▣ 裁剪</button>
+      <button class="btn tiny" data-ietool="mosaic">▩ 马赛克</button>
+      <button class="btn tiny" data-ietool="paint">✎ 涂抹</button>
+      <span class="ie-sep"></span>
+      <button class="btn tiny" data-ie="undo" id="ie-undo" disabled>↶ 撤销</button>
+      <button class="btn tiny" data-ie="reset">重来</button>
+      <span class="ie-grow"></span>
+      <button class="btn tiny" data-ie="cancel">取消</button>
+      <button class="btn tiny primary" data-ie="save">保存…</button>
+    </div>
+    <div class="ie-stage" id="ie-stage">
+      <canvas id="ie-cv" width="600" height="400"></canvas>
+      <div class="ie-crop hidden" id="ie-crop"></div>
+    </div>
+    <div class="ie-foot">
+      <span id="ie-status">选一个工具开始</span>
+      <span class="ie-grow"></span>
+      <label id="ie-sizewrap" class="hidden">粗细 <input type="range" id="ie-size" min="8" max="90" value="34"></label>
+      <span id="ie-colors" class="hidden">
+        <button class="ie-sw" data-iecolor="#e53935" style="background:#e53935" aria-pressed="true" title="红"></button>
+        <button class="ie-sw" data-iecolor="#1a6fb5" style="background:#1a6fb5" aria-pressed="false" title="蓝"></button>
+        <button class="ie-sw" data-iecolor="#111111" style="background:#111111" aria-pressed="false" title="黑"></button>
+      </span>
+      <span id="ie-dims"></span>
+    </div>
+    <div class="ie-foot hidden" id="ie-cropact">
+      <span>拖出要留下的部分，然后：</span>
+      <button class="btn tiny primary" data-ie="docrop">裁掉框外</button>
+      <button class="btn tiny" data-ie="uncrop">重新框</button>
+    </div>
+  </div>
 
   <!-- ===== 幻灯片播放（PPT/PDF 逐页出图，比整份下载快两个数量级） ===== -->
   <div id="slideshow" class="hidden">
@@ -751,12 +793,14 @@
       <button class="btn tiny" id="dv-share-list" title="我分享出去的链接"><span class="em-sw"><span class="em-e">🔗</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.6 1.6"/><path d="M14 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.6-1.6"/></svg></span></span> 分享</button>
       <button class="btn tiny" id="dv-paste"><span class="em-sw"><span class="em-e">📋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="4" width="15" height="17" rx="2"/><path d="M9 4V2.6h6V4"/><path d="M8.5 10h7M8.5 14h5"/></svg></span></span> 粘贴</button>
       <button class="btn tiny" id="dv-trash"><span class="em-sw"><span class="em-e">🗑</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16"/><path d="M6.5 6.5l1 13h9l1-13"/><path d="M9.5 6.5V4h5v2.5"/><path d="M10 10v6M14 10v6"/></svg></span></span> 回收站</button>
+      <button class="btn tiny" id="dv-slim" title="开了之后，上传图片先在本机缩到长边 2000px 再传（证件原图请保持关闭）">🪶 省流上传：关</button>
       <button class="btn tiny" id="dv-newfolder"><span class="em-sw"><span class="em-e">＋</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.6v14.8M4.6 12h14.8"/></svg></span></span> 文件夹</button>
       <label class="btn tiny"><span class="em-sw"><span class="em-e">⬆</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"/><path d="M6 11l6-6 6 6"/></svg></span></span> 传文件夹<input type="file" id="dv-upfolder" webkitdirectory directory multiple hidden></label>
       <label class="btn tiny primary"><span class="em-sw"><span class="em-e">⬆</span><span class="em-s"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"/><path d="M6 11l6-6 6 6"/></svg></span></span> 上传<input type="file" id="dv-upfile" multiple hidden></label>
     </div>
     <div id="dv-batch" class="dv-batch hidden">
       <span id="dv-batch-n"></span>
+      <button class="btn tiny" id="dv-bdl">下载</button>
       <button class="btn tiny" id="dv-copy">复制</button>
       <button class="btn tiny" id="dv-move">移动到…</button>
       <button class="btn tiny" id="dv-bsend">发送到聊天…</button>
@@ -2269,5 +2313,6 @@
 <script src="js/tabs.js"></script>
 <script src="js/tabviews.js"></script>
 <script src="js/today.js"></script>
+<script src="js/imgedit.js"></script>
 </body>
 </html>

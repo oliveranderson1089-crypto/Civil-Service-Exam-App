@@ -62,7 +62,9 @@ except Exception:
         HAVE_TRAY = False
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "5.1"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+DESKTOP_VER = "6.3"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+                             # ⚠️ 和 Windows 壳（desktop/win/main.js 的 SHELL_VER）共用同一条
+                             # 数字线：网页里的特性闸门（canReveal / canOpenFile…）是跨平台比的。
 TUNNEL = "https://gk.gongkaopei2026.click"
 APP_HOSTS = {"gk.gongkaopei2026.click", "127.0.0.1", "localhost"}
 ICONS = ["/usr/share/icons/hicolor/512x512/apps/gongkao-assistant.png",
@@ -685,6 +687,10 @@ class Gongkao(Gtk.Application):
             self.copy_image(d.get("data") or "")
         elif act == "pickdir":
             self.pick_dir()
+        elif act == "reveal":
+            self.reveal(d.get("path") or "")
+        elif act == "openfile":
+            self.open_file(d.get("path") or "")
         elif act == "batchdone":
             # 网页把这一批传完了 → 放行下一批（背压，见 _push）
             ev = getattr(self, "_ack", None)
@@ -694,6 +700,50 @@ class Gongkao(Gtk.Application):
             # 剪贴板里先看有没有文件，没有再当图片粘
             if not self.paste_files() and not self.paste_image():
                 self._toast("剪贴板里没有文件或图片")
+
+    def open_file(self, path):
+        """用系统默认程序打开刚下好的那份文件（6.3 起）。
+
+        在这之前桌面端只能开到**文件夹**（reveal），聊天里下完一份讲义还得自己去翻。
+        和 reveal 一样：路径只认真实存在的文件，网页那边传什么过来都不越过这一关。
+        """
+        path = os.path.realpath(path or "")
+        if not path or not os.path.isfile(path):
+            self._toast("文件不在了：" + path[:60])
+            return
+        try:
+            if not Gio.AppInfo.launch_default_for_uri(GLib.filename_to_uri(path, None), None):
+                raise RuntimeError("没有默认程序")
+        except Exception:
+            # 打不开就退一步：在文件管理器里选中它，人自己挑用什么打开
+            self._toast("没有能打开它的程序，已在文件管理器里选中")
+            self.reveal(path)
+
+    def reveal(self, path):
+        """在文件管理器里打开刚下好的文件所在的目录（5.2 起）。
+
+        先试 org.freedesktop.FileManager1.ShowItems —— 它能把那个文件**选中**，
+        用户一眼就看到是哪一份；桌面环境没提供这个服务就退回「打开目录」。
+        路径只认真实存在的文件，网页那边传什么过来都不越过这一关。
+        """
+        path = os.path.realpath(path or "")
+        if not path or not os.path.exists(path):
+            self._toast("文件不在了：" + path[:60])
+            return
+        uri = GLib.filename_to_uri(path, None)
+        try:
+            Gio.DBusConnection.call_sync(
+                Gio.bus_get_sync(Gio.BusType.SESSION, None),
+                "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1", "ShowItems",
+                GLib.Variant("(ass)", ([uri], "")), None,
+                Gio.DBusCallFlags.NONE, 3000, None)
+            return
+        except Exception:
+            pass                                    # 没这个服务（或超时）→ 退回打开目录
+        d = path if os.path.isdir(path) else os.path.dirname(path)
+        if not Gio.AppInfo.launch_default_for_uri(GLib.filename_to_uri(d, None), None):
+            self._toast("打不开文件管理器，文件在：" + d)
 
     def copy_image(self, b64):
         """把网页传来的 PNG（base64）**真的写进系统剪贴板**。

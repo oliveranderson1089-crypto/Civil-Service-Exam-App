@@ -7,10 +7,12 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, anchorMenu, api, appConfirm, appPrompt, artEm, back, c, clipFiles, composing,
-   chunkUpload, compressImage, convoAvatar, convoLongPress, convoStick, dvIcon,
+/* global $, anchorMenu, api, appConfirm, appPrompt, artEm, back, c, canOpenFile, canReveal,
+   clipFiles, composing,
+   chunkUpload, compressImage, convoAvatar, convoLongPress, convoStick, deskOpenFile, dvIcon,
    DV_CHUNK_MIN, errMsg, esc, fSize,
-   growAndSync, init, IS_MOBILE, lightbox, lsDel, lsGet, lsSet, mdToHtml, ME, openAI,
+   growAndSync, init, IS_DESKTOP, IS_MOBILE, lightbox, lsDel, lsGet, lsSet, mdToHtml, ME, openAI,
+   revealPath,
    openViewerUrl, preview, push, SKIN, stack, state, toast, uiError, voiceAsrEnabled, voiceBubbleHtml,
    voiceInsert, voiceLive, voiceRecord, voiceSupported, voiceToggle, voiceToText, voiceWhyNot */
 
@@ -595,7 +597,8 @@ function crTimeLabel(t) {
 }
 $('#cr-msgs').addEventListener('click', e => {
   const im = e.target.closest('[data-lbimg]'); if (im) { lightbox(im.dataset.lbimg); return; }
-  const fb = e.target.closest('[data-cfile]'); if (fb) { e.preventDefault(); crFileTap(fb); }
+  const fb = e.target.closest('[data-cfile]');
+  if (fb) { e.preventDefault(); crFileTap(fb, !!e.target.closest('.cr-fact')); }
 });
 
 /* ================= 聊天里的文件：预览 / 下载 / 转存 =================
@@ -607,27 +610,59 @@ $('#cr-msgs').addEventListener('click', e => {
 const CR_IMG_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'avif', 'svg'];
 const CR_DL = {};        // file_id → { state:'run'|'done'|'fail', pct, got, total, … }
 
+/* 「这份文件已经在本机了」得单独记一份、并且要活过这次会话。
+   CR_DL 记的是**这一趟**的进度，crDlLater 一分钟后就把它清掉（卡片要变回原样）——
+   于是下完一分钟，右边那个「打开」就再也回不来，想打开只能重下一遍；
+   网页端和桌面端更早一步：它们那条下载路根本没记路径，「打开」从来没出现过。 */
+const CR_HAVE_KEY = 'chatDlHave';
+const CR_HAVE_MAX = 80;      // localStorage 只有 5 MiB，这张表不设上限就是慢性泄漏
+function crHaveAll() {
+  try { return JSON.parse(lsGet(CR_HAVE_KEY) || '{}') || {}; } catch (_) { return {}; }
+}
+// path 是本机路径（安卓是 content:// Uri，桌面是绝对路径）；浏览器给不出路径，只标 web
+function crHave(id) {
+  const r = crHaveAll()[id];
+  return r && (r.path || r.web) ? r : null;
+}
+function crHaveSet(id, path, where) {
+  const all = crHaveAll();
+  all[id] = { path: path || '', web: path ? 0 : 1, where: where || '', at: Date.now() };
+  Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0))
+    .slice(CR_HAVE_MAX).forEach(k => delete all[k]);
+  lsSet(CR_HAVE_KEY, JSON.stringify(all));
+}
+
+/* 卡片一画出来就要认账：本机已经有这一份的话，右边直接带上「打开」。
+   （crDlPaint 只在下载过程中被调，翻页/重进会话重画的卡片不经过它） */
+function crFileAct(id) {
+  return crHave(id) ? '<span class="cr-fact">打开</span>' : '<span class="cr-fact hidden"></span>';
+}
 function crFileCard(id, name, size, viewable) {
-  return `<button type="button" class="cr-file" data-cfile="${id}"
+  return `<button type="button" class="cr-file${crHave(id) ? ' dl-have' : ''}" data-cfile="${id}"
     data-cfn="${esc(name || '')}" data-cfsz="${size || 0}" data-cfv="${viewable ? 1 : 0}"
     data-cfem="${esc(fSize(size))}">
     <span class="cr-fic">${dvIcon((name || '').split('.').pop())}</span>
     <span class="cr-fmid"><span class="cr-fn">${esc(name || '文件')}</span>
       <em>${fSize(size)}</em><span class="cr-fbar hidden"><i></i></span></span>
-    <span class="cr-fact hidden"></span></button>`;
+    ${crFileAct(id)}</button>`;
 }
 function crFileOf(el) {
   return { id: +el.dataset.cfile, name: el.dataset.cfn || '文件', size: +el.dataset.cfsz || 0,
     view: el.dataset.cfv === '1', meta: el.dataset.cfmeta || '' };
 }
-// 点这张卡：下载中→取消，失败→重试，下完（安卓）→打开，其余→弹动作卡
-function crFileTap(el) {
+/* 点这张卡：下载中→取消，失败→重试，刚下完→打开，其余→弹动作卡。
+   hitAct＝点的是右边那枚小按钮（「打开」/「取消」/「重试」）而不是卡片本身：
+   以前下过、这次只是路过的文件，点卡身还是该弹动作卡（预览/下载/转存都在那儿），
+   只有点「打开」才是「就要本机那一份」。 */
+function crFileTap(el, hitAct) {
   const f = crFileOf(el);
   const j = CR_DL[f.id];
   if (j && j.state === 'run') { crDlCancel(f.id); return; }
   if (j && j.state === 'fail') { crDownload(f); return; }
-  if (j && j.state === 'done' && j.path) { crOpenLocal(j.path); return; }
-  crFileSheet(f);
+  if (j && j.state === 'done' && (j.path || j.web)) { crOpenLocal(f, j.path); return; }
+  const have = crHave(f.id);
+  if (have && hitAct) { crOpenLocal(f, have.path); return; }
+  crFileSheet(f, have);
 }
 /* ---- 动作卡（不用系统原生弹窗，样式跟应用走） ---- */
 function crFsClose() {
@@ -635,7 +670,7 @@ function crFsClose() {
   if (b) { b.remove(); document.removeEventListener('keydown', crFsKey); }
 }
 function crFsKey(e) { if (e.key === 'Escape') crFsClose(); }
-function crFileSheet(f) {
+function crFileSheet(f, have) {
   crFsClose();
   const ext = (f.name || '').split('.').pop().toLowerCase();
   const box = document.createElement('div');
@@ -648,7 +683,8 @@ function crFileSheet(f) {
       ${f.view
     ? `<button type="button" class="cf-b pri" data-cf="view"><span class="cf-k">${artEm('👁')}</span>在应用内预览</button>`
     : `<button type="button" class="cf-b off" disabled><span class="cf-k">${artEm('👁')}</span>${ext ? '.' + esc(ext) + ' ' : ''}这种格式看不了，下载后再打开</button>`}
-      <button type="button" class="cf-b" data-cf="dl"><span class="cf-k">${artEm('⤓')}</span>下载到本机<span class="cf-s">下载文件夹</span></button>
+      ${have ? `<button type="button" class="cf-b" data-cf="open"><span class="cf-k">${artEm('↘')}</span>${have.path ? '打开本机的这一份' : '在新标签打开'}<span class="cf-s">${esc(have.where || '之前下载过')}</span></button>` : ''}
+      <button type="button" class="cf-b" data-cf="dl"><span class="cf-k">${artEm('⤓')}</span>${have ? '再下一次' : '下载到本机'}<span class="cf-s">下载文件夹</span></button>
       <button type="button" class="cf-b" data-cf="save"><span class="cf-k">${artEm('↗')}</span>转存到我的云盘</button>
       <button type="button" class="cf-b cancel" data-cf="x">取消</button>
     </div>`;
@@ -659,6 +695,7 @@ function crFileSheet(f) {
     const a = b.dataset.cf;
     crFsClose();
     if (a === 'view') crPreview(f);
+    else if (a === 'open') crOpenLocal(f, have ? have.path : '');
     else if (a === 'dl') crDownload(f);
     else if (a === 'save') crSaveToDrive(f);
   });
@@ -689,12 +726,20 @@ function crDlPaint(id) {
     const bar = el.querySelector('.cr-fbar');
     const act = el.querySelector('.cr-fact');
     el.classList.remove('dl-run', 'dl-done', 'dl-fail');
-    if (!j) {                                   // 回到静态样子
+    if (!j) {                                   // 这一趟没在下：回到静态样子
       if (em) em.textContent = el.dataset.cfem || '';
       if (bar) bar.classList.add('hidden');
-      if (act) { act.classList.add('hidden'); act.textContent = ''; }
+      /* 但「本机已经有这一份」是**上一趟**留下的事实，卡片得一直认账：
+         右边留一枚「打开」，点它直接开那份文件，不用再下一遍。 */
+      const have = crHave(+el.dataset.cfile);
+      el.classList.toggle('dl-have', !!have);
+      if (act) {
+        act.textContent = have ? '打开' : '';
+        act.classList.toggle('hidden', !have);
+      }
       return;
     }
+    el.classList.remove('dl-have');
     el.classList.add('dl-' + j.state);
     if (em) {
       if (j.state === 'run') {
@@ -712,7 +757,8 @@ function crDlPaint(id) {
       bar.classList.toggle('indet', j.state === 'run' && j.pct < 0);
     }
     if (act) {
-      const t = j.state === 'run' ? '取消' : (j.state === 'fail' ? '重试' : (j.path ? '打开' : ''));
+      const t = j.state === 'run' ? '取消'
+        : (j.state === 'fail' ? '重试' : ((j.path || j.web) ? '打开' : ''));
       act.textContent = t;
       act.classList.toggle('hidden', !t);
     }
@@ -760,6 +806,25 @@ async function crDownload(f) {
     crBlobSaveFallback(url, f.name);
     return;
   }
+  /* 桌面壳（Linux WebKit / Windows Electron）：交给壳自己的下载器。
+     它下完会回调 __onDownloaded，带着**落盘的绝对路径** —— 那正是「打开」缺的东西；
+     走下面 fetch+blob 那条路只拿得到一个 blob，路径无从谈起（这就是桌面端一直没有
+     「打开」的原因）。代价是没有百分比，壳不回报进度，所以这里画的是来回跑的条。 */
+  if (IS_DESKTOP) {
+    CR_DL[id] = { state: 'run', pct: -1, got: 0, total: f.size || 0, name: f.name, desk: true };
+    crDlPaint(id);
+    crDeskWait = { id: id, name: f.name || '', at: Date.now() };
+    crLinkSave(url, f.name);
+    // 壳要是没回音（下载被取消、动作被丢弃），别让这张卡一直转下去
+    clearTimeout(crDeskTimer);
+    crDeskTimer = setTimeout(() => {
+      if (CR_DL[id] && CR_DL[id].state === 'run' && CR_DL[id].desk) {
+        CR_DL[id] = { state: 'fail', msg: '没等到下载结果，点这里重试' };
+        crDlPaint(id);
+      }
+    }, 180000);
+    return;
+  }
   const ctl = ('AbortController' in window) ? new AbortController() : null;
   CR_DL[id] = { state: 'run', pct: 0, got: 0, total: f.size || 0, name: f.name,
     abort: ctl ? () => ctl.abort() : null };
@@ -790,7 +855,8 @@ async function crDownload(f) {
       blob = new Blob(parts, { type: r.headers.get('Content-Type') || 'application/octet-stream' });
     }
     crBlobSave(blob, f.name);
-    CR_DL[id] = { state: 'done', where: '已保存到「下载」' };
+    CR_DL[id] = { state: 'done', where: '已保存到「下载」', web: 1 };
+    crHaveSet(id, '', '已下载过');
     crDlPaint(id); crDlLater(id);
   } catch (err) {
     if (err && err.name === 'AbortError') { delete CR_DL[id]; crDlPaint(id); toast('已取消下载'); return; }
@@ -798,16 +864,49 @@ async function crDownload(f) {
     crDlPaint(id); crDlLater(id);
   }
 }
-// 旧壳兜底：老老实实用隐藏的 <a download>，让壳自己的下载器接管
-function crBlobSaveFallback(url, name) {
+/* 隐藏的 <a download>：把这次下载交给壳/浏览器自己的下载器。
+   ⚠️ 不许改 location.href —— 那是**导航**，单页应用当场被文件顶掉，
+   再回来就是重新加载（人看到的是「返回怎么回首页了」）。 */
+function crLinkSave(url, name) {
   const a = document.createElement('a');
   a.href = url; a.download = name || '';
   document.body.appendChild(a); a.click(); a.remove();
+}
+// 旧安卓壳兜底：系统下载器接管，进度只在通知栏
+function crBlobSaveFallback(url, name) {
+  crLinkSave(url, name);
   toast('已交给系统下载器，进度看通知栏');
 }
-function crOpenLocal(path) {
-  if (window.GongkaoNative && GongkaoNative.openDownload) {
+let crDeskWait = null, crDeskTimer = 0;
+/* 桌面壳下完只会喊一声 __onDownloaded(路径)，并不知道是谁点的下载（那个回调本来是
+   给更新包和云盘用的）。这里认领：刚才确实是聊天卡片发起的、文件名也对得上，
+   就归到那张卡上，由卡片显示「打开」，不再叠一个「下载完成」的框。 */
+const crStem = (n) => String(n || '').replace(/\.[^.]*$/, '').replace(/\(\d+\)$/, '');
+window.__chatDlAdopt = function (path) {
+  const w = crDeskWait;
+  if (!w || Date.now() - w.at > 10 * 60 * 1000) return false;
+  const base = String(path || '').split(/[\\/]/).pop() || '';
+  if (w.name && base && crStem(base) !== crStem(w.name)) return false;   // 不是这一份，交还给原来那条路
+  crDeskWait = null; clearTimeout(crDeskTimer);
+  CR_DL[w.id] = { state: 'done', where: '已保存到本机', path: path || '' };
+  crHaveSet(w.id, path || '', '已保存到本机');
+  crDlPaint(w.id); crDlLater(w.id);
+  toast('已下载：' + base + '　点卡片右边的「打开」就能打开它');
+  return true;
+};
+/* 打开本机那一份。三种壳三条路，都走不通时至少把人送到文件本身，别只留一句安慰话。
+   ⚠️ 浏览器碰不到本机文件系统（下载去哪了它自己都不告诉网页），所以网页端的「打开」
+   开的是**服务器上的那一份**，而且一定要新标签：在当前标签打开就等于把应用顶掉。 */
+function crOpenLocal(f, path) {
+  if (path && window.GongkaoNative && GongkaoNative.openDownload) {
     try { GongkaoNative.openDownload(path); return; } catch (_) { /* 老壳没这个方法 */ }
+  }
+  if (path && canOpenFile()) { deskOpenFile(path); return; }
+  if (path && canReveal()) { revealPath(path); return; }      // 老一点的桌面壳：至少在文件管理器里选中它
+  if (f && f.id) {
+    window.open('/api/chat/file/' + f.id + '?inline=1', '_blank', 'noopener');
+    toast('已在新标签打开；本机下载的那一份在「下载」文件夹里');
+    return;
   }
   toast('文件在「下载」文件夹里');
 }
@@ -820,6 +919,7 @@ window.__chatDl = function (tag, pct, got, total) {
 window.__chatDlDone = function (tag, path) {
   const id = +tag;
   CR_DL[id] = { state: 'done', where: '已保存到「下载」', path: path || '' };
+  if (path) crHaveSet(id, path, '已保存到「下载」');    // 一分钟后进度状态会清掉，这条得留着
   crDlPaint(id); crDlLater(id);
 };
 // 安卓 9 及以下没有 MediaStore.Downloads，壳把活儿交给了系统下载器
@@ -832,6 +932,42 @@ window.__chatDlFail = function (tag, msg) {
   const id = +tag;
   CR_DL[id] = { state: 'fail', msg: '下载失败：' + (msg || '未知原因') };
   crDlPaint(id); crDlLater(id);
+};
+
+/* ================= 「回来时还站在原地」 =================
+   「下载完文件按返回，怎么回首页了？」——不是返回键的毛病：浏览器/壳把当前标签导航到了
+   文件本身（下载后自动打开、或就地打开），整个单页应用被顶掉；再回来是**重新加载**，
+   而导航栈只活在内存里，从头开始自然就是首页。
+   整条栈没法复活（每一层的内容都是当时渲染出来的），但最要紧的那一层可以：人是在某个
+   会话里看文件的，就把这个会话记进 sessionStorage（只活在这个标签页里），
+   重新加载后若还新鲜（10 分钟内）就自动回到它。 */
+const CR_RESUME_KEY = 'chatResume';
+const CR_RESUME_TTL = 10 * 60 * 1000;
+function crResumeClear() { try { sessionStorage.removeItem(CR_RESUME_KEY); } catch (_) { /* 隐私模式下 sessionStorage 本身会抛 */ } }
+/* shell.js 的 render() 每次切视图调一次。
+   看文件那一层（viewer）**不动记录** —— 那正是最容易被顶掉的地方，记录要留给它。 */
+window.__chatResumeMark = function (view) {
+  if (view === 'viewer') return;
+  if (view === 'chat' && (crFid || crGid)) {
+    try {
+      sessionStorage.setItem(CR_RESUME_KEY,
+                             JSON.stringify({ f: crFid, g: crGid, n: crName, at: Date.now() }));
+    } catch (_) { /* 存不下就是没有这层兜底，不影响别的 */ }
+    return;
+  }
+  crResumeClear();                    // 自己走回列表/首页的，就别再把人拽回会话里
+};
+// init() 画完首页后调一次
+window.__chatResume = function () {
+  let r = null;
+  try { r = JSON.parse(sessionStorage.getItem(CR_RESUME_KEY) || 'null'); } catch (_) { r = null; }
+  crResumeClear();
+  if (!r || Date.now() - (r.at || 0) > CR_RESUME_TTL) return false;
+  openChat();
+  if (r.g) openGroup(r.g, r.n || '');
+  else if (r.f) openChatroom(r.f, r.n || '');
+  else return false;
+  return true;
 };
 
 /* ---- 语音条：点一下放，再点停；进度画在气泡自己身上 ---- */
@@ -1121,7 +1257,7 @@ function crFileRow(f) {
     data-cfem="${esc(meta)}" data-cfmeta="${esc(meta)}">
     <span class="fi">${artEm('📄')}</span><span class="ci-fm"><b>${esc(f.name)}</b>
     <em>${esc(meta)}</em><span class="cr-fbar hidden"><i></i></span></span>
-    <span class="cr-fact hidden"></span></button>`;
+    ${crFileAct(f.id)}</button>`;
 }
 function crImgGrid(imgs) {
   if (!imgs || !imgs.length) return '<p class="ci-empty">还没有图片。</p>';
@@ -1184,7 +1320,7 @@ $('#chat-info').addEventListener('click', async e => {
   const img = e.target.closest('[data-lb]');
   if (img) { lightbox(img.dataset.lb); return; }
   const cf = e.target.closest('[data-cfile]');
-  if (cf) { e.preventDefault(); crFileTap(cf); return; }   // 和气泡里的文件同一条路
+  if (cf) { e.preventDefault(); crFileTap(cf, !!e.target.closest('.cr-fact')); return; }   // 和气泡里的文件同一条路
   const ed = e.target.closest('[data-gedit]');
   if (ed) {
     const isName = ed.dataset.gedit === 'name';
@@ -1236,6 +1372,14 @@ function crInviteMembers() {
   });
 }
 $('#cr-info').onclick = crInfoToggle;
+/* 窄屏它是盖在聊天区上的浮层，Esc / 点旁边的聊天区都当关闭 —— 只留一个 ✕ 太窄了 */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('#chat-info').classList.contains('hidden')) crInfoClose();
+});
+$('#cr-msgs').addEventListener('pointerdown', () => {
+  const box = $('#chat-info');
+  if (!box.classList.contains('hidden') && getComputedStyle(box).position !== 'static') crInfoClose();
+});
 $('#cr-searchbtn').onclick = () => { $('#ch-msgsearch').focus(); $('#ch-msgsearch').select(); };
 /* 「@ 我」跳转（F9）：群里被点名那条往往已经被后面的消息顶上去了。
    按钮只在这一屏真有 @我 时才出现 —— 没有就不显示，不摆一颗按不动的（AD10 的教训）。 */

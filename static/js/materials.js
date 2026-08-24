@@ -8,8 +8,8 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, ALL_BOARDS, api, appConfirm, appPrompt, artEm, back, c, chunkUpload,
-   copyText, DV_CHUNK_MIN, errMsg, esc, libTouch, fmtSize, hl, Ink, inkHere, IS_DESKTOP, KB, kbPrompt,
-   openMatMenu, push, toast */
+   copyText, DV_CHUNK_MIN, errMsg, esc, libTouch, fmtSize, hl, ieEditable, Ink, inkHere, IS_DESKTOP,
+   KB, kbPrompt, openMatMenu, push, toast */
 
 /* ================= 资料库 ================= */
 const EXT_ICON = {
@@ -207,8 +207,112 @@ $('#mat-list').addEventListener('click', async e => {
   openViewer(id, item.querySelector('.mat-name').textContent, item.dataset.ext);
 });
 const READER_EXT = ['.md', '.markdown', '.txt'];
+/* 与后端 mods/files.py 的 IMAGE_EXT 同名同内容（tests/frontend/crossend.test.js 盯着这一对）：
+   后端拿它判「这份能不能预览、要不要出缩略图」，前端拿它判「走不走图片查看器」——
+   两边走散的话，列表里显示得出缩略图的东西点开却是另一套渲染。
+   .svg 不在里面：它在 iframe 里本来就会自适应窗口，没有「太大」这回事。 */
+const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif',
+  '.heic', '.heif', '.tif', '.tiff', '.avif'];
 let viewerTextUrl = null;
-function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
+
+/* ---- 图片预览 ----
+   图片原来是丢给 iframe 让浏览器自己显示的。WebKit 的图片文档**按原始像素铺开**：
+   手机拍的证书是 4000px 宽，打开就是一角糊在屏幕上（Chrome 会自动缩，WebKitGTK 不会），
+   而页面 meta 上写着 user-scalable=no，连捏合缩小都没有 —— 于是「看一眼」这件事做不成。
+   所以图片走这套自己的查看器：先整张放进窗口，再把缩放和拖动补齐。 */
+const VIMG_MAX = 8;                     // 放到 8 倍够看清证书编号了，再多只是糊
+let vimgS = 1, vimgX = 0, vimgY = 0;    // 当前缩放 / 平移（translate 在 scale 之外，单位是屏幕像素）
+
+function vimgApply() {
+  const im = $('#viewer-img img');
+  if (!im) return;
+  im.style.transform = `translate(${vimgX}px, ${vimgY}px) scale(${vimgS})`;
+  im.style.cursor = vimgS > 1.01 ? 'grab' : 'zoom-in';
+  $('#viewer-fit').textContent = vimgS > 1.01 ? '🔍 整张' : '🔍 原始大小';
+}
+
+/* 缩放到 s，并让 (cx,cy)（视口坐标）这个点在图上原地不动 ——
+   不锚住的话，滚轮/捏合放大时目标永远从指头底下溜走，得再拖回来。 */
+function vimgZoom(s, cx, cy) {
+  const box = $('#viewer-img').getBoundingClientRect();
+  s = Math.max(1, Math.min(VIMG_MAX, s));
+  const ax = (cx == null ? box.width / 2 : cx - box.left) - box.width / 2;
+  const ay = (cy == null ? box.height / 2 : cy - box.top) - box.height / 2;
+  const k = s / vimgS;
+  vimgX = ax - (ax - vimgX) * k;
+  vimgY = ay - (ay - vimgY) * k;
+  vimgS = s;
+  if (vimgS <= 1.001) { vimgS = 1; vimgX = vimgY = 0; }   // 回到整张就归位，别留个偏出去的死角
+  vimgApply();
+}
+
+// 「原始大小」= 图片的真实像素。整张放进窗口后被缩了多少，这里就放回多少
+function vimgNatural() {
+  const im = $('#viewer-img img');
+  return (im && im.clientWidth) ? im.naturalWidth / im.clientWidth : 1;
+}
+
+function openViewerImage(url) {
+  const box = $('#viewer-img'), im = box.querySelector('img');
+  vimgS = 1; vimgX = 0; vimgY = 0;
+  im.src = url;
+  box.classList.remove('hidden');
+  $('#viewer-fit').classList.remove('hidden');
+  vimgApply();
+}
+
+(function vimgBind() {
+  const box = $('#viewer-img');
+  if (!box) return;
+  // 滚轮缩放（桌面）。乘性步进：放大和缩小走一样的手感，且永远到不了 0
+  box.addEventListener('wheel', e => {
+    e.preventDefault();
+    vimgZoom(vimgS * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
+  }, { passive: false });
+  // 双击 / 双敲：在整张和原始大小之间来回
+  box.addEventListener('dblclick', e => {
+    vimgZoom(vimgS > 1.01 ? 1 : vimgNatural(), e.clientX, e.clientY);
+  });
+  // 鼠标拖动（放大之后才有意义）
+  let dx = 0, dy = 0, drag = false;
+  box.addEventListener('mousedown', e => {
+    if (vimgS <= 1.01) return;
+    drag = true; dx = e.clientX - vimgX; dy = e.clientY - vimgY; e.preventDefault();
+  });
+  window.addEventListener('mousemove', e => {
+    if (!drag) return;
+    vimgX = e.clientX - dx; vimgY = e.clientY - dy; vimgApply();
+  });
+  window.addEventListener('mouseup', () => { drag = false; });
+  /* 触屏：一指拖、两指捏。**必须自己做** —— 页面 meta 关掉了 user-scalable，
+     手机上没有原生捏合可借。 */
+  let t0 = null, s0 = 1, x0 = 0, y0 = 0, px = 0, py = 0;
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const mid = t => [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2];
+  box.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      t0 = dist(e.touches); s0 = vimgS; [px, py] = mid(e.touches);
+    } else if (e.touches.length === 1 && vimgS > 1.01) {
+      t0 = null; x0 = e.touches[0].clientX - vimgX; y0 = e.touches[0].clientY - vimgY;
+    }
+  }, { passive: true });
+  box.addEventListener('touchmove', e => {
+    if (e.touches.length === 2 && t0) {
+      e.preventDefault();
+      vimgZoom(s0 * dist(e.touches) / t0, px, py);
+    } else if (e.touches.length === 1 && vimgS > 1.01) {
+      e.preventDefault();                       // 放大后一指是拖图，不该顺带把整页滑走
+      vimgX = e.touches[0].clientX - x0; vimgY = e.touches[0].clientY - y0; vimgApply();
+    }
+  }, { passive: false });
+  box.addEventListener('touchend', e => { if (e.touches.length < 2) t0 = null; }, { passive: true });
+  $('#viewer-fit').onclick = () => vimgZoom(vimgS > 1.01 ? 1 : vimgNatural());
+})();
+
+/* 当前看的这张图是谁家的。图片编辑器要拿它决定「能不能覆盖原图」——
+   云盘里自己的图可以，聊天里别人发来的、共享进来的都不行。 */
+let viewerImg = null;
+function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl, src) {
   ext = (ext || '').toLowerCase();
   setViewerFull(false);
   $('#viewer-name').textContent = name;
@@ -217,6 +321,29 @@ function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
   // id 带上文件本身：批注按「这一份文档」存。不带的话每份 .md/.txt 都共用 view:viewer 这一个
   // key，07-15 上画的圈打开 07-14 也会浮出来。
   push({ view: 'viewer', title: name, id: (fileUrl || '').slice(-80) });
+  // 换一份文件就把上一份的图片层收起来，否则 pdf 会显示在一张停留的老图底下
+  $('#viewer-img').classList.add('hidden');
+  $('#viewer-fit').classList.add('hidden');
+  $('#viewer-edit').classList.add('hidden');
+  viewerImg = null;
+  $('#viewer-img img').removeAttribute('src');
+  if (IMAGE_EXT.includes(ext)) {
+    viewerImg = { url: fileUrl, name: name, ext: ext, src: src || null };
+    /* 改得动的才给「编辑」：HEIC/TIFF 浏览器画不出来，给了也只是点了没反应。
+       **要 typeof**：本文件在首屏包里，imgedit.js 在延后包 —— 两包之间那一小段时间
+       ieEditable 还不存在，直接调会把整个「打开图片」炸掉（图根本显示不出来）。 */
+    $('#viewer-edit').classList.toggle('hidden',
+                                       typeof ieEditable !== 'function' || !ieEditable(ext));
+    $('#viewer-mode').classList.add('hidden');
+    $('#viewer-ink').classList.add('hidden');
+    $('#viewer-play').classList.add('hidden');
+    $('#viewer-reader').classList.add('hidden');
+    $('#reader-tools').classList.add('hidden');
+    $('#viewer-frame').classList.add('hidden');
+    $('#viewer-frame').removeAttribute('src');   // iframe 还挂着上一份就等于在后台白下一遍
+    openViewerImage(fileUrl);
+    return;
+  }
   if (READER_EXT.includes(ext)) { $('#viewer-mode').classList.add('hidden'); openReader(fileUrl, ext); return; }
   // 原版预览（pdf.js / iframe）
   $('#viewer-reader').classList.add('hidden');
@@ -237,6 +364,7 @@ function openViewerUrl(fileUrl, name, ext, dlUrl, textUrl) {
 // 把它工具栏里的编辑按钮藏掉，只用我们对齐准确、能存能擦的「✏️ 批注」。
 function hidePdfjsPen() {
   const f = $('#viewer-frame');
+  applyViewerTheme();                     // 顺手把明暗也对上（同一个 onload，同一个 iframe）
   try {
     const doc = f.contentDocument; if (!doc) return;
     if (doc.getElementById('gk-hidepen')) return;
@@ -246,6 +374,24 @@ function hidePdfjsPen() {
     doc.head.appendChild(st);
   } catch (_) { /* 这一步失败不影响主流程，下面有兜底 */ }
 }
+
+/* pdf.js 自带一套配色，默认只认系统的 prefers-color-scheme —— 可我们的明暗是 body.dark，
+   它还可能来自「跟随天光」（跟系统深浅无关）。两边各判各的，结果就是夜里应用整个暗下来了，
+   中间嵌着的那份 PDF 还是一整片白，晃眼。
+   pdf.js 3.x 认 html 上的 is-dark / is-light 两个类（viewer.css 里 :root:where(.is-dark)），
+   iframe 同源，直接给它挂上就行。切主题时也要再来一次，所以挂到 window 上给 theme.js 调。 */
+function applyViewerTheme() {
+  const f = $('#viewer-frame');
+  if (!f) return;
+  const dark = document.body.classList.contains('dark');
+  try {
+    const el = f.contentDocument && f.contentDocument.documentElement;
+    if (!el) return;                      // 还没加载完 / 不同源：onload 时会再来一次
+    el.classList.toggle('is-dark', dark);
+    el.classList.toggle('is-light', !dark);
+  } catch (_) { /* 跨源 iframe 摸不着，忽略 */ }
+}
+window.__viewerTheme = applyViewerTheme;
 
 /* ================= 幻灯片播放（逐页出图） =================
    整份 PDF 十几 MB，家里上行只有一百多 KB/s，打开要一分多钟；
@@ -320,12 +466,9 @@ function setViewerFull(on) {
     if (window.GongkaoNative && typeof GongkaoNative.fullscreen === 'function') GongkaoNative.fullscreen(on);
   } catch (_) { /* 外壳没注入这个桥就是在普通浏览器里，不该走这条路 */ }
 }
-/* 顶栏的「‹ 返回」：全屏时先退全屏，否则退一级导航栈（＝回到刚才那一页）。
-   走 appBack 而不是直接 back()，这样阅读器里开着的浮层会先被关掉，一次只退一级。 */
-$('#viewer-back').onclick = () => {
-  if (_viewerFull) { setViewerFull(false); return; }
-  if (window.appBack) appBack(); else back();
-};
+/* 返回只留顶栏那一个（#nav-back）。这条 bar 上原来还有一个，上下两行各写一遍「‹ 返回」，
+   同一句话说两遍；全屏时这条 bar 本来就整条隐藏，那时的退路是 #viewer-exit 和返回键
+   （appBack 里已经先退全屏，见 shell.js）。 */
 $('#viewer-full').onclick = () => setViewerFull(!_viewerFull);
 $('#viewer-exit').onclick = () => setViewerFull(false);
 $('#viewer-ink').onclick = () => inkHere();
@@ -632,7 +775,8 @@ function openViewer(id, name, ext) {
   libTouch('material', id);
   const e = (ext || '').toLowerCase();
   const textUrl = (e === '.pdf' || OFFICE_EXT.includes(e)) ? '/api/materials/' + id + '/text' : null;
-  openViewerUrl('/api/materials/' + id + '/view', name, ext, '/api/materials/' + id + '/download', textUrl);
+  openViewerUrl('/api/materials/' + id + '/view', name, ext, '/api/materials/' + id + '/download',
+                textUrl, { kind: 'materials', id: id });
 }
 /* 上传资料 */
 $('#upload-btn').onclick = () => {

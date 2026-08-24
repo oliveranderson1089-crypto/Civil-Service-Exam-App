@@ -55,7 +55,7 @@ test('一套分组两种呈现：电脑竖栏、手机 chips，靠断点切', ()
   const css = require('fs').readFileSync(
     require('path').join(__dirname, '../../static/style.css'), 'utf8');
   assert.match(css, /\.acct-nav\{display:flex;gap:7px;overflow-x:auto/, '手机上不是横向 chips');
-  const m = css.match(/@media\(min-width:761px\)\{[^@]*?#view-account\{display:grid[\s\S]*?\n\}/);
+  const m = css.match(/@media ?\(min-width:761px\)\{[^@]*?#view-account\{display:grid[\s\S]*?\n\}/);
   assert.ok(m, '电脑上没做成左栏 + 内容两栏');
   assert.match(m[0], /\.acct-nav\{grid-column:1;grid-row:1 \/ span 99;position:sticky/,
     '电脑上导航没固定在左侧');

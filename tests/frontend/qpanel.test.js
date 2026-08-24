@@ -96,7 +96,7 @@ test('画布类面板进栏后要重新量尺寸，否则笔迹落点对不上',
 test('内联面板要给死高度：height:auto 会让画布塌成一条', () => {
   const css = require('fs').readFileSync(
     require('path').join(__dirname, '../../static/style.css'), 'utf8');
-  const m = css.match(/@media\(min-width:761px\)\{[^@]*?#view-realrun\.qp-wide[\s\S]*?\n\}/);
+  const m = css.match(/@media ?\(min-width:761px\)\{[^@]*?#view-realrun\.qp-wide[\s\S]*?\n\}/);
   assert.ok(m, '没有加宽规则');
   assert.match(m[0], /\.dk-inline\{height:calc\(/, '内联面板没给确定高度');
 });

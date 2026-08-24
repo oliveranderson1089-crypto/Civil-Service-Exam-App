@@ -232,19 +232,33 @@ def ai_extract_attachment():
     - 应用里已有的文件（drive_id / material_id）—— 云盘、资料库里点「发给 AI 助手」
       或复制后在助手里粘贴走这条，不重传一遍。
     """
+    # 这条路是用户盯着等的：上传要走网络（手机走隧道时几十 MB 的照片能传半分钟），
+    # 识别本身又要一二十秒。出问题时「到底有没有传上来、慢在哪一段」全靠这行日志 ——
+    # 没有它，手机端一句「选完图没动静」在服务器上查无此事。
+    t0 = time.time()
     src, err = _lib_file()
     if err:
         return jsonify({"error": err}), 404
     if src:
         path, name, ext, mime = src
-        return jsonify(_att_extract(path, name, ext, mime, keep_src=True))
+        out = _att_extract(path, name, ext, mime, keep_src=True)
+        log.info("AI 附件（库内）：%s 用时 %.1fs", name, time.time() - t0)
+        return jsonify(out)
     f = request.files.get("file")
     if not f or not f.filename:
         return jsonify({"error": "没有文件"}), 400
     _, ext = guess_ext(f.filename, f.mimetype)     # 拍照/粘贴来的图常常没有扩展名
     tmp = os.path.join(tempfile.gettempdir(), "aiatt_" + uuid.uuid4().hex + ext)
     f.save(tmp)
-    return jsonify(_att_extract(tmp, f.filename, ext, f.mimetype))
+    size = os.path.getsize(tmp)
+    t1 = time.time()
+    out = _att_extract(tmp, f.filename, ext, f.mimetype)
+    # 只记得到「服务端这一段」：body 在进视图之前就被读完了，网络上传那几十秒不在这个数里。
+    # 所以真正该看的是 MB 数 —— 手机传上来的还是好几 MB，说明前端没压，卡的是路上。
+    log.info("AI 附件（上传）：%s %.2fMB 识别 %.1fs%s",
+             f.filename, size / 1048576.0, time.time() - t1,
+             "" if out.get("text") or out.get("image") else " 【没提取到内容】")
+    return jsonify(out)
 
 
 @bp.get("/api/changshi/boards")

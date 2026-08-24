@@ -36,9 +36,10 @@ const BUDGET = {
   radii: 28,           // 不重复的 border-radius:Npx
   shadows: 129,        // 不重复的 box-shadow 值
   zIndex: 44,          // 不重复的 z-index 取值
-  /* 断点 21 里有一半是同一个值的不同写法（`@media(max-width:760px)` 和
-     `@media (max-width:760px)` 各算一条）。真正该收的是这个，不是再加新断点。 */
-  breakpoints: 21,
+  /* 曾经是 21，其中三对是同一个值的两种写法（`@media(max-width:760px)` 和
+     `@media (max-width:760px)` 各算一条）。2026-08-22 全文统一成 `@media (` 后
+     剩 19 个**真**断点，棘轮跟着收到 19：以后再加新断点得先想清楚。 */
+  breakpoints: 19,
   important: 311,      // !important 出现次数（这个数是总数，不是去重）
 };
 

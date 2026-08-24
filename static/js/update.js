@@ -152,10 +152,41 @@ if (IS_DESKTOP || IN_APP) {
     if (!document.hidden && Date.now() - _lastUpdChk > 10 * 60 * 1000) checkUpdate(false);
   });
 }
-/* 桌面壳下载完成后回调（更新包下好了 → 告诉用户怎么装） */
+/* 壳能不能「打开所在文件夹」是 5.2 才有的动作。老壳收到不认识的消息是**静默丢弃**的，
+   不看版本就给按钮，点下去只会是一片死寂 —— 那正是这次要修掉的毛病，别再造一个。 */
+const REVEAL_VER = 5.2;
+const canReveal = () => IS_DESKTOP && parseFloat(DESKTOP_VER || '0') >= REVEAL_VER;
+function revealPath(p) {
+  try { window.webkit.messageHandlers.gk.postMessage(JSON.stringify({ a: 'reveal', path: p })); }
+  catch (_) { toast('打不开文件夹，路径：' + p, true); }
+}
+/* 「用系统默认程序打开这个文件」是 6.3 才有的动作（在这之前桌面端只能开到**文件夹**）。
+   同样要看版本：老壳收到不认识的消息是静默丢弃，不看版本就给按钮，点下去只有一片死寂。 */
+const OPENFILE_VER = 6.3;
+const canOpenFile = () => IS_DESKTOP && parseFloat(DESKTOP_VER || '0') >= OPENFILE_VER;
+function deskOpenFile(p) {
+  try { window.webkit.messageHandlers.gk.postMessage(JSON.stringify({ a: 'openfile', path: p })); }
+  catch (_) { toast('打不开这个文件，路径：' + p, true); }
+}
+
+/* 下载完成的回音。**每一次下载都要有**：在这之前，除了更新包，其它文件下完
+   一声不吭 —— 用户既不知道成没成，也不知道东西去哪了（云盘打包下载就栽在这儿）。 */
+function dlDone(p) {
+  const name = p.split('/').pop() || '文件';
+  const dir = p.slice(0, p.length - name.length - 1) || p;
+  if (!canReveal()) { toast('已下载：' + name + '（保存在 ' + dir + '）'); return; }
+  appConfirm('已保存到：\n' + p,
+    { title: '下载完成', okText: '打开文件夹', cancelText: '知道了' })
+    .then(ok => { if (ok) revealPath(p); });
+}
+
+/* 桌面壳下载完成后回调（更新包下好了 → 告诉用户怎么装；别的文件 → 报个平安） */
 window.__onDownloaded = (path) => {
   const p = path || '';
+  // 聊天里点的下载：由那张卡自己报信（卡片上直接长出「打开」），不再叠一个弹框
+  if (window.__chatDlAdopt && window.__chatDlAdopt(p)) return;
   const tip = { title: '更新包已下载完成', okText: '知道了' };
+  if (!/\.(deb|exe)$/i.test(p) && !/gongkao-win.*\.zip$/i.test(p)) { dlDone(p); return; }
   if (/\.deb$/i.test(p)) {
     appConfirm(
       '已保存到：' + p + '\n\n双击它用「软件安装器」打开即可完成更新，'

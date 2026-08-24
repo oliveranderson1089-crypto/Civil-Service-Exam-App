@@ -166,7 +166,7 @@ main{max-width:none;margin:0;padding:0;}
   font-size:13px;padding:5px 12px;border-radius:20px;cursor:pointer;
   /* 实测 41×31，够不着 44。只在窄屏（手指）撑高，桌面（鼠标）保持紧凑 —— 见下一条规则 */
   }
-@media(max-width:760px){
+@media (max-width:760px){
   /* 撑的是**可点区域**不是外观：min-height 让按钮长高，里面的字仍然居中，看上去没变 */
   .logout,.navbtn,.tb-search{min-height:44px;}
   .tb-search{min-width:44px;justify-content:center;}
@@ -316,7 +316,7 @@ body.dark .ui-err{border-left-color:#e8776a;}
 
 .hidden{display:none!important;}
 
-@media(max-width:520px){
+@media (max-width:520px){
   .topbar h1{font-size:17px;}
   .pv-word{font-size:20px;}
   .toolbar{gap:6px;}
@@ -385,6 +385,13 @@ body.dark .ui-err{border-left-color:#e8776a;}
 #viewer-name{flex:1;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .viewer-bar .btn{padding:6px 14px;font-size:13px;}
 #viewer-frame{width:100%;height:calc(100vh - 120px);border:none;background:#525659;}
+/* 图片预览：整张先放进窗口，缩放靠 transform（见 materials.js 的 vimg*）。
+   overflow:hidden 是必须的 —— 放大后靠 transform 平移看，交给滚动条会和捏合手势打架。 */
+#viewer-img{width:100%;height:calc(100vh - 120px);background:#525659;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;touch-action:none;}
+#viewer-img img{max-width:100%;max-height:100%;object-fit:contain;display:block;
+  transform-origin:center center;cursor:zoom-in;-webkit-user-select:none;user-select:none;
+  -webkit-user-drag:none;}
 
 /* ---- 全文搜索 ---- */
 #view-search{max-width:920px;margin:0 auto;}
@@ -744,7 +751,7 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
 .reader-pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;margin:0;}
 .reader-tip{text-align:center;color:var(--muted);padding:50px 0;}
 
-@media(max-width:520px){
+@media (max-width:520px){
   .home-card{padding:20px 10px;}
   .hc-name{font-size:18px;}
 }
@@ -870,7 +877,7 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
 .fc-empty-hint{color:var(--muted);}
 .cp-tool.active{background:#e3eaf3;color:var(--blue);}
 /* 桌面：编辑器在左、动态流在右 */
-@media(min-width:780px){
+@media (min-width:780px){
   .notes-content{display:flex;gap:18px;align-items:flex-start;}
   .composer{flex:0 0 400px;position:sticky;top:0;margin-bottom:0;}
   .feed-wrap{flex:1;min-width:0;}
@@ -889,7 +896,7 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
 .feed{gap:14px;}
 
 /* ============ 小记桌面版：大气布局（参照语雀图一） ============ */
-@media(min-width:780px){
+@media (min-width:780px){
   /* 主区：左编辑器 + 右动态流，铺满高度 */
   .notes-content{display:flex;gap:22px;align-items:stretch;height:100%;overflow:hidden;padding:20px 22px;}
   /* 编辑器：占左侧约 40%、铺满高度，输入框撑满 */
@@ -907,7 +914,7 @@ body.dark .fw-pull-big{background:#241a1a;color:#d7b8b3;border-color:#8a3a30;}
   .feed-card{padding:16px 18px;}
   .feed-wrap .empty{margin-top:80px;}
 }
-@media(min-width:1280px){
+@media (min-width:1280px){
   .composer{flex-basis:38%;}   /* 超宽屏让动态流更宽 */
 }
 
@@ -1069,7 +1076,7 @@ body.mobile-ui #view-notes .fc-time{font-size:11.5px;color:var(--muted);}
 /* —— 知识库列表 —— */
 #view-kb{position:relative;min-height:calc(100dvh - 120px);}
 .kb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 16px;}
-@media(min-width:680px){.kb-grid{grid-template-columns:repeat(4,1fr);}}
+@media (min-width:680px){.kb-grid{grid-template-columns:repeat(4,1fr);}}
 .kb-card{cursor:pointer;}
 /* 封面的四样（底色 / 书脊 / 圆角 / 投影）全走变量。八个色号由 .kbc0…kbc7 给（在主题段里），
    主题开着时由 js/daylight.js 的 dlKbCovers 顶掉 —— 这一层自己不认识任何颜色。 */
@@ -1250,7 +1257,7 @@ img,svg,video{max-width:100%;}
 .topbar{overflow:hidden;}
 .brand-min{flex:1 1 auto;min-width:0;}
 .topbar-actions{flex:0 0 auto;}
-@media(max-width:440px){
+@media (max-width:440px){
   .topbar{gap:6px;padding-left:10px;padding-right:10px;}
   .logout{padding:5px 9px;font-size:12px;}
   .navbtn{padding:5px 8px;font-size:12px;}
@@ -1813,6 +1820,7 @@ body.viewer-full #fab{display:none !important;}
 body.viewer-full main{padding:0;}
 body.viewer-full #view-viewer{position:fixed;inset:0;z-index:95;background:#fff;}
 body.viewer-full #viewer-frame{width:100%;height:100%;border:0;padding:0;}
+body.viewer-full #viewer-img{width:100%;height:100%;}
 body.viewer-full #viewer-reader{height:100%;overflow:auto;padding:14px 16px;}
 #viewer-full{white-space:nowrap;}
 /* 退出全屏：右下角半透明圆钮，不挡 PDF 工具条 */
@@ -2008,6 +2016,11 @@ body.dark .ckb-tools input,body.dark .acct-sec input,body.dark .acct-sec select{
   background:#1a2130 !important;border-color:#2a3345 !important;color:#e2e7ef !important;}
 body.dark .btn:not(.primary){background:#1f2836 !important;border-color:#333d52 !important;color:#cfd6e2 !important;}
 body.dark .viewer-bar{background:#141a26 !important;border-color:#2a3345 !important;}
+/* 看文件的那块底也要跟着夜间走：#525659 是 pdf.js 那身浅色皮配的灰，夜里一整片亮着，
+   比正文还显眼。pdf.js 自己的界面由 JS 挂 html.is-dark 翻（见 materials.js 的
+   applyViewerTheme），这里翻的是它外面那一圈——两处一起才是一块暗下去的。 */
+body.dark #viewer-frame,body.dark #viewer-img{background:#0f141e;}
+body.dark.viewer-full #view-viewer{background:#0f141e;}
 /* 强调框：浅蓝/浅黄底 → 深底亮字 */
 body.dark .gk-sent,body.dark .cd-sec.cd-ai,body.dark .qz-mat-t,
 body.dark .item-note,body.dark .pv-ai,body.dark .pd-recite-btn,body.dark .blk.sel,
@@ -2834,7 +2847,7 @@ body.dark{--c1:#3f92d6;--c2:#cf7c33;--c3:#2fa36c;--c4:#8d72d1;
 .dt-figopt{position:relative;display:grid;place-items:center;padding:8px 4px !important;}
 .dt-figopt .fg{width:58px;height:58px;color:var(--text);}
 .dt-figl{position:absolute;top:4px;left:7px;font-size:11.5px;font-weight:700;color:var(--muted);}
-@media(max-width:480px){.dt-opts.dt-figs{grid-template-columns:repeat(2,1fr);}}
+@media (max-width:480px){.dt-opts.dt-figs{grid-template-columns:repeat(2,1fr);}}
 
 /* 资料分析材料 */
 .dt-mat{background:var(--bg);border:1px solid var(--line);border-radius:12px;
@@ -2858,7 +2871,7 @@ body.dark{--c1:#3f92d6;--c2:#cf7c33;--c3:#2fa36c;--c4:#8d72d1;
 .qz-opts.qz-figs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
 .qz-figopt{position:relative;display:grid !important;place-items:center;padding:10px 4px !important;}
 .qz-figopt .fg{width:60px;height:60px;color:var(--text);}
-@media(max-width:480px){.qz-opts.qz-figs{grid-template-columns:repeat(2,1fr);}}
+@media (max-width:480px){.qz-opts.qz-figs{grid-template-columns:repeat(2,1fr);}}
 
 /* ================= 外观定制：头像 / 壁纸 ================= */
 /* 壁纸固定铺底（不跟着滚），上面一层可调浓度的蒙版——壁纸再花也不会看不清字 */
@@ -2931,7 +2944,7 @@ body.dark .pgbtn{background:#1b2231;border-color:#2f3a4d;}
    随手栏也占着右边 250px，翻页条得再往左让一个栏宽，否则正压在它上面。 */
 body{--rrail-w:0px;}
 .pgbar{right:calc(14px + var(--push-r,0px) + var(--rrail-w));}
-@media(max-width:900px){body.has-pen .pgbar{display:none;}}
+@media (max-width:900px){body.has-pen .pgbar{display:none;}}
 .pgbtn svg{width:20px;height:20px;}
 /* 真题卷：拖文件进来上传（PDF/Word/图片都行） */
 #view-shenlun{position:relative;}
@@ -2958,7 +2971,7 @@ body{--rrail-w:0px;}
    触摸直接落到下面的文字上，由 .mat-scroll 正常滚动（比只改 touch-action 稳）。 */
 #matpad.mat-pan #mat-cv{touch-action:pan-y;pointer-events:none;cursor:default;}
 body.dark .matpad{background:#151b27;}
-@media(max-width:520px){.mat-text{font-size:14.5px;line-height:1.95;}}
+@media (max-width:520px){.mat-text{font-size:14.5px;line-height:1.95;}}
 
 /* ================= 截图裁剪层 ================= */
 .shot{position:fixed;inset:0;z-index:3200;background:rgba(12,18,30,.92);
@@ -3808,6 +3821,9 @@ button.ci-file{font:inherit;cursor:pointer;text-align:left;width:100%;border:non
   border:1px solid rgba(20,40,80,.14);border-radius:var(--r-xs);padding:2px 7px;}
 .cr-fact.hidden{display:none;}
 .cr-file.dl-run,.cr-file.dl-done{border-color:#6cc98a;}
+/* 以前下过、本机还留着那一份：卡片右边常驻一枚「打开」（见 chat.js 的 crHave）。
+   边框借用「下过了」那支绿，不新添色值。 */
+.cr-file.dl-have{border-color:#6cc98a;}
 .cr-file.dl-fail{border-color:rgba(192,57,43,.4);}
 .cr-file.dl-done em,.ci-file.dl-done em{color:#1e8449;}
 .cr-file.dl-fail em,.ci-file.dl-fail em{color:#c0392b;}
@@ -3832,7 +3848,7 @@ body.dark .cr-file.dl-fail .cr-fact,body.dark .ci-file.dl-fail .cr-fact{color:#e
   .cr-fsheet .cf-card{animation:none;}
   .cr-fbar.indet i{animation:none;}
 }
-@media(min-width:761px){
+@media (min-width:761px){
   .cr-fsheet{align-items:center;}
   .cr-fsheet .cf-card{border-radius:var(--r-md);padding:var(--sp-3);}
 }
@@ -3858,7 +3874,6 @@ body.dark .cf-b.pri{background:rgba(108,201,138,.16);color:#6cc98a;}
 /* 拖到聊天页、但一个会话都没打开：亮个「不能放」的边，别让人以为发出去了 */
 #chat-main.cr-nodrop{outline:3px dashed var(--muted);outline-offset:-6px;opacity:.85;}
 /* 查看器顶栏的返回键（手机端全屏时 pdf.js 会吃掉边缘手势，必须给个真按钮） */
-.viewer-bar .vb-back{flex:none;font-weight:600;}
 .cr-input{display:flex;flex-direction:column;gap:7px;align-items:stretch;padding:8px 12px;border-top:1px solid var(--line);
   padding-bottom:calc(8px + env(safe-area-inset-bottom));background:var(--card);position:relative;}
 .cr-attbtn{flex:none;width:38px;height:38px;display:grid;place-items:center;font-size:18px;cursor:pointer;
@@ -4135,7 +4150,7 @@ body.dark .fr-s.near{background:#4a3418;}
 /* 扫描件笔记里的对照表（家庭类型、人生八阶段）。表格自己带 md-tablewrap 会横向
    滚动，这里只把内边距收窄一点，别让表格四周浪费半屏宽度。 */
 .bk-block.bk-table{padding:11px 12px;}
-.bk-block.bk-table .bk-tag{background:#5b7ba6;}
+.bk-block.bk-table .bk-tag{background:var(--blue);}
 .bk-block.bk-table .md-tablewrap{margin:.2em 0;}
 .bk-block.bk-table .md-table{font-size:.9em;}
 .bk-block.bk-table .md-table td:first-child{font-weight:600;white-space:nowrap;}
@@ -4154,13 +4169,13 @@ mark.bk-g{background:none;color:#2f8a4a;font-weight:600;}
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .bk-sub .bk-leaf{padding-left:34px;}            /* 缩进一档，一眼看出是它下面的 */
 .bk-sub .bk-sweep-btn{margin-left:0;}
-body.dark .bk-sub-h{background:#1e2229;}
+body.dark .bk-sub-h{background:var(--bg2);}
 body.dark .bk-sub{border-bottom-color:#2f3543;}
 
 /* ---- 整章速览：左列考点名、右列要点串，和纸质笔记同一个节奏 ---- */
 .bk-sweep-btn{margin-left:auto;margin-right:8px;font-size:11px;font-weight:700;color:var(--blue);
   background:none;border:1px solid #c3d7ea;border-radius:7px;padding:2px 9px;cursor:pointer;}
-.bk-sweep-btn:hover{background:#eef5fb;}
+.bk-sweep-btn:hover{background:#eef6ff;}
 .bk-sw{background:var(--card);border:1px solid var(--line);border-radius:12px;
   padding:4px 16px;box-shadow:var(--shadow);}
 .bk-sw-intro{font-size:14px;color:var(--muted);line-height:1.8;margin:0 0 12px;padding:0 2px;}
@@ -4176,30 +4191,31 @@ body.dark .bk-sub{border-bottom-color:#2f3543;}
 .bk-sw-sub{margin:6px 0 0 12px;padding-left:10px;border-left:2px solid var(--line);}
 .bk-sw-subt{display:block;font-size:13px;font-weight:600;color:var(--text);}
 .bk-sw-tip{font-size:12.5px;color:var(--muted);text-align:center;margin:12px 0 0;}
-@media(max-width:560px){
+@media (max-width:560px){
   .bk-sw-item{grid-template-columns:1fr;gap:2px;}
   .bk-sw{padding:4px 12px;}
 }
 body.dark .bk-sw{background:#232833;border-color:#2f3543;}
-body.dark .bk-sw-b{color:#c2cad7;}
+body.dark .bk-sw-b{color:#c9d1de;}
 body.dark .bk-sw-item{border-bottom-color:#2f3543;}
 body.dark .bk-sw-item:hover{background:rgba(255,255,255,.03);}
-body.dark .bk-sweep-btn{border-color:#3a5170;}
-body.dark .bk-sweep-btn:hover{background:#28303d;}
+body.dark .bk-sweep-btn{border-color:#37506b;}
+body.dark .bk-sweep-btn:hover{background:#2a3345;}
 .bk-nav{display:flex;justify-content:space-between;gap:10px;margin-top:14px;}
 .bk-nav .btn{max-width:47%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 /* 对照：宽屏并排，窄屏上下（优路在上、三色在下，和「先详解后速记」的读法一致） */
 .bk-cmp{display:grid;gap:12px;grid-template-columns:1fr;}
-@media(min-width:860px){.bk-cmp{grid-template-columns:1fr 1fr;align-items:start;}}
+@media (min-width:860px){.bk-cmp{grid-template-columns:1fr 1fr;align-items:start;}}
 .bk-side-h{font-size:13px;font-weight:700;margin-bottom:8px;padding-left:9px;
   border-left:3px solid var(--blue);color:var(--blue);}
 .bk-side.bk-s .bk-side-h{border-left-color:#c9902e;color:#b8801d;}
 .bk-side-t{font-size:14px;font-weight:700;margin:10px 0 6px;color:var(--text);}
 body.dark .bk-block{background:#232833;border-color:#2f3543;}
 body.dark .bk-block .bk-body{color:#c9d1de;}
+/* 夜间的 --blue 是提亮过的 #5a9be6，白字压不住；标签底改回深一档的既有蓝灰 */
+body.dark .bk-block.bk-table .bk-tag{background:#37506b;}
 body.dark .bk-block.bk-ex{background:#2b2921;border-color:#3d3830;}
 body.dark .bk-block.bk-ans{background:#1f2a24;border-color:#2c3d33;}
-body.dark .bk-block.bk-table .bk-tag{background:#41618c;}
 body.dark .bk-group,body.dark #view-bkcmp .bk-leaf{background:#232833;border-color:#2f3543;}
 body.dark mark.bk-r{color:#ff7b7b;} body.dark mark.bk-b{color:#79aaff;} body.dark mark.bk-g{color:#6cc98a;}
 .bk-pagebtns{display:flex;gap:8px;flex-wrap:wrap;}
@@ -4216,8 +4232,8 @@ body.dark mark.bk-r{color:#ff7b7b;} body.dark mark.bk-b{color:#79aaff;} body.dar
 .bk-pagetext h4{font-size:14.5px;font-weight:700;margin:11px 0 6px;color:var(--blue);}
 .bk-pagetext p{margin:.5em 0;text-align:justify;}
 .bk-pagetext strong{color:var(--text);}
-body.dark .bk-pagetext{background:#1e2229;border-color:#2f3543;color:#c2cad7;}
-body.dark .bk-pagetext strong{color:#e2e8f0;}
+body.dark .bk-pagetext{background:var(--bg2);border-color:#2f3543;color:#c9d1de;}
+body.dark .bk-pagetext strong{color:var(--text);}
 .bk-pageimg{display:block;width:100%;margin-top:10px;border:1px solid var(--line);border-radius:9px;background:#fff;}
 body.dark .bk-pagebtn{border-color:#37506b;} body.dark .bk-pageimg{border-color:#2f3543;}
 /* 学完就练：考点正文和对照页底部的真题入口 */
@@ -4554,7 +4570,7 @@ body.dark .tabbar{background:#1a2233;border-top-color:#2a3345;box-shadow:0 -2px 
 
 /* 电脑端先不出标签栏：P3 会把同一份 TAB_DEFS 渲染成左侧导航栏，
    在那之前宽屏保持原样，免得一条通栏的横条横在 1120px 的窗口底下。 */
-@media(min-width:761px){
+@media (min-width:761px){
   .tabbar{display:none !important;}
   body.has-tabs{--tabh:0px;--botsafe:env(safe-area-inset-bottom);}
 }
@@ -4713,7 +4729,7 @@ body.dark .tr-stat.new{background:#152a3d;color:#7db8ea;}
 .td-hero-t .tv-sk{display:block;}
 .td-hero-t.sk-col{flex:1;}
 /* 骨架是"还没到"的提示，不是动画表演。系统开了减弱动态就别晃 */
-@media(prefers-reduced-motion:reduce){.tv-sk{animation:none;}}
+@media (prefers-reduced-motion:reduce){.tv-sk{animation:none;}}
 /* 我的：完成度环那张卡整张可点（去计划记录），给个手型别让人以为它只是块牌子 */
 #tab-groups .td-hero{cursor:pointer;}
 
@@ -4732,7 +4748,7 @@ body.dark .lb-sky{background:#152a3d;color:#8cc0ea;}
 body.dark .lb-gold{background:#332a12;color:#d9bb6a;}
 
 /* 电脑端一行摆得下更多：图标格跟着宽度自己排，不锁死三列 */
-@media(min-width:761px){
+@media (min-width:761px){
   .lb-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));}
 }
 
@@ -4743,7 +4759,7 @@ body.dark .lb-gold{background:#332a12;color:#d9bb6a;}
    用 fixed 而不是把 <main> 包进 flex：包一层要动 DOM 结构，而顶栏是 sticky、
    78 个视图里还有一批自己算高度的（小记/聊天/文档），动结构的风险远大于这点收益。 */
 .siderail{display:none;}
-@media(min-width:761px){
+@media (min-width:761px){
   /* left 跟着 --push-l：面板停到左半屏时，body 的 padding 会把普通流的内容推开，
      但 fixed 的左栏不吃 padding —— 不跟着挪就会被面板整个盖住。 */
   .siderail{position:fixed;left:var(--push-l,0px);top:var(--topbar-h,56px);bottom:0;width:206px;z-index:40;
@@ -4765,7 +4781,7 @@ body.dark .lb-gold{background:#332a12;color:#d9bb6a;}
    再窄就会把内容列挤到不好读，那时宁可让右边空着。
    和左栏一样用 fixed（理由见上面那段：动 DOM 结构的风险大于收益）。 */
 .siderail-r{display:none;}
-@media(min-width:1360px){
+@media (min-width:1360px){
   body.has-rrail .siderail-r{
     position:fixed;right:0;top:var(--topbar-h,56px);bottom:0;width:250px;z-index:39;
     display:flex;flex-direction:column;gap:1px;overflow-y:auto;
@@ -4800,7 +4816,7 @@ body.dark .srr-row:hover{background:#1f2838;}
    换成 minmax(280px,1fr) 的网格之后，行宽降到 ~300，标题和数字落进同一个视线，
    同样高度装二十四条。**只在 ≥1100 生效** —— 再窄排两列每格就不到 280 了，
    反而不如单列。手机端一行 CSS 都不受影响。 */
-@media(min-width:1100px){
+@media (min-width:1100px){
   body.has-rail #view-tab .board-grid,
   body.has-rail #view-tab .tv-rows{
     grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
@@ -4831,7 +4847,7 @@ body.dark .siderail .sr-t:hover{background:#1f2838;}
    电脑上做题页分两列：正文 + 常驻答题卡。**不包 wrapper**，用显式列定位——
    #view-realrun 底下是七八个平铺的 div，包一层要动 DOM，而这些 id 被 realq.js
    引了几十处；让侧栏占第二列、其余一律落第一列，效果一样且一行 DOM 都不用改。 */
-@media(min-width:761px){
+@media (min-width:761px){
   /* ⚠️ **不能挂 body.has-tabs**：做题页在 TAB_OFF 里（整屏专注，左栏/底栏都让位），
      那个类恰恰在这两个视图上被摘掉 —— 挂上去等于这套两栏布局永远不生效，
      答题卡掉下来变成通栏一大块。这里只按视图和断点走。 */
@@ -4883,7 +4899,7 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
 
    所以这不是某几页的事，是全局给它留一条道：正文右边空出 58px，浮条正好停在那条道里。
    viewer-full（阅读器全屏）除外——那一屏本来就是要铺满的，它自己把 padding 清零了。 */
-@media(min-width:761px){
+@media (min-width:761px){
   /* 翻页条那条道（58px）之外，还得加上随手栏的宽度 —— 两者都在右边 */
   body.has-pen:not(.viewer-full) main{padding-right:calc(58px + var(--rrail-w));}
 }
@@ -4896,7 +4912,7 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
 
    所以只放宽「不是长文阅读」的那些：聊天、做题、导航页、错题本、资料库、成语——
    它们是列表、双栏、卡片网格，宽度受限本来就没道理。 */
-@media(min-width:1500px){
+@media (min-width:1500px){
   /* 操作类：跟着屏幕长 */
   #view-chat{max-width:1560px;}
   #view-wrongq,#view-materials,#view-idiom,#view-search,#view-classics{max-width:1200px;}
@@ -4922,7 +4938,7 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
 
 /* 卡片网格在宽屏上按「格子最小宽度」排，不是死死两列：
    电脑上两列意味着一张卡片 470px 宽，中间全是空的。 */
-@media(min-width:761px){
+@media (min-width:761px){
   .home-cards{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));}
   .td-ups{grid-template-columns:repeat(auto-fill,minmax(210px,1fr));}
 }
@@ -4948,7 +4964,7 @@ body.dark .qs-wrong{background:#3a1d19;border-color:#7a3a31;color:#eaa094;}
   border:1px solid var(--line);border-radius:5px;padding:1px 6px;background:var(--card);}
 .tb-days{font-size:12.5px;color:var(--muted);white-space:nowrap;align-self:center;}
 .tb-days b{color:var(--blue);font-size:14px;}
-@media(max-width:760px){
+@media (max-width:760px){
   .tb-search{flex:0 0 auto;max-width:none;margin:0 0 0 auto;padding:7px;background:transparent;border-color:transparent;}
   .tb-search span,.tb-search kbd{display:none;}
   .tb-days{display:none;}          /* 窄屏放不下，倒计时在「今日」页里本来就有 */
@@ -5016,7 +5032,7 @@ body.has-crumb .view{padding-top:8px;}
 /* 快捷键做了却没人知道它存在，等于没做。只在有键盘的地方提示 */
 .q-keys{display:none;font-size:11.5px;color:var(--muted);margin-top:14px;letter-spacing:.02em;}
 .q-keys i{font-style:normal;color:var(--line);}
-@media(min-width:761px){ .q-keys{display:block;} }
+@media (min-width:761px){ .q-keys{display:block;} }
 body.dark .q-keys i{color:#2a3345;}
 
 /* ---- 右栏「本题相关」 ---- */
@@ -5031,7 +5047,7 @@ body.dark .qr-rate.bad{color:#e6968a;} body.dark .qr-rate.warn{color:#e0b872;} b
 
 /* ---- 做题页右栏容器：一列多张卡 ---- */
 .q-col{display:flex;flex-direction:column;gap:12px;margin-top:14px;}
-@media(min-width:761px){ .q-col{margin-top:0;} }
+@media (min-width:761px){ .q-col{margin-top:0;} }
 /* 标签栏：答题卡 / AI 助手 / 草稿纸 / 笔记。窄屏不出——手机上这些各有各的入口 */
 .q-tabs{display:none;gap:6px;flex-wrap:wrap;}
 .q-tabs button{border:1px solid var(--line);background:var(--card);border-radius:9px;cursor:pointer;
@@ -5055,7 +5071,7 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
 /* 右栏标签栏只在有键盘鼠标的宽屏出现（手机上 AI/草稿纸/随手记各有各的入口）。
    **必须放在 .q-tabs{display:none} 之后**：两条特异性一样，靠先后定胜负，
    写在前面会被那条基础规则盖掉。 */
-@media(min-width:761px){ .q-tabs{display:flex;} }
+@media (min-width:761px){ .q-tabs{display:flex;} }
 
 /* ================= 补齐没设上限的那批视图的行长 =================
    上一轮只照顾了「已经有 760px 上限」的阅读类，漏了一批**本来就没设上限**的页面 ——
@@ -5076,7 +5092,7 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
 #view-quizsets,#view-docqa,#view-dtest,#view-quizrun,
 #view-slpaper,#view-sltype,#view-slgrade{max-width:920px;margin:0 auto;}
 
-@media(min-width:1500px){
+@media (min-width:1500px){
   #view-realq,#view-realrec,#view-realrecd,#view-drill,#view-drillrec,#view-drillrecd,
   #view-find,#view-findrec,#view-findwrong,#view-write,#view-essays,#view-shenlun,
   #view-changkao,#view-ckboard,#view-theory,#view-thboard,#view-csboard,
@@ -5087,7 +5103,7 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
 
 
 /* ---- 顶栏：电脑上收掉品牌区，搜索相对视口居中 ---- */
-@media(min-width:761px){
+@media (min-width:761px){
   /* 「公考助手」这几个字在电脑上是重复的：桌面版有窗口标题栏、浏览器有标签页，
      当前在哪一页则由面包屑交代。收掉**文字**，头像不收 —— 它是账户入口，已经挪到右边了。 */
   .topbar .brand-min{display:none;}
@@ -5100,7 +5116,7 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
 /* ---- 右栏切到 AI / 草稿纸 / 笔记 时加宽（答题卡 292px 够用，那三个不够） ----
    加宽的是**栏**：面板自己 width:auto 跟着长，不用给三个面板各写一套尺寸。
    高度也给死：草稿纸的画布是按容器像素画的，height:auto 会让它塌成一条。 */
-@media(min-width:761px){
+@media (min-width:761px){
   #view-realrun.qp-wide{grid-template-columns:minmax(0,1fr) 460px;}
   #view-realrun.rq-3col.qp-wide{grid-template-columns:minmax(0,340px) minmax(0,1fr) 460px;}
   .dk-inline{height:calc(100vh - var(--topbar-h,56px) - 130px) !important;
@@ -5118,7 +5134,7 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
 .acct-nav button:hover{color:var(--blue);border-color:var(--blue);}
 .acct-nav button.on{background:var(--blue-fill);border-color:var(--blue-fill);color:#fff;font-weight:600;}
 
-@media(min-width:761px){
+@media (min-width:761px){
   /* 电脑：左侧竖栏 + 右侧内容。不包 wrapper —— 账户页底下是一排平铺的卡片，
      包一层要动 DOM，用显式列定位效果一样。 */
   /* 只给**列**间距，不给行间距。
@@ -5143,7 +5159,7 @@ body.dark .q-tabs button.on{background:#e8ecf4;border-color:#e8ecf4;color:#141b2
 }
 body.dark .acct-nav button{background:#1a2233;border-color:#2a3345;color:#9aa4b2;}
 body.dark .acct-nav button.on{background:var(--blue-fill);color:#fff;}
-@media(min-width:761px){
+@media (min-width:761px){
   body.dark .acct-nav button{background:none;border:none;color:#cfd5e0;}
   body.dark .acct-nav button:hover{background:#1f2838;}
   body.dark .acct-nav button.on{background:var(--blue-fill);color:#fff;}
@@ -5334,7 +5350,7 @@ body.art-hue .hc-logo::after{content:"";position:absolute;inset:0;border-radius:
 /* ---- 横构图的启动屏 ----
    居中的一竖条在 16:10 里两边空得发慌。正文靠左、右半留给美术层（#sp-art）。
    限定在 761px 以上：真机换到窄窗口时（这四套已经不生效了）不该留着这套布局。 */
-@media(min-width:761px){
+@media (min-width:761px){
   body.art-desk #splash{align-items:flex-start;text-align:left;padding:0 8vw;}
   body.art-desk .sp-body{align-items:flex-start;max-width:min(46vw,540px);width:auto;}
   body.art-desk .sp-quote{max-width:none;}
@@ -5869,6 +5885,22 @@ body.art-on .ai-folder circle[fill="#ffd66b"]{fill:var(--blue);}
 .ao-read{padding:6px 0 24px;}
 .ao-rt{font-size:19px;margin:10px 0 12px;}
 .ao-rb{line-height:1.85;overflow-wrap:anywhere;}
+/* 产出正文的标题分级 —— 云盘转出来的 Markdown 就是靠这几行「字号跟着层级走」的。
+   全用 em：正文基准由下面的 A− / A+ 调（.ao-rb 的 font-size），
+   各级标题按比例一起缩放，和阅读模式（.reader）是同一套比例，
+   同一份文档在两处看不该是两个样子。 */
+.ao-rb h1,.ao-rb h2,.ao-rb h3,.ao-rb h4,.ao-rb h5,.ao-rb h6{font-weight:700;line-height:1.4;}
+.ao-rb h1{font-size:1.55em;margin:.9em 0 .45em;}
+.ao-rb h2{font-size:1.32em;margin:.85em 0 .4em;}
+.ao-rb h3{font-size:1.16em;margin:.8em 0 .35em;}
+.ao-rb h4,.ao-rb h5,.ao-rb h6{font-size:1.04em;margin:.7em 0 .3em;}
+.ao-rb p{margin:.7em 0;}
+.ao-rb ul,.ao-rb ol{padding-left:1.5em;margin:.6em 0;}
+.ao-rb li{margin:.32em 0;}
+.ao-rb blockquote{border-left:3px solid var(--line);padding:.2em 0 .2em 14px;
+  color:var(--muted);margin:.7em 0;}
+.ao-rhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 12px;}
+.ao-rhead .ao-rt{margin:0;flex:1;min-width:0;}
 
 /* ---- 别人分享给我的 AI 对话（只读 + 接着问）----
    气泡样式跟 AI 助手里那套**刻意不完全一样**：这是别人给的一份副本，不是你正在进行的
@@ -6043,6 +6075,15 @@ body.mobile-ui .ai-acts{opacity:1;}
   background:var(--gold);color:#222;font-size:9px;line-height:15px;font-weight:700;}
 .ai-attcut{margin:6px 0 0;font-size:11.5px;line-height:1.55;color:var(--gold);}
 
+/* 还在压缩/上传/识别的那份附件：图先淡着显示，底下一条来回跑的进度条。
+   手机上这一段常有几十秒，没有它屏幕上就是「选完图什么也没发生」。 */
+.ai-att.busy{border-style:dashed;}
+.ai-att.busy img{opacity:.45;}
+.ai-att.busy::after{content:'';position:absolute;z-index:3;left:0;right:0;bottom:0;height:2px;
+  background:var(--blue);transform-origin:left center;animation:aiattbusy 1.1s ease-in-out infinite;}
+@keyframes aiattbusy{0%{transform:scaleX(.1);}50%{transform:scaleX(1);}100%{transform:scaleX(.1);}}
+@media (prefers-reduced-motion:reduce){.ai-att.busy::after{animation:none;transform:scaleX(1);}}
+
 /* 云盘/资料库复制之后的提示条：桌面壳右键菜单里的「粘贴」够不着应用内剪贴板，
    这条是那份剪贴板在 AI 输入框里唯一看得见的样子，所以不能藏。 */
 .ai-clipchip{display:flex;align-items:center;gap:8px;margin-bottom:7px;padding:6px 8px;
@@ -6163,9 +6204,13 @@ body.dark .ch-draft{color:#e8837c;}
 /* 信息栏（第三栏）：成员 / 公告 / 文件 / 图片 / 开关（CD2、F11） */
 .chat-info{width:286px;flex:none;overflow-y:auto;background:var(--ai-head);border-left:1px solid var(--line);}
 .chat-info.hidden{display:none;}
-.ci-head{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;
+/* 标题栏（带 ✕）在哪种宽度下都吸顶：信息栏里文件一多，一滚就把关闭按钮带走了，
+   窄屏它还是盖住半个聊天区的浮层，关不掉等于卡死。 */
+.ci-head{position:sticky;top:0;z-index:2;background:var(--ai-head);
+  display:flex;align-items:center;justify-content:space-between;padding:13px 15px;
   border-bottom:1px solid var(--line);font-size:14px;}
-.ci-head button{border:none;background:transparent;color:var(--muted);font-size:15px;cursor:pointer;}
+.ci-head button{flex:none;border:none;background:transparent;color:var(--muted);
+  font-size:15px;padding:2px 6px;cursor:pointer;}
 .ci-grp{padding:13px 15px;border-bottom:1px solid var(--line);}
 .ci-lbl{font-size:11.5px;color:var(--muted);font-weight:700;letter-spacing:.04em;margin-bottom:9px;}
 .ci-empty{font-size:12.5px;color:var(--muted);margin:0;}
@@ -6205,7 +6250,6 @@ body.mobile-ui .cr-peer{display:flex;}          /* 旧版这里是 display:none 
 body.mobile-ui #chat-side{padding:10px 10px 0;}
 body.mobile-ui .chat-info{position:fixed;inset:0;z-index:120;width:auto;border-left:none;
   padding-bottom:env(safe-area-inset-bottom);}
-body.mobile-ui .ci-head{position:sticky;top:0;background:var(--ai-head);z-index:2;}
 body.mobile-ui .cr-checkin{margin:8px 10px 0;}
 body.mobile-ui .cr-selbar{padding-bottom:calc(9px + env(safe-area-inset-bottom));}
 /* 会话名那一行是「名字省略号 + 几个不省略的角标」：
@@ -6490,7 +6534,7 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
 .sq-extra{color:var(--gold);margin-left:8px;}
 .sq-allright{text-align:center;color:var(--muted);}
 .sq-cmp2{display:grid;gap:10px;margin-top:8px;}
-@media(min-width:761px){.sq-cmp2{grid-template-columns:1fr 1fr;}}
+@media (min-width:761px){.sq-cmp2{grid-template-columns:1fr 1fr;}}
 .sq-cmp-t{font-size:var(--fs-xs);color:var(--muted);margin-bottom:3px;}
 .sq-cmp-b{background:var(--bg2);border-radius:var(--r-sm);padding:9px 11px;
   font-size:var(--fs-sm);line-height:1.85;white-space:pre-wrap;}
@@ -6560,3 +6604,53 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
 .tv-line-n{font-size:var(--fs-sm);color:var(--muted);line-height:1.7;margin-top:10px;
   padding-top:9px;border-top:1px dashed var(--line);}
 .tv-line-n b{color:var(--text);}
+
+/* ================= 图片编辑（js/imgedit.js） =================
+   浮在查看器之上的一层，不是一个「视图」—— 它要盖住底下那张图，
+   退出时原样回到刚才看的位置。 */
+.imgedit{
+  position:fixed;inset:0;z-index:var(--z-modal);
+  background:var(--card);display:flex;flex-direction:column;
+}
+body.ie-open{overflow:hidden;}                 /* 编辑时别让底下的页面跟着滚 */
+.ie-bar,.ie-foot{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  padding:10px 12px;border-bottom:1px solid var(--line);background:var(--card);
+}
+/* 手机上这一层是全屏的，顶到刘海底下就点不着「保存」了（页面开了 viewport-fit=cover）；
+   底下那条同理，会被小白条压住。全站的安全区写法都是这个 max()/calc()。 */
+.ie-bar{padding-top:max(10px,env(safe-area-inset-top));}
+.ie-foot{border-bottom:none;border-top:1px solid var(--line);
+  font-size:var(--fs-sm);color:var(--muted);
+  padding-bottom:calc(10px + env(safe-area-inset-bottom));}
+.ie-grow{flex:1;}
+.ie-sep{width:1px;align-self:stretch;background:var(--line);margin:2px 4px;}
+/* 画布区：占满剩下的高度。touch-action:none 是必须的 ——
+   不关掉的话，手指在图上拖是在滚页面，马赛克一笔都画不出来。
+
+   居中用 flex，**不能用 grid** —— 画布带的是 max-height:100%，而 grid 轨道的高度
+   又要看内容算，WebKit（桌面壳）碰上这种互相依赖就把位置算飞：尺寸是对的
+   （632×843），位置却落在 top:509 / left:384，整张图被推向右下角，顶边看不见。
+   flex 的交叉轴尺寸是先定下来的，百分比有确定的参照，没有这个循环。 */
+.ie-stage{
+  position:relative;flex:1;min-height:0;background:#525659;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;padding:10px;touch-action:none;
+}
+#ie-cv{max-width:100%;max-height:100%;display:block;box-shadow:0 6px 20px rgba(0,0,0,.3);}
+#ie-cv.ie-crosshair{cursor:crosshair;}
+#ie-cv.ie-cell{cursor:cell;}
+/* 框外压暗：outline 铺满整个舞台（被 .ie-stage 的 overflow:hidden 裁掉多余部分）。
+   用 outline 不用 box-shadow —— 它本来就不是阴影，而且 outline 不进 CSS 的阴影预算。 */
+.ie-crop{
+  position:absolute;border:1.5px dashed #fff;background:rgba(26,111,181,.18);
+  pointer-events:none;outline:9999px solid rgba(0,0,0,.35);
+}
+/* 色板：内圈是卡片色的白边，外圈是描边。两圈都用 border/outline，不占阴影预算
+   （outline 会跟着 border-radius 走，圆的还是圆的）。 */
+.ie-sw{
+  width:20px;height:20px;padding:0;border-radius:var(--r-pill);
+  border:2px solid var(--card);outline:2px solid var(--line);cursor:pointer;
+}
+.ie-sw[aria-pressed="true"]{outline-color:var(--blue);}
+#ie-size{accent-color:var(--blue);width:110px;vertical-align:middle;}

@@ -8,8 +8,8 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, aiAttachLib, api, appConfirm, appPrompt, artEm, back, clipFiles, copyText,
-   DESKTOP_VER, errMsg, esc, libTouch, IS_DESKTOP, KB, lsDel, lsGet, lsSet, openViewerUrl, push, render,
-   setAppClip, stack, toast, uiError */
+   DESKTOP_VER, errMsg, esc, libTouch, IN_APP, IS_DESKTOP, KB, lsDel, lsGet, lsSet, openAiOut,
+   openViewerUrl, push, render, setAppClip, stack, toast, uiError */
 
 /* ================= 云盘 ================= */
 let dvFolder = '';
@@ -182,7 +182,8 @@ function dvOpenFile(id, name, folder) {
   dvJump(folder || '');
   const ext = (String(name || '').match(/\.[^.]+$/) || [''])[0].toLowerCase();
   openViewerUrl('/api/drive/' + id + '/view', name, ext,
-                '/api/drive/' + id + '/download', '/api/drive/' + id + '/view?text=1');
+                '/api/drive/' + id + '/download', '/api/drive/' + id + '/view?text=1',
+                { kind: 'drive', id: +id });
 }
 $('#dv-crumb').addEventListener('click', e => {
   const a = e.target.closest('[data-dvcd]');
@@ -238,7 +239,8 @@ $('#dv-list').addEventListener('click', async e => {
     const id = view.dataset.dvview;
     libTouch('drive', id, dvFolder);   // 带上所在目录，「最近打开」里点回来才落得回这一层
     openViewerUrl('/api/drive/' + id + '/view', view.textContent, view.dataset.ext,
-                  '/api/drive/' + id + '/download', '/api/drive/' + id + '/view?text=1');
+                  '/api/drive/' + id + '/download', '/api/drive/' + id + '/view?text=1',
+                  { kind: 'drive', id: +id });
     return;
   }
   const mo = e.target.closest('[data-dvmore]');
@@ -261,6 +263,65 @@ $('#dv-grid').onclick = () => {
   $('#dv-grid').textContent = dvGrid ? '☰ 列表' : '▦ 网格';
   loadDrive();
 };
+
+/* ---- 转成 Markdown ----
+   云盘里的 PDF / Word / 扫描件转成有层级的 Markdown，成品落到「AI 产出」，
+   再由用户决定投到哪（那边的投放、下载、改名都是现成的）。分级怎么做见 mods/tomd.py。
+
+   这份扩展名清单是后端 tomd.SUPPORT_EXT 的镜像，只用来决定「菜单里显不显示这一项」；
+   能不能转由后端说了算（不支持会返回 415，错误话术也在后端）。和 OFFICE_EXT 一样，
+   前后端各留一份是这套代码的老规矩，改一边记得改另一边。 */
+const DV_MD_EXT = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'odt', 'odp', 'rtf', 'txt', 'md',
+  'csv', 'json', 'html', 'htm', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'heic', 'tif', 'tiff'];
+const dvExt = n => (String(n || '').split('.').pop() || '').toLowerCase();
+
+async function dvToMd(id, name) {
+  let p;
+  try { p = await api('/api/drive/' + id + '/tomd/probe'); }
+  catch (e) { toast(errMsg(e), true); return; }
+
+  /* 扫描页要逐页识别，一页几秒。超过默认上限就把账算给用户看，让他自己决定 ——
+     一本 300 页的扫描书全转要十几分钟，替他做主两个方向都是错的：
+     擅自全转是让他干等，擅自截断是给他一份缺了后半本、还看不出来的文件。 */
+  let all = false;
+  const limit = p.ocr_limit || 30;
+  if (p.scan_pages > limit) {
+    const mins = Math.max(1, Math.round(p.scan_pages * 3 / 60));
+    const ans = await appConfirm(
+      `「${name}」里有 ${p.scan_pages} 页是扫描件，要逐页识别文字，全部转大约 ${mins} 分钟。`,
+      { title: '这份要识别的页数不少', okText: '全部转', altText: `只转前 ${limit} 页`, cancelText: '取消' });
+    if (!ans) return;              // 取消（false / null）
+    all = ans !== 'alt';
+  }
+
+  let d;
+  try {
+    d = await api('/api/drive/' + id + '/tomd', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ all_pages: all })
+    });
+  } catch (e) { toast(errMsg(e), true); return; }
+  toast('在后台转，转好了通知你');
+  dvMdPoll(d.task_id, name);
+}
+
+/* 轮询任务。间隔 2 秒：原生 PDF 一两秒就完了，扫描件要几分钟，
+   前者不该等太久，后者也不值得每秒问一次。转换本身在后台跑，
+   这里断了（切走页面、关掉应用）只是看不到结果提示，转换照常完成，通知中心里有。 */
+function dvMdPoll(tid, name) {
+  const t0 = Date.now();
+  const tick = async () => {
+    if (Date.now() - t0 > 45 * 60 * 1000) return;    // 兜底：再长就不守着了，去通知里看
+    let t;
+    try { t = await api('/api/drive/tomd/' + tid); }
+    catch (_e) { return; }                            // 网断了就不再追问，通知里还有一份
+    if (t.status === 'running') { setTimeout(tick, 2000); return; }
+    if (t.status === 'error') { toast('转换失败：' + (t.message || '未知原因'), true); return; }
+    if (await appConfirm(t.message || '转好了', {
+      title: `「${name}」转好了`, okText: '去看看', cancelText: '待会儿' })) openAiOut();
+  };
+  setTimeout(tick, 1200);
+}
 
 /* ---- 分享链接 ----
    这是全站唯一「不用登录就能取到东西」的口子，所以界面上要把有效期说清楚，
@@ -341,6 +402,36 @@ function dvBatchBar() {
   $('#dv-batch').classList.toggle('hidden', !dvSel.size);
   $('#dv-batch-n').textContent = '已选 ' + dvSel.size + ' 项';
 }
+/* 批量下载：多选打成一个 zip。
+   只选中一个文件时不套 zip —— 直接下原文件，省得用户下回来还要解一层。 */
+const dvIsDir = id => {
+  const b = document.querySelector(`[data-dvmore="${id}"]`);
+  return !!(b && b.closest('.dv-item') && b.closest('.dv-item').classList.contains('dv-dir'));
+};
+const dvNameOf = id => {
+  const b = document.querySelector(`[data-dvmore="${id}"]`);
+  const n = b && b.closest('.dv-item') && b.closest('.dv-item').querySelector('.dv-name');
+  return n ? n.textContent : '';
+};
+$('#dv-bdl').onclick = async () => {
+  const ids = [...dvSel];
+  if (!ids.length) return;
+  if (ids.length === 1 && !dvIsDir(ids[0])) {
+    dvDownload('/api/drive/' + ids[0] + '/download', dvNameOf(ids[0]));
+    return;
+  }
+  const q = ids.join(',');
+  /* 先问一句「这一包多大、打不打得动」。
+     点 <a download> 碰上 JSON 错误响应，浏览器是**静默不动**的 —— 超限、文件没了，
+     用户看到的都是「点了没反应」。预检把这两种情况变成一句看得懂的话。 */
+  let d;
+  try { d = await api('/api/drive/zip?check=1&ids=' + q); }
+  catch (err) { toast(errMsg(err), true); return; }
+  // 打包是同步做的，几百 MB 要好几秒才开始下。不报一声体量，用户会以为按钮坏了，
+  // 接着连点好几下 —— 每一下都是一次完整的打包。
+  toast('正在打包 ' + d.files + ' 个文件（' + fSize(d.size) + '），好了会自动开始下载');
+  dvDownload('/api/drive/zip?ids=' + q, '云盘' + ids.length + '项.zip');
+};
 $('#dv-bcancel').onclick = () => { dvSel.clear(); dvBatchBar(); document.querySelectorAll('.dv-pick').forEach(c => { c.checked = false; }); };
 $('#dv-bdel').onclick = async () => {
   if (!dvSel.size) return;
@@ -428,6 +519,7 @@ function dvMenu(x, y, id, name, viewable, isDir) {
     rows.push(['dvm-send', isDir ? '📤 打包发送到聊天…' : '📤 发送到聊天…']);
     // 文件夹给不了：附件是一份份读的，一个目录塞进去只会把上下文冲爆
     if (!isDir) rows.push(['dvm-ai', '🤖 发给 AI 助手']);
+    if (!isDir && DV_MD_EXT.includes(dvExt(name))) rows.push(['dvm-md', 'Ⓜ 转成 Markdown']);
     rows.push(['dvm-del', '🗑 删除']);
   }
   rows.push(['dvm-paste', '📋 粘贴' + (dvClip.length ? '（' + dvClip.length + ' 项）' : '')]);
@@ -447,6 +539,13 @@ function dvDownload(url, name) {
   const a = document.createElement('a');
   a.href = url; a.download = name || '';
   document.body.appendChild(a); a.click(); a.remove();
+  /* 下完要有人说一声，否则「下载」这个动作从头到尾没有任何回音。
+     桌面壳不在这儿说：它下完会回调 __onDownloaded，那时候连**存到哪**都说得出来（见 update.js）。
+     安卓壳交给系统 DownloadManager，通知栏里有。剩下的浏览器只能报个「开始了」。 */
+  if (!IS_DESKTOP) {
+    toast('已开始下载' + (name ? '：' + name : '')
+      + (IN_APP ? '，完成后在通知栏或手机的「下载」里找' : '，可在浏览器的下载列表里看'));
+  }
 }
 const dvMenuHide = () => $('#dv-menu').classList.add('hidden');
 $('#view-drive').addEventListener('contextmenu', e => {
@@ -484,6 +583,7 @@ $('#dv-menu').addEventListener('click', async e => {
     case 'dvm-share': dvShare(id); break;
     case 'dvm-send': driveSend([id], isDir); break;
     case 'dvm-ai': aiAttachLib([{ kind: 'drive', id, name }]); break;
+    case 'dvm-md': dvToMd(id, name); break;
     case 'dvm-zip': dvDownload('/api/drive/' + id + '/zip', name + '.zip'); break;
     case 'dvm-paste': dvPaste(); break;
     case 'dvm-ren': dvRename(id, name); break;
@@ -520,7 +620,8 @@ async function dvPickFolder() {
    [{file, folder}]，folder 是**相对当前目录**的子路径（'' = 直接放当前目录）。
    中间那些目录不用前端一层层发请求去建，后端 _ensure_folder_path 会照着这个
    相对路径把缺的补出来。 */
-const DV_PARALLEL = 3;      // 并发数：再多就是把上行带宽切碎，总时间反而更长
+const DV_PARALLEL = 3;      // 同时传几个文件：再多就是把上行带宽切碎，总时间反而更长
+const DV_CHUNK_PAR = 3;     // 单个文件里同时传几片（隧道 RTT 高，串行等的时间比传的时间还长）
 const DV_CHUNK = 4 * 1024 * 1024;        // 分片大小，远小于 Cloudflare 隧道那 100MB 硬上限
 const DV_CHUNK_MIN = 8 * 1024 * 1024;    // 超过这么大才值得切片（小文件切了反而更慢）
 /* 秒传的哈希只算到这个大小为止（= 走整发上传的那档）。
@@ -558,7 +659,8 @@ const dvUpKey = (file, folder) =>
    只重试**网络层**的失败（fetch 抛 TypeError）。服务端明确拒绝的（会话不存在、
    块号不合法、传的比说好的多、未登录）重试多少次都是同一个答案，直接抛出去。 */
 const DV_BACKOFF = [1000, 3000, 6000];
-const dvNetErr = (e) => e instanceof TypeError || /Failed to fetch|Load failed|NetworkError/i.test(e && e.message || '');
+const dvNetErr = (e) => e instanceof TypeError
+  || /Failed to fetch|Load failed|NetworkError|网络中断/i.test(e && e.message || '');
 async function dvRetry(fn) {
   for (let t = 0; ; t++) {
     try { return await fn(); } catch (e) {
@@ -598,16 +700,84 @@ async function chunkUpload(file, opts, onProg) {
     had = new Set(init.received || []);
     lsSet(key, id);
   }
+  /* 片与片之间并发。串行时每传完一片都要等一个完整的往返才开下一片，
+     走隧道那条路（边缘在洛杉矶）一个来回就是大半秒 —— 100MB 的文件光「等」就等掉几十秒。
+     后端每片写自己的文件、done 时才按序号合并，所以乱序到达是安全的。 */
   const n = Math.ceil(file.size / DV_CHUNK);
-  for (let i = 0; i < n; i++) {
-    const end = Math.min(file.size, (i + 1) * DV_CHUNK);
-    if (!had.has(i)) await dvRetry(() => api('/api/drive/chunk/' + id + '/' + i,
-                                             { method: 'POST', body: file.slice(i * DV_CHUNK, end) }));
-    onProg(end);
-  }
+  const partSize = i => Math.min(file.size, (i + 1) * DV_CHUNK) - i * DV_CHUNK;
+  let acked = 0, next = 0;
+  for (let i = 0; i < n; i++) if (had.has(i)) acked += partSize(i);   // 续传：已在服务端的先记上
+  onProg(acked);
+  const sendPart = async () => {
+    while (next < n) {
+      const i = next++;
+      if (had.has(i)) continue;
+      await dvRetry(() => api('/api/drive/chunk/' + id + '/' + i,
+                              { method: 'POST', body: file.slice(i * DV_CHUNK, i * DV_CHUNK + partSize(i)) }));
+      // 进度按「传成了多少字节」累加，不能再用 end：并发下片是乱序完成的，
+      // 拿末尾位置当进度会让进度条跳来跳去
+      acked += partSize(i); onProg(acked);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(DV_CHUNK_PAR, n) }, sendPart));
   const row = await dvRetry(() => api('/api/drive/chunk/' + id + '/done', { method: 'POST' }));
   lsDel(key);                              // 传成了，别把死 id 留到下次
   return row;
+}
+
+/* ---- 省流上传 ----
+   家里上行就那么点（走隧道更是绕一趟洛杉矶），手机拍的证件照一张 3~4MB，
+   十几张就是好几分钟。缩到长边 2000px 之后一张只剩几百 KB，**同一批快五六倍**。
+   默认关：证件、证书这类材料该传原图，清晰度是它的全部意义 —— 要省流得自己按一下。 */
+const DV_SLIM_PX = 2000;                  // 长边缩到这个像素：证书上的编号、印章字仍然认得出
+const DV_SLIM_Q = 0.85;
+const DV_SLIM_MIN = 600 * 1024;           // 比这还小的图压了也省不下什么，别白折腾
+const DV_SLIM_EXT = ['.jpg', '.jpeg', '.png', '.webp'];
+const dvSlimOn = () => lsGet('dv:slim') === '1';
+function dvSlimLabel() {
+  const b = $('#dv-slim');
+  if (b) b.textContent = '🪶 省流上传：' + (dvSlimOn() ? '开' : '关');
+}
+dvSlimLabel();
+$('#dv-slim').onclick = () => {
+  lsSet('dv:slim', dvSlimOn() ? '0' : '1');
+  dvSlimLabel();
+  toast(dvSlimOn() ? '开了：图片会先缩到长边 2000px 再传（省流量、快很多）'
+    : '关了：图片一律按原图上传');
+};
+
+/* 缩图。任何一步不成就返回原文件 —— 省流是锦上添花，不能因为它把「传得上去」搞没了。
+   （HEIC 在多数浏览器里解不出来，就是靠这条兜底原样上传。） */
+async function dvShrink(file) {
+  const ext = (file.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+  if (!dvSlimOn() || file.size < DV_SLIM_MIN || !DV_SLIM_EXT.includes(ext)) return file;
+  try {
+    const bm = await createImageBitmap(file);
+    const k = DV_SLIM_PX / Math.max(bm.width, bm.height);
+    if (k >= 1) { bm.close(); return file; }        // 本来就不大，缩了只会更糊
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(bm.width * k); cv.height = Math.round(bm.height * k);
+    cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
+    bm.close();
+    const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', DV_SLIM_Q));
+    if (!blob || blob.size >= file.size) return file;   // 没省下来就别换
+    // 统一出 JPEG，名字也跟着改，免得一份 .png 里躺着 jpeg 数据
+    const name = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+    return new File([blob], name, { type: 'image/jpeg', lastModified: file.lastModified });
+  } catch (_) { return file; }
+}
+
+/* 关着省流、又一口气传一大堆图时，提一次（**只提一次**：每次都弹就成了骚扰）。
+   这条提示存在的理由很实在 —— 手机走公网隧道传十几张证件照要好几分钟，
+   而多数人并不知道有这么个开关。 */
+const DV_SLIM_HINT = 20 * 1024 * 1024;
+function dvSlimHint(items) {
+  if (dvSlimOn() || lsGet('dv:slimhint') === '1') return;
+  const big = items.filter(it => DV_SLIM_EXT.includes((it.file.name.match(/\.[^.]+$/) || [''])[0].toLowerCase()))
+    .reduce((a, it) => a + (it.file.size || 0), 0);
+  if (big < DV_SLIM_HINT) return;
+  lsSet('dv:slimhint', '1');
+  toast('这批图片有 ' + fSize(big) + '。工具栏「🪶 省流上传」开着能快好几倍（证件原图就别开）');
 }
 
 async function dvUploadOne(file, folder, onProg) {
@@ -621,9 +791,11 @@ async function dvUploadOne(file, folder, onProg) {
       if (d && d.hit) { onProg(file.size); return d; }
     } catch (_) { /* 秒传没成就老老实实传 */ }
   }
+  /* 整发这条路原来一次不成就算失败。走隧道时「Lost connection with the edge」一天十几次，
+     几 MB 的照片正撞上就白传 —— 和分片一样给它退避重试（重来时进度从 0 起，会往回跳一格）。 */
   return file.size > DV_CHUNK_MIN
     ? dvUploadChunked(file, folder, onProg)
-    : dvUploadWhole(file, folder, onProg);
+    : dvRetry(() => dvUploadWhole(file, folder, onProg));
 }
 
 // 云盘这一侧的老名字留着：它就是「落点 = 云盘」的 chunkUpload，调用方和测试都还认它
@@ -666,18 +838,26 @@ async function dvUpload(items) {
   items = (items || []).map(it => (it instanceof File ? { file: it, folder: '' } : it))
     .filter(it => it && it.file);
   if (!items.length) return;
-  const total = items.reduce((s, it) => s + (it.file.size || 0), 0);
+  /* 分母要按「实际要传的字节」算，所以放在数组里跟着走：开了省流之后，
+     一张图压完可能只剩五分之一，还拿原始大小当分母的话进度条永远到不了头。 */
+  const sizes = items.map(it => it.file.size || 0);
   const sent = new Array(items.length).fill(0);       // 每个文件已发字节，汇总成总进度
   let done = 0, ok = 0, fail = 0, next = 0;
-  const tick = () => dvProg(sent.reduce((a, b) => a + b, 0), total, '上传中 ' + done + '/' + items.length);
+  const tick = () => dvProg(sent.reduce((a, b) => a + b, 0), sizes.reduce((a, b) => a + b, 0),
+                            '上传中 ' + done + '/' + items.length);
+  dvSlimHint(items);
   tick();
   const worker = async () => {
     while (next < items.length) {
       const i = next++;
       const dest = [dvFolder, items[i].folder].filter(Boolean).join('/');
-      try { await dvUploadOne(items[i].file, dest, n => { sent[i] = n; tick(); }); ok++; }
-      catch (err) { fail++; toast(items[i].file.name + '：' + err.message, true); }
-      sent[i] = items[i].file.size || 0;   // 失败的也记满，否则进度条永远差一截停在那
+      try {
+        const f = await dvShrink(items[i].file);      // 没开省流 / 不是图片时原样返回
+        sizes[i] = f.size || 0;
+        await dvUploadOne(f, dest, n => { sent[i] = n; tick(); });
+        ok++;
+      } catch (err) { fail++; toast(items[i].file.name + '：' + err.message, true); }
+      sent[i] = sizes[i];                  // 失败的也记满，否则进度条永远差一截停在那
       done++; tick();
     }
   };

@@ -24,11 +24,13 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from core import CFG, DB, UPLOADS, get_db, log, open_db, uid, uname
+from core import CFG, DB, UPLOADS, bg_new, bg_set, get_db, log, open_db, uid, uname
 import aiclient
 from mods.ai import ai_chat
 from mods.files import (IMAGE_EXT, INLINE_EXT, OFFICE_EXT, _cacheable,
                         _extract_text, _no_script, _office_to_pdf, _remove_blob)
+from mods import tomd
+from mods.aiout import BODY_MAX, create_output
 
 bp = Blueprint("social", __name__)
 
@@ -673,19 +675,17 @@ def _folder_files(db, owner, path):
     return out
 
 
-def _zip_folder(db, owner, r):
-    """把一个文件夹打成 zip，返回临时文件路径；超限或空目录返回 (None, 错误响应)。
+def _zip_write(owner, items, empty_msg):
+    """把 [(zip 内相对路径, 磁盘路径, 大小)] 写成一个 zip，返回 (临时文件路径, None)。
 
     写到临时文件而不是全在内存里拼：一个几百 MB 的目录直接进内存，服务端会被一个
-    下载请求打垮。调用方负责用完删掉。
+    下载请求打垮。调用方负责用完删掉（_send_temp 会）。
     """
-    path = (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"]
-    items = _folder_files(db, owner, path)
     if not items:
-        return None, (jsonify({"error": "这个文件夹是空的，没什么可打包"}), 400)
+        return None, (jsonify({"error": empty_msg}), 400)
     total = sum(n for _, _, n in items)
     if total > ZIP_MAX:
-        return None, (jsonify({"error": "文件夹太大（%d MB），超过打包上限 %d MB"
+        return None, (jsonify({"error": "选中的内容太大（%d MB），超过打包上限 %d MB"
                                % (total // (1024 * 1024), ZIP_MAX // (1024 * 1024))}), 413)
     tmp = os.path.join(_drive_dir(owner), ".tmp_zip_" + uuid.uuid4().hex)
     try:
@@ -702,6 +702,41 @@ def _zip_folder(db, owner, r):
             pass
         return None, (jsonify({"error": "打包失败"}), 500)
     return tmp, None
+
+
+def _zip_folder(db, owner, r):
+    """把一个文件夹打成 zip，返回临时文件路径；超限或空目录返回 (None, 错误响应)。"""
+    path = (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"]
+    return _zip_write(owner, _folder_files(db, owner, path), "这个文件夹是空的，没什么可打包")
+
+
+def _zip_rows(db, owner, rows):
+    """多选打包：一串条目（文件、文件夹混着）合成一个 zip。
+
+    zip 里的路径按「选中项自己的名字」起头 —— 用户选的是眼前这几项，解出来就该是
+    眼前这几项，不该带上它们在云盘里的整条祖先路径。
+    重名要改名而不是覆盖：搜索结果里同名文件来自不同目录是常事，
+    zipfile 遇到同名只会闷头写两条，解压时后一条把前一条盖掉 —— 那是**丢文件**。
+    """
+    items, seen = [], set()
+
+    def take(rel, src, size):
+        base, ext = os.path.splitext(rel)
+        i, out = 2, rel
+        while out.lower() in seen:              # 大小写不敏感的文件系统上 A.jpg 和 a.jpg 也是撞的
+            out = "%s(%d)%s" % (base, i, ext)
+            i += 1
+        seen.add(out.lower())
+        items.append((out, src, size or 0))
+
+    for r in rows:
+        if r["is_dir"]:
+            path = (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"]
+            for rel, src, n in _folder_files(db, owner, path):
+                take(rel, src, n)
+        elif r["stored_name"]:
+            take(r["name"], os.path.join(_drive_dir(owner), r["stored_name"]), r["size"])
+    return _zip_write(owner, items, "选中的都是空文件夹，没什么可打包")
 
 
 def _send_temp(path, download_name):
@@ -723,6 +758,128 @@ def _send_temp(path, download_name):
                                 mimetype="application/zip"))
     resp.headers["Content-Length"] = str(size)   # 文件对象拿不到大小，得自己带上
     return resp
+
+
+@bp.get("/api/drive/zip")
+def drive_zip_many():
+    """多选打包下载：/api/drive/zip?ids=1,2,3。
+
+    用 GET 而不是 POST 传 id 列表，是为了让它能被隐藏的 <a download> 直接点开 ——
+    桌面壳（WebKitGTK）的下载只认 http(s) 地址，POST 回来的 blob: 在那儿点不动。
+    """
+    ids = [int(x) for x in re.findall(r"\d+", request.args.get("ids") or "")][:500]
+    if not ids:
+        return jsonify({"error": "没有选中任何东西"}), 400
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM drive_files WHERE owner_id=? AND deleted_at IS NULL AND id IN (%s)"
+        % ",".join("?" * len(ids)), (uid(),) + tuple(ids)).fetchall()
+    if not rows:
+        return jsonify({"error": "选中的东西不在了"}), 404
+    # check=1：只算账不打包。前端点「下载」时先问这一句 —— 浏览器点 <a download>
+    # 碰上 JSON 错误响应是**静默不动**的，超限、文件没了都表现成「点了没反应」。
+    if request.args.get("check"):
+        n = size = 0
+        for r in rows:
+            if r["is_dir"]:
+                for _rel, _src, b in _folder_files(db, uid(),
+                                                   (r["folder"] + "/" + r["name"]) if r["folder"] else r["name"]):
+                    n += 1; size += b or 0
+            elif r["stored_name"]:
+                n += 1; size += r["size"] or 0
+        if not n:
+            return jsonify({"error": "选中的都是空文件夹，没什么可打包"}), 400
+        if size > ZIP_MAX:
+            return jsonify({"error": "选中的内容太大（%d MB），超过打包上限 %d MB"
+                            % (size // (1024 * 1024), ZIP_MAX // (1024 * 1024))}), 413
+        return jsonify({"files": n, "size": size})
+    tmp, err = _zip_rows(db, uid(), rows)
+    if err:
+        return err
+    name = (rows[0]["name"] + ".zip") if len(rows) == 1 and rows[0]["is_dir"] \
+        else "云盘%d项.zip" % len(rows)
+    return _send_temp(tmp, name)
+
+
+# ---- 图片编辑（转/裁/打码后写回）----
+# 能改的只有浏览器解得出、又能重新编码出来的那几种。HEIC/TIFF 不在其中：
+# 前端根本画不出来，给了编辑按钮也只是点了没反应。
+EDIT_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+EDIT_MAX = 40 * 1024 * 1024          # 一张编辑过的图撑死也就这么大，再大必是哪里错了
+
+
+def _edited_blob(db, r):
+    """收下请求体里那张编辑好的图，落成临时文件。返回 (tmp, size, err)。"""
+    data = request.get_data()
+    if not data:
+        return None, 0, (jsonify({"error": "没有收到图片内容"}), 400)
+    if len(data) > EDIT_MAX:
+        return None, 0, (jsonify({"error": "编辑后的图太大了（超过 %d MB）"
+                                  % (EDIT_MAX // (1024 * 1024))}), 400)
+    tmp = os.path.join(_drive_dir(uid()), ".tmp_" + uuid.uuid4().hex)
+    with open(tmp, "wb") as fp:
+        fp.write(data)
+    return tmp, len(data), None
+
+
+def _edit_target(db, fid):
+    """要改的那一行：自己的、不是目录、而且是张改得动的图。"""
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
+    if not r:
+        return None, (jsonify({"error": "这个文件不在了"}), 404)
+    if (r["ext"] or "").lower() not in EDIT_EXT:
+        return None, (jsonify({"error": "这种格式改不了"}), 400)
+    return r, None
+
+
+@bp.post("/api/drive/<int:fid>/replace")
+def drive_replace(fid):
+    """用编辑后的内容**覆盖**原图。
+
+    绝不能就地把字节写回老文件：去重让多行共用一个 stored_name（秒传来的、复制出来的），
+    就地改会把另外几行也一起改了 —— 用户只编辑了一张，云盘里另外三处跟着变。
+    所以永远写一个新 blob，只把这一行指过去，老的交给引用计数去收。
+    """
+    db = get_db()
+    r, err = _edit_target(db, fid)
+    if err:
+        return err
+    tmp, size, err = _edited_blob(db, r)
+    if err:
+        return err
+    # 配额按「换掉之后」算：新的进来、旧的（如果没人再用）出去
+    if _drive_used(db, uid()) - (r["size"] or 0) + size > DRIVE_QUOTA:
+        os.remove(tmp)
+        return jsonify({"error": "云盘空间不足（配额 %d MB）"
+                        % (DRIVE_QUOTA // (1024 * 1024))}), 400
+    stored = uuid.uuid4().hex + (r["ext"] or "").lower()
+    os.replace(tmp, os.path.join(_drive_dir(uid()), stored))
+    old = r["stored_name"]
+    db.execute("UPDATE drive_files SET stored_name=?, size=?, sha256=? WHERE id=?",
+               (stored, size, _sha256_file(os.path.join(_drive_dir(uid()), stored)), fid))
+    db.commit()
+    _drop_blob(db, uid(), old)          # 缩略图缓存跟着 _remove_blob 一起走
+    return jsonify(_drive_row(db.execute("SELECT * FROM drive_files WHERE id=?", (fid,)).fetchone()))
+
+
+@bp.post("/api/drive/<int:fid>/saveas")
+def drive_saveas(fid):
+    """编辑结果**另存一份**，就放在原图旁边（同一个文件夹），原图一个字节不动。"""
+    db = get_db()
+    r, err = _edit_target(db, fid)
+    if err:
+        return err
+    tmp, _size, err = _edited_blob(db, r)
+    if err:
+        return err
+    base = os.path.splitext(r["name"])[0]
+    name = (request.args.get("name") or "").strip() or (base + "-编辑" + (r["ext"] or ""))
+    name = os.path.basename(name.replace("\\", "/"))
+    row, err = _finish_upload(db, r["folder"] or "", name, tmp, r["mime"] or "")
+    if err:
+        return err
+    return jsonify(_drive_row(row)), 201
 
 
 @bp.get("/api/drive/<int:fid>/zip")
@@ -1148,6 +1305,165 @@ def trash_empty():
     _purge(db, uid(), rows)
     db.commit()
     return jsonify({"ok": True, "n": len(rows)})
+
+
+# ---- 转成 Markdown ----
+# 云盘里躺着的 PDF / Word / 扫描件，阅读模式只能给一份**平的**纯文本：章标题和
+# 一句正文长得一模一样，没有目录、搜不着、字号也无从跟着分级。这里把它们转成
+# 有层级的 Markdown（怎么分级见 mods/tomd.py），成品落到「AI 产出」——
+# 和 AI 生成的东西同一条路：先看，满意了再用现成的投放按钮送去资料库 / 云盘 / 小记。
+# 不直接往云盘写同名 .md：转坏了要手动删，反复转还会堆出「xx(1).md」。
+_TOMD_GATE = threading.Semaphore(2)      # 转换吃 CPU（OCR 尤其），别让几份大文件同时开跑
+
+
+def _tomd_titles(name, n):
+    """成品标题。分卷时带上「（1/3）」——不然一列产出里三份同名文件，谁也认不出哪是哪。"""
+    base = os.path.splitext(name or "未命名")[0]
+    if n <= 1:
+        return [base]
+    return ["%s（%d/%d）" % (base, i + 1, n) for i in range(n)]
+
+
+def _tomd_split(md, limit):
+    """超长正文按段落边界分卷。
+
+    单份产出有上限（aiout.BODY_MAX），一本几十万字的书塞不进去。create_output 是
+    直接截断的 —— 静默截断最要命：用户拿到的是一份看起来完整、其实缺了后半本的文件。
+    所以宁可分成几卷，也不让它悄悄少一半。
+    """
+    if len(md) <= limit:
+        return [md]
+    parts, cur = [], ""
+    for blk in md.split("\n\n"):
+        if cur and len(cur) + len(blk) + 2 > limit:
+            parts.append(cur)
+            cur = blk
+        else:
+            cur = (cur + "\n\n" + blk) if cur else blk
+    if cur:
+        parts.append(cur)
+    return parts
+
+
+def _tomd_run(tid, user_id, fid, ocr_limit):
+    """后台转换。原生 PDF 一两秒就完了，扫描件一页几秒 —— 一律走后台，
+    界面只管轮询进度，用户可以退出去干别的。"""
+    con = None
+    try:
+        _TOMD_GATE.acquire()
+        con = open_db()
+        r = con.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND deleted_at IS NULL",
+                        (fid, user_id)).fetchone()
+        if not r:
+            bg_set(con, tid, status="error", message="文件不存在")
+            return
+        path = os.path.join(_drive_dir(user_id), r["stored_name"] or "")
+        if not os.path.exists(path):
+            bg_set(con, tid, status="error", message="文件丢失")
+            return
+
+        last = [0.0]
+
+        def on_page(num):
+            # 进度写库要节流：一页写一次，一本 300 页的书就是 300 次提交，
+            # 光写库就比转换本身还慢。
+            now = time.time()
+            if now - last[0] < 1.5:
+                return
+            last[0] = now
+            bg_set(con, tid, progress=num, message="第 %d 页" % num)
+
+        out = tomd.convert(path, r["ext"] or "", name=r["name"] or "",
+                           ocr_limit=ocr_limit, on_page=on_page)
+        md, st = out["md"], out["stats"]
+        if not md.strip():
+            bg_set(con, tid, status="error",
+                   message="没读出文字。扫描件可以再转一次并打开文字识别")
+            return
+
+        parts = _tomd_split(md, BODY_MAX)
+        titles = _tomd_titles(r["name"] or "未命名", len(parts))
+        first_id = None
+        for title, body in zip(titles, parts):
+            oid = create_output(con, user_id, title, body, kind="md")
+            first_id = first_id or oid
+        note = "转好了 · %d 页 · %d 个标题" % (st["pages"], st["heads"])
+        if st["tables"]:
+            note += " · %d 张表" % st["tables"]
+        if len(parts) > 1:
+            note += " · 分成 %d 卷" % len(parts)
+        if st["note"]:
+            note += " · " + st["note"]
+        bg_set(con, tid, status="done", result_id=first_id, progress=st["pages"] or 1,
+               message=note, extra=json.dumps({"stats": st, "parts": len(parts)},
+                                              ensure_ascii=False))
+        con.execute("INSERT INTO notifications(user_id,kind,dkey,title,body,link) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (user_id, "aiout", "tomd:%d" % tid,
+                     "「%s」转好了" % (r["name"] or "文件"), note, "aiout"))
+        con.commit()
+    except Exception as e:
+        log.exception("转 Markdown 失败（任务 %s）", tid)
+        try:
+            if con:
+                bg_set(con, tid, status="error", message=str(e)[:200])
+        except Exception:
+            log.debug("写失败状态也失败了", exc_info=True)
+    finally:
+        _TOMD_GATE.release()
+        if con:
+            con.close()
+
+
+@bp.get("/api/drive/<int:fid>/tomd/probe")
+def drive_tomd_probe(fid):
+    """预检：这份文件转起来要多久、有多少页要识别。
+
+    前端拿它决定要不要问一句「扫描页超过 30 页，全部转吗」。所以这一步必须**快** ——
+    它是用户点完菜单就在等的一步（Office 因此不在这里转 PDF，见 tomd.probe）。
+    """
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "文件不存在"}), 404
+    ext = (r["ext"] or "").lower()
+    if ext not in tomd.SUPPORT_EXT:
+        return jsonify({"error": "这个格式还不能转成 Markdown"}), 415
+    path = os.path.join(_drive_dir(uid()), r["stored_name"] or "")
+    if not os.path.exists(path):
+        return jsonify({"error": "文件丢失"}), 404
+    d = tomd.probe(path, ext)
+    d["name"] = r["name"]
+    d["ocr_limit"] = tomd.OCR_DEFAULT_LIMIT
+    return jsonify(d)
+
+
+@bp.post("/api/drive/<int:fid>/tomd")
+def drive_tomd(fid):
+    """开一个转换任务。all_pages=1 表示用户看过提示、要求把扫描页全部识别。"""
+    data = request.get_json(silent=True) or {}
+    db = get_db()
+    r = db.execute("SELECT * FROM drive_files WHERE id=? AND owner_id=? AND is_dir=0 "
+                   "AND deleted_at IS NULL", (fid, uid())).fetchone()
+    if not r:
+        return jsonify({"error": "文件不存在"}), 404
+    ext = (r["ext"] or "").lower()
+    if ext not in tomd.SUPPORT_EXT:
+        return jsonify({"error": "这个格式还不能转成 Markdown"}), 415
+    ocr_limit = 0 if data.get("all_pages") else tomd.OCR_DEFAULT_LIMIT
+    tid = bg_new(db, "tomd", r["name"] or "未命名")
+    threading.Thread(target=_tomd_run, args=(tid, uid(), fid, ocr_limit), daemon=True).start()
+    return jsonify({"task_id": tid}), 201
+
+
+@bp.get("/api/drive/tomd/<int:tid>")
+def drive_tomd_task(tid):
+    t = get_db().execute("SELECT * FROM bg_tasks WHERE id=? AND user_id=? AND kind='tomd'",
+                         (tid, uid())).fetchone()
+    if not t:
+        return jsonify({"error": "未找到"}), 404
+    return jsonify(dict(t))
 
 
 # ---- 发送到聊天 ----

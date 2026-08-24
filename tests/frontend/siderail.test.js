@@ -157,9 +157,9 @@ test('真·全屏的两页（阅读器 / 文档编辑器）左栏才撤', (t) =>
 test('谁出现由断点决定，两个断点必须严丝合缝不留空档', () => {
   // JS 里不能用 IS_MOBILE 判——那是加载时算一次的常量，拖动窗口不会变，
   // 结果就是拖宽之后底栏还在、左栏不出来。
-  assert.ok(/@media\(min-width:761px\)\{[\s\S]{0,400}?\.tabbar\{display:none/.test(CSS),
+  assert.ok(/@media ?\(min-width:761px\)\{[\s\S]{0,400}?\.tabbar\{display:none/.test(CSS),
     '≥761 没把底部标签栏收掉');
-  assert.ok(/@media\(min-width:761px\)\{[\s\S]{0,600}?\.siderail\{position:fixed/.test(CSS),
+  assert.ok(/@media ?\(min-width:761px\)\{[\s\S]{0,600}?\.siderail\{position:fixed/.test(CSS),
     '≥761 没把左栏放出来');
   assert.ok(/\.siderail\{display:none;\}/.test(CSS), '默认（窄屏）没把左栏藏起来');
 });
@@ -183,7 +183,7 @@ test('顶栏只留「去处在别处没有」的东西', () => {
 });
 
 test('电脑上顶栏收掉品牌区，搜索相对**视口**居中', () => {
-  const m = CSS.match(/@media\(min-width:761px\)\{[^@]*?\.topbar \.brand-min\{display:none;\}[\s\S]*?\n\}/);
+  const m = CSS.match(/@media ?\(min-width:761px\)\{[^@]*?\.topbar \.brand-min\{display:none;\}[\s\S]*?\n\}/);
   assert.ok(m, '电脑上没收掉「公考助手」品牌区 —— 桌面版有窗口标题栏，当前页由面包屑交代');
   /* flex 里的 margin:0 auto 只能「在剩余空间里居中」：右边挂着倒计时和铃铛，
      两侧不等宽，搜索框就会偏。要相对视口居中必须脱离 flex 流。 */
@@ -227,7 +227,7 @@ test('宽屏只放宽「不是长文阅读」的页面，阅读类必须留在 7
   // 这条护的是一个判断，不是一个数字：时政/范文/素材那类是整篇读的，
   // 760px 一行 40 来个汉字正好；跟着屏幕拉到 1500 一行一百多字，
   // 眼睛来回甩，是**变难读**不是变好。全屏留白不该拿它们去填。
-  const m = CSS.match(/@media\(min-width:1500px\)\{[\s\S]*?\n\}/);
+  const m = CSS.match(/@media ?\(min-width:1500px\)\{[\s\S]*?\n\}/);
   assert.ok(m, '没有 ≥1500 的大屏断点');
   const wide = m[0];
   ['#view-chat', '#view-wrongq', '#view-realrun', '#view-tab'].forEach(v =>
@@ -245,7 +245,7 @@ test('正文型页面任何宽度都不放宽：整篇读的东西不能一行�
   assert.ok(rule, '成文/范文详情那批正文页没设 760px 行长上限');
   READ.forEach(v => assert.ok(rule[0].includes(v) || new RegExp(v + '[^{]*\\{[^}]*max-width:760px').test(CSS),
     `${v} 是整篇读的，却没限行长`));
-  const wide = CSS.match(/@media\(min-width:1500px\)\{[\s\S]*?\n\}/g) || [];
+  const wide = CSS.match(/@media ?\(min-width:1500px\)\{[\s\S]*?\n\}/g) || [];
   READ.forEach(v => wide.forEach(blk => assert.ok(!blk.includes(v),
     `${v} 被放进了宽屏放宽名单 —— 正文型永远不该跟着屏幕长`)));
 });

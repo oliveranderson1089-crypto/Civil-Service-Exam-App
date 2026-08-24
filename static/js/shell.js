@@ -24,7 +24,7 @@
    openYyErr, openYyLib */
 
 /* ---------------- 导航 ---------------- */
-const VIEWS = ['home', 'section', 'board', 'tab', 'allfeats', 'stars', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'bktree', 'bknode', 'bkcmp', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'exam', 'gaikuo', 'gongwen', 'yyerr', 'yylib', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'realq', 'realrun', 'realrec', 'realrecd', 'sqreal', 'sqrun', 'sqres', 'sqcheck', 'sqlocal', 'sqsub', 'sqwrite', 'sqdrill', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'aiout', 'aishare', 'fanwen', 'fanwend', 'drive', 'chat'];
+const VIEWS = ['home', 'section', 'board', 'tab', 'allfeats', 'stars', 'notes', 'kb', 'notebook', 'doc', 'materials', 'idiom', 'viewer', 'search', 'classics', 'cdetail', 'wrongq', 'wqadd', 'wqdetail', 'boardkb', 'bktree', 'bknode', 'bkcmp', 'bksweep', 'account', 'partydict', 'policydoc', 'policydocd', 'news', 'newsd', 'exam', 'gaikuo', 'gongwen', 'yyerr', 'yylib', 'sucai', 'review', 'changshi', 'csboard', 'works', 'workd', 'quiz', 'quizrun', 'tasks', 'changkao', 'ckboard', 'theory', 'thboard', 'shenlun', 'slpaper', 'sltype', 'slgrade', 'slresult', 'notify', 'essays', 'essayd', 'quizsets', 'docqa', 'docqad', 'planlog', 'dtest', 'drafts', 'write', 'writed', 'realq', 'realrun', 'realrec', 'realrecd', 'sqreal', 'sqrun', 'sqres', 'sqcheck', 'sqlocal', 'sqsub', 'sqwrite', 'sqdrill', 'drill', 'drillrun', 'drillrec', 'drillrecd', 'find', 'findrun', 'findrec', 'findrecd', 'findwrong', 'videos', 'aiout', 'aishare', 'fanwen', 'fanwend', 'drive', 'chat'];
 const TITLES = { home: '公考助手', section: '', board: '', tab: '', allfeats: '全部功能', stars: '收藏', notes: '小记', kb: '知识库', notebook: '', doc: '', materials: '资料库', drive: '云盘', idiom: '成语词语', viewer: '查看', search: '搜索', classics: '古诗文速查', cdetail: '', wrongq: '错题本', wqadd: '记录错题', wqdetail: '错题详情', boardkb: '基础知识点', bktree: '', bknode: '', bkcmp: '考点对照', account: '账户', partydict: '创新理论词典', policydoc: '时政要文库', policydocd: '', news: '每日时政', newsd: '', exam: '全国考情', gaikuo: '概括句积累', gongwen: '应用文上位词', yyerr: '应用文改错', yylib: '应用文素材库', sucai: '素材积累', review: '今日复习', changshi: '常识积累', csboard: '', works: '经典著作', workd: '', quiz: '题库', quizsets: '模拟卷', docqa: '题目解析', docqad: '', essays: '范文推荐', essayd: '', quizrun: '做题', tasks: '任务清单', changkao: '常考', ckboard: '', theory: '理论基础', thboard: '', shenlun: '真题批改', slpaper: '', sltype: '', slgrade: '', slresult: '批改结果', notify: '消息', planlog: '计划记录', dtest: '巩固测试', drafts: '草稿本', write: '成文', writed: '', realq: '历年真题', realrun: '', realrec: '做题记录', realrecd: '回看这一组', sqreal: '资中真题', sqrun: '', sqres: '成绩', sqcheck: '入库校对', sqlocal: '资中专项', sqsub: '主观题 40 分', sqwrite: '', sqdrill: '专项练', drill: '专项练', drillrun: '', drillrec: '做题记录', drillrecd: '', find: '小题训练', findrun: '', findrec: '做题记录', findrecd: '这次的批改', findwrong: '错题记录', videos: '每日新闻视频', aiout: 'AI 产出', aishare: '分享的对话' };
 function render() {
   const st = stack[stack.length - 1];
@@ -38,6 +38,9 @@ function render() {
   }
   // 当前是哪个视图，给 CSS 用：屏幕下方住着谁（小记的悬浮条…）只有它知道
   document.body.dataset.view = st.view;
+  /* 记住「万一整页被文件顶掉，回来该落在哪个会话」（见 chat.js 的 __chatResumeMark）。
+     下载/打开文件时浏览器可能把当前标签导航走，回来是重新加载，内存里的栈没了。 */
+  if (window.__chatResumeMark) window.__chatResumeMark(st.view);
   $('#top-title').textContent = st.title || TITLES[st.view] || '公考助手';
   renderCrumb(st);
   $('#nav-back').classList.toggle('hidden', stack.length <= 1);
@@ -48,6 +51,9 @@ function render() {
   if (window.Ink && Ink.on) Ink.close();                  // 切视图退出批注模式（笔迹已按页面存好）
   // 离开阅读页必须退出全屏，否则状态栏一直藏着
   if (st.view !== 'viewer' && document.body.classList.contains('viewer-full')) setViewerFull(false);
+  /* 同理：图片编辑是浮在最上面的一层，不是一个 view。用系统返回键/手势退出去时，
+     没人替它收场 —— 底下换了页，编辑器还盖在屏幕上，谁也点不掉。 */
+  if (st.view !== 'imgedit' && window.__ieHide) window.__ieHide();
   /* 兜底：body.pad-full 会让悬浮球 display:none。只要没有面板真的全屏开着，就把它摘掉——
      漏摘一次，悬浮球就一路消失到下次重开应用（返回键退全屏 AI 面板出过这个）。 */
   if (document.body.classList.contains('pad-full') && window.avoidFab) avoidFab();
@@ -139,6 +145,10 @@ window.appBack = function () {
   if (padEl && !padEl.classList.contains('hidden')) { padClose(); return true; }
   // 幻灯片播放优先退出
   if (!$('#slideshow').classList.contains('hidden')) { closeSlideshow(); return true; }
+  /* 看文件全屏时先退全屏，再退一级 —— 全屏下顶栏和查看器工具条都是隐藏的，
+     这一步要是不做，返回键就把人从「全屏读 PDF」一下子扔回上一页（还留着沉浸式状态栏）。
+     （原来这条判断长在查看器自己那个「‹ 返回」上，那个按钮已经撤了，见 index.html） */
+  if (document.body.classList.contains('viewer-full')) { setViewerFull(false); return true; }
   // 0) 任意底部弹层 / 锚定小菜单（小记新建、知识库 +、块菜单、插入面板；资料库⋮、AI 会话⋮、
   //    知识库节点⋮、AI 附件来源等锚定菜单）——要放在 AI 面板分支之前，否则 AI 会话⋮菜单/
   //    附件来源开着时按返回会被 aiBack() 当成"退出会话"处理掉，而不是先关掉这个小菜单
@@ -228,6 +238,8 @@ async function init() {
   $('#qz-entries').dataset.dragsort = 'qz';
   applyCardOrder($('#home-cards'));
   goHome();
+  // 上一趟是在某个会话里看/下文件时被顶掉的 → 回到那个会话，而不是把人扔回首页
+  try { if (window.__chatResume) window.__chatResume(); } catch (e) { console.warn('[聊天] 回到上次的会话没成功：', e); }
   refreshReviewBadge();
   refreshRealqBadge();
   refreshChatBadge();
@@ -256,6 +268,7 @@ function _dialog(o) {
     inp.classList.toggle('hidden', !o.input);
     if (o.input) { inp.value = o.val || ''; inp.placeholder = o.placeholder || ''; }
     $('#ad-ok').textContent = o.okText || '确定';
+    $('#ad-cancel').textContent = o.cancelText || '取消';
     $('#ad-ok').classList.toggle('danger', !!o.danger);
     const alt = $('#ad-alt');
     if (o.altText) { alt.hidden = false; alt.textContent = o.altText; alt.classList.toggle('danger', !!o.altDanger); }

@@ -78,6 +78,15 @@ div.composer @drop
 #mat-filter @contextmenu
 #mat-filter @click
 #mat-list @click
+#viewer-img @wheel
+#viewer-img @dblclick
+#viewer-img @mousedown
+window @mousemove
+window @mouseup
+#viewer-img @touchstart
+#viewer-img @touchmove
+#viewer-img @touchend
+#viewer-fit .onclick
 #viewer-play .onclick
 #ss-close .onclick
 #ss-prev .onclick
@@ -87,7 +96,6 @@ div.composer @drop
 document @keydown
 #slideshow @touchstart
 #slideshow @touchend
-#viewer-back .onclick
 #viewer-full .onclick
 #viewer-exit .onclick
 #viewer-ink .onclick
@@ -228,6 +236,7 @@ div.input-grip @pointercancel
 #wqd-wrap @click
 #bktree-wrap @click
 #bknode-wrap @click
+#bksweep-wrap @click
 #bkcmp-wrap @click
 #bkb-wrap @click
 #admin-btn .onclick
@@ -408,6 +417,7 @@ document @click
 #dv-share-list .onclick
 #dv-search @input
 #dv-sort .onclick
+#dv-bdl .onclick
 #dv-bcancel .onclick
 #dv-bdel .onclick
 #dv-move .onclick
@@ -417,6 +427,7 @@ document @click
 #view-drive @contextmenu
 document @click
 #dv-menu @click
+#dv-slim .onclick
 #dv-upfile @change
 #dv-upfolder @click
 #dv-upfolder @change
@@ -462,6 +473,8 @@ document @click
 #chat-info @change
 #chat-info @click
 #cr-info .onclick
+document @keydown
+#cr-msgs @pointerdown
 #cr-searchbtn .onclick
 #cr-atjump .onclick
 #cr-plus .onclick
@@ -596,3 +609,12 @@ document @keydown
 #st-chips @click
 #st-list @click
 #today-body @click
+#viewer-edit .onclick
+#ie-bar @click
+#ie-cropact @click
+#ie-size @input
+#ie-colors @click
+#ie-cv @pointerdown
+#ie-cv @pointermove
+#ie-cv @pointerup
+#ie-cv @pointercancel

@@ -21,7 +21,7 @@ const log = require('./log');
 const files = require('./files')({ log, js, toast, getWin: () => win });
 const shot = require('./shot')({ log, js, toast });
 
-const SHELL_VER = '6.2';          // 壳版本。⚠️ 与 Linux 壳（DESKTOP_VER）共用同一条数字线：
+const SHELL_VER = '6.3';          // 壳版本。⚠️ 与 Linux 壳（DESKTOP_VER）共用同一条数字线：
                                   // 网页里 parseFloat(DESKTOP_VER) >= x 的特性闸门是跨平台比的，
                                   // 从 1.0 起步会被当成老版本，功能被悄悄关掉。
 const TUNNEL = 'https://gk.gongkaopei2026.click';
@@ -469,6 +469,20 @@ ipcMain.on('gk', (e, raw) => {
     case 'sharefile':
       shareFile(d.url || '', d.name || '');
       break;
+    /* 用系统默认程序打开刚下好的那份文件（6.3 起，聊天卡片上的「打开」）。
+       只开真实存在的文件：网页传什么过来都不越过这一关。openPath 打不开时会返回
+       一句错误（不抛），那就退一步在资源管理器里选中它，人自己挑用什么打开。 */
+    case 'openfile': {
+      const fp = String(d.path || '');
+      if (!fp || !fs.existsSync(fp) || !fs.statSync(fp).isFile()) { toast('文件不在了'); break; }
+      shell.openPath(fp).then((err) => {
+        if (!err) return;
+        log.warn('gk', 'openfile 打不开：' + err);
+        toast('没有能打开它的程序，已在文件夹里选中');
+        shell.showItemInFolder(fp);
+      });
+      break;
+    }
     case 'batchdone':
       files.ackBatch();           // 网页把这一批收完了 → 放行下一批（背压）
       break;

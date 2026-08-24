@@ -50,6 +50,8 @@ function applyTheme() {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = dark ? '#0f141e' : '#1a6fb5';
   if (window.__padTheme) window.__padTheme();      // 草稿纸墨色跟着日/夜间翻转（钩子在脚本末尾才挂，早期调用自动跳过）
+  // 正在看的那份 PDF 也要跟着翻：pdf.js 在 iframe 里，只认它自己 html 上的 is-dark/is-light
+  if (window.__viewerTheme) window.__viewerTheme();
   /* 默认外观的天光底要跟着重算：它只在「日间 + 没开主题」时才上色，
      而这两件事都可能刚刚在上面几行里变了。放最后，等 .dark 定下来。 */
   if (window.dlTintApply) dlTintApply();

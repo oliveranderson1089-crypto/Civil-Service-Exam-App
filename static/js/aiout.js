@@ -9,7 +9,8 @@
  *
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  */
-/* global $, api, appConfirm, appPrompt, artEm, esc, libTouch, errMsg, mdToHtml, push, toast, uiError */
+/* global $, api, appConfirm, appPrompt, artEm, esc, libTouch, errMsg, lsGet, lsSet,
+   mdToHtml, push, toast, uiError */
 
 let aoItems = [], aoRetain = 30;
 
@@ -57,6 +58,17 @@ function aoPaint() {
     </div>`).join('');
 }
 
+/* 正文字号。产出里现在会出现整本书转来的长文档（云盘「转成 Markdown」），
+   一屏几十行的东西没法用固定字号读 —— 和阅读模式一样给 A− / A+，
+   范围也取同一档（13~28px）。标题在 CSS 里全是 em，调正文它们跟着缩放。 */
+let aoFont = +lsGet('ao:font') || 16;
+
+function aoApplyFont() {
+  const b = $('#ao-rb');
+  if (b) b.style.fontSize = aoFont + 'px';
+  lsSet('ao:font', aoFont);
+}
+
 async function aoView(it) {
   libTouch('aiout', it.id);
   const box = $('#ao-list');
@@ -64,9 +76,18 @@ async function aoView(it) {
     const d = await api('/api/aiout/' + it.id);
     box.innerHTML = `<div class="ao-read">
       <button class="ais-back" id="ao-back">‹ 回到产出列表</button>
-      <h2 class="ao-rt">${esc(d.title)}</h2>
-      <div class="ao-rb">${mdToHtml(d.body || '')}</div>
+      <div class="ao-rhead">
+        <h2 class="ao-rt">${esc(d.title)}</h2>
+        <span class="reader-tools">
+          <button id="ao-fmin" title="字小一点">A−</button>
+          <button id="ao-fplus" title="字大一点">A+</button>
+        </span>
+      </div>
+      <div class="ao-rb" id="ao-rb">${mdToHtml(d.body || '')}</div>
     </div>`;
+    aoApplyFont();
+    $('#ao-fmin').onclick = () => { aoFont = Math.max(13, aoFont - 1); aoApplyFont(); };
+    $('#ao-fplus').onclick = () => { aoFont = Math.min(28, aoFont + 1); aoApplyFont(); };
   } catch (e) { toast(errMsg(e), true); }
 }
 
