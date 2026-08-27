@@ -73,6 +73,10 @@ async function openAI(preset) {
   $('#ai-panel').classList.remove('hidden');
   aiDk.apply(false);
   aiSyncShell();
+  /* 面板一打开就问一次后端状态。**别只在 aiOpenChat 里调** —— 那条路只有「打开已有
+     会话」才走，而最常见的用法是进来直接问一句（aiNewChat）。漏了这一处的表现是：
+     🎯 精准识图按钮在电脑上**永远不出现**，因为它默认 hidden、等状态回来才露面。 */
+  aiLoadTierNote();
   /* 落点是输入框，不是列表：最高频的动作是「问一句」。列表随时能从 ☰ / 标题拉出来。
      （旧版打开先看到一张列表，要问一句得先点「＋ 新对话」——AD14） */
   if (!aiChatId || preset) await aiNewChat(preset ? null : aiProjectId);
@@ -1343,22 +1347,32 @@ function renderAiTier() {
 }
 let aiTierNoteAt = 0;
 async function aiLoadTierNote() {
-  const el = $('#ai-tiernote'); if (!el) return;
-  if (Date.now() - aiTierNoteAt < 60000 && el.textContent) return;   // 一分钟内不重复问
+  /* 这个函数兼两件事：填档位那行小字，**以及**把「精准识图配没配」取回来。
+     所以不能再像以前那样「没有 #ai-tiernote 就直接 return」——那行小字在手机端根本
+     不渲染，而按钮的显隐不该跟着它一起消失。 */
+  const el = $('#ai-tiernote');
+  if (Date.now() - aiTierNoteAt < 60000 && el && el.textContent) return;   // 一分钟内不重复问
   aiTierNoteAt = Date.now();
+  let d;
   try {
-    const d = await api('/api/ai/status');
-    if (!aiAlive()) return;
+    d = await api('/api/ai/status');
+  } catch (_) {
+    if (el) el.textContent = '';
+    return;
+  }
+  // 先落数据再碰 DOM：aiExactOk 是纯状态，不该被「界面还在不在」挡下来
+  aiExactOk = !!d.vision_exact;
+  if (!aiAlive()) return;
+  if (el) {
     el.textContent = (aiTier === 'pro' ? (d.model_pro || '') : (d.model || ''))
       + (d.today ? ' · 今日 ' + d.today + ' 次' : '');
-    aiExactOk = !!d.vision_exact;      // ➕ 面板那一格也看它（手机端没有工具行）
-    const ex = $('#ai-exact');
-    if (ex) ex.classList.toggle('hidden', !aiExactOk);
-    // 面板正开着的时候才补画（上面那次问是它触发的）；aiExactOk 这时已是 true，
-    // 重绘不会再触发一次询问，绕不成死循环。
-    const sh = $('#ai-sheet');
-    if (aiExactOk && sh && !sh.classList.contains('hidden')) aiSheetOpen();
-  } catch (_) { el.textContent = ''; }
+  }
+  const ex = $('#ai-exact');
+  if (ex) ex.classList.toggle('hidden', !aiExactOk);
+  // 面板正开着的时候才补画（上面那次问多半是它触发的）；aiExactOk 这时已是 true，
+  // 重绘不会再触发一次询问，绕不成死循环。
+  const sh = $('#ai-sheet');
+  if (aiExactOk && sh && !sh.classList.contains('hidden')) aiSheetOpen();
 }
 async function aiAskTier() {
   const r = await appConfirm('这段对话用哪个档位？\n\n快：日常问答，秒回\n深度：推理模型，复杂题目更稳，但要多等十几秒',

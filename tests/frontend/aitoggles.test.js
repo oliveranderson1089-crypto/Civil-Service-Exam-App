@@ -103,3 +103,46 @@ test('隐藏一格不能让后面的格子点错', (t) => {
     }))()`);
   assert.ok(ok, '先 filter 再 map 会让下标错位 —— 点「联网」结果跑去了「导出」');
 });
+
+
+/* ---- 按钮到底露不露面：这一条是真栽过的 ----
+ * 🎯 默认 hidden，等 /api/ai/status 回来才露面。而拉状态原先只挂在 aiOpenChat
+ * （打开**已有**会话）上 —— 最常见的用法却是进来直接问一句（aiNewChat）。
+ * 结果：电脑端那个按钮**永远不出现**，而代码、接口、配置全是对的。
+ */
+
+/* 打桩打在 harness 的 fetch 上（boot({fetch})），不是 window.api ——
+   `api` 是 app 自己作用域里的函数，往 window 上挂同名的覆盖不到它。 */
+const bootStatus = (visionExact) => boot({
+  fetch: (url) => (url.includes('/api/ai/status')
+    ? { json: { configured: true, model: 'm', model_pro: 'p', today: 0,
+                vision: true, vision_exact: visionExact } }
+    : {}),
+});
+
+test('打开面板就该把状态拉回来（不是只有打开旧会话才拉）', async (t) => {
+  const h = bootStatus('deepseek-v4-flash-vision-exp'); t.after(() => h.close());
+  h.run('aiTierNoteAt = 0; aiExactOk = false; $("#ai-exact").classList.add("hidden");');
+  await h.run('aiLoadTierNote()');
+  assert.strictEqual(h.run('aiExactOk'), true);
+  assert.strictEqual(h.run('$("#ai-exact").classList.contains("hidden")'), false,
+    '按钮还藏着 —— 电脑端就看不到精准识图，跟第一版一样');
+});
+
+test('没配那一档就继续藏着', async (t) => {
+  const h = bootStatus(''); t.after(() => h.close());
+  h.run('aiTierNoteAt = 0; aiExactOk = true;');
+  await h.run('aiLoadTierNote()');
+  assert.strictEqual(h.run('aiExactOk'), false);
+  assert.strictEqual(h.run('$("#ai-exact").classList.contains("hidden")'), true);
+});
+
+test('档位小字那行不在，也不该连累按钮显隐', async (t) => {
+  const h = bootStatus('x-vision'); t.after(() => h.close());
+  // 手机端那行小字根本不渲染。以前「没有它就直接 return」，按钮跟着一起消失。
+  h.run('const n = $("#ai-tiernote"); if (n) n.remove();');
+  h.run('aiTierNoteAt = 0; aiExactOk = false;');
+  await h.run('aiLoadTierNote()');
+  assert.strictEqual(h.run('aiExactOk'), true,
+    '按钮的显隐跟「那行小字在不在」是两回事');
+});
