@@ -6041,6 +6041,10 @@ body.mobile-ui .ai-acts{opacity:1;}
   border-radius:9px;display:inline-grid;place-items:center;cursor:pointer;font-size:15px;flex:none;
   -webkit-tap-highlight-color:transparent;}
 .ai-attbtn:hover{border-color:var(--blue);color:var(--blue);}
+/* 联网开着的时候必须一眼看得出来：这个开关会实实在在改变答案的来源（网上 vs 模型印象），
+   开没开、用户是要能确认的 —— 灰不溜秋地混在一排图标里等于没有这个按钮。 */
+.ai-attbtn.on{background:var(--blue-fill);border-color:var(--blue-fill);color:#fff;}
+.ai-attbtn.on:hover{color:#fff;}
 .ai-attbtn.rec{background:#c0392b;border-color:#c0392b;color:#fff;animation:airec 1.1s ease-in-out infinite;}
 @keyframes airec{50%{opacity:.55}}
 @media (prefers-reduced-motion:reduce){.ai-attbtn.rec{animation:none;}}
@@ -6122,6 +6126,10 @@ body.mobile-ui .ai-acts{opacity:1;}
 .ai-g4 em{font-style:normal;width:52px;height:52px;border-radius:15px;background:var(--ai-bg);
   border:1px solid var(--line);display:grid;place-items:center;font-size:22px;color:var(--text);}
 .ai-g4:active em{background:var(--ai-soft);}
+/* ➕ 面板里的**开关**格（联网 / 精准识图）：开着就得一眼看出来。
+   手机端没有工具行，这一格是它唯一的状态指示。 */
+.ai-g4.on{color:var(--blue);font-weight:650;}
+.ai-g4.on em{background:var(--blue-fill);color:#fff;}
 
 /* ---- 手机端：全屏对话（M1）---- */
 /* 手机屏太窄，停靠手柄和全屏按钮没有意义；**平板不在此列**（body.tablet-ui，见 core.js

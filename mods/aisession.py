@@ -15,7 +15,7 @@ import aiclient
 from core import AI_PROJ_DIR, CFG, get_db, log, open_db, uid
 from mods.agent import _ai_agentic_or_error, ai_chat_agentic_stream
 from mods.agent_tools import TOOL_REGISTRY, exec_tool, tool_label
-from mods.ai import vision_chat, vision_configured
+from mods.ai import vision_chat, vision_configured, vision_exact_configured
 from mods.aichat import _user_stats
 from mods.attach import ATT_OCR_PAGES, ai_img_path, extract_file, guess_ext
 from mods.files import _extract_text
@@ -582,6 +582,15 @@ def _tier(c):
         return "fast"
 
 
+def _web(data):
+    """这一轮用户有没有按下「联网」。
+
+    单独一个开关、而不是继续靠问句里的关键词猜：靠猜的那套（意图正则）漏一次，
+    用户看到的就是「我按了联网它还是在瞎编」—— 按钮存在的意义正是把这件事说死。
+    """
+    return bool((data or {}).get("web"))
+
+
 def _req_atts(data):
     """请求里带的附件：[{name,text}]，挡掉畸形和超大的。"""
     raw = data.get("attachments")
@@ -610,7 +619,12 @@ def _req_atts(data):
     return out
 
 
-def _vision_answer(atts, content):
+def _exact(data):
+    """这一轮用不用「精准」视觉档（DeepSeek）。跟 _web 一样是明示开关，不靠猜。"""
+    return bool((data or {}).get("exact"))
+
+
+def _vision_answer(atts, content, exact=False):
     """本轮带了图片 → 把**原图**交给视觉模型，而不是只拿抽出来的文字问。
 
     图形推理、资料分析的图表，文字抽取那一步就把版面和图形丢了 —— 行测两个大板块
@@ -632,7 +646,10 @@ def _vision_answer(atts, content):
               "试卷截图）：请先看清图本身（图形的形状、数量、位置、对称性；图表的坐标和数值），"
               "再作答。\n\n用户的问题：" + q + ("\n\n" + ocr if ocr else ""))
     try:
-        reply = vision_chat(prompt, paths[:3], prefer="pro", temperature=0.3, max_tokens=2000)
+        # exact=精准档（DeepSeek 视觉）：整页转写又快又准。默认仍是 pro——
+        # 认图形、认三色笔记的颜色是智谱旗舰更强，别为了快把默认换掉。
+        reply = vision_chat(prompt, paths[:3], prefer="exact" if exact else "pro",
+                            temperature=0.3, max_tokens=2000)
     except Exception as e:
         log.warning("视觉问答失败：%r", e)
         return None, (jsonify({"error": aiclient.error_message(e)}), 502)
@@ -651,14 +668,14 @@ def aichat_send(cid):
     if not c:
         return jsonify({"error": "会话不存在"}), 404
     # 带图的这一轮走视觉模型（看得见图形和图表，代价是这轮没有工具）
-    vreply, verr = _vision_answer(atts, content)
+    vreply, verr = _vision_answer(atts, content, exact=_exact(data))
     if verr:
         return verr
     if vreply:
         saved = _persist(db, cid, c, content, vreply, atts)
         return jsonify({"reply": vreply, "actions": [], "trace": [], **saved})
     reply, actions, trace, err = _ai_agentic_or_error(full, db, temperature=0.6, max_tokens=2000,
-                                                      tier=_tier(c))
+                                                      tier=_tier(c), web=_web(data))
     if err:
         return err
     saved = _persist(db, cid, c, content, reply, atts, trace=trace)
@@ -684,6 +701,10 @@ def aichat_stream(cid):
     _, c, full = _build(cid, content, atts)
     if not c:
         return jsonify({"error": "会话不存在"}), 404
+    # **在这里取**，不能等到 gen() 里：响应体是边算边发的，那时候视图早返回了，
+    # request 上下文已经拆掉，再去读 data 就是 RuntimeError。
+    web = _web(data)
+    exact = _exact(data)
 
     def sse(kind, obj):
         return "event: %s\ndata: %s\n\n" % (kind, json.dumps(obj, ensure_ascii=False))
@@ -702,7 +723,7 @@ def aichat_stream(cid):
             # 一个注释帧就够 —— 前端解帧时没有 data: 行会直接跳过，不影响任何逻辑。
             yield ": open\n\n"
             # 带图：走视觉模型。它不是流式的，所以一次性把整段推出去（前端照常收 done）
-            vreply, verr = _vision_answer(atts, content)
+            vreply, verr = _vision_answer(atts, content, exact=exact)
             if verr or vreply:
                 if verr:
                     yield sse("error", {"error": verr[0].get_json().get("error", "看图失败")})
@@ -713,7 +734,7 @@ def aichat_stream(cid):
                 saved = True
                 return
             for kind, p in ai_chat_agentic_stream(full, db, temperature=0.6, max_tokens=2000,
-                                                  tier=_tier(c)):
+                                                  tier=_tier(c), web=web):
                 if kind == "ping":
                     # 上游还活着、只是还没有字可发。转成注释帧：隧道和前端的空闲超时
                     # 都靠「有没有字节流动」判断，光靠正文的话，模型一想久就被判死。

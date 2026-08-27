@@ -774,10 +774,23 @@ const AI_SHEET_ITEMS = [
   { ic: '🧠', name: '记忆', go: () => openAiMemories() },
   { ic: '⚡', name: '档位', go: () => aiAskTier() },
   { ic: '📤', name: '导出', go: () => aiExport() },
+  /* 这两格是**开关**，不是「点了就执行」：所以点完不关面板（keep），
+     让格子当场亮起来。手机端整行工具栏是收起的（style.css 里
+     `body.mobile-ui .ai-input .input-tools{display:none}`），面板一关就再没有
+     第二处能看出「联网到底开没开」—— 只靠一闪而过的 toast 是不够的。 */
+  { ic: '🌐', name: '联网', keep: true, on: () => aiWeb, go: () => aiWebToggle() },
+  { ic: '🎯', name: '精准识图', keep: true, on: () => aiExact,
+    show: () => aiExactOk, go: () => aiExactToggle() },
 ];
 function aiSheetOpen() {
+  // 还不知道精准档配没配就顺手问一次（自带一分钟节流）。手机端没有工具行，
+  // ➕ 面板是这一格**唯一**的入口，状态没拿到就等于这个功能在手机上不存在。
+  if (!aiExactOk) aiLoadTierNote();
+  // 下标一律用**原始**下标：先 filter 再 map 的话，隐藏掉一格就会让后面所有格子点错
   $('#ai-sheet-grid').innerHTML = AI_SHEET_ITEMS.map((it, i) =>
-    `<button class="ai-g4" data-sh="${i}"><em>${artEm(it.ic)}</em>${esc(it.name)}</button>`).join('');
+    (it.show && !it.show()) ? '' :
+      `<button class="ai-g4${it.on && it.on() ? ' on' : ''}" data-sh="${i}">`
+      + `<em>${artEm(it.ic)}</em>${esc(it.name)}${it.on && it.on() ? ' ✓' : ''}</button>`).join('');
   $('#ai-sheet').classList.remove('hidden');
   $('#ai-panel').classList.add('sheet-on');
   $('#ai-plus').classList.add('on');      // ＋ 转 45° 变成 ✕：同一颗按钮既开又关
@@ -791,8 +804,10 @@ function aiSheetClose() {
 function aiSheetToggle() { if ($('#ai-sheet').classList.contains('hidden')) aiSheetOpen(); else aiSheetClose(); }
 $('#ai-sheet').addEventListener('click', e => {
   const b = e.target.closest('[data-sh]'); if (!b) return;
+  const it = AI_SHEET_ITEMS[+b.dataset.sh]; if (!it) return;
+  if (it.keep) { it.go(); aiSheetOpen(); return; }   // 开关：原地重绘，让人看见它亮了
   aiSheetClose();
-  const it = AI_SHEET_ITEMS[+b.dataset.sh]; if (it) it.go();
+  it.go();
 });
 
 /* 流式读一次对话。返回 {reply, title, actions}。
@@ -807,7 +822,7 @@ $('#ai-sheet').addEventListener('click', e => {
 let aiCtl = null, aiStopped = false;
 const CAN_STREAM = !!(window.fetch && window.TextDecoder && typeof ReadableStream !== 'undefined');
 const noStream = () => Object.assign(new Error('NO_STREAM'), { noStream: true });
-async function aiSendStream(content, atts) {
+async function aiSendStream(content, atts, web, exact) {
   let ctl = null, timer = 0;
   /* 空闲超时，不是总超时：任何一个字节（正文、推理段、心跳注释帧）都会把它重新上弦，
      所以「这么久一个字节都没有」才叫连接死了。模型写得再长也不会被误杀。
@@ -829,7 +844,7 @@ async function aiSendStream(content, atts) {
   try {
     r = await fetch('/api/aichat/chats/' + aiChatId + '/stream', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: content, attachments: atts || [] }), signal: ctl ? ctl.signal : undefined
+      body: JSON.stringify({ content: content, attachments: atts || [], web: !!web, exact: !!exact }), signal: ctl ? ctl.signal : undefined
     });
   } catch (e) { stopArm(); throw e; }
   if (r.status === 401) { stopArm(); location.href = '/login'; throw new Error('未登录'); }
@@ -907,19 +922,28 @@ async function aiSend() {
   aiStick().seen();              // 自己发的这条，一定要看得见（哪怕刚才翻在半山腰）
   $('#ai-text').value = ''; aiGrow(); aiSheetClose();
   aiBusy = true; aiStreamText = ''; aiPhase = ''; aiPaintReset(); renderAI();
+  // 这一轮用不用联网 / 精准识图，在**发出去之前**定死（异步路径读的是快照，
+  // 不是发送过程中可能被改动的全局值）。**开关不自动复位** —— 连着追问同一件事时，
+  // 每轮都要重新点是最烦人的地方。代价是「忘了关」，所以状态得摆在显眼处：
+  // 桌面端图标高亮、手机端 ➕ 面板那一格高亮，再加上输入框的 placeholder（见 aiHintPh）
+  // —— 手机端面板一关就没有别的地方能看出它还开着。
+  const useWeb = aiWeb;
+  const useExact = aiExact;
   const t0 = Date.now();
   try {
     let d = null;
     if (CAN_STREAM) {
-      try { d = await aiSendStream(shown, atts); }
+      try { d = await aiSendStream(shown, atts, useWeb, useExact); }
       catch (e) { if (!e.noStream) throw e; }   // 只有「这条路走不通」才退回，真错误照报
     }
     if (!d) {
       d = await api('/api/aichat/chats/' + aiChatId + '/send', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         // 非流式没有逐字心跳，只能靠总超时兜底：服务端自己封顶 100 秒
-        // （mods/agent.py AI_BUDGET），这里多给 30 秒。
-        body: JSON.stringify({ content: shown, attachments: atts }), timeoutMs: 130000
+        // （mods/agent.py AI_BUDGET），这里多给 30 秒。开了联网服务端的预算换成
+        // AI_WEB_BUDGET（220 秒），前端这份要一起放宽，否则搜完了却被自己这边掐断。
+        body: JSON.stringify({ content: shown, attachments: atts, web: useWeb, exact: useExact }),
+        timeoutMs: useWeb ? 260000 : 130000
       });
     }
     aiLastMs = Date.now() - t0;
@@ -1260,6 +1284,56 @@ async function aiAutoTitle() {
 }
 /* 档位：快 / 深度。深度走推理模型（aiclient 的 pro 档），慢但想得清楚。
    旁边那行小字说清「现在用的是哪个模型」（AD12）。 */
+/* 联网开关。**每问一次就自动关掉**：联网这一轮要多花几倍时间和钱，而用户按它
+   通常是为了某一个具体问题（「今年公告出了没」），不是从此以后每句话都上网。
+   忘了关比忘了开难受得多 —— 后者按一下就是，前者是每一句都慢半分钟还不知道为什么。 */
+// 原样从 DOM 取，不在这儿再抄一份 HTML 里的那句 —— 抄一份的下场是改了 index.html
+// 之后，开关一开一关就把 placeholder 换成了旧文案。
+const AI_PH = ($('#ai-text') || {}).placeholder || '问点什么…';
+/* 开关状态也写进 placeholder。**这不是装饰**：开关现在会一直开着，而手机端
+   ➕ 面板一关就没有别的地方能看出它还开着 —— 每句话默默多花十几秒去联网、
+   还查不出为什么，比忘了开难受得多。 */
+function aiHintPh() {
+  const el = $('#ai-text'); if (!el) return;
+  const on = [aiWeb ? '🌐 联网中' : '', aiExact ? '🎯 精准识图' : ''].filter(Boolean);
+  el.placeholder = on.length ? on.join(' · ') + '，问点什么…' : AI_PH;
+}
+
+let aiWeb = false;
+function renderAiWeb() {
+  aiHintPh();
+  const el = $('#ai-web'); if (!el) return;
+  el.classList.toggle('on', aiWeb);
+  el.title = aiWeb ? '联网已开：每一问都会先去网上真查一遍（再点一下关掉）'
+    : '联网：开启后每一问都先去网上真查一遍，答案带出处链接';
+}
+/* 开关逻辑只写一份：桌面端点图标、手机端点 ➕ 面板里的格子，走的是同一条。
+   两边各写一份的下场是「网页版改好了、手机上还是老样子」。 */
+function aiWebToggle() {
+  aiWeb = !aiWeb; renderAiWeb();
+  toast(aiWeb ? '联网已开：之后每一问都会先搜一遍（再点一下关掉）' : '已关闭联网');
+}
+if ($('#ai-web')) $('#ai-web').onclick = aiWebToggle;
+
+/* 「精准」识图档。跟联网那个开关同一套规矩：明示、一问一关。
+   只对**带图**的那一轮有意义（后端只有视觉那条路读它），没带图时点了也不会出错。
+   默认不开：整页转写它更快更准，但认三色笔记里哪句是红字还是智谱旗舰强，
+   所以这是「需要的时候按一下」，不是新的默认值。 */
+let aiExact = false;
+let aiExactOk = false;          // 这一档配没配（/api/ai/status 说了算）；没配就别摆出来
+function renderAiExact() {
+  aiHintPh();
+  const el = $('#ai-exact'); if (!el) return;
+  el.classList.toggle('on', aiExact);
+  el.title = aiExact ? '精准识图已开：发图片时用更强的识别（再点一下关掉）'
+    : '精准识图：发图片时用更强的识别（整页转写更快更准）';
+}
+function aiExactToggle() {
+  aiExact = !aiExact; renderAiExact();
+  toast(aiExact ? '精准识图已开：之后发的图都用它（再点一下关掉）' : '已关闭精准识图');
+}
+if ($('#ai-exact')) $('#ai-exact').onclick = aiExactToggle;
+
 let aiTier = 'fast';
 function renderAiTier() {
   const el = $('#ai-tier'); if (!el) return;
@@ -1277,6 +1351,13 @@ async function aiLoadTierNote() {
     if (!aiAlive()) return;
     el.textContent = (aiTier === 'pro' ? (d.model_pro || '') : (d.model || ''))
       + (d.today ? ' · 今日 ' + d.today + ' 次' : '');
+    aiExactOk = !!d.vision_exact;      // ➕ 面板那一格也看它（手机端没有工具行）
+    const ex = $('#ai-exact');
+    if (ex) ex.classList.toggle('hidden', !aiExactOk);
+    // 面板正开着的时候才补画（上面那次问是它触发的）；aiExactOk 这时已是 true，
+    // 重绘不会再触发一次询问，绕不成死循环。
+    const sh = $('#ai-sheet');
+    if (aiExactOk && sh && !sh.classList.contains('hidden')) aiSheetOpen();
   } catch (_) { el.textContent = ''; }
 }
 async function aiAskTier() {

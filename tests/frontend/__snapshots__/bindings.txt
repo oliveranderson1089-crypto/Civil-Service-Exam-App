@@ -200,6 +200,8 @@ div.input-grip @pointercancel
 #ai-msgs @click
 #ai-memsheet @click
 #aih-mem .onclick
+#ai-web .onclick
+#ai-exact .onclick
 #ai-tier @click
 #ai-voice .onclick
 #ai-mic2 .onclick

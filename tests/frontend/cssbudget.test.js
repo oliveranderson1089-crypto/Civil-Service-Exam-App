@@ -31,7 +31,15 @@ const CSS = fs.readFileSync(path.join(__dirname, '../../static/style.css'), 'utf
    评审当天的起点是：hex 670 / 字号 43 / 圆角 26 / 阴影 129 / z-index 41 /
    断点 15 / !important 322 —— 那一版还没剥注释，口径略松。 */
 const BUDGET = {
-  hexUnique: 666,      // 不重复的十六进制颜色（手写板三层底改成透明后少了两个实心底色）
+  /* 2026-08-27：666 → 670。全局搜索新增「云盘」这一类结果（提交 5ac5841），
+     跟着来了一组专属配色 —— 明 `#e8eaf6/#3949ab`、暗 `#1b2036/#9aa6e0`。
+     为什么不压回去：`.sr-type.*` 这一片是「颜色即类型」的色板，15 类各有各的色，
+     而云盘、时政、小记是会同屏出现的；把 drive 并到 news 或 partydict 的色上
+     确实能省 4 个值，但那等于让新类型失去颜色身份 —— 省的是数字，赔的是功能。
+     也别指望 token 化能降这个数：搬进 :root 之后 `--chip-drive-bg:#e8eaf6`
+     仍然是一个写死值，这里数的是**唯一 hex 字面量**，搬家不改变计数。
+     棘轮照常往前：这次是「新增一类信息类型」才放行的，日常改样式仍然只减不增。 */
+  hexUnique: 670,      // 不重复的十六进制颜色（手写板三层底改成透明后少了两个实心底色）
   fontSizes: 42,       // 不重复的 font-size:Npx
   radii: 28,           // 不重复的 border-radius:Npx
   shadows: 129,        // 不重复的 box-shadow 值

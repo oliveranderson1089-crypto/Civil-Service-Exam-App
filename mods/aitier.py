@@ -24,6 +24,7 @@ tests/test_aitier.py 守着「代码里写了 tier="pro" 的模块，名册必�
 from flask import Blueprint, jsonify, request
 
 import aiclient
+from mods.ai import _vision_conf, vision_exact_configured
 from core import CFG, _save_cfg, get_db
 
 bp = Blueprint("aitier", __name__)
@@ -173,7 +174,11 @@ def tiers_get():
         "models": {"fast": aiclient.conf("fast", CFG, who="")["model"],
                    "pro": aiclient.conf("pro", CFG, who="")["model"],
                    "vision_free": CFG.get("vision_model_free") or "",
-                   "vision_pro": CFG.get("vision_model") or ""},
+                   "vision_pro": CFG.get("vision_model") or "",
+                   # 「精准」档是**另一家**（DeepSeek 视觉），没配就给空串 ——
+                   # 前端据此决定要不要摆出第三个按钮，摆了却设不了比没有更糟。
+                   "vision_exact": (_vision_conf()["lanes"]["exact"]["model"]
+                                    if vision_exact_configured() else "")},
         "vision_configured": bool(CFG.get("vision_key") and CFG.get("vision_base")),
         "global": {k: ovs[k].get("*", "") for k in KINDS},
         "groups": [

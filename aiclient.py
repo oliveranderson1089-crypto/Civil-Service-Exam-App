@@ -145,11 +145,19 @@ def effective_tier(tier="fast", cfg=None, who=None):
 # ---------------------------------------------------------------- 视觉模型的同款旋钮
 # 读图走的是另一家（智谱，配置在 vision_* 那几个键），但「成本旋钮」的道理一样，
 # 所以键的形状、优先级、清除方式都跟上面一致，后台一页管两家。
-#   free —— 免费的 flash 档优先，读图/OCR 够用（vision_chat 会在它失败时自己退到旗舰）
-#   pro  —— 直接上旗舰，图形推理这类硬任务用
-# 真实模型名不在这儿：视觉那两个名字住在 mods/ai.py 的 _vision_conf，这里只管档位。
+#   free  —— 免费的 flash 档优先，读图/OCR 够用（vision_chat 会在它失败时自己退到旗舰）
+#   pro   —— 直接上旗舰，图形推理这类硬任务用
+#   exact —— 「精准」：换另一家（DeepSeek 视觉）。整页转写又快又准，token 还省一半；
+#            认三色笔记的颜色不如智谱旗舰，所以是**多一档**，不是取代 pro。
+# 真实模型名不在这儿：视觉那几个名字住在 mods/ai.py 的 _vision_conf，这里只管档位。
 VISION_KEY = "ai_vision_tiers"
-VISION_TIERS = ("free", "pro")
+VISION_TIERS = ("free", "pro", "exact")
+
+# exact 那一档的兜底模型名。**真实模型名只准住在本文件**（见 Test全局约束），
+# 所以它放这儿而不是 mods/ai.py —— 智谱那两个名字不受这条约束管（不是 deepseek 家的），
+# 但既然这儿已经是模型名的家，DeepSeek 视觉这个名字也只该有这一份。
+# 配置里的 vision_exact_model 优先；这里只是没配时的落点。
+VISION_EXACT_MODEL = "deepseek-v4-flash-vision-exp"
 
 
 def effective_vision(prefer="free", cfg=None, who=None):

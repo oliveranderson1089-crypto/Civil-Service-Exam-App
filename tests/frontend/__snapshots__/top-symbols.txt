@@ -2,6 +2,7 @@ $
 AE
 AI_FOLDER
 AI_LINE
+AI_PH
 AI_PX
 AI_SHEET_ITEMS
 AI_TOOL_GROUPS
@@ -276,9 +277,13 @@ aiDayGroup
 aiDk
 aiDoneHtml
 aiDoneLen
+aiExact
+aiExactOk
+aiExactToggle
 aiExport
 aiGrow
 aiHandleAttach
+aiHintPh
 aiHomeNavItems
 aiHomeQ
 aiHomeTimer
@@ -348,6 +353,8 @@ aiVoicePaint
 aiVoiceToggle
 aiVoiceWait
 aiWaitHtml
+aiWeb
+aiWebToggle
 anchorMenu
 annAnchorAt
 annCtx
@@ -1350,9 +1357,11 @@ render
 renderAI
 renderAiAtts
 renderAiCtx
+renderAiExact
 renderAiList
 renderAiTier
 renderAiTools
+renderAiWeb
 renderBkTree
 renderBkb
 renderCDetail

@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 
 import aiclient
 from core import CFG, _save_cfg, _study_stats, get_db, uid
-from mods.ai import _ai_call_or_error, _ai_conf, ai_configured, vision_configured
+from mods.ai import _ai_call_or_error, _ai_conf, ai_configured, vision_configured, vision_exact_configured
 
 bp = Blueprint("aichat", __name__)
 
@@ -27,7 +27,10 @@ def ai_status():
         today = 0
     return jsonify({"configured": ai_configured(), "model": _ai_conf()["model"],
                     "model_pro": aiclient.conf("pro", CFG, who="").get("model", ""),
-                    "today": today, "vision": vision_configured()})
+                    "today": today, "vision": vision_configured(),
+                    # 「精准」视觉档（另一家：DeepSeek 视觉）配没配。前端据此决定要不要把
+                    # 那个开关摆出来 —— 摆出来却点了没反应，比没有这个开关更糟。
+                    "vision_exact": vision_exact_configured()})
 
 
 def _user_stats():

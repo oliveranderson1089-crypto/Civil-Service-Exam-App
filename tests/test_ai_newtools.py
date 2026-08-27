@@ -139,10 +139,9 @@ def test_读网页会剥标签并在截断时留痕(ctx, monkeypatch):
     assert "某公告" in msg and "只是开头一部分" in msg
 
 
-def test_剥标签是真的能用():
+def test_剥标签是真的能用(monkeypatch):
     html = ("<html><head><title>测试页</title></head><body><script>var a=1</script>"
             "<p>第一段</p><p>第二段&amp;结尾</p></body></html>")
-    import urllib.request
 
     class R:
         headers = {"Content-Type": "text/html; charset=utf-8"}
@@ -156,11 +155,11 @@ def test_剥标签是真的能用():
         def __exit__(self, *a):
             return False
 
-    urllib.request.urlopen, orig = (lambda req, timeout=0: R()), urllib.request.urlopen
-    try:
-        title, body, cut = websearch.fetch("https://example.com")
-    finally:
-        urllib.request.urlopen = orig
+    # 打在 `_DIRECT.open` 上，不是 `urllib.request.urlopen`：搜索这一路现在自己建
+    # opener（服务单元的 `NO_PROXY=*` 会让 urlopen 那条把显式代理静默绕过，
+    # 见 tests/test_websearch_proxy.py）。打错地方的话，这里会去真的连外网。
+    monkeypatch.setattr(websearch._DIRECT, "open", lambda req, timeout=None: R())
+    title, body, cut = websearch.fetch("https://example.com")
     assert title == "测试页"
     assert "第一段" in body and "第二段&结尾" in body
     assert "var a=1" not in body, "script 里的东西不该当正文喂给模型"

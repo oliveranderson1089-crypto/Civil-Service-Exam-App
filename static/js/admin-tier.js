@@ -8,11 +8,33 @@ let TR_WIN = '30d';
 let TR_DATA = null;
 const TR_SEL = new Set();
 
-/* 两家的档位名与说法。cheap/rich 是位置，fast/free 是名字——批量按钮说的是位置。 */
+/* 两家的档位名与说法。cheap/rich 是位置，fast/free 是名字——批量按钮说的是位置。
+
+   读图还有第三档 `exact`（「精准档」，见 extra）：它**不在 cheap↔rich 这条贵贱轴上**，
+   而是换另一家（DeepSeek 视觉）。所以批量按钮不碰它，降档保护也不管它——
+   设成精准既不是省钱也不是升级，是换一条路。没配那一家时整个按钮不出现。 */
 const TR_KIND = {
   text: { cheap: 'fast', rich: 'pro', cheapName: '快速档', richName: '旗舰档', what: '文字' },
-  vision: { cheap: 'free', rich: 'pro', cheapName: '免费档', richName: '旗舰档', what: '读图' },
+  vision: { cheap: 'free', rich: 'pro', cheapName: '免费档', richName: '旗舰档', what: '读图',
+            extra: [{ v: 'exact', name: '精准档', need: 'vision_exact' }] },
 };
+
+/* 这一档现在摆不摆得出来：`need` 指向 models 里的那个模型名，空的就是没配。
+   摆出一个点了设不了的按钮，比没有这个按钮更糟。 */
+function trExtra(kind) {
+  const k = TR_KIND[kind];
+  if (!k.extra || !TR_DATA) return [];
+  return k.extra.filter(e => !e.need || (TR_DATA.models || {})[e.need]);
+}
+
+/* 档位名 → 人话。exact 不在 cheap/rich 两分里，得单独查一遍，
+   否则它会被当成 cheapName 显示成「免费档」——那是**说反了**。 */
+function trName(kind, tier) {
+  const k = TR_KIND[kind];
+  if (tier === k.rich) return k.richName;
+  const e = (k.extra || []).find(x => x.v === tier);
+  return e ? e.name : k.cheapName;
+}
 
 function trNum(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
@@ -25,13 +47,13 @@ function trSeg(kind, key, cur) {
   const k = TR_KIND[kind];
   const b = (v, txt) => `<button data-v="${v}" class="${cur === v ? 'on' : ''}">${txt}</button>`;
   return `<span class="seg mini tr-set" data-kind="${kind}" data-key="${esc(key)}">
-      ${b('', '跟随默认')}${b(k.cheap, k.cheapName)}${b(k.rich, k.richName)}</span>`;
+      ${b('', '跟随默认')}${b(k.cheap, k.cheapName)}${b(k.rich, k.richName)}`
+    + trExtra(kind).map(e => b(e.v, e.name)).join('') + '</span>';
 }
 
 /* 「现在实际走哪档」。跟代码默认一致时是绿的，被改过是红的——一眼看出哪些是人为动过的。 */
 function trCur(kind, row) {
-  const k = TR_KIND[kind];
-  const name = row.effective === k.rich ? k.richName : k.cheapName;
+  const name = trName(kind, row.effective);
   const same = row.effective === row.tier;
   return `<div class="tr-cur${same ? ' same' : ''}">当前生效：<b>${name}</b>${same ? '（代码默认）' : ''}</div>`;
 }
@@ -62,7 +84,7 @@ function trRow(s, max) {
     : '<span style="font-size:12px;color:#5f6875;">下面分别设 ↓</span>'}</div>`;
   const subs = single ? '' : rows.map(({ kind, r }) => {
     const k = TR_KIND[kind];
-    const def = r.tier === k.rich ? k.richName : k.cheapName;
+    const def = trName(kind, r.tier);   // r.tier 是代码默认档，眼下只会是 free/pro；走 trName 是为了以后加档不漏
     return `<div class="sub">
         <div>· ${k.what}${rows.filter(x => x.kind === kind).length > 1 ? '（默认' + def + '那部分）' : ''}
           <span class="tr-tag ${r.tier === k.rich ? 'rich' : 'cheap'}">默认${def}</span>
@@ -78,6 +100,7 @@ function trRender() {
   $('#tr-models').innerHTML = `文字 · 快速 <b>${esc(d.models.fast)}</b>｜旗舰 <b>${esc(d.models.pro)}</b>`
     + (d.vision_configured
       ? `<br>读图 · 免费 <b>${esc(d.models.vision_free || '未填')}</b>｜旗舰 <b>${esc(d.models.vision_pro || '未填')}</b>`
+        + (d.models.vision_exact ? `｜精准 <b>${esc(d.models.vision_exact)}</b>` : '')
       : '<br>读图 · <span style="color:#98a1b0;">未配置视觉模型</span>');
 
   $('#tr-global').innerHTML = `

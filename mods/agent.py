@@ -5,6 +5,7 @@
 记成一个 action 交回前端执行。这样 AI 说「已加入」就是真的加了。
 """
 import json
+import re
 import time
 from datetime import datetime
 
@@ -33,6 +34,71 @@ AI_RETRIES = 2
 # 一次对话的总预算。工具循环最多 5 次调用，不封顶的话最坏叠成十分钟：
 # 手机端早在 Cloudflare 隧道的 100 秒上限处就 524 断了，服务端还在空转占线程。
 AI_BUDGET = 100
+# 用户手动按了「联网」时的预算：搜一次不够就得再搜、还要把正文读回来，
+# 三四次网络往返打底，拿聊天那份 100 秒去套，必然在收尾前就被自己的预算掐断。
+AI_WEB_BUDGET = 220
+
+WEB_TOOLS = ("web_search", "web_fetch")
+
+# 按下「联网」意味着**这一轮必须真的去搜**。不把话说死的话，模型会觉得
+# 「我知道啊」然后凭印象答 —— 那正是联网按钮最没用的一种失败：用户以为查过了。
+WEB_ON_PROMPT = (
+    "【用户已开启联网】这一轮**必须先调用 web_search 真的去搜**，再根据搜到的内容回答。\n"
+    "· 摘要不足以下结论时，用 web_fetch 把正文读回来再答（尤其是公告、政策原文这类）。\n"
+    "· 回答里**必须注明出处**：写清哪几条来自网络，附标题和链接。\n"
+    "· 搜不到就直说搜不到，**绝对不许拿你自己的印象冒充搜索结果** —— 用户按这个按钮，"
+    "要的就是「真去查过」，编一个看起来对的答案比说搜不到糟得多。")
+
+# DeepSeek 在「它还想调工具、但这一轮没给它 tools」时，会把工具调用**当正文吐出来**：
+# 屏幕上是一串 <｜｜DSML｜｜tool_calls>…，真正的答案没了。这就是「联网搜索用不了」的
+# 真相 —— 搜是搜到了（trace 里几条 web_search 都有结果），最后那句话被这堆标记顶掉。
+# 治本是收尾轮那条硬指令（见下面 ai_chat_agentic_stream 末尾）；这里是兜底。
+_TOOL_MARK = re.compile(r"<[｜|]{1,2}\s*(DSML|tool[_▁\s]?calls?|function[_▁\s]?calls?)", re.I)
+
+
+def _cut_markup(text):
+    """从第一个工具调用标记处截断。返回 (可见正文, 是否截到了)。"""
+    m = _TOOL_MARK.search(text or "")
+    return (text[:m.start()], True) if m else (text, False)
+
+
+def _collect_hits(bag, result):
+    """把 web_search 这一次的命中攒起来（**趁结果还完整**）。
+
+    不从 trace 里取：那份 result 只留 400 字给界面回放，JSON 早断了，解析必然失败——
+    兜底会「看起来接了、其实永远是空的」，这是最难发现的一类坏法。
+    """
+    try:
+        hits = json.loads(result or "")
+    except Exception:
+        return                             # 「没搜着」那类是人话不是 JSON，跳过
+    if not isinstance(hits, list):
+        return
+    for h in hits:
+        if isinstance(h, dict) and h.get("url"):
+            bag.append(h)
+
+
+def _fallback_from_hits(hits):
+    """收尾那一轮一个字都没说出来时，拿查到的东西自己交代。
+
+    这一步不是锦上添花：模型在收尾轮**还想调工具**的时候（找不到直达链接就反复换词搜
+    是常态），正文会被上面那道闸整段挡掉 —— 用户屏幕上就只剩几句「我再查一下」，
+    而那几条搜索结果明明是真查到的。宁可给一份朴素的清单，也不能让人对着半句话收场。
+    """
+    seen, lines = set(), []
+    for h in hits or []:
+        u = h.get("url") or ""
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        lines.append("· [%s](%s)%s" % ((h.get("title") or u)[:80], u,
+                                       "\n  " + h["snippet"][:120] if h.get("snippet") else ""))
+    if not lines:
+        return ""
+    return ("\n\n**这一轮查到的来源（我没能把话说完，先把出处给你）：**\n"
+            + "\n".join(lines[:8])
+            + "\n\n以上是搜索直接给回的结果，链接可以点开核对。")
 
 
 def _ai_stream(messages, tools=None, temperature=0.4, max_tokens=1600, deadline=None, tier="fast"):
@@ -528,24 +594,47 @@ def _t_delete_note(args, db):
 
 
 def _round(msgs, tools, temperature, max_tokens, deadline, parts, tier="fast"):
-    """跑一次调用：正文边出边往外吐，攒进 parts，返回完整 message（可能含 tool_calls）。"""
-    m = {}
+    """跑一次调用：正文边出边往外吐，攒进 parts，返回完整 message（可能含 tool_calls）。
+
+    正文这一路带一道闸：模型一旦开始吐工具调用标记（见 _TOOL_MARK），后面就全是标记了，
+    从那里起一个字都不再往前端推。**必须在流式这一层挡** —— 等攒完再洗，用户早就
+    看见那堆乱码了。标记可能被切在两片之间，所以尾部的 `<` 先扣住不发，下一片再判。
+    """
+    m, buf, open_gate = {}, "", True
     for kind, p in _ai_stream(msgs, tools=tools, temperature=temperature,
                               max_tokens=max_tokens, deadline=deadline, tier=tier):
         if kind == "content":
-            parts.append(p)
-            yield "delta", p
+            if not open_gate:
+                continue
+            buf += p
+            vis, cut = _cut_markup(buf)
+            if cut:
+                open_gate = False
+            else:
+                # 尾巴上可能是半个标记（`<｜` 被切在两片之间），扣住等下一片
+                i = vis.rfind("<")
+                if i >= 0 and len(vis) - i <= 24:
+                    vis = vis[:i]
+            buf = buf[len(vis):] if open_gate else ""
+            if vis:
+                parts.append(vis)
+                yield "delta", vis
         elif kind == "reasoning":
             yield "reasoning", p        # 前端拿它把「思考中…」变成真的在动
         elif kind == "ping":
             yield "ping", ""            # 上游心跳：一路转到浏览器，别让隧道把连接掐了
         elif kind == "done":
             m = p
+    if open_gate and buf:
+        vis, _ = _cut_markup(buf)          # 扣住的尾巴：确认不是标记就补发
+        if vis:
+            parts.append(vis)
+            yield "delta", vis
     return m
 
 
 def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_tokens=2000,
-                           budget=AI_BUDGET, tier="fast"):
+                           budget=AI_BUDGET, tier="fast", web=False):
     """带工具调用的对话循环，流式版。产出 (kind, payload)：
 
         ("reasoning", 片段)          模型在想（还没开始写正文）
@@ -561,12 +650,24 @@ def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_toke
     """
     msgs = list(messages)
     actions, parts, trace = [], [], []
+    hits = []                       # web_search 的完整命中，只给下面的兜底用
     # 按最后一句用户消息的意图挑工具（命中不了主题就全给，见 tool_specs_for）
     last_user = next((m.get("content") or "" for m in reversed(messages)
                       if m.get("role") == "user"), "")
     # 项目对话再并上项目资料那两个工具：挂在项目上的资料，这个项目下的每一轮都该够得着，
     # 不管用户这句话里有没有出现「资料」两个字（见 PROJECT_TOOLS）。
-    specs = tool_specs_for(last_user, always=PROJECT_TOOLS if cur_project() else ())
+    keep = (PROJECT_TOOLS if cur_project() else ())
+    if web:
+        # 用户按了「联网」：这两个工具**必须在手上**。意图那道正则本来也会放它们过，
+        # 但按钮是明示的意图，不能再交给关键词去猜——一次没命中就等于按钮没接线。
+        keep = tuple(keep) + WEB_TOOLS
+    specs = tool_specs_for(last_user, always=keep)
+    if web:
+        # 指令放在最后一条：离用户那句话越近，模型越不容易把它当耳边风。
+        msgs.append({"role": "system", "content": WEB_ON_PROMPT})
+        # 搜 → 读正文 → 可能再搜，四轮打不住；预算也得跟着放宽（见 AI_WEB_BUDGET）
+        max_rounds = max(max_rounds, 6)
+        budget = max(budget, AI_WEB_BUDGET)
     deadline = time.time() + budget
     truncated = True                # 只有「模型自己说完了」那条路会把它改回 False
     try:
@@ -591,6 +692,8 @@ def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_toke
                 # 不再把查询和删除一律说成「正在操作…」
                 yield "tool", {"name": fn.get("name") or "", "label": tool_label(fn.get("name"))}
                 result, action = exec_tool(fn.get("name"), a, db)
+                if fn.get("name") == "web_search":
+                    _collect_hits(hits, result)
                 if action:
                     actions.append(action)
                     if action.get("type") == "confirm":
@@ -606,10 +709,24 @@ def ai_chat_agentic_stream(messages, db, max_rounds=4, temperature=0.5, max_toke
                 # 别在同一轮里自己补个 _confirmed 就把东西删了——确认必须跨一次用户回合。
                 truncated = False   # 这是「等你确认」，不是「没干完」，别给用户弹「继续」
                 break
-        # 轮数（或预算）用完还在调工具：再要一次纯文本收尾
+        # 轮数（或预算）用完还在调工具：再要一次纯文本收尾。
+        # **必须明说「不许再调工具」**：光是不给 tools 不够——它照旧想调，然后把工具调用
+        # 当正文吐出来（<｜｜DSML｜｜tool_calls>…），用户屏幕上只剩一堆标记，答案没了。
         if parts and not parts[-1].endswith("\n"):
             parts.append("\n\n")
+        msgs.append({"role": "system", "content":
+                     "工具到此为止，**这一轮不要再调用任何工具、也不要写任何工具调用**。"
+                     "就用上面已经查到的内容把话说完：给结论，并注明出处（标题 + 链接）。"
+                     "信息不够就明说还缺什么、建议用户去哪儿看，不要编。"})
+        before = len(parts)
         yield from _round(msgs, None, temperature, max_tokens, deadline, parts, tier)
+        if len("".join(parts[before:]).strip()) < 20:
+            # 收尾这一轮几乎什么也没说出来 —— 多半是它还在写工具调用，被上面那道闸挡下了。
+            # 把查到的东西自己交代出去，别让用户对着一串「我再查一下」收场。
+            tail = _fallback_from_hits(hits)
+            if tail:
+                parts.append(tail)
+                yield "delta", tail
         # truncated=True 表示「轮数/预算用完了它还在调工具」——活没干完，只是被迫收尾。
         # 前端据此给一个「继续」按钮，而不是让用户对着半截总结干瞪眼。
         yield "done", {"reply": "".join(parts).strip(), "actions": actions,
