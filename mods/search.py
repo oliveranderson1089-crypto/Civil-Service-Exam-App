@@ -17,8 +17,13 @@ from core import UPLOADS, get_db, log, uid
 from mods.annots import _ann_sentence, _ann_where
 from mods.files import INLINE_EXT, OFFICE_EXT, TEXT_EXT
 from mods.notes import _jl
+from mods.social import _drive_dir, _viewable
 
 bp = Blueprint("search", __name__)
+
+DV_TEXT_EXT = sorted(TEXT_EXT | {".html", ".htm", ".log"})   # 云盘里能读进来搜内容的
+DV_TEXT_BYTES = 512 * 1024   # 每份只读开头这么多：云盘的东西动辄几十 MB，全读会把搜索拖死
+DV_SCAN_MAX = 60             # 一次搜索最多翻几份文本文件的内容（按新到旧）
 
 FUZZY_MAX = 24          # 模糊轮最多回多少条，多了全是噪声
 TERM_MAX = 24           # 最多切多少个词：一次 SQL 的绑定参数＝词数×列数×2，
@@ -111,6 +116,38 @@ def _block_text(b):
     return t
 
 
+def _read_head(path):
+    """读文件开头。读不到（文件没了/权限/二进制）就当空，搜索不该为一份坏文件整个报错。"""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as fp:
+            return fp.read(DV_TEXT_BYTES)
+    except Exception:
+        return ""
+
+
+def _fsize(n):
+    n = n or 0
+    for u in ("B", "KB", "MB", "GB"):
+        if n < 1024 or u == "GB":
+            return ("%d %s" if u == "B" or n >= 100 else "%.1f %s") % (n, u)
+        n /= 1024.0
+
+
+def _dv_item(r, snip):
+    """一条云盘结果。folder 是所在目录的路径串，前端靠它先落到那一层再开文件。"""
+    folder = r["folder"] or ""
+    return {"type": "drive", "id": r["id"], "title": r["name"] or "（未命名）",
+            "folder": folder, "is_dir": bool(r["is_dir"]),
+            "path": (folder + "/" + (r["name"] or "")) if folder else (r["name"] or ""),
+            "ext": r["ext"] or "",
+            "viewable": (not r["is_dir"]) and _viewable(r["ext"]),
+            "board": " · ".join(x for x in [
+                "云盘" + ("（聊天文件）" if r["source"] == "chat" else ""),
+                folder,
+                "文件夹" if r["is_dir"] else _fsize(r["size"])] if x),
+            "snippet": snip}
+
+
 def _collect(db, m):
     """按一种匹配口径跑一遍全库。精确轮和模糊轮共用，差别只在 m 里。"""
     results = []
@@ -148,6 +185,26 @@ def _collect(db, m):
              "viewable": (r["ext"] in INLINE_EXT) or (r["ext"] in OFFICE_EXT) or (r["ext"] in TEXT_EXT),
              "board": r["board"] or "",
              "snippet": _snippet(body, m) if s_body else ""})
+    # 云盘：先按文件名/所在目录搜，再把文本类的小文件读进来搜内容
+    # （「记得存过、就是想不起来叫什么」正是要靠内容捞回来的那一半）
+    dv_dir = _drive_dir(uid())
+    dv_seen = set()
+    w, p = m.clause(["name", "folder"], where="owner_id=? AND deleted_at IS NULL",
+                    params=(uid(),), order="is_dir DESC, id DESC", limit=15)
+    for r in db.execute("SELECT id,name,folder,ext,size,is_dir,source FROM drive_files" + w, p):
+        dv_seen.add(r["id"])
+        add(m.score(r["name"] or "", r["folder"] or ""), _dv_item(r, ""))
+    sql = ("SELECT id,name,folder,ext,size,is_dir,source,stored_name FROM drive_files "
+           "WHERE owner_id=? AND deleted_at IS NULL AND is_dir=0 AND size<=? "
+           "AND LOWER(ext) IN (%s) ORDER BY id DESC LIMIT %d"
+           % (",".join("?" * len(DV_TEXT_EXT)), DV_SCAN_MAX))
+    for r in db.execute(sql, [uid(), DV_TEXT_BYTES] + DV_TEXT_EXT):
+        if r["id"] in dv_seen:
+            continue
+        body = _read_head(os.path.join(dv_dir, r["stored_name"] or ""))
+        s_body = m.score(body)
+        if s_body:
+            add(s_body, _dv_item(r, _snippet(body, m)))
     # 知识库文档
     nb_names = {row["id"]: row["name"] for row in
                 db.execute("SELECT id,name FROM notebooks WHERE user_id=?", (uid(),)).fetchall()}

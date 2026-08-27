@@ -267,7 +267,7 @@ def _t_lookup(args, db):
 
 
 @tool("global_search",
-      "在用户的个人数据里跨库搜关键词：成语收录、错题本、小记，以及古诗文库、常识库、时政。"
+      "在用户的个人数据里跨库搜关键词：成语收录、错题本、小记、云盘文件，以及古诗文库、常识库、时政。"
       "用户说「找一下…/我之前收/记过…吗/哪里有讲…」而不确定在哪个功能时调用。",
       {"type": "object", "properties": {
           "keyword": {"type": "string", "description": "搜索关键词"}},
@@ -290,6 +290,12 @@ def _t_global(args, db):
                    (u, lk)).fetchall()
     if r:
         res["我的小记"] = [{"id": x[0], "内容": _snip(x[1], 50)} for x in r]
+    r = db.execute("SELECT id, name, folder, is_dir FROM drive_files WHERE owner_id=? AND "
+                   "deleted_at IS NULL AND name LIKE ? ORDER BY is_dir DESC, id DESC LIMIT 5",
+                   (u, lk)).fetchall()
+    if r:
+        res["云盘"] = [{"id": x[0], "名称": x[1], "在": x[2] or "根目录",
+                        "类型": "文件夹" if x[3] else "文件"} for x in r]
     r = db.execute("SELECT id, title, author FROM classics WHERE title LIKE ? OR author LIKE ? "
                    "OR content LIKE ? LIMIT 5", (lk, lk, lk)).fetchall()
     if r:

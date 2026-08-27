@@ -84,9 +84,9 @@ setInterval(() => { if (ME && !document.hidden) refreshChatBadge(); }, 15000);
 /* 锚定小菜单（⋮ 菜单 / + 面板）：点菜单和触发按钮之外的任何地方就关闭。
    一次性把几个 ctxmenu 一起收，别处点了别处的 ⋮ 也顺手把上一个关掉。
    .input-tools（手机端由 ➕ 弹出的工具面板）没有唯一 id，按 class 一起处理。 */
-const CTX_MENU_IDS = ['mat-menu', 'ai-chatmenu', 'node-menu', 'ai-attsheet'];
+const CTX_MENU_IDS = ['mat-menu', 'ai-chatmenu', 'node-menu', 'ai-attsheet', 'ch-addmenu'];
 const CTX_MENU_TRIGGERS = '.mat-more, [data-aimenu], [data-nodedots], #ai-attach, ' +
-  '#ai-plus, #cr-plus, .input-tools, ' + CTX_MENU_IDS.map(id => '#' + id).join(', ');
+  '#ai-plus, #cr-plus, #ch-add-btn, .input-tools, ' + CTX_MENU_IDS.map(id => '#' + id).join(', ');
 document.addEventListener('click', e => {
   /* 用**事件路径**判断，别用 e.target.closest()：菜单里若在响应这次点击时重画过内容
      （AI 会话 ⋮ 的「移动到项目 ›」就是这么干的），被点的那个节点已经不在文档里了，

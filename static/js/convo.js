@@ -122,7 +122,21 @@ function convoLongPress(box, sel, fn) {
     target = e.target.closest(sel);
     if (!target) return;
     sx = t.clientX; sy = t.clientY;
-    timer = setTimeout(() => { const el = target; clear(); if (el) fn(el); }, 500);
+    timer = setTimeout(() => {
+      const el = target; clear(); if (!el) return;
+      /* 长按满 500ms 就弹菜单，可手指抬起时浏览器还会补一个 click。不拦掉它，
+         这一下会被当成普通点击：既顺手打开了这个会话，又冒泡到 document 被
+         「点别处就收菜单」的逻辑当场把刚弹出来的菜单关掉。
+         只吞落在长按目标上的那一次（点菜单项的点击照常走），吞完即摘。 */
+      const eat = (ev) => {
+        document.removeEventListener('click', eat, true);
+        if (ev.target && ev.target.closest && ev.target.closest(sel)) {
+          ev.stopPropagation(); ev.preventDefault();
+        }
+      };
+      document.addEventListener('click', eat, true);
+      fn(el);
+    }, 500);
   }, { passive: true });
   box.addEventListener('touchmove', (e) => {
     if (!timer) return;

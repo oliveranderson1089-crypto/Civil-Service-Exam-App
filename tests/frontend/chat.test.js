@@ -273,3 +273,48 @@ test('群里按服务端给的 my_read 水位画线', async (t) => {
   assert.strictEqual(await crUnreadAfter(t, list, { my_read: 12 }, 5), 13, '线该在水位之后那条前面');
   assert.strictEqual(await crUnreadAfter(t, list, { my_read: 14 }, 5), 0, '水位已到最新，不该还有线');
 });
+
+/* ---- 会话列表右上角的 ＋ 菜单：怎么关 ----
+   它原来只管弹出来：点别处不关（全局那份「点别处收菜单」的清单里没有它）、
+   再点一次 ＋ 只是原地重画一遍、切到别的页它还悬在新页面上（.ctxmenu 是 fixed 的，
+   跟视图显隐无关）。三条路各钉一条测试。 */
+function chAddMenu(t) {
+  const h = boot({ fetch: () => ({ json: { conversations: [], unread: 0 } }) });
+  t.after(() => h.close());
+  const doc = h.window.document;
+  const box = doc.getElementById('ch-addmenu');
+  doc.getElementById('ch-add-btn').click();
+  assert.ok(!box.classList.contains('hidden'), '点 ＋ 菜单没弹出来');
+  return { h, doc, box };
+}
+
+test('＋ 菜单：点页面别处就收起', (t) => {
+  const { doc, box } = chAddMenu(t);
+  doc.getElementById('ch-convos').click();
+  assert.ok(box.classList.contains('hidden'), '点菜单外面菜单还在');
+});
+
+test('＋ 菜单：再点一次 ＋ 是收起，不是重画', (t) => {
+  const { doc, box } = chAddMenu(t);
+  doc.getElementById('ch-add-btn').click();
+  assert.ok(box.classList.contains('hidden'), '连点两下 ＋ 菜单关不掉');
+});
+
+test('＋ 菜单：换一页就收起，不许悬在新页面上', (t) => {
+  const { h, box } = chAddMenu(t);
+  h.run('push')({ view: 'home' });
+  assert.ok(box.classList.contains('hidden'), '切了视图菜单还浮在上面');
+});
+
+test('会话行的右键菜单，点别处也收得掉', (t) => {
+  const h = boot({ fetch: () => ({ json: { conversations: [], unread: 0 } }) });
+  t.after(() => h.close());
+  const doc = h.window.document;
+  const box = doc.getElementById('ch-addmenu');
+  doc.getElementById('ch-convos').innerHTML =
+    '<div class="ch-convo" data-crf="7" data-crn="小李" data-cpin="0" data-cmute="0"></div>';
+  h.run('chRowMenu')(doc.querySelector('.ch-convo'));
+  assert.ok(!box.classList.contains('hidden'), '右键菜单没出来');
+  doc.body.click();
+  assert.ok(box.classList.contains('hidden'), '右键菜单点别处收不掉');
+});

@@ -7,11 +7,12 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, c, csBoard, csTopic, draft, errMsg, esc, loadCsBoard, loadDraft,
+/* global $, api, c, csBoard, csTopic, draft, dvDownload, dvGo, dvJump, dvOpenFile,
+   errMsg, esc, loadCsBoard, loadDraft,
    loadEntries, loadPartyDict, openAccount, openBoardKb, openChangkao, openChangshi,
    openCkBoard, openClassicDetail, openClassics, openDoc, openDocqa, openDraft, openDrafts,
    openEssay, openEssays, openGaikuo, openGongwen, openIdiom, openKb, openMaterials,
-   openNews, openNewsItem, openNotebook, openNotes, openPartyDict, openPlanLog,
+   openDrive, openNews, openNewsItem, openNotebook, openNotes, openPartyDict, openPlanLog,
    openPolicyDoc, openPolicyDocs, openReview, openSection, openShenlun, openSucai,
    openTasks, openThBoard, openTheory, openViewer, openWorkDetail, openWorks, openWqDetail,
    openWrongq, openYyLib, push, SECTIONS, state, tkSwitch, toast */
@@ -68,7 +69,7 @@ function hl(text, q) {
 }
 const SR_TYPE = { note: '小记', material: '资料', doc: '知识库', wrongq: '错题', boardkb: '基础知识', news: '时政', policydoc: '要文', partydict: '理论词典', classic: '古诗文', changshi: '常识', sucai: '素材', gaikuo: '概括句', entry: '成语词语', feature: '功能',
   draft: '草稿本', essay: '范文', gongwen: '应用文', yy: '应用文素材', changkao: '常考', theory: '理论', xiyu: '习语', work: '经典著作',
-  annot: '批注' };
+  annot: '批注', drive: '云盘' };
 // 功能入口索引：搜索时匹配名称/关键词，结果置顶直达
 const FEATURES = [
   { name: '备考规划', desc: '任务清单 · AI 按你的学情排当天计划', kw: '规划助手备考计划学习计划每日计划安排时间距考试', open: () => { openTasks(); setTimeout(() => tkSwitch('plan'), 60); } },
@@ -97,6 +98,7 @@ const FEATURES = [
   { name: '小记', desc: '随手记 · 标签归类', kw: '笔记记录', open: () => openNotes() },
   { name: '知识库', desc: '笔记本 · 文档 · 分组整理', kw: '文档笔记本', open: () => openKb() },
   { name: '资料库', desc: '图片/文档/网页 应用内查看', kw: '资料文件上传', open: () => openMaterials() },
+  { name: '云盘', desc: '任意格式文件 · 文件夹 / 分享 / 回收站', kw: '云盘网盘文件上传下载文件夹分享回收站安装包', open: () => openDrive() },
   { name: '基础知识点', desc: '各板块 基础知识+方法技巧', kw: '基础知识方法技巧', open: () => { openSection(SECTIONS[0] && SECTIONS[0].key); toast('进入任意板块即可看「基础知识点」'); } },
   { name: '账户', desc: '个人信息 · 改密码/邮箱/密保', kw: '账号设置密码退出登录', open: () => openAccount() },
 ];
@@ -195,6 +197,12 @@ $('#search-results').addEventListener('click', async e => {
     setTimeout(() => { const b = document.querySelector('#news-boards [data-nb="习语"]'); if (b) b.click(); }, 260);
   } else if (r.type === 'work') {
     openWorkDetail(r.id);
+  } else if (r.type === 'drive') {
+    // 文件夹＝走进去；文件＝先落到它所在那层再预览（关掉预览器时人还站在原处），
+    // 不能预览的（压缩包、安装包…）只剩下载这一条路
+    if (r.is_dir) dvGo(r.path);
+    else if (r.viewable) dvOpenFile(r.id, r.title, r.folder);
+    else { dvJump(r.folder || ''); dvDownload('/api/drive/' + r.id + '/download', r.title); }
   } else if (r.type === 'annot') {
     // 批注：打开它所在的那份资料，笔迹会自己按锚贴回原处（PDF 按页、阅读模式按那句话）
     if (r.mat) openViewer(r.mat.id, r.mat.name, r.mat.ext);

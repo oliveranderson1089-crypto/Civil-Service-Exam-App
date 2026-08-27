@@ -53,6 +53,10 @@ function chSwitch(t) {
 }
 $('#ch-add-btn').onclick = (e) => {
   const box = $('#ch-addmenu');
+  // 已经开着就当成「收起」——＋ 是这个菜单的触发器，被「点别处就关」放行，
+  // 不在这儿自己收，连点两下只会原地重画一遍，看起来就是关不掉。
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+  box._ctx = null;
   box.innerHTML = `<div class="acm-list">
     <button data-cha="group">${artEm('👥')} 新建学习小组</button>
     <button data-cha="add">${artEm('＋')} 加好友</button>
