@@ -89,8 +89,11 @@ document.addEventListener('click', e => {
 });
 window.__bmView = () => setTimeout(bmRestore, 700);   // 内容渲染完再问
 
-/* 选队友共享：复用底部弹层，勾选=共享，取消勾选=收回 */
-function matPickMembers(members) {
+/* 选队友共享：复用底部弹层，勾选=共享，取消勾选=收回。
+
+   hint 可以换掉那句说明 —— AI 产出借这个面板时规矩不一样（它是**投一份副本**过去，
+   取消勾选收不回），话不换就是骗人。不传就还是资料库自己那句。 */
+function matPickMembers(members, hint) {
   return new Promise(res => {
     const el = $('#mat-share-sheet');
     // ★ 必须裹 .ns-mask（深色遮罩）+ .ns-panel（白底面板）—— 少了它们，内容就直接浮在
@@ -99,7 +102,8 @@ function matPickMembers(members) {
       <div class="ns-panel">
         <div class="ns-handle"></div>
         <div class="ns-title">${artEm('👥')} 共享给队友</div>
-        <p class="acct-hint" style="padding:0 16px;margin:0 0 6px">勾上就共享给他（他能在资料库看到并下载，但不能改不能删）；取消勾选就收回。</p>
+        <p class="acct-hint" style="padding:0 16px;margin:0 0 6px">${esc(hint
+          || '勾上就共享给他（他能在资料库看到并下载，但不能改不能删）；取消勾选就收回。')}</p>
         <div class="ms-list">${members.map(m => `
           <label class="ms-row"><input type="checkbox" value="${m.id}" ${m.shared ? 'checked' : ''}>
             <span>${esc(m.username)}</span></label>`).join('')}</div>

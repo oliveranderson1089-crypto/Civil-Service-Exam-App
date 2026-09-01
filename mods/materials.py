@@ -377,16 +377,25 @@ def mat_boards_set():
 
 
 # ---- 资料库：共享给指定成员 ----
+def teammates(db, user_id):
+    """我的队友：同一个队里除我之外的人。
+
+    资料库的「共享给队友」和 AI 产出的共享问的是同一件事，这条查询以前抄了两份 ——
+    共享是**越权最要紧**的地方，两份各改各的迟早走散。
+    """
+    return db.execute(
+        "SELECT u.id, u.username FROM team_members m1 "
+        "JOIN team_members m2 ON m2.team_id=m1.team_id AND m2.user_id!=m1.user_id "
+        "JOIN users u ON u.id=m2.user_id WHERE m1.user_id=?", (user_id,)).fetchall()
+
+
 @bp.get("/api/materials/<int:mid>/share")
 def mat_share_get(mid):
     """能共享给谁：我的队友。顺带返回已经共享给了谁。"""
     db = get_db()
     if not db.execute("SELECT 1 FROM materials WHERE id=? AND user_id=?", (mid, uid())).fetchone():
         return jsonify({"error": "只能共享自己的资料"}), 403
-    mates = db.execute(
-        "SELECT u.id, u.username FROM team_members m1 "
-        "JOIN team_members m2 ON m2.team_id=m1.team_id AND m2.user_id!=m1.user_id "
-        "JOIN users u ON u.id=m2.user_id WHERE m1.user_id=?", (uid(),)).fetchall()
+    mates = teammates(db, uid())
     shared = {r["to_user"] for r in db.execute(
         "SELECT to_user FROM material_shares WHERE material_id=?", (mid,))}
     return jsonify({"members": [{"id": r["id"], "username": r["username"],
@@ -400,10 +409,7 @@ def mat_share_set(mid):
     if not db.execute("SELECT 1 FROM materials WHERE id=? AND user_id=?", (mid, uid())).fetchone():
         return jsonify({"error": "只能共享自己的资料"}), 403
     to = (request.get_json(silent=True) or {}).get("to") or []
-    mates = {r["id"] for r in db.execute(
-        "SELECT u.id FROM team_members m1 "
-        "JOIN team_members m2 ON m2.team_id=m1.team_id AND m2.user_id!=m1.user_id "
-        "JOIN users u ON u.id=m2.user_id WHERE m1.user_id=?", (uid(),))}
+    mates = {r["id"] for r in teammates(db, uid())}
     to = [int(x) for x in to if int(x) in mates]        # 只能共享给队友，防越权
     db.execute("DELETE FROM material_shares WHERE material_id=?", (mid,))
     for t in to:

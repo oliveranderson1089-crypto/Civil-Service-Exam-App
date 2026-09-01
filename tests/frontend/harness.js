@@ -25,7 +25,7 @@ const EXPORTS = [
   'Ink', 'annCtx', 'annLocate', 'annPosOf', 'annRangeOf',
   'rvShow', 'rvSelect', 'RV_INTERVALS', 'RV_LNAME', 'rvQueue',
   'mdToHtml', 'mdSafeHref',
-  'feedCard', 'addTagsFrom', 'draft', 'boardOptions',
+  'feedCard', 'addTagsFrom', 'draft', 'boardOptions', 'addDraftImages', 'readFileSerial',
   'slWords', 'slCountWords', 'slSetupAnswer',
   'loadYyMine',
 ];
@@ -136,14 +136,21 @@ function boot(opts = {}) {
     ;window.__T = { ${EXPORTS.map(n => `get ${n}() { return typeof ${n} !== 'undefined' ? ${n} : undefined; }`).join(', ')} };
     /* 在 app.js 自己的作用域里跑代码：测试要能读写它的内部状态（matKey / matStrokes 之类）。
        必须是这里的直接 eval —— window.eval 是另一个作用域，看不见这些变量。 */
-    ;window.__run = function (code) { return eval(code); };
+    ;window.__run = function (code) {
+      /* 要传给这段代码的值在里面叫 args（**不是 arguments[0]** —— 那个是 code 本身）。
+         踩过：h.run('aiProjUpload(3, arguments[0])', f) 传进去的其实是那句代码字符串，
+         被测函数拿到的是个 String 而不是 File，测试却照样绿。 */
+      const args = [].slice.call(arguments, 1);
+      void args;
+      return eval(code);
+    };
   `;
   w.eval(js + tail);
 
   return {
     window: w, dom, calls, toasts, logs, bindings,
     T: w.__T,
-    run: (code) => w.__run(code),      // 在 app.js 自己的作用域里执行
+    run: (code, ...args) => w.__run(code, ...args),   // 在 app.js 自己的作用域里执行；额外参数在里面叫 args
 
     /* 把 jsdom 那边的值搬回本 realm。
        jsdom 里造的数组/对象，原型是它自己那套 Object/Array —— assert.deepStrictEqual

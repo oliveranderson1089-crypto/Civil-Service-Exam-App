@@ -10,9 +10,9 @@
 /* dropRoute **不在这张表里**：它就定义在本文件（见下面 function dropRoute），
    而这张表只列「定义在别处」的符号。列进来 eslint 会报 no-redeclare —— 那不是误报，
    是在提醒这份依赖清单和实际情况对不上了。 */
-/* global $, addDraftFiles, addDraftImages, aiHandleAttach, bindImgDrop, bindImgPaste,
+/* global $, addDraftFiles, addDraftImages, aiHandleAttach, aiHandleAttachAll, bindImgDrop, bindImgPaste,
    c, compressImage, crInRoom, crSendFiles, deskMsg, dvOpenAndUpload, dvUpload,
-   openAI, push, qnAddFiles, qnAddImgs, slUploadPaper, stack,
+   fSize, openAI, push, qnAddFiles, qnAddImgs, slUploadPaper, stack,
    toast, uploadDropped */
 
 /* ================= 桌面版：拖放 / 粘贴图片（由壳送进来） =================
@@ -149,7 +149,7 @@ function dropRoute(t, files) {
     toast('已加 ' + bits.join(' + '));
     return null;
   }
-  if (t === 'ai') files.forEach(f => aiHandleAttach(f));         // AI 开着 → 当附件
+  if (t === 'ai') aiHandleAttachAll(files);                      // AI 开着 → 当附件（排队读，别并发）
   else if (t === 'shenlun') slUploadPaper(files[0]);             // 真题页 → 上传真题卷
   else if (t === 'materials') uploadDropped(files);              // 资料库 → 传进当前分类
   else if (t === 'chatroom') crSendFiles(files);                 // 聊天窗口 → 直接发给对方
@@ -185,6 +185,96 @@ window.__onPickedFiles = (items, intent) => {
   }
   Promise.resolve(p).then(done, done);
 };
+/* ==================== 桌面壳里的大文件 ====================
+   壳送文件进网页走的是一座 base64 桥：读整份文件 → base64 → 拼进一句 JS 源码注入。
+   这条路对大文件是死的 —— 一个 2GB 的文件 base64 之后是 2.7GB 的**源码字符串**，
+   run_javascript 当场就把壳撑死。所以壳原来的做法是：超过 64MB 的直接跳过，提示用户
+   「用『⬆ 上传』按钮单独传」。用户在桌面版里拖进来的大文件因此一个都上不去。
+
+   现在把方向倒过来：**壳不再往网页推整份文件，改成网页按需向壳要一片**。
+   每片 4MB（= 云盘分片通道的 DV_CHUNK），走的还是 /api/drive/chunk 那条现成的路 ——
+   登录态、去重、断点续传、进度条全都白拿，内存里同时只有一片。上限因此从 64MB
+   变成分片通道自己的 2GB。
+
+   协议（两个壳一致，Linux 的 gongkao_native.py 和 Windows 的 win/files.js）：
+     壳  → 网页   window.__onBigFile({token,name,rel,size,mtime,mime}, intent)
+     网页 → 壳    {a:'bigpart', token, seq, start, len}   要第 [start,start+len) 段
+     壳  → 网页   window.__deskBigPart(seq, base64)  ／  window.__deskBigFail(seq, 消息)
+     网页 → 壳    {a:'bigdone', token, ok}           这份传完了（壳靠它放行下一个）
+   token 由壳发放、壳自己记着对应哪个路径 —— 网页拿不到也给不了任意路径。 */
+const DESK_PART_TIMEOUT = 120 * 1000;   // 壳读一片还没回来就算它失败，别让整份卡死
+let deskPartSeq = 0;
+const deskPartWait = new Map();
+
+/* 向壳要一段字节，拿到 Blob。壳那边是异步读盘的，所以这里按 seq 配对回执。 */
+function deskAskPart(token, start, end) {
+  return new Promise((resolve, reject) => {
+    const seq = ++deskPartSeq;
+    const timer = setTimeout(() => {
+      deskPartWait.delete(seq);
+      reject(new Error('壳读这一片超时了'));
+    }, DESK_PART_TIMEOUT);
+    deskPartWait.set(seq, { resolve, reject, timer });
+    deskMsg({ a: 'bigpart', token, seq, start, len: end - start });
+  });
+}
+const deskPartSettle = (seq, fn) => {
+  const w = deskPartWait.get(seq);
+  if (!w) return;                        // 超时后迟到的回执：丢掉，别让它复活一个已经拒绝的 promise
+  deskPartWait.delete(seq);
+  clearTimeout(w.timer);
+  fn(w);
+};
+window.__deskBigPart = (seq, b64) => deskPartSettle(seq, w => {
+  try {
+    const bin = atob(b64);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    w.resolve(new Blob([buf]));
+  } catch (_) { w.reject(new Error('这一片解不开')); }
+});
+window.__deskBigFail = (seq, msg) => deskPartSettle(seq, w => w.reject(new Error(msg || '壳读不了这个文件')));
+
+/* 壳送来的大文件在浏览器里没有真身，造一个「长得像 File」的壳子：
+   上传链路只用到 name/size/type/lastModified，唯一要读字节的地方是 chunkUpload，
+   它认 __part（见 drive.js 的 dvPartOf）。 */
+function deskBigFile(m) {
+  return {
+    name: m.name || ('大文件_' + Date.now()),
+    size: Number(m.size) || 0,
+    type: MIME[String(m.name || '').split('.').pop().toLowerCase()] || '',
+    // 续传的 key 里有它：同一份文件下次再传才认得出上次传到哪
+    lastModified: Number(m.mtime) || 0,
+    __part: (start, end) => deskAskPart(m.token, start, end),
+  };
+}
+
+/* 壳发现一个大文件 → 这里把它接到分片通道上。一次一个（壳等回执才送下一个）。 */
+window.__onBigFile = (m, intent) => {
+  window.__onDragLeave();
+  const fin = (ok, err) => {
+    if (!ok && err) toast((m && m.name ? m.name + '：' : '') + err.message, true);
+    try { deskMsg({ a: 'bigdone', token: m && m.token, ok: ok ? 1 : 0 }); } catch (_) { /* 不在壳里 */ }
+  };
+  if (!m || !m.token || !(Number(m.size) > 0)) { fin(false); return Promise.resolve(); }
+  const file = deskBigFile(m);
+  const folder = m.rel && m.rel !== '.' ? m.rel : '';
+  /* 落点：大文件只有云盘和资料库收得下（它们共用分片通道）。拖到小记、聊天、AI
+     那几处的路径都要一份**内存里的真 File**，几百 MB 塞不进去，所以一律改收进云盘
+     并说明一声 —— 比静默跳过强得多，那正是用户碰上的老毛病。 */
+  const t = intent === 'drive' ? 'drive' : dropTarget(intent === 'paste' ? 'paste' : 'drop');
+  let p;
+  if (t === 'materials') p = uploadDropped([file]);
+  else if (t === 'drive') p = dvUpload([{ file, folder }]);
+  else {
+    toast(fSize(file.size) + ' 的大文件先收进云盘（这么大只有云盘存得下）');
+    p = dvOpenAndUpload([{ file, folder }]);
+  }
+  /* 把 promise 交回去：壳不看它（壳等的是 bigdone 那句回执），但测试和内部调用要拿它当「传完了」。
+     dvUpload **不抛**（一批里坏一个不算整批失败），成没成得看它返回的战果。 */
+  return Promise.resolve(p).then(r => fin(!(r && r.fail)), e => fin(false, e));
+};
+
 window.__onPasteImage = (dataUrl) => {   // Ctrl+V / 右键「粘贴图片」（壳里的粘贴也走这条路）
   fetch(dataUrl).then(r => r.blob()).then(b => {
     const f = new File([b], '粘贴的图片.png', { type: 'image/png' });

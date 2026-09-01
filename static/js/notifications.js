@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, api, appConfirm, errMsg, esc, ME, openChangkao, openChangshi, openChat,
+/* global $, api, appConfirm, errMsg, esc, ME, openBoardKb, openChangkao, openChangshi, openChat,
    openChatroom, openCkBoard, openClassics, openCsBoard, openDrafts, openEssays, openFind,
    openGaikuo, openGongwen, openIdiom, openNews, openPartyDict, openPolicyDocs, openQuiz,
    openReview, openShenlun, openSucai, openTasks, openThBoard, openTheory, openWorks,
@@ -50,6 +50,13 @@ function ntfGo(link) {
     partydict: () => openPartyDict(),
     policydoc: () => openPolicyDocs(),
     dtest: () => { openTasks(); setTimeout(() => tkSwitch('daily'), 60); },   // 巩固测试在「每日任务」里
+    // 社区那条线的去处：路线图和 AI 排的计划都会给这几个 key，以前这里没有，
+    // 点「去做 ›」只弹「没有可跳转的位置」
+    sqdrill: () => window.openSqDrill && window.openSqDrill(),
+    sqsub: () => window.openSqSub && window.openSqSub(),
+    sqreal: () => window.openSqReal && window.openSqReal(),
+    sqlocal: () => window.openSqLocal && window.openSqLocal(),
+    'bk-shequ': () => openBoardKb(arg || '社会工作'),
     plan: () => { openTasks(); setTimeout(() => tkSwitch('plan'), 60); },
     chatroom: () => { if (arg) openChatroom(+arg, ''); else openChat(); },     // 聊天通知点进来直达会话
   }[k];

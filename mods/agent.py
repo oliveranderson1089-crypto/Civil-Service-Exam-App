@@ -487,7 +487,7 @@ def _t_deliver_file(args, db):
     oid, dest = int(args.get("id") or 0), args.get("dest")
     if dest not in ("material", "drive", "note"):
         return "只能投到 资料库/云盘/小记 三者之一。", None
-    ok, msg = deliver(db, uid(), oid, dest)
+    ok, msg, _row = deliver(db, uid(), oid, dest)
     if not ok:
         return msg, None
     return msg, {"type": "refresh", "what": dest, "toast": "已投放 📤"}

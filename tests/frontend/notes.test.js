@@ -207,3 +207,77 @@ test('导出：卡片上有单条导出按钮，且带小记 id', (t) => {
   assert.ok(btn, '卡片上没有导出按钮');
   assert.strictEqual(btn.dataset.exp, '1');
 });
+
+/* ---- 一次选多张图：读文件必须排队 ----
+   真事：手机上选了几张不同的图，发出去有三份字节完全相同（连编辑器里的缩略图
+   都是同一张）。原因是几张图的 arrayBuffer / createImageBitmap 是**同时**发起的，
+   安卓 WebView 读多个 content:// URI 会互相串成同一份数据。
+   下面用「谁跟别人同时读，谁就读到别人的数据」的假文件把那个环境模拟出来：
+   只要哪天有人把 readFileSerial 那道闸去掉，这条就红。 */
+function strayFile(h, tag, live) {
+  const w = h.window;
+  return {
+    name: tag + '.png', type: 'image/png',
+    async arrayBuffer() {
+      live.n++;
+      const crossed = live.n > 1;          // 有人跟我同时在读 → 读到的是别人那份
+      await new Promise(r => w.setTimeout(r, 5));
+      live.n--;
+      return new w.TextEncoder().encode(crossed ? 'STRAY' : tag).buffer;
+    },
+  };
+}
+
+test('一次选多张图：读文件是排队的，不会串成同一张', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  const live = { n: 0 };
+  const files = ['aaa', 'bbb', 'ccc'].map(tag => strayFile(h, tag, live));
+  await h.T.addDraftImages(files);
+  const imgs = h.T.draft.images;
+  assert.strictEqual(imgs.length, 3, '三张都该进草稿');
+  await Promise.all(imgs.map(i => i.ready));
+  const got = [];
+  for (const im of imgs) got.push(await im.fileObj.text());
+  assert.deepStrictEqual(got, ['aaa', 'bbb', 'ccc'], '几张图串成了同一份数据');
+});
+
+test('图片还没读出来时，缩略图不放空 img（免得一排裂图）', async (t) => {
+  const h = boot(); t.after(() => h.close());
+  const live = { n: 0 };
+  h.T.addDraftImages([strayFile(h, 'aaa', live)]);
+  const box = h.window.document.querySelector('#cp-imgs .cp-thumb');
+  assert.ok(box, '位子要先占上');
+  assert.strictEqual(box.querySelector('img'), null, '还没读出来就不该有 img');
+  assert.ok(box.classList.contains('busy'), '该显示成「处理中」');
+  await Promise.all(h.T.draft.images.map(i => i.ready));
+  assert.ok(box.querySelector('img'), '读完了缩略图要补上');
+});
+
+/* ---- 点「完成」之后 ----
+   手机上存一条带图的小记，慢的全在上传那几秒（服务端只要 0.0 秒）。
+   所以编辑器是**先关**、上传在后台跑。代价是「万一没传成功」这条路必须是真的可靠：
+   内容得原样回到编辑器，不能只弹一句红字然后人财两空。 */
+function fillComposer(h, text) {
+  h.window.document.querySelector('#cp-content').value = text;
+  h.run(`draft.content = ${JSON.stringify(text)}`);
+}
+
+test('点完成：编辑器立刻放开，不等上传', (t) => {
+  const h = boot({ fetch: () => ({ json: { id: 7 } }) }); t.after(() => h.close());
+  fillComposer(h, '记一条');
+  h.window.document.querySelector('#cp-submit').click();
+  assert.strictEqual(h.window.document.querySelector('#cp-content').value, '',
+    '还在等服务端回话就说明界面被上传挡住了');
+});
+
+test('保存失败：这条要原样回到编辑器，不能凭空没了', async (t) => {
+  const h = boot({ fetch: () => new Error('隧道又断了') }); t.after(() => h.close());
+  fillComposer(h, '不能丢的一条');
+  h.window.document.querySelector('#cp-submit').click();
+  for (let i = 0; i < 50 && !h.toasts.some(x => x.err); i++) {
+    await new Promise(r => h.window.setTimeout(r, 10));
+  }
+  assert.strictEqual(h.window.document.querySelector('#cp-content').value, '不能丢的一条',
+    '传失败了，正文没还回来');
+  assert.ok(h.toasts.some(x => x.err), '失败了得说一声');
+});

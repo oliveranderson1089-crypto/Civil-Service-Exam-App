@@ -12,15 +12,28 @@
  */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { dialog, clipboard } = require('electron');
 
 const MAX_FILE = 64 * 1024 * 1024;         // 比这大的不走这座 base64 的桥
 const BATCH = 6 * 1024 * 1024;             // 一批最多这么多原始字节（base64 还会再涨 1/3）
 const ACK_TIMEOUT = 300 * 1000;            // 等网页回执的上限，超了就往下走，别卡死整次上传
+/* 比 MAX_FILE 还大的以前直接跳过，于是桌面版里的大文件一个都传不上去。现在改走
+   「网页按需向壳要一片」的分片通道（sendBig）：字节留在本地，网页要第几片才读第几片，
+   上限因此跟云盘那条分片通道对齐 —— 2GB。协议见 static/js/desktop.js 里那段注释，
+   和 Linux 壳（gongkao_native.py 的 _send_big/_big_read）逐字一致。 */
+const BIG_MAX = 2 * 1024 * 1024 * 1024;
+const PART_MAX = 16 * 1024 * 1024;         // 网页要得再多也不给
+const BIG_IDLE = 300 * 1000;               // 这么久没来要下一片就当它死了（传 2GB 本身可以很久）
 
 module.exports = ({ log, js, toast, getWin }) => {
   let pumping = false;
   let ack = null;
+  /* 大文件通道：token → 绝对路径。**只认这里登记过的 token** —— 网页永远拿不到、
+     也给不了一个任意路径，读盘范围锁死在用户自己拖进来的那几个文件上。 */
+  const bigs = new Map();
+  let bigAck = null;
+  let bigLast = 0;
 
   const relOf = (dir, base) => {
     const r = path.relative(base, dir).split(path.sep).join('/');
@@ -61,11 +74,16 @@ module.exports = ({ log, js, toast, getWin }) => {
   }
 
   async function pump(items, intent) {
-    let batch = []; let size = 0; const skipped = [];
+    let batch = []; let size = 0; const skipped = []; const bigList = [];
     for (const it of items) {
       let st;
       try { st = await fs.promises.stat(it.abs); } catch (_) { skipped.push(path.basename(it.abs)); continue; }
-      if (st.size > MAX_FILE) { skipped.push(path.basename(it.abs)); continue; }
+      if (st.size > MAX_FILE) {
+        // 大文件不再跳过：攒起来，等这批小的走完再一个一个走分片通道
+        if (st.size <= BIG_MAX) bigList.push({ abs: it.abs, rel: it.rel, size: st.size, mtime: st.mtimeMs });
+        else skipped.push(path.basename(it.abs));
+        continue;
+      }
       let buf;
       try { buf = await fs.promises.readFile(it.abs); } catch (_) { skipped.push(path.basename(it.abs)); continue; }
       batch.push({
@@ -78,8 +96,63 @@ module.exports = ({ log, js, toast, getWin }) => {
     }
     if (batch.length) await push(batch, intent);
     if (skipped.length) {
-      // 单个太大的走网页那个「⬆ 上传」按钮更靠谱：那条是分片传的，不经这座桥
-      toast(`${skipped.length} 个文件太大没传（${skipped[0].slice(0, 20)}…），用「⬆ 上传」单独传`);
+      toast(`${skipped.length} 个文件超过 2GB 没传（${skipped[0].slice(0, 20)}…）`);
+    }
+    // 大的放在最后：小文件先落地，用户能立刻看见东西，而不是对着一个几百 MB 的进度条干等
+    for (const b of bigList) await sendBig(b, intent);
+  }
+
+  /* ---- 大文件：网页按需向壳要一片 ---- */
+
+  /* 推「名字 + 大小 + 一个 token」给网页，字节留在本地，等它传完（或没动静了）再返回。
+     老网页没有 __onBigFile（壳更新了、页面还是缓存里的旧版），让它当场回一句 ok=0，
+     别让壳在这儿干等到静默超时。 */
+  function sendBig(b, intent) {
+    const token = crypto.randomBytes(16).toString('hex');
+    bigs.set(token, b.abs);
+    bigLast = Date.now();
+    const meta = { token, name: path.basename(b.abs), rel: b.rel === '.' ? '' : b.rel,
+                   size: b.size, mtime: Math.round(b.mtime || 0) };
+    return new Promise((resolve) => {
+      let over = false;
+      const fin = () => {
+        if (over) return;
+        over = true; bigAck = null; bigs.delete(token); clearInterval(timer); resolve();
+      };
+      bigAck = fin;
+      /* 传 2GB 本身就要很久，不能拿一个固定的总时长当超时。看的是「还有没有在要片」：
+         网页每要一片就刷新 bigLast，静默超过 BIG_IDLE 才算它死了。 */
+      const timer = setInterval(() => {
+        if (Date.now() - bigLast <= BIG_IDLE) return;
+        toast(`「${meta.name.slice(0, 20)}」传得没动静了，跳过`);
+        fin();
+      }, 15 * 1000);
+      js(`(window.__onBigFile ? window.__onBigFile(${JSON.stringify(meta)}, ${JSON.stringify(intent)})`
+        + ` : window.webkit.messageHandlers.gk.postMessage(JSON.stringify(`
+        + `{a:'bigdone', token:${JSON.stringify(token)}, ok:0, old:1})))`);
+    });
+  }
+
+  /* 网页要第 [start, start+len) 段 → 读盘 → base64 送回去。
+     读盘一律走 fs.promises（线程池），别用同步版把主进程钉死。 */
+  async function bigPart(d) {
+    const seq = Number(d.seq) || 0;
+    const start = Math.max(0, Number(d.start) || 0);
+    const len = Math.min(Math.max(0, Number(d.len) || 0), PART_MAX);
+    const abs = bigs.get(String(d.token || ''));
+    bigLast = Date.now();
+    let fh = null;
+    try {
+      if (!abs) throw new Error('这份文件已经不在这次上传里了');
+      fh = await fs.promises.open(abs, 'r');
+      const buf = Buffer.alloc(len);
+      const { bytesRead } = await fh.read(buf, 0, len, start);
+      js(`window.__deskBigPart && window.__deskBigPart(${seq}, ${JSON.stringify(buf.subarray(0, bytesRead).toString('base64'))})`);
+    } catch (e) {
+      log.warn('files', '读不了这一片', String(e));
+      js(`window.__deskBigFail && window.__deskBigFail(${seq}, ${JSON.stringify('读文件失败：' + String(e && e.message || e))})`);
+    } finally {
+      if (fh) await fh.close().catch(() => {});
     }
   }
 
@@ -159,5 +232,13 @@ module.exports = ({ log, js, toast, getWin }) => {
     toast('剪贴板里没有文件或图片');
   }
 
-  return { pickDir, pasteFiles, sendPaths, ackBatch: () => { if (ack) ack(); } };
+  return {
+    pickDir, pasteFiles, sendPaths,
+    ackBatch: () => { if (ack) ack(); },
+    bigPart,
+    ackBig: (d) => {
+      if (d && d.old) toast('网页版本太旧，传不了大文件（关掉应用重开一次）');
+      if (bigAck) bigAck();
+    },
+  };
 };

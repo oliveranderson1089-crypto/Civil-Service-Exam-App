@@ -14,10 +14,10 @@
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
 /* global $, anchorMenu, api, appConfirm, applyPush, appPrompt, artEm, avoidFab, CAN_ABORT,
-   composing, compressImage, convoAvatar, convoStick, createDock, errMsg, esc, getAppClip,
-   growAndSync, IS_MOBILE,
+   composing, compressImage, convoAvatar, convoStick, copyText, createDock, errMsg, esc,
+   getAppClip, growAndSync, IS_MOBILE, lightbox,
    loadClassics, loadDaily, loadEntries, loadFeed, loadPlan, loadWrongq, lsGet, lsSet,
-   mdToHtml, navHomeCard, openAiChatMenu, stack, toast, uiError, voiceAsrEnabled,
+   mdToHtml, navHomeCard, openAiChatMenu, readFileSerial, stack, toast, uiError, voiceAsrEnabled,
    voiceInsert, voiceLive, voiceRecord, voiceSupported, voiceToText, voiceWhyNot */
 
 /* ================= AI 助手 ================= */
@@ -236,7 +236,7 @@ async function openAiProjSet(pid) {
         可以直接传 PDF / Word / 图片，也可以粘一段文字。大文件不会整段塞进对话，
         AI 会按需一段段读。</p>
       <div id="ps-files"><p class="empty">加载中…</p></div>
-      <input type="file" id="ps-upfile" class="hidden"
+      <input type="file" id="ps-upfile" class="hidden" multiple
         accept=".pdf,.doc,.docx,.txt,.md,.ppt,.pptx,.xls,.xlsx,image/*">
     </div>
     <div class="mem-add"><button id="ps-addfile">＋ 传文件</button>
@@ -268,7 +268,11 @@ async function aiProjUpload(pid, file) {
   if (!file) return;
   toast('正在读取「' + file.name + '」…');
   try {
-    const fd = new FormData(); fd.append('file', file);
+    // 先整份读进内存、且排队读（见 readFileSerial）：一次挂好几份讲义时，
+    // 手机上并发读 content:// 会把几份文件读串。
+    let blob = file;
+    try { blob = await readFileSerial(file, file.type); } catch (_) { blob = file; }
+    const fd = new FormData(); fd.append('file', blob, file.name || 'file');
     const d = await api('/api/aichat/projects/' + pid + '/files/upload', { method: 'POST', body: fd });
     if (d.error) { toast(d.error, true); return; }
     await aiProjFiles(pid);
@@ -277,10 +281,11 @@ async function aiProjUpload(pid, file) {
       : ('已挂上（' + (d.chars || 0) + ' 字），这个项目下的每个对话都读得到'), !!d.ocr_pages);
   } catch (err) { toast(errMsg(err), true); }
 }
-$('#ai-projsheet').addEventListener('change', e => {
+$('#ai-projsheet').addEventListener('change', async e => {
   const inp = e.target.closest('#ps-upfile'); if (!inp) return;
-  const f = inp.files[0]; inp.value = '';        // 清空：同一个文件连传两次也要触发
-  aiProjUpload(+$('#ai-projsheet').dataset.pid, f);
+  const fs = [...inp.files]; inp.value = '';     // 清空：同一个文件连传两次也要触发
+  const pid = +$('#ai-projsheet').dataset.pid;
+  for (const f of fs) await aiProjUpload(pid, f);   // 一次能挑好几份，一份一份挂
 });
 $('#ai-projsheet').addEventListener('click', async e => {
   const box = $('#ai-projsheet'), pid = +box.dataset.pid;
@@ -377,22 +382,34 @@ function aiStepHtml(s, n) {
 function aiAttCut(a) {
   if (!a) return '';
   const bits = [];
-  const got = (a.text || '').length;
+  // 历史消息里没有 text（正文不随历史回传，太占带宽），服务端改回 got 这个字数。
+  // 少了这一行，翻回旧对话时「只读到前 N 字」的角标全都不见了 —— 而那正是最该提醒的时候。
+  const got = a.got != null ? a.got : (a.text || '').length;
   if (a.total && a.total > got) bits.push('全文约 ' + a.total + ' 字，只读到前 ' + got + ' 字');
   if (a.pages && a.ocr_pages && a.pages > a.ocr_pages) bits.push('共 ' + a.pages + ' 页，只识别了前 ' + a.ocr_pages + ' 页');
   return bits.join('；');
 }
-function aiAttsHtml(atts, small) {
+/* mid = 这条消息在服务端的行号（已发出去的才有）。附件正文不随历史回传，
+   点开「看内容」时得凭它去 /api/aichat/chats/<cid>/att 按需取。 */
+function aiAttsHtml(atts, small, mid) {
   if (!atts || !atts.length) return '';
   return '<div class="ai-attrow' + (small ? ' sm' : '') + '">' + atts.map((a, i) => {
     // pending = 本地这份还在压缩 / 上传 / 识别。先拿本地 objectURL 占住位子：
     // 这一段合起来常有几十秒（手机照片走隧道更久），中间一片空白的话，
     // 用户看到的就是「选完图没动静」，只会反复再选一次。
     const src = a.pending ? (a.url || '') : (a.image ? '/api/ai/img/' + encodeURIComponent(a.image) : '');
-    const img = src ? `<img src="${esc(src)}" alt="">`
+    // 图挂了的兜底在 aiAttImgFallback（捕获阶段委托），不写内联 onerror
+    const img = src ? `<img src="${esc(src)}" alt="" loading="lazy">`
       : `<span class="ai-attic">${/\.pdf$/i.test(a.name || '') ? '📕' : '📄'}</span>`;
     const cut = aiAttCut(a);
-    return `<span class="ai-att${cut ? ' cut' : ''}${a.pending ? ' busy' : ''}" title="${esc((a.name || '') + (cut ? '（' + cut + '）' : ''))}">
+    // 整块都能点：图片点开看大图，文件点开看抽出来的正文（见 aiAttOpen）。
+    // 待发送的那份也一样能点 —— 发之前就该有机会确认「传的是不是这张、读到的是不是这些字」。
+    const tip = a.pending ? '正在读取…' : ((a.image ? '点开看大图' : '点开看内容')
+      + '：' + (a.name || '附件') + (cut ? '（' + cut + '）' : ''));
+    return `<span class="ai-att${cut ? ' cut' : ''}${a.pending ? ' busy' : ''}"
+      ${a.pending ? '' : `data-attv="${i}"${mid ? ` data-attmid="${mid}"` : ''}
+        data-attimg="${esc(a.image || '')}" data-attname="${esc(a.name || '附件')}" role="button" tabindex="0"`}
+      title="${esc(tip)}">
       ${img}<span class="nm">${a.pending ? '读取中…' : esc(a.name || '附件')}</span>
       ${cut ? '<span class="cutflag" aria-hidden="true">半</span>' : ''}
       ${(small || a.pending) ? '' : `<button class="x" data-aiattdel="${i}" title="移除">×</button>`}</span>`;
@@ -432,7 +449,7 @@ function renderAI() {
       const last = i === aiMsgs.length - 1;
       if (m.role === 'user') {
         return `<div class="ai-row user">
-          <div class="ai-bub">${aiAttsHtml(m.atts, true)}${esc(m.content)}</div>
+          <div class="ai-bub">${aiAttsHtml(m.atts, true, m.id)}${esc(m.content)}</div>
           ${aiActsHtml(m, i, last)}</div>`;
       }
       const tag = `<div class="ai-tag">${convoAvatar('AI', '', 'ai', 'sm')}<span>助手</span>` +
@@ -572,10 +589,107 @@ function renderAiAtts() {
   $('#ai-atts').classList.toggle('on', !!aiAtts.length);
 }
 $('#ai-atts').addEventListener('click', e => {
-  const b = e.target.closest('[data-aiattdel]'); if (!b) return;
-  e.stopPropagation();
-  aiAtts.splice(+b.dataset.aiattdel, 1); renderAiAtts();
+  const b = e.target.closest('[data-aiattdel]');
+  if (b) { e.stopPropagation(); aiAtts.splice(+b.dataset.aiattdel, 1); renderAiAtts(); return; }
+  const v = e.target.closest('[data-attv]');            // 还没发出去的这份也能点开确认
+  if (v) { e.stopPropagation(); aiAttOpen(aiAtts[+v.dataset.attv], 0, +v.dataset.attv); }
 });
+/* 暂存的原图只留 3 天，过期就是 404。原来这儿会留一个碎图图标，翻旧对话时满屏都是。
+   error 事件不冒泡，所以监听走捕获阶段；换成跟文件一样的角标，至少看得出这儿曾经有张图。 */
+function aiAttImgFallback(e) {
+  const img = e.target;
+  if (!img || img.tagName !== 'IMG' || !img.closest('.ai-att')) return;
+  const ic = document.createElement('span');
+  ic.className = 'ai-attic';
+  ic.textContent = '🖼';
+  img.replaceWith(ic);
+}
+$('#ai-msgs').addEventListener('error', aiAttImgFallback, true);
+$('#ai-atts').addEventListener('error', aiAttImgFallback, true);
+
+/* 点开一个附件。图片走看大图浮层（跟小记、聊天里的图同一个 lightbox，手感一致），
+   文件走文本浮层。
+
+   为什么图片也要先探一次：原图三天就清，过期后直接开 lightbox 是一个纯黑的浮层加
+   一张碎图，用户只会以为应用坏了。探到没有就退而求其次 —— 把当时转写出来的文字给他看，
+   并说清楚图为什么不在了。 */
+function aiAttOpen(att, mid, i) {
+  if (!att) return;
+  if (att.image) {
+    const url = '/api/ai/img/' + encodeURIComponent(att.image);
+    const probe = new Image();
+    probe.onload = () => lightbox(url, att.name || 'image.jpg');
+    probe.onerror = () => {
+      toast('这张图已经过期了（发给 AI 的原图只暂存 3 天），下面是当时识别出来的文字', true);
+      aiAttText(att, mid, i);
+    };
+    probe.src = url;
+    return;
+  }
+  aiAttText(att, mid, i);
+}
+
+/* 文件附件的正文浮层：AI 到底读到了什么，用户得看得见。
+   以前这里什么都没有 —— 传完一份 PDF，屏幕上只有一个文件名，AI 说「这份材料里没提到」时，
+   没人能判断是文件没读全、还是模型没看仔细。 */
+async function aiAttText(att, mid, i) {
+  const old = document.getElementById('ai-attv'); if (old) old.remove();
+  const box = document.createElement('div');
+  box.id = 'ai-attv'; box.className = 'lbx ai-attv';
+  const name = (att && att.name) || '附件';
+  box.innerHTML = `
+    <div class="lbx-bar">
+      <button class="lbx-b" data-attvb="copy">⧉ 复制全文</button>
+      <button class="lbx-b lbx-x" data-attvb="close" title="关闭（Esc）">×</button>
+    </div>
+    <div class="attv-card">
+      <div class="attv-h"><b>${esc(name)}</b><span class="attv-meta" id="attv-meta">读取中…</span></div>
+      <pre class="attv-body" id="attv-body">正在取…</pre>
+    </div>`;
+  document.body.appendChild(box);
+  const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
+  // 手机返回键那条路（shell.js）是直接 remove 掉这个元素的，close() 不会被调到 ——
+  // 监听得自己发现「我守的那层已经没了」，否则每开一次就留一条死监听。
+  const onKey = ev => {
+    if (!document.body.contains(box)) { document.removeEventListener('keydown', onKey); return; }
+    if (ev.key === 'Escape') close();
+  };
+  document.addEventListener('keydown', onKey);
+  let text = '';
+  box.addEventListener('click', ev => {
+    if (ev.target === box) { close(); return; }              // 点背景关，点卡片不关
+    const b = ev.target.closest('[data-attvb]'); if (!b) return;
+    if (b.dataset.attvb === 'close') close();
+    else if (b.dataset.attvb === 'copy') {
+      if (!text) { toast('还没有内容可复制', true); return; }
+      copyText(text).then(ok => toast(ok ? '已复制全文' : '复制失败，长按选中再复制', !ok));
+    }
+  });
+
+  // 已发出去的那份正文不在本地（历史不回传正文），按需去服务端取；待发送的本地就有
+  let d = att || {};
+  if (mid && aiChatId) {
+    try {
+      d = await api('/api/aichat/chats/' + aiChatId + '/att?mid=' + mid + '&i=' + i);
+    } catch (e) { d = { error: errMsg(e) }; }
+  }
+  if (!document.getElementById('ai-attv')) return;            // 取的过程中被关掉了
+  text = (d && d.text) || '';
+  const meta = [];
+  if (d.pages) meta.push('共 ' + d.pages + ' 页');
+  if (d.total) meta.push('共 ' + d.total + ' 字');
+  if (text && d.total && text.length < d.total) meta.push('只读到前 ' + text.length + ' 字');
+  $('#attv-meta').textContent = meta.join(' · ') || (text ? text.length + ' 字' : '');
+  const body = $('#attv-body');
+  if (d.error) { body.textContent = '⚠️ ' + d.error; return; }
+  if (text) { body.textContent = text; return; }
+  // 空的三种原因分开说，别一律「没有内容」——用户据此决定是等一等还是重传
+  body.textContent = d.ocr === 'pending'
+    ? '这张图的文字转写还在后台跑（通常十几秒），等一会儿再点开就有了。\n\nAI 回答时看的是原图本身，不受影响。'
+    : d.ocr === 'gone'
+      ? '原图已过期（只暂存 3 天），当时也没留下转写。'
+      : '这份附件没有可显示的文字内容。';
+}
 $('#ai-attach').onclick = () => anchorMenu($('#ai-attsheet'), $('#ai-attach'));
 $('#ai-attsheet').addEventListener('click', e => {
   const b = e.target.closest('[data-aiatt]'); if (!b) return;
@@ -609,14 +723,18 @@ function aiAttDone(att, isImg) {
    ② 选完立刻在输入框上方摆一个「读取中」的位子，别让这几十秒里屏幕上什么都不变。
    ③ 请求给超时 —— api() 默认不超时，隧道一断这个 fetch 就永远挂着，
       连那句错误提示都等不到。 */
-async function aiHandleAttach(file) {
+/* 一轮最多带几份附件。**必须跟服务端 mods/aisession.py 的 ATT_MAX 一个数**：
+   服务端只取前这么多份，前端不挡的话，多出来的就是选了、传了、界面上还摆着，
+   却根本没进这轮请求 —— 用户看到的是「AI 只解释了前面几张」。 */
+const AI_ATT_MAX = 12;
+async function aiHandleAttach(file, quiet) {   // quiet：一次多份时，成功提示留给最后统一给
   if (!file) return;
+  if (aiAtts.length >= AI_ATT_MAX) {
+    toast('一轮最多带 ' + AI_ATT_MAX + ' 份附件，先把这些发出去再传剩下的', true);
+    return;
+  }
   const isImg = /^image\//.test(file.type || '');
-  // 缩略图只是让人看见「进来了」。createObjectURL 拿不到就空着显示个文件图标 ——
-  // 占位失败绝不能把上传本身带下去（老 WebView 上真有没有它的）。
-  let url = '';
-  if (isImg) { try { url = URL.createObjectURL(file); } catch (_) { url = ''; } }
-  const ph = { name: file.name || (isImg ? '图片' : '附件'), pending: true, url: url };
+  const ph = { name: file.name || (isImg ? '图片' : '附件'), pending: true, url: '' };
   aiAtts.push(ph); renderAiAtts();
   const drop = () => {
     const i = aiAtts.indexOf(ph);
@@ -624,17 +742,25 @@ async function aiHandleAttach(file) {
     if (ph.url) { try { URL.revokeObjectURL(ph.url); } catch (_) { /* 撤不掉就算了 */ } }
     renderAiAtts();
   };
-  let blob = file, name = file.name || 'image.jpg';
+  /* ★ 先把这一份整个读进内存，而且**排队读**（readFileSerial）：
+     安卓 WebView 上同时读多个 content:// URI 会互相串成同一份数据 ——
+     一次选多张图时，传上去的会有好几张是同一张。读完再压缩、再上传就不会串。
+     缩略图也用内存里这一份：占位失败绝不能把上传本身带下去（老 WebView 上真有没有它的）。*/
+  let raw = file;
+  try { raw = await readFileSerial(file, file.type); } catch (_) { raw = file; }
+  if (isImg) { try { ph.url = URL.createObjectURL(raw); renderAiAtts(); } catch (_) { ph.url = ''; } }
+  let blob = raw, name = file.name || 'image.jpg';
   if (isImg) {
-    try { blob = await compressImage(file, 2000, 0.85); } catch (_) { blob = file; }
-    if (blob !== file && !/\.jpe?g$/i.test(name)) name = name.replace(/\.[^.]+$/, '') + '.jpg';
+    try { blob = await compressImage(raw, 2000, 0.85); } catch (_) { blob = raw; }
+    if (blob !== raw && !/\.jpe?g$/i.test(name)) name = name.replace(/\.[^.]+$/, '') + '.jpg';
   }
   const fd = new FormData(); fd.append('file', blob, name);
   try {
     const d = await api('/api/ai/extract', { method: 'POST', body: fd, timeoutMs: 180000 });
     drop();
     if (d.error) { toast(d.error, true); return; }
-    aiAttDone(aiPushAtt(d, file.name), !!d.image);
+    const att = aiPushAtt(d, file.name);
+    if (!quiet) aiAttDone(att, !!d.image);
   } catch (e) { drop(); toast(errMsg(e), true); }
 }
 
@@ -643,8 +769,14 @@ async function aiHandleAttach(file) {
    （云盘里的讲义动辄几十 MB）。云盘右键「发给 AI 助手」和在助手里粘贴都走这里。
    items: [{kind:'drive'|'material', id, name}]，返回成功的条数。 */
 async function aiAttachLib(items, opts) {
-  const list = (items || []).filter(it => it && it.id);
+  let list = (items || []).filter(it => it && it.id);
   if (!list.length) return 0;
+  const room = AI_ATT_MAX - aiAtts.length;      // 跟服务端 ATT_MAX 对齐，超出的当场说明
+  if (room <= 0) { toast('一轮最多带 ' + AI_ATT_MAX + ' 份附件，先把这些发出去', true); return 0; }
+  if (list.length > room) {
+    toast('一轮最多带 ' + AI_ATT_MAX + ' 份，这次先附 ' + room + ' 个', true);
+    list = list.slice(0, room);
+  }
   if (!(opts && opts.keepPanel)) await openAI();   // 从云盘/资料库点过来的，得先把助手打开
   toast(list.length > 1 ? ('正在读取 ' + list.length + ' 个文件…') : '正在读取附件…');
   let ok = 0, last = null;
@@ -683,7 +815,16 @@ $('#ai-clipchip').addEventListener('click', async e => {
   // 附完不清空应用剪贴板：云盘那边还指望它粘文件（同一份剪贴板两处用），只把提示条收起来
   if (await aiAttachLib(clip, { keepPanel: true })) $('#ai-clipchip').classList.add('hidden');
 });
-$('#ai-attfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
+/* 选文件/选图可以一次挑好几个（input 上有 multiple）。这里**逐个 await**：
+   十来张图并排冲上去，手机上既容易读串、又会把隧道塞满，
+   一张张来反而更快看到结果，占位条也按顺序亮起来。 */
+async function aiHandleAttachAll(files) {
+  const list = [...files].filter(Boolean);
+  if (list.length > 1) toast('正在读取 ' + list.length + ' 个文件…');
+  for (const f of list) await aiHandleAttach(f, list.length > 1);
+  if (list.length > 1) toast('已附加 ' + list.length + ' 个文件');
+}
+$('#ai-attfile').addEventListener('change', e => { const fs = [...e.target.files]; e.target.value = ''; aiHandleAttachAll(fs); });
 $('#ai-camfile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; aiHandleAttach(f); });
 
 // ===== AI 工具面板：把 AI 能调的工具做成可点的快捷入口，既能一键让 AI 做、也能直接打开 =====
@@ -1114,6 +1255,15 @@ $('#ai-msgs').addEventListener('click', async e => {
   if (!$('#ai-sheet').classList.contains('hidden')) aiSheetClose();   // 点消息区＝收起面板
   if (e.target.closest('#ai-continue')) {      // 接着上一轮往下做（服务端的 4 轮/100 秒上限重新计）
     $('#ai-text').value = '继续，把上面没做完的做完'; aiGrow(); aiSend(); return;
+  }
+  /* 消息流里已经发出去的附件：点开看大图 / 看正文。
+     开哪一种看元素上的 data-attimg 就够 —— 不去 aiMsgs 里按 id 找，
+     刚发出去那条本地还没拿到行号（mid 为 0）时也照样点得开。 */
+  const att = e.target.closest('.ai-att[data-attv]');
+  if (att) {
+    aiAttOpen({ name: att.dataset.attname || '附件', image: att.dataset.attimg || '' },
+              +(att.dataset.attmid || 0), +att.dataset.attv);
+    return;
   }
   const more = e.target.closest('.ai-rmore');
   if (more) { const r = more.previousElementSibling; if (r) r.classList.remove('clip'); more.remove(); return; }

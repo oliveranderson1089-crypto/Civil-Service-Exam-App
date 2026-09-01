@@ -1,5 +1,6 @@
 $
 AE
+AI_ATT_MAX
 AI_FOLDER
 AI_LINE
 AI_PH
@@ -12,6 +13,7 @@ ANN_QLEN
 ANN_SKIP
 AO_DESTS
 AO_KIND
+AO_SOON
 APPCLIP
 ART_EM
 ART_ICONS
@@ -43,6 +45,7 @@ CS_KEYS
 CTX_MENU_IDS
 CTX_MENU_TRIGGERS
 DESKTOP_VER
+DESK_PART_TIMEOUT
 DL_ART
 DL_ART2_DARK
 DL_ART_HRS
@@ -209,6 +212,7 @@ _dialog
 _docSaveFailed
 _draftMeaningful
 _draftSaveT
+_dvDecodeChain
 _kbpResolve
 _lastUpdChk
 _lsWarned
@@ -231,6 +235,7 @@ _qtTotalUsed
 _qtTotalWarned
 _qtUsed
 _qtWarned
+_readChain
 _readInjTimer
 _selBub
 _svg
@@ -260,6 +265,9 @@ aiAlive
 aiAskTier
 aiAttCut
 aiAttDone
+aiAttImgFallback
+aiAttOpen
+aiAttText
 aiAttachFiles
 aiAttachLib
 aiAtts
@@ -283,6 +291,7 @@ aiExactToggle
 aiExport
 aiGrow
 aiHandleAttach
+aiHandleAttachAll
 aiHintPh
 aiHomeNavItems
 aiHomeQ
@@ -362,11 +371,16 @@ annLocate
 annPosOf
 annRangeOf
 aoApplyFont
+aoCard
 aoFont
 aoItems
+aoLeft
 aoPaint
+aoPickShare
 aoRetain
+aoSecOpen
 aoSend
+aoShare
 aoView
 api
 appConfirm
@@ -583,8 +597,13 @@ curB
 curBoardFeat
 curNoteBoard
 curTag
+deskAskPart
+deskBigFile
 deskMsg
 deskOpenFile
+deskPartSeq
+deskPartSettle
+deskPartWait
 deskSay
 deskStop
 deskTTS
@@ -704,6 +723,7 @@ dtTable
 dtTotalSec
 dvBatchBar
 dvClip
+dvDecodeSerial
 dvDownload
 dvExt
 dvFolder
@@ -721,6 +741,7 @@ dvNameOf
 dvNetErr
 dvOpenAndUpload
 dvOpenFile
+dvPartOf
 dvPaste
 dvPickFolder
 dvPickFolderNative
@@ -1344,6 +1365,7 @@ qtTotalResume
 qtTotalStart
 qtTotalStop
 qz
+readFileSerial
 readerFont
 readerSepia
 readerSerif
@@ -1499,6 +1521,7 @@ sqLocalHint
 sqOpenPaper
 sqOpenRecord
 sqOpenSub
+sqPaperCard
 sqPapers
 sqPick
 sqQuestionHtml
@@ -1513,6 +1536,7 @@ sqRun
 sqSheetHtml
 sqStash
 sqSub
+sqSubCard
 sqSubmit
 sqTick
 srRightFill
@@ -1534,6 +1558,7 @@ stack
 state
 stripHtml
 switchLine
+syncDraftThumb
 syncSendState
 syncTabletUi
 sysIsDark

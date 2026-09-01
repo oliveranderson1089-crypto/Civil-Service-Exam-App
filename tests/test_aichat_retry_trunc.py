@@ -6,6 +6,7 @@
 """
 import json
 import sqlite3
+import time
 
 import pytest
 
@@ -184,7 +185,9 @@ def test_临时文件跨文件系统时原图照样留得住(auth_client, monkey
     real_replace = os.replace
 
     def cross_device(src, dst):
-        if str(dst).startswith(str(attach.AI_IMG_DIR)):
+        # 只拦「把原图搬进暂存目录」这一步。后台转写落 sidecar 也用 os.replace，
+        # 但它的临时文件跟目标同目录、必然同一个文件系统，跨设备错误在那儿不会发生。
+        if str(dst).startswith(str(attach.AI_IMG_DIR)) and not str(dst).endswith(".txt"):
             raise OSError(18, "Invalid cross-device link")
         return real_replace(src, dst)
 
@@ -197,4 +200,10 @@ def test_临时文件跨文件系统时原图照样留得住(auth_client, monkey
     d = r.get_json()
     assert d.get("image"), "原图没留下，这一轮就用不上视觉模型了"
     assert os.path.exists(os.path.join(attach.AI_IMG_DIR, d["image"]))
-    assert d["text"] == "识别出来的字"
+    # 转写是后台补的（图片上传不再等它），所以这儿等一下再看 sidecar
+    assert d["text"] == "" and d["ocr"] == "pending"
+    for _ in range(200):
+        if attach.ai_img_text(d["image"]):
+            break
+        time.sleep(0.05)
+    assert attach.ai_img_text(d["image"]) == "识别出来的字"

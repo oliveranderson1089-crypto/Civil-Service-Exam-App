@@ -164,7 +164,7 @@ def md_to_pdf(title, body):
     return buf.getvalue()
 
 
-def _bytes_of(r):
+def output_bytes(r):
     """一份产出的文件内容 + 文件名。pdf 现渲染（不落盘：产出随时会被清掉，
     留一份 pdf 在盘上只是又一样要跟着清的东西）。"""
     title = r["title"] or "AI 产出"
@@ -182,7 +182,7 @@ def aiout_download(oid):
     if not r:
         return jsonify({"error": "未找到"}), 404
     try:
-        data, name, mime = _bytes_of(r)
+        data, name, mime = output_bytes(r)
     except Exception as e:
         log.warning("AI 产出出文件失败：%r", e)
         return jsonify({"error": "生成文件失败：%s" % e}), 500
@@ -193,7 +193,7 @@ DESTS = ("material", "drive", "note")
 
 
 def deliver(db, user_id, oid, dest, board="", folder=""):
-    """把一份产出投到别的容器里，返回 (成功?, 给人看的一句话)。
+    """把一份产出投到别的容器里，返回 (成功?, 给人看的一句话, 落库那一行或 None)。
 
     HTTP 接口和 AI 工具**共用这一条**：投放这件事有配额、有去重、有目录，
     抄成两份迟早出现「网页上投得进去、让 AI 投就报错」。
@@ -202,21 +202,21 @@ def deliver(db, user_id, oid, dest, board="", folder=""):
     """
     r = db.execute("SELECT * FROM ai_outputs WHERE id=? AND user_id=?", (oid, user_id)).fetchone()
     if not r:
-        return False, "找不到这份产出（id=%s）。" % oid
+        return False, "找不到这份产出（id=%s）。" % oid, None
     if dest not in DESTS:
-        return False, "不支持的目的地：%s" % dest
+        return False, "不支持的目的地：%s" % dest, None
 
     if dest == "note":
         db.execute("INSERT INTO notes(user_id,content) VALUES(?,?)",
                    (user_id, ("# " + (r["title"] or "") + "\n\n" + (r["body"] or ""))[:BODY_MAX]))
         db.commit()
-        return True, _mark(db, oid, r, "小记")
+        return True, _mark(db, oid, r, "小记"), None
 
     try:
-        payload, name, mime = _bytes_of(r)
+        payload, name, mime = output_bytes(r)
     except Exception as e:
         log.warning("AI 产出出文件失败：%r", e)
-        return False, "生成文件失败：%s" % e
+        return False, "生成文件失败：%s" % e, None
     fd, tmp = tempfile.mkstemp(prefix="aiout_")
     with os.fdopen(fd, "wb") as f:
         f.write(payload)
@@ -229,7 +229,7 @@ def deliver(db, user_id, oid, dest, board="", folder=""):
             row, err = _finish_upload(db, folder, name, tmp, mime)
     except Exception as e:
         log.warning("AI 产出投放失败：%r", e)
-        return False, "投放失败：%s" % e
+        return False, "投放失败：%s" % e, None
     finally:
         # 入库助手成功时会把临时文件搬走；失败或异常时它还在，别留一地垃圾
         if os.path.exists(tmp):
@@ -240,10 +240,10 @@ def deliver(db, user_id, oid, dest, board="", folder=""):
     if err:
         # err 是 (json响应, 状态码)：配额不够这类。把里面那句话原样带出来
         try:
-            return False, err[0].get_json().get("error") or "投放失败"
+            return False, err[0].get_json().get("error") or "投放失败", None
         except Exception:
-            return False, "投放失败"
-    return True, _mark(db, oid, r, "资料库" if dest == "material" else "云盘")
+            return False, "投放失败", None
+    return True, _mark(db, oid, r, "资料库" if dest == "material" else "云盘"), row
 
 
 def _mark(db, oid, r, where):
@@ -254,15 +254,72 @@ def _mark(db, oid, r, where):
     return "已把《%s》投到%s（并顺手归了档，不会被自动清理）。" % (r["title"] or "", where)
 
 
+def mark_sent(db, oid, where):
+    """记一笔「投到过哪儿」并顺手归档。聊天转发在 mods/social.py 里，也走这一条。"""
+    r = db.execute("SELECT * FROM ai_outputs WHERE id=?", (oid,)).fetchone()
+    return _mark(db, oid, r, where) if r else ""
+
+
 @bp.post("/api/aiout/<int:oid>/send")
 def aiout_send(oid):
     data = request.get_json(silent=True) or {}
     dest = data.get("dest")
     if dest not in DESTS:
         return jsonify({"error": "不支持的目的地"}), 400
-    ok, msg = deliver(get_db(), uid(), oid, dest,
+    ok, msg, _row = deliver(get_db(), uid(), oid, dest,
                       board=(data.get("board") or ""), folder=(data.get("folder") or ""))
     if not ok:
         return jsonify({"error": msg}), 400
     return jsonify({"ok": True, "where": {"material": "资料库", "drive": "云盘",
                                           "note": "小记"}[dest], "msg": msg})
+
+# ---------------------------------------------------------------- 共享给队友
+def _picked_mates(db, me, raw):
+    """请求里的收件人 → 确实是我队友的那些。不是队友的一律丢掉（防越权）。"""
+    from mods.materials import teammates
+    mates = {m["id"] for m in teammates(db, me)}
+    out = []
+    for x in (raw or []):
+        try:
+            x = int(x)
+        except (TypeError, ValueError):
+            continue
+        if x in mates and x not in out:
+            out.append(x)
+    return out
+
+
+@bp.get("/api/aiout/<int:oid>/team")
+def aiout_team_get(oid):
+    """能共享给谁：我的队友。"""
+    db = get_db()
+    if not db.execute("SELECT 1 FROM ai_outputs WHERE id=? AND user_id=?", (oid, uid())).fetchone():
+        return jsonify({"error": "未找到"}), 404
+    from mods.materials import teammates
+    return jsonify({"members": [{"id": m["id"], "username": m["username"], "shared": False}
+                                for m in teammates(db, uid())]})
+
+
+@bp.post("/api/aiout/<int:oid>/team")
+def aiout_team_set(oid):
+    """共享给队友 = 先把这份产出投进**自己的**资料库，再把那一行共享出去。
+
+    不另造一套共享表：这一页是中转站，30 天就清，别人来这儿看等于看一个随时会消失的
+    东西。「让队友长期看得到」在这个应用里只有一种实现 —— 资料库的 material_shares，
+    所以这里走 deliver(dest='material') 再挂共享，配额、去重、权限全归资料库管。
+
+    每点一次都会新投一份进资料库（不像资料库那边是「整份覆盖」）：产出本来就是
+    一次性的东西，改了再共享是常事，硬去认「上次投的是哪一份」只会认错。
+    """
+    db, me = get_db(), uid()
+    to = _picked_mates(db, me, (request.get_json(silent=True) or {}).get("to"))
+    if not to:
+        return jsonify({"error": "选一个队友再共享"}), 400
+    ok, msg, row = deliver(db, me, oid, "material")
+    if not ok:
+        return jsonify({"error": msg}), 400
+    for t in to:
+        db.execute("INSERT OR IGNORE INTO material_shares(material_id,owner_id,to_user) "
+                   "VALUES(?,?,?)", (row["id"], me, t))
+    db.commit()
+    return jsonify({"ok": True, "n": len(to), "material_id": row["id"], "msg": msg})

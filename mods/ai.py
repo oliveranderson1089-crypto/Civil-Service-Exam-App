@@ -142,6 +142,38 @@ def _img_data_url(path, maxpx=1600):
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def _vision_lanes(prefer):
+    """按 prefer 排出这一次可用的视觉档位（含退路）。vision_chat 和 vision_stream 共用
+    —— 两处各抄一份的话，「exact 没配就退回智谱两档」这种规则迟早只在其中一处生效，
+    表现是「同一张图，问答能看、转写看不了」。
+
+    这层函数不会影响记账：aimeter 的 _SKIP 里已经有 "ai"，caller() 照样顺栈找到
+    真正的业务模块（attach / aisession），不会把这儿当成调用方。
+    """
+    prefer = aiclient.effective_vision(prefer, CFG, aimeter.caller())
+    lanes = _vision_conf()["lanes"]
+    if prefer == "exact" and lanes["exact"]["key"] and lanes["exact"]["model"]:
+        # 精准档：DeepSeek 打头，它不在时照样退回智谱两档
+        order = [lanes["exact"], lanes["pro"], lanes["free"]]
+    elif prefer == "free" and lanes["free"]["model"]:
+        order = [lanes["free"], lanes["pro"]]
+    else:
+        order = [lanes["pro"], lanes["free"]]
+    order = [l for l in order if l["model"] and l["key"] and l["base"]]
+    if not order:
+        raise RuntimeError("视觉模型未配置")
+    return order
+
+
+def _vision_content(text, images):
+    """文字 + 若干张图 → OpenAI 兼容的 content 数组。图片路径就地读盘压缩成 data URL。"""
+    content = [{"type": "text", "text": text}]
+    for im in images:
+        u = im if isinstance(im, str) and im.startswith("data:") else _img_data_url(im)
+        content.append({"type": "image_url", "image_url": {"url": u}})
+    return content
+
+
 def vision_chat(text, images, prefer="free", temperature=0.2, max_tokens=1500, timeout=90, json_mode=False):
     """视觉对话。images 为文件路径或 data-url 列表。
 
@@ -157,23 +189,8 @@ def vision_chat(text, images, prefer="free", temperature=0.2, max_tokens=1500, t
     和 DeepSeek 那两档同一个旋钮体系（键的形状、优先级、清除方式都一样）。
     who 顺调用栈找，落到真正的业务模块（drill / docqa / attach），不是这个转发层。
     """
-    prefer = aiclient.effective_vision(prefer, CFG, aimeter.caller())
-    conf = _vision_conf()
-    lanes = conf["lanes"]
-    if prefer == "exact" and lanes["exact"]["key"] and lanes["exact"]["model"]:
-        # 精准档：DeepSeek 打头，它不在时照样退回智谱两档
-        order = [lanes["exact"], lanes["pro"], lanes["free"]]
-    elif prefer == "free" and lanes["free"]["model"]:
-        order = [lanes["free"], lanes["pro"]]
-    else:
-        order = [lanes["pro"], lanes["free"]]
-    order = [l for l in order if l["model"] and l["key"] and l["base"]]
-    if not order:
-        raise RuntimeError("视觉模型未配置")
-    content = [{"type": "text", "text": text}]
-    for im in images:
-        u = im if isinstance(im, str) and im.startswith("data:") else _img_data_url(im)
-        content.append({"type": "image_url", "image_url": {"url": u}})
+    order = _vision_lanes(prefer)
+    content = _vision_content(text, images)
     last = "未知错误"
     for lane in order:
         model, url = lane["model"], _vision_url(lane["base"])
@@ -224,6 +241,86 @@ def vision_chat(text, images, prefer="free", temperature=0.2, max_tokens=1500, t
             aimeter.record(tier="vision", model=model, mode="vision",
                            usage=d.get("usage"), elapsed_ms=t.ms, ok=True)
             return out
+    raise RuntimeError("视觉识别失败（%s）" % last)
+
+
+def vision_stream(text, images, prefer="free", temperature=0.2, max_tokens=1500, timeout=90):
+    """流式版视觉对话。产出 ("reasoning", 片段) / ("content", 片段) / ("ping", "") /
+    ("done", 整段正文)。
+
+    为什么非要有这一条：带图那一轮以前一律走 vision_chat（stream=False），用户按下
+    发送后要对着骨架屏干等十几到几十秒，然后整段「啪」地出现 —— 同一个界面里，
+    不带图的问答是逐字出的，带图的反而像卡死了。看图本身就慢（图片 token 贵、
+    还要先读完图再动笔），越慢越需要让人看见它在写。
+
+    退档规则和 vision_chat 一致（_vision_lanes），但**只在一个字都没吐出去之前**换档：
+    已经流了半截再换一档重来，用户屏幕上会出现两段重复的开头。
+
+    reasoning 必须转出去，不能像正文那样只挑 content：精准档（DeepSeek 视觉）是推理模型，
+    实测一张 640×200 的小图就先推了 106 片 reasoning_content 才出第一个正文字符 ——
+    整页讲义那种能想上几十秒。这期间要是一个字节都不往下游发，隧道和前端的空闲超时
+    会把一条好端端的连接判死。
+    """
+    order = _vision_lanes(prefer)
+    content = _vision_content(text, images)
+    last = "未知错误"
+    for lane in order:
+        model, url = lane["model"], _vision_url(lane["base"])
+        cap = aiclient.budget(model, max_tokens)
+        payload = {"model": model, "messages": [{"role": "user", "content": content}],
+                   "temperature": temperature, "max_tokens": cap, "stream": True,
+                   "stream_options": {"include_usage": True}}
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={
+            "Content-Type": "application/json", "Authorization": "Bearer " + lane["key"]})
+        t = aimeter.Timer()
+        out, usage, emitted = [], {}, False
+        try:
+            with t, urllib.request.urlopen(req, timeout=timeout) as r:
+                for raw in r:
+                    line = raw.decode("utf-8", "ignore").strip()
+                    if not line:
+                        continue
+                    if not line.startswith("data:"):
+                        # 上游的注释帧（keep-alive）。转出去，好让我们发给浏览器的那条
+                        # SSE 一直有字节流动 —— 中间隔着 Cloudflare 隧道，静默久了会被掐。
+                        yield "ping", ""
+                        continue
+                    body = line[5:].strip()
+                    if body == "[DONE]":
+                        break
+                    try:
+                        d = json.loads(body)
+                    except Exception:
+                        continue          # 半截 JSON 丢掉，别让一帧脏数据毁掉整次回答
+                    usage = d.get("usage") or usage
+                    delta = ((d.get("choices") or [{}])[0].get("delta") or {})
+                    if delta.get("reasoning_content"):
+                        yield "reasoning", delta["reasoning_content"]
+                    if delta.get("content"):
+                        out.append(delta["content"])
+                        emitted = True
+                        yield "content", delta["content"]
+            full = "".join(out).strip()
+            if not full:
+                # 同 vision_chat：空正文不是成功（推理段可能把额度烧光了）
+                raise ValueError("模型没有返回正文（可能推理段吃光了额度）")
+        except GeneratorExit:
+            # 客户端断开。已经吐出去的 token 是真收费的，记一笔再放行（不能吞）。
+            aimeter.record(tier="vision", model=model, mode="vision", usage=usage,
+                           elapsed_ms=t.ms, ok=False, err="aborted")
+            raise
+        except Exception as e:
+            aimeter.record(tier="vision", model=model, mode="vision", usage=usage,
+                           elapsed_ms=t.ms, ok=False, err=e)
+            last = "HTTP %d" % e.code if isinstance(e, urllib.error.HTTPError) else str(e)
+            if emitted:
+                # 已经吐了半截：换档重来会把开头再写一遍，只能就此打住
+                raise RuntimeError("视觉识别中断（%s）" % last)
+            continue                       # 一个字都没出：换下一档再试
+        aimeter.record(tier="vision", model=model, mode="vision", usage=usage,
+                       elapsed_ms=t.ms, ok=True)
+        yield "done", full
+        return
     raise RuntimeError("视觉识别失败（%s）" % last)
 
 

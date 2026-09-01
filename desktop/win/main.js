@@ -21,7 +21,7 @@ const log = require('./log');
 const files = require('./files')({ log, js, toast, getWin: () => win });
 const shot = require('./shot')({ log, js, toast });
 
-const SHELL_VER = '6.3';          // 壳版本。⚠️ 与 Linux 壳（DESKTOP_VER）共用同一条数字线：
+const SHELL_VER = '6.4';          // 壳版本。⚠️ 与 Linux 壳（DESKTOP_VER）共用同一条数字线：
                                   // 网页里 parseFloat(DESKTOP_VER) >= x 的特性闸门是跨平台比的，
                                   // 从 1.0 起步会被当成老版本，功能被悄悄关掉。
 const TUNNEL = 'https://gk.gongkaopei2026.click';
@@ -485,6 +485,12 @@ ipcMain.on('gk', (e, raw) => {
     }
     case 'batchdone':
       files.ackBatch();           // 网页把这一批收完了 → 放行下一批（背压）
+      break;
+    case 'bigpart':
+      files.bigPart(d);           // 大文件：网页要第几片（见 files.js 的 sendBig）
+      break;
+    case 'bigdone':
+      files.ackBig(d);            // 这份大文件传完了 → 放行下一个
       break;
     default: log.warn('gk', '不认识的动作：' + d.a);
   }

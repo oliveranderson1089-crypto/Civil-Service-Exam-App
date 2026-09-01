@@ -675,3 +675,207 @@ class Test裁决台:
         auth_client.post("/api/shequ/doubt/4", json={"act": "drop"})
         d = auth_client.get("/api/shequ/paper/1?mode=study").get_json()
         assert not [it for it in d["items"] if it["stem"] == "存疑题干"]
+
+
+# ---------------------------------------------------------------- 模拟卷
+class Test模拟卷:
+    """模拟卷是**整卷、但不是真题**。这一组盯的是三件会静默出错的事：
+       ① 它别混进真题列表；② 缺口要如实报；③ 答案区串行的册子一份都不许收。"""
+
+    def test_模拟卷不混进真题列表(self, auth_client, paper):
+        from core import DB
+        import sqlite3
+        con = sqlite3.connect(DB)
+        con.execute("INSERT INTO sq_papers(id,file_id,name,year,kind,region,n_obj,n_bad) "
+                    "VALUES(11,9011,'2025年社区工作者考试模拟试题及答案 (1)',0,'模拟','通用',66,27)")
+        con.commit()
+        con.close()
+        d = auth_client.get("/api/shequ/overview").get_json()
+        assert "2025年社区工作者考试模拟试题及答案 (1)" not in [p["name"] for p in d["papers"]], \
+            "模拟卷跑进真题列表了 —— 真题一共只有两套，混着摆像考过七八回"
+        assert [p["name"] for p in d["mocks"]] == ["2025年社区工作者考试模拟试题及答案 (1)"]
+
+    def test_模拟卷要如实报出缺口(self, auth_client, paper):
+        from core import DB
+        import sqlite3
+        con = sqlite3.connect(DB)
+        con.execute("INSERT INTO sq_papers(id,file_id,name,year,kind,region,n_obj,n_bad) "
+                    "VALUES(12,9012,'模拟卷甲',0,'模拟','通用',37,59)")
+        con.commit()
+        con.close()
+        d = auth_client.get("/api/shequ/overview").get_json()
+        assert d["mocks"][0]["n_bad"] == 59, \
+            "只报收下的那些题，卷子看着是满的，人会以为自己做完了一整套"
+
+    def test_整卷才叫模拟卷_题册不算(self):
+        import ingest_sqbank as B
+        assert B.kind_of("2025年社区工作者考试模拟试题及答案 (1).pdf") == "模拟"
+        assert B.kind_of("2025年社区工作者-社会工作法规与政策押题试卷及答案.pdf") == "押题"
+        # 「1月份时政押题」是一本题库、不是一套卷。认不出就当题册，别摆成整卷骗人去做
+        assert B.kind_of("1月份时政押题.pdf") == "题库"
+        assert B.kind_of("社区概论练习1.pdf") == "题库"
+
+    def test_答案区串行的册子一道都不收(self):
+        """闸门要按**掉下来的原因**判，不是按一个总分数判。
+
+        OCR 把选项吃了 → 丢题，可以忍；答案区串行 → 发错题，一道都不能忍。
+        这两件事在「对齐率」上长得一模一样，所以另算一个「错位嫌疑率」。
+        """
+        import ingest_sqbank as B
+        bad = {"n_all": 100, "bad": [({}, "答案 D 超出本题 3 个选项的范围")] * 19}
+        ok = {"n_all": 100, "bad": [({}, "选项少于 2 个")] * 40}
+        assert B._misalign(bad) > 0.05, "答案串行的册子没被算成高危"
+        assert B._misalign(ok) == 0.0, "OCR 掉字被误算成答案串行，好卷子会被整份扔掉"
+
+    def test_题号回到1就是换了题型段(self):
+        """扫描件常把「二、多项选择题」那行页脚粘掉。没有这条退路的话，
+           多选的 1~40 会去撞单选已占的号，setdefault 让先来的赢，
+           **整段多选一条答案都取不到** —— 实测一套卷丢了 32 道。"""
+        import ingest_sqbank as B
+        tail = "参考答案\n一、单项选择题\n" \
+               + "\n".join("%d. A %d. B" % (i, i + 1) for i in range(1, 60, 2)) \
+               + "\n1. ABDE 2. ABCE 3. BCD 4. ABCE\n"
+        got = B._scan_answers(tail)
+        assert got.get(("", "multi", 1)) == "ABDE", "多选段没被认出来：%r" % (
+            [k for k in got if k[1] == "multi"][:5])
+        assert got.get(("", "single", 1)) == "A", "单选段被换段规则误伤了"
+
+    def test_题号被OCR认错不算换段(self):
+        """同一册里「28.」被认成「98.」，下一条 29 比 98 小。按「只要变小就换段」
+           写会在这儿凭空劈出一段来 —— 所以判据是「回到 1」，不是「变小」。"""
+        import ingest_sqbank as B
+        tail = "参考答案\n一、单项选择题\n25. D 26. B 27. A 98. D 29. A 30. B\n"
+        got = B._scan_answers(tail)
+        assert got.get(("", "single", 29)) == "A", "被 OCR 错号骗着劈段了：%r" % got
+
+    def test_一段答案的题型按答案形状判(self):
+        import ingest_sqbank as B
+        assert B._kind_by_shape(["ABD", "BCD", "AC", "ABCE"]) == "multi"
+        assert B._kind_by_shape(["T", "F", "T", "F"]) == "judge"
+        assert B._kind_by_shape(["A", "B", "C", "D"]) == "single"
+
+
+# ---------------------------------------------------------------- 主观题扩容
+class Test主观题分档:
+    """外省题库带来了一百多道主观题。它们能用，但**不能冒充资中考情** ——
+       简答论述这个题型资中两套原卷上根本没有。"""
+
+    def test_简答论述不算在四十分里(self):
+        assert "short" not in sqscore.PAPER_PARTS, \
+            "简答论述混进了卷面题型，会让人以为资中考简答"
+        assert "short" in sqscore.SUB_PARTS, "但它得能当主观题批改"
+
+    def test_题型清单只有一份(self):
+        # SQL 里手写 IN ('case','gongwen') 的地方，加了题型就会有的认有的不认
+        assert sqscore.sql_in(("case", "gongwen")) == "('case','gongwen')"
+
+    def test_主观题按来源分档(self, auth_client, paper):
+        from core import DB
+        import sqlite3
+        con = sqlite3.connect(DB)
+        con.execute("INSERT INTO sq_papers(id,file_id,name,year,kind,region) "
+                    "VALUES(13,NULL,'近五年多省份主观题真题题库',0,'主观题库','通用')")
+        for seq, (qid, part, stem) in enumerate(
+                ((21, "case", "外省案例题面"), (22, "short", "简答题面")), 1):
+            con.execute("INSERT INTO sq_questions(id,seq,paper_id,part,part_seq,qtype,stem,"
+                        "options,answer,explain,score,verify) "
+                        "VALUES(?,?,13,?,1,'社会工作',?,'','1. 甲\n2. 乙','',12,'ok')",
+                        (qid, seq, part, stem))
+        con.commit()
+        con.close()
+        d = auth_client.get("/api/shequ/subjective").get_json()
+        by = {it["stem"]: it for it in d["items"]}
+        assert by["案例题面"]["group"] == "real"
+        assert by["外省案例题面"]["group"] == "offsite"
+        assert by["简答题面"]["group"] == "short"
+        assert [g["key"] for g in d["groups"]] == ["real", "offsite", "short"]
+
+    def test_没年份的题不许显示成N年真题(self, auth_client, paper):
+        # year=0 照原样渲染会变成「0 年真题」，看着像资中 0 年考过
+        from core import DB
+        import sqlite3
+        con = sqlite3.connect(DB)
+        con.execute("INSERT INTO sq_papers(id,file_id,name,year,kind,region) "
+                    "VALUES(14,NULL,'近五年多省份主观题真题题库',0,'主观题库','通用')")
+        con.execute("INSERT INTO sq_questions(id,seq,paper_id,part,part_seq,qtype,stem,"
+                    "options,answer,explain,score,verify) "
+                    "VALUES(23,1,14,'case',1,'社会工作','外省题面','','1. 甲\n2. 乙','',12,'ok')")
+        con.commit()
+        con.close()
+        d = auth_client.get("/api/shequ/subjective").get_json()
+        it = [x for x in d["items"] if x["stem"] == "外省题面"][0]
+        assert not it["year"] and it["src"], "没年份时得说得出它出自哪本册子"
+
+
+class Test主观题入库:
+    def test_两本册子按分节和题号对齐(self):
+        """题干在一本、答案在另一本。**只按题号做键**的话，案例分析第 1 题
+           会拿到简答论述第 1 题的答案 —— 题数照样对得上，答案全错。"""
+        import ingest_sqsub as S
+        q = ("简答、论述题真题题库\n1、简答题一问，题面也要写够十五个字才不会被当成 OCR 吃了题面\n2、简答题二问，题面也要写够十五个字才不会被当成 OCR 吃了题面\n"
+             "案例分析题真题题库\n1、案例一的题面写得长一些够长了吧\n")
+        a = ("简答、论述题题库参考答案\n1、【参考答案】\n简答一的答案正文，这里要写够三十个字才收得下来，不然会被当成没抠全而丢掉\n"
+             "2、【参考答案】\n简答二的答案正文，这里要写够三十个字才收得下来，不然会被当成没抠全而丢掉\n"
+             "案例分析题题库参考答案\n1、【参考答案】\n案例一的答案正文，这里要写够三十个字才收得下来，不然会被当成没抠全而丢掉\n")
+        merged, drop, orphan = S.scan_pair(q, a)
+        assert merged[("案例分析", 1)]["answer"].startswith("案例一的答案"), \
+            "案例第 1 题拿到了简答第 1 题的答案 —— 这就是错位"
+        assert merged[("案例分析", 1)]["part"] == "case"
+        assert merged[("简答", 1)]["part"] == "short"
+
+    def test_整节没答案就整节不收(self):
+        import ingest_sqsub as S
+        q = "写作真题题库\n1、写一篇议论文题面够长了吗应该够了吧\n"
+        merged, drop, orphan = S.scan_pair(q, "写作题题库参考答案\n")
+        assert not merged, "把没有参考答案的题发出去了"
+        assert drop and "没有参考答案" in drop[0][1]
+
+    def test_OCR认花的条目号要还原(self):
+        import ingest_sqsub as S
+        got = S.ocr_points("(1T)第一条\n(2)第二条\n(4第四条")
+        assert got.splitlines()[0].startswith("(1)")
+        assert got.splitlines()[2].startswith("(4)")
+
+    def test_句中的圈码不许凭空补号(self):
+        """行首的圈码是采分点边界、按顺序补号是合理的；句中那种
+           （`包括: @家庭矛盾，@教育方式`）补号就是在编数字了。"""
+        import ingest_sqsub as S
+        got = S.ocr_points("困境主要有: @家庭矛盾，@教育方式不当")
+        assert "·家庭矛盾" in got and "(1)" not in got
+
+    def test_顶层括号编号要提成采分点(self):
+        """sqgrade 把「（N）」当子要素，那条规则是为资中真题写的、没错；
+           外省这批答案顶层就是用 (1)(2)(3) 编的，不提的话一个点都拆不出来。"""
+        import ingest_sqsub as S
+        from mods import sqgrade
+        raw = "作为社区工作者，我将:\n(1)召集业主大会。\n(2)制定居民公约。\n(3)及时公示信息。"
+        assert not sqgrade.split_points(raw, 12), "前提变了，这个用例要重写"
+        assert len(sqgrade.split_points(S.promote_points(raw), 12)) == 3
+
+    def test_已有顶层编号时不动人家的层级(self):
+        import ingest_sqsub as S
+        raw = "1. 接案:\n(1)倾听\n(2)建立信任\n2. 预估:\n(1)核心问题"
+        assert S.promote_points(raw) == raw, "把带层级的答案压平了"
+
+    def test_两个解析器对同一份输入给同样的选项(self):
+        """「四个选项挤一行」的修复原先只写在 parse_inline 里，parse_bank 没有。
+
+        同族的两条解析路径（答案在卷末 / 答案跟在题后）**必须吃同一份修复** ——
+        少一处的下场不是报错，是那一路把好题判成「选项少于 2 个」，
+        报出来看着像题册残缺，而不像我们少做了一步。
+        """
+        import ingest_sqbank as B
+        body = "1.管仲辅佐（  ）成为春秋首霸。\nA.晋文公 B.楚庄王 C.齐桓公 D.秦穆公\n"
+        a, _ = B.parse_bank(body + "参考答案\n一、单项选择题\n1. C\n")
+        b, _ = B.parse_inline(body + "答案：C\n")
+        assert a and b, "两条路各自都得解析得出来：%r / %r" % (a, b)
+        assert a[0]["options"] == b[0]["options"] == ["晋文公", "楚庄王", "齐桓公", "秦穆公"], \
+            "两个解析器给出的选项不一样：%r vs %r" % (a[0]["options"], b[0]["options"])
+
+    def test_选项开头的残标点要削掉(self):
+        # 原卷印的是「A、澄清」，OCR 认成「A，澄清」——「，」不在分隔符里，
+        # 于是被当成正文留下来，界面上就是「，澄清」。实测占模拟卷选项的 16%
+        import ingest_sqbank as B
+        items = [{"stem": "题干", "options": ["，澄清", "， 倾听", "同感"], "no": 1}]
+        B.repair_options(items)
+        assert items[0]["options"] == ["澄清", "倾听", "同感"]

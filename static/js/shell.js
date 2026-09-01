@@ -163,6 +163,8 @@ window.appBack = function () {
      顺序＝叠放顺序：后开的先关，每按一次只关一层。 */
   const fsheet = document.getElementById('cr-fsheet');       // 文件的「预览还是下载」
   if (fsheet) { fsheet.remove(); return true; }
+  const attv = document.getElementById('ai-attv');           // AI 附件正文浮层
+  if (attv) { attv.remove(); return true; }
   const lbx = document.getElementById('lbx');                // 看大图浮层
   if (lbx) { lbx.remove(); return true; }
   const cmenu = $('#cr-menu');                               // 消息长按菜单

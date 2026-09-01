@@ -31,7 +31,11 @@ SERVABLE = sqscore.SERVABLE_SQL
 # 后来加「题库」时忘了同步，结果 75 份练习册全跑进真题列表里显示成 77 份卷子。
 # 白名单的话，将来再加什么 kind 都不会漏进来。
 REAL_KINDS = ("招聘", "公开选聘")
-_REAL = "p.kind IN (%s)" % ",".join("'%s'" % k for k in REAL_KINDS)
+# 模拟卷/押题卷：**是整卷，但不是真题**。和真题分成两组摆，卷子上标明白 ——
+# 混在一起会让人以为资中考过七八套，而这门考试的真题一共就两套。
+MOCK_KINDS = ("模拟", "押题")
+_REAL = "p.kind IN %s" % sqscore.sql_in(REAL_KINDS)
+_MOCK = "p.kind IN %s" % sqscore.sql_in(MOCK_KINDS)
 
 # 招聘公告的权威事实（build_zizhong.py 也读它）。日期从这儿取而**不是**从用户的
 # 「备考计划」里取：那个字段一个用户只有一个，填的是公考的日子；社区笔试是另一场，
@@ -96,17 +100,22 @@ def overview():
     # 校对跑到一半、或裁决完还没回写时它就过期了 —— 而 servable 是现算的，
     # 两个数一起摆在同一张卡片上就会自相矛盾（实测「60 道待裁决」配「可练 41」）。
     # 同一件事只认一个来源。
-    rows = db.execute(
-        "SELECT p.id, p.name, p.year, p.kind, p.region, p.n_obj, p.n_sub, "
-        "  (SELECT COUNT(*) FROM sq_questions q WHERE q.paper_id=p.id "
-        "     AND q.part IN ('single','multi','judge') AND %s) servable, "
-        "  (SELECT COUNT(*) FROM sq_questions q WHERE q.paper_id=p.id "
-        "     AND q.part IN ('single','multi','judge') AND q.verify<>'ok') n_doubt, "
-        "  (SELECT COUNT(*) FROM sq_records r WHERE r.paper_id=p.id AND r.user_id=?) mine "
-        # 专项（程序化生成）和题库（练习册）都不是真题卷，混进来会让人以为
-        # 资中考过七十几套。它们各有自己的入口（资中专项 / 专项练）。
-        "FROM sq_papers p WHERE %s "
-        "ORDER BY p.year DESC" % (SERVABLE, _REAL), (u,)).fetchall()
+    # 专项（程序化生成）和题库（练习册）都不是整卷，混进来会让人以为
+    # 资中考过七十几套。它们各有自己的入口（资中专项 / 专项练）。
+    # 模拟卷是整卷、但**不是真题**，所以单独查一次、单独一组发给前端。
+    cols = ("SELECT p.id, p.name, p.year, p.kind, p.region, p.n_obj, p.n_sub, p.n_bad, "
+            "  (SELECT COUNT(*) FROM sq_questions q WHERE q.paper_id=p.id "
+            "     AND q.part IN %s AND %s) servable, "
+            "  (SELECT COUNT(*) FROM sq_questions q WHERE q.paper_id=p.id "
+            "     AND q.part IN %s AND q.verify<>'ok') n_doubt, "
+            "  (SELECT COUNT(*) FROM sq_records r WHERE r.paper_id=p.id AND r.user_id=?) mine "
+            "FROM sq_papers p WHERE %%s ORDER BY p.year DESC, p.name"
+            % (sqscore.sql_in(sqscore.OBJ_PARTS), SERVABLE,
+               sqscore.sql_in(sqscore.OBJ_PARTS)))
+    rows = db.execute(cols % _REAL, (u,)).fetchall()
+    # n_bad 是**解析时就没收下的题**（扫描件 OCR 把选项吃了）。发给前端是为了
+    # 卷面上能写「93 题里收下 66 道」—— 只报收下的那 66，人会以为自己做完了整卷。
+    mocks = [dict(r) for r in db.execute(cols % _MOCK, (u,)).fetchall()]
     # 考点分布：只统计发得出去的题，**不要拿库存充数**（库存满 ≠ 有题做）
     # 考点分布只统计真题：专项那 18 道是我们自己按公告造的，
     # 算进去会让「资中县情」这一格虚高，看不出真题的真实分布。
@@ -116,8 +125,13 @@ def overview():
         "SELECT q.qtype, COUNT(*) c %s AND %s GROUP BY q.qtype ORDER BY c DESC"
         % (real, SERVABLE))]
     doubt = db.execute("SELECT COUNT(*) c %s AND q.verify<>'ok'" % real).fetchone()["c"]
-    return jsonify({"papers": [dict(r) for r in rows], "types": types,
+    return jsonify({"papers": [dict(r) for r in rows], "mocks": mocks, "types": types,
                     "doubt": doubt, "paper_min": timing.SQ_PAPER_MIN,
+                    # 这句话跟着数据一起下发，别在 JS 里另写一份：模拟卷是外省机构编的，
+                    # 卷面结构和资中真题不一样（没有案例分析和公文写作那 40 分）。
+                    "mock_note": "外省机构编的模拟卷，不是资中真题：卷面只有客观题，"
+                                 "没有资中那 40 分的案例分析和公文写作。原件是扫描件，"
+                                 "OCR 认不出的题已剔除，缺口如实标在卷名后面。",
                     "rules": sqscore.RULE_TEXT, "exam": _countdown()})
 
 
@@ -136,13 +150,14 @@ def paper(pid):
         return jsonify({"error": "没有这份卷子"}), 404
     rows = db.execute(
         "SELECT q.* FROM sq_questions q WHERE q.paper_id=? AND "
-        "(q.part IN ('case','gongwen') OR %s) ORDER BY q.seq" % SERVABLE, (pid,)).fetchall()
+        "(q.part IN %s OR %s) ORDER BY q.seq"
+        % (sqscore.sql_in(sqscore.SUB_PARTS), SERVABLE), (pid,)).fetchall()
     items = [_pub(r, reveal) for r in rows]
     held = db.execute(
         "SELECT COUNT(*) c FROM sq_questions WHERE paper_id=? AND part IN "
         "('single','multi','judge') AND verify<>'ok'", (pid,)).fetchone()["c"]
     parts = []
-    for key in ("single", "multi", "judge", "case", "gongwen"):
+    for key in sqscore.PAPER_PARTS:
         got = [i for i in items if i["part"] == key]
         if got:
             parts.append({"part": key, "name": sqscore.PART_NAME[key], "n": len(got),
@@ -279,7 +294,10 @@ def facts():
 # ---------------------------------------------------------------- 专项练
 # 只从**题库**里出题，不动真题卷：真题是标尺，刷散题时把它掺进来，
 # 到考前想拿真题估分就估不准了（做过的题再做一遍，分数是虚高的）。
-_BANK = "p.kind='题库'"
+# 「专项练」的题源：题册 + 模拟卷。模拟卷进这儿是因为**题就是题** ——
+# 它换了个 kind 是为了能整卷做，不该顺带从专项练里消失（实测会少掉 300 多道）。
+BANK_KINDS = ("题库",) + MOCK_KINDS
+_BANK = "p.kind IN %s" % sqscore.sql_in(BANK_KINDS)
 
 # 哪些考点是**公告点名或真题考过**的。公告原文：「社会工作者职业资格考试初级知识，
 # 党的建设、社区建设、基层治理、法律常识、时事政治等」。
@@ -489,28 +507,55 @@ def sq_dtest_done():
 
 
 # ---------------------------------------------------------------- 主观题（40 分）
+# 主观题的三档，**摆在一起但不混为一谈**：
+#   real     资中两套原卷上的四道题 —— 这是标尺，永远排最前
+#   offsite  外省真题里和资中同型的（案例分析 / 公文写作）
+#   short    简答论述。资中卷面上**没有这个题型**，只当知识点自测用
+# 分档写在这儿而不是前端：JS 里再判一遍迟早和后端说的不是一回事。
+SUB_GROUPS = [
+    ("real", "资中真题", "两套原卷上的原题。这是标尺 —— 别的题都照着它的形状练。"),
+    ("offsite", "外省真题 · 同型", "别的省份考过的案例分析和公文写作，形状和资中一样。"
+                                   "满分是照资中口径给的（案例 12 分、公文 15 分），"
+                                   "外省原卷没标分值。"),
+    ("short", "简答论述 · 资中未考", "外省题库带来的题型，资中两套原卷上没有。"
+                                     "不算在 40 分里，当知识点自测用。满分按 10 分记。"),
+]
+
+
+def _sub_group(part, kind):
+    if part == "short":
+        return "short"
+    return "real" if kind in REAL_KINDS else "offsite"
+
+
 @bp.get("/api/shequ/subjective")
 def subjective():
-    """案例分析 + 公文写作的题目清单。**采分点是规则从参考答案拆的**，
-       所以这儿顺带把「这道题能不能逐点批改」也算出来告诉前端。"""
+    """主观题清单。**采分点是规则从参考答案拆的**，所以这儿顺带把
+       「这道题能不能逐点批改」也算出来告诉前端。"""
     db = get_db()
     rows = db.execute(
-        "SELECT q.*, p.year, p.name paper_name FROM sq_questions q "
-        "JOIN sq_papers p ON p.id=q.paper_id WHERE q.part IN ('case','gongwen') "
-        "ORDER BY p.year DESC, q.seq").fetchall()
+        "SELECT q.*, p.year, p.kind, p.name paper_name FROM sq_questions q "
+        "JOIN sq_papers p ON p.id=q.paper_id WHERE q.part IN %s "
+        "ORDER BY p.year DESC, q.part, q.seq" % sqscore.sql_in(sqscore.SUB_PARTS)).fetchall()
+    mine = {r["qid"]: r["c"] for r in db.execute(
+        "SELECT qid, COUNT(*) c FROM sq_grade WHERE user_id=? GROUP BY qid", (uid(),))}
     out = []
     for r in rows:
-        pts = sqgrade.split_points(r["answer"], r["score"]) if r["part"] == "case" else []
+        # 公文的参考答案是整篇范文、拆不出点，改按结构部件给分（见 sqgrade）——
+        # 所以它 n_points 是 0 但照样能批改，两件事别用同一个字段表示。
+        pts = [] if r["part"] == "gongwen" else sqgrade.split_points(r["answer"], r["score"])
         sk = sqgrade.skeleton_of(r["stem"]) if r["part"] == "case" else None
         out.append({"id": r["id"], "part": r["part"],
                     "part_name": sqscore.PART_NAME.get(r["part"], r["part"]),
-                    "year": r["year"], "stem": r["stem"], "score": r["score"],
-                    "n_points": len(pts), "gradable": bool(pts),
+                    "group": _sub_group(r["part"], r["kind"]),
+                    "year": r["year"], "src": r["paper_name"],
+                    "stem": r["stem"], "score": r["score"],
+                    "n_points": len(pts),
+                    "gradable": bool(pts) or r["part"] == "gongwen",
                     "skeleton": sqgrade.SKELETONS.get(sk) if sk else None,
-                    "mine": db.execute(
-                        "SELECT COUNT(*) c FROM sq_grade WHERE user_id=? AND qid=?",
-                        (uid(), r["id"])).fetchone()["c"]})
-    return jsonify({"items": out, "skeletons": sqgrade.SKELETONS})
+                    "mine": mine.get(r["id"], 0)})
+    return jsonify({"items": out, "skeletons": sqgrade.SKELETONS,
+                    "groups": [{"key": k, "name": n, "note": d} for k, n, d in SUB_GROUPS]})
 
 
 @bp.post("/api/shequ/grade")

@@ -176,6 +176,8 @@ document @keydown
 #ai-projsheet @change
 #ai-projsheet @click
 #ai-atts @click
+#ai-msgs @error
+#ai-atts @error
 #ai-attach .onclick
 #ai-attsheet @click
 document @appclip

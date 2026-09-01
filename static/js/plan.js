@@ -68,30 +68,34 @@ function renderRoadmap(rm, prof) {
     </div>
     <div class="plr-bar"><i style="width:${pct}%"></i></div>
     <div class="plr-focus">${esc(ph.focus)}</div>
-    ${rm.review_day ? `<div class="plr-tip">${rm.weekend === 'sat'
-      ? '周六复盘（稍满）：上午一套行测限时套题（严格 120 分钟）→ 下午全套订正 + 错因归因 → 晚上把本周错题过一遍。<b>今天不排新知识</b>，但别偷懒。'
-      : '周日复盘（更轻）：本周错题再过一遍 + 快速回看这周的新词 / 素材 / 时政，然后<b>休半天</b>放松。今天不排新任务，收收心准备下周。'}</div>` : ''}
-    <div class="plr-quota"><span class="plr-qt">今日行测定额</span>${quota}</div>
-    <div class="plr-sl">${artEm('📝')} 申论：${esc(ph.shenlun)}</div>
+    ${rm.review_day ? `<div class="plr-tip">${rm.line === 'shequ'
+      ? (rm.weekend === 'sat'
+        ? '周六复盘（稍满）：上午一套真题整卷（按考场时间）→ 下午全套订正 + 错因归因 → 晚上把本周错题过一遍。<b>今天不上新考点</b>，但别偷懒。'
+        : '周日复盘（更轻）：本周错题再过一遍 + 主观题按采分点重对一次，然后<b>休半天</b>放松。今天不排新内容，收收心准备下周。')
+      : (rm.weekend === 'sat'
+        ? '周六复盘（稍满）：上午一套行测限时套题（严格 120 分钟）→ 下午全套订正 + 错因归因 → 晚上把本周错题过一遍。<b>今天不排新知识</b>，但别偷懒。'
+        : '周日复盘（更轻）：本周错题再过一遍 + 快速回看这周的新词 / 素材 / 时政，然后<b>休半天</b>放松。今天不排新任务，收收心准备下周。')}</div>` : ''}
+    <div class="plr-quota"><span class="plr-qt">${esc(dd.quota_label || '今日题量定额')}</span>${quota}</div>
+    ${ph.shenlun ? `<div class="plr-sl">${artEm('📝')} 申论：${esc(ph.shenlun)}</div>` : ''}
     <div class="plr-detail ${plRoadOpen ? '' : 'hidden'}">
       <div class="plr-sec">${artEm('🎯')} 本阶段正确率目标</div>
       <table class="plr-tb">${acc}</table>
       <div class="plr-sec">${artEm('📌')} 模块优先级</div>
       <div class="plr-p">${esc(dd.priority || '')}<div class="plr-why">${esc(dd.priority_why || '')}</div></div>
-      <div class="plr-sec">🔁 本阶段每周要做到</div>
-      <ul class="plr-ul">${(ph.weekly || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      ${(ph.weekly || []).length ? `<div class="plr-sec">🔁 本阶段每周要做到</div>
+      <ul class="plr-ul">${ph.weekly.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       <div class="plr-sec">${artEm('📚')} 每日固定动作（用 App 现成内容）</div>
       <ul class="plr-ul">${(dd.fixed || []).map(x =>
         `<li>${esc(x.t)}${x.link ? ` <i class="pl-go" data-plgo="${esc(x.link)}">去做 ›</i>` : ''}
           <span class="plr-note">${esc(x.note || '')}</span></li>`).join('')}</ul>
       <div class="plr-sec">⏰ 节奏</div>
       <div class="plr-p">${esc(dd.rhythm || '')}</div>
-      <div class="plr-sec">🧱 纪律（原贴的 140 分强度，挑能长期执行的）</div>
-      <ul class="plr-ul">${(dd.discipline || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      ${(dd.discipline || []).length ? `<div class="plr-sec">🧱 纪律（挑能长期执行的）</div>
+      <ul class="plr-ul">${dd.discipline.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       <div class="plr-sec">🏁 阶段产出</div>
       <div class="plr-p">${esc(ph.output || '')}</div>
-      <div class="plr-sec">➡️ 40 天之后</div>
-      <div class="plr-p">${esc(dd.after || '')}</div>
+      ${dd.after ? `<div class="plr-sec">➡️ 这轮之后</div>
+      <div class="plr-p">${esc(dd.after)}</div>` : ''}
       <button class="btn tiny plr-stop" id="plr-stop">结束这轮冲刺</button>
     </div>`;
   if (prof && prof.minutes < 300) {

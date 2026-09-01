@@ -169,7 +169,7 @@ function renderComposer() {
      <button class="cp-x" data-tdr="${i}">×</button></div>`).join('');
   $('#cp-imgs').innerHTML = draft.images.map((im, i) =>
     `<div class="cp-thumb${im.busy ? ' busy' : ''}" data-imb="${i}">
-       <img src="${im.url}" data-imbig="${i}" title="点开看大图，确认没传错">
+       ${im.url ? `<img src="${im.url}" data-imbig="${i}" title="点开看大图，确认没传错">` : ''}
        <button class="cp-x" data-imr="${i}">×</button>
      </div>`).join('');
   $('#cp-files').innerHTML = draft.files.map((f, i) =>
@@ -245,6 +245,18 @@ async function _materialize(f, fallbackType) {
     const buf = await f.arrayBuffer();
     return new Blob([buf], { type: f.type || fallbackType || 'application/octet-stream' });
   } catch (_) { return f; }   // 兜底用原 File
+}
+/* ★ 读文件必须**一份一份来**。
+   安卓 WebView 上同时去读多个 content:// URI，会互相串成同一份数据 ——
+   实测选 4 张不同的图，落库后有 3 份字节完全相同（连缩略图都是同一张，
+   因为压缩那一步 createImageBitmap 读到的就已经是错的）。一次只读一份就不会串。
+   凡是「把用户刚选的文件读进内存」的地方都从这道闸过：小记、随手记、AI 助手附件。 */
+let _readChain = Promise.resolve();
+function readFileSerial(f, fallbackType) {
+  const job = () => _materialize(f, fallbackType);
+  const p = _readChain.then(job, job);
+  _readChain = p.then(() => {}, () => {});   // 一份读挂了不能堵死后面的
+  return p;
 }
 /* 轻量看图浮层：就地放大，不跳走、不丢正在写的草稿（openViewerUrl 会 push 一个新视图，
    写到一半跑去看图再回来，体验很别扭）。Esc / 点背景 / 点图都能关。 */
@@ -413,19 +425,38 @@ async function compressImage(file, maxSide = 1600, quality = 0.82) {
   return (blob && blob.size < file.size) ? blob : file;   // 压完反而更大就用原图
 }
 
+// 单张缩略图就地更新（读完/压完各刷一次）。不整块 renderComposer：那会重绘标签区，
+// 把用户正打开的标签输入框连字一起清掉。
+function syncDraftThumb(im) {
+  const i = draft.images.indexOf(im); if (i < 0) return;
+  const box = document.querySelector(`#cp-imgs [data-imb="${i}"]`); if (!box) return;
+  box.classList.toggle('busy', !!im.busy);
+  if (!im.url) return;
+  let img = box.querySelector('img');
+  if (!img) {
+    img = document.createElement('img');
+    img.dataset.imbig = i; img.title = '点开看大图，确认没传错';
+    box.prepend(img);
+  }
+  if (img.getAttribute('src') !== im.url) img.src = im.url;
+}
 async function addDraftImages(files) {
   const list = [...files];
   for (const f of list) {
     const im = {
       kind: 'new', fileObj: f, name: f.name || ('img_' + Date.now() + '.jpg'),
-      url: URL.createObjectURL(f), busy: true,
+      url: '', busy: true,
     };
     draft.images.push(im);
-    im.ready = compressImage(f).then(b => {          // 后台压，不挡添加
-      im.fileObj = b; im.busy = false;
-      const el = document.querySelector(`[data-imb="${draft.images.indexOf(im)}"]`);
-      if (el) el.classList.remove('busy');
-    }).catch(() => { im.busy = false; });
+    // 读盘 → 缩略图 → 压缩，全在后台做，不挡添加。读那一步走串行闸（见 readFileSerial：
+    // 并发读会把几张图串成同一张），所以缩略图是一张张亮起来的，先用 busy 占着位子。
+    im.ready = readFileSerial(f, f.type).then(async raw => {
+      im.fileObj = raw;
+      try { im.url = URL.createObjectURL(raw); } catch (_) { im.url = ''; }
+      syncDraftThumb(im);
+      im.fileObj = await compressImage(raw);
+      im.busy = false; syncDraftThumb(im);
+    }).catch(() => { im.busy = false; syncDraftThumb(im); });
   }
   renderComposer();
 }
@@ -435,7 +466,7 @@ bindImgPaste($('#cp-content'), addDraftImages);                        // Ctrl+V
 $('#cp-camfile').addEventListener('change', async e => { const fs = [...e.target.files]; e.target.value = ''; await addDraftImages(fs); });
 async function addDraftFiles(files) {          // 图片以外的附件进小记编辑器
   for (const f of [...files]) {
-    const blob = await _materialize(f);
+    const blob = await readFileSerial(f);
     draft.files.push({ kind: 'new', fileObj: blob, name: f.name || 'file' });
   }
   renderComposer();
@@ -461,14 +492,19 @@ $('#cp-del').onclick = async () => {
   try { await api('/api/notes/' + draft.id, { method: 'DELETE' }); toast('已删除'); newDraft(true); loadFeed(); loadFeedTags(); refreshNoteCounts(); }
   catch (e) { toast(errMsg(e), true); }
 };
+/* 点「完成」之后**不再让人对着编辑器干等**。
+   服务端存一条小记是 0.0 秒（写盘 + 一条 INSERT），慢的全在把图片传上去那一段 ——
+   手机在外面走隧道，几百 KB 也能拖上好几秒，而这几秒里屏幕上什么都不动，
+   看起来就是「点了没反应」。所以：等图片压完（本地，很快）→ 立刻收起编辑器、
+   回到列表，上传丢到后台跑。传失败了再把这条原样还回来，一个字都不丢。 */
 $('#cp-submit').onclick = async () => {
   const content = $('#cp-content').value.trim();
   draft.todos = draft.todos.filter(t => (t.text || '').trim() !== '');
   if (!content && !draft.images.length && !draft.files.length && !draft.todos.length) { toast('写点什么吧', true); return; }
   $('#cp-submit').disabled = true;
-  // 压缩一般在选图时就跑完了；万一刚选完就点发布，这里等一下（避免传上去的是原图）
+  // 图片是选图时就在后台压的；万一刚选完就点完成，这里等一下（避免传上去的是原图）
   const pending = draft.images.filter(i => i.ready).map(i => i.ready);
-  if (pending.length) await Promise.all(pending);
+  if (pending.length) { $('#cp-hint').textContent = '正在处理图片…'; await Promise.all(pending); }
   const fd = new FormData();
   fd.append('board', draft.board != null ? draft.board : curNoteBoard);
   fd.append('content', content);
@@ -476,17 +512,32 @@ $('#cp-submit').onclick = async () => {
   fd.append('tags', JSON.stringify(draft.tags));
   draft.images.filter(i => i.kind === 'new').forEach(i => fd.append('images', i.fileObj, i.name || 'image.jpg'));
   draft.files.filter(i => i.kind === 'new').forEach(i => fd.append('attachments', i.fileObj, i.name || 'file'));
-  try {
-    if (draft.id) {
-      fd.append('keep_imgs', JSON.stringify(draft.images.filter(i => i.kind === 'old').map(i => i.file)));
-      fd.append('keep_atts', JSON.stringify(draft.files.filter(i => i.kind === 'old').map(i => i.file)));
-      await api('/api/notes/' + draft.id, { method: 'PUT', body: fd });
-    } else {
-      await api('/api/notes', { method: 'POST', body: fd });
-    }
-    toast('已保存'); newDraft(true); loadFeed(); loadFeedTags(); refreshNoteCounts();
-  } catch (e) { toast(errMsg(e), true); }
+  const id = draft.id;
+  if (id) {
+    fd.append('keep_imgs', JSON.stringify(draft.images.filter(i => i.kind === 'old').map(i => i.file)));
+    fd.append('keep_atts', JSON.stringify(draft.files.filter(i => i.kind === 'old').map(i => i.file)));
+  }
+  const snap = draft; snap.content = content;      // 传失败时照这份还原
+  const hasImg = draft.images.length || draft.files.length;
+  newDraft(true);                                  // 先关编辑器、清草稿：界面立刻自由
   $('#cp-submit').disabled = false;
+  if (hasImg) toast(id ? '正在保存…' : '正在发布…');
+  try {
+    await api(id ? '/api/notes/' + id : '/api/notes', { method: id ? 'PUT' : 'POST', body: fd });
+    toast('已保存'); loadFeed(); loadFeedTags(); refreshNoteCounts();
+  } catch (e) {
+    // 还原：把这条重新放回编辑器。除非用户在这几秒里已经开始写下一条——
+    // 那就别覆盖人家正在写的东西，只把话说清楚。
+    const busyNow = ($('#cp-content').value || '').trim() || draft.images.length || draft.files.length;
+    if (busyNow) { toast('没保存成功：' + errMsg(e) + '（这条没存上，请重写或重试）', true); return; }
+    draft = snap;
+    $('#cp-content').value = snap.content;
+    renderComposer();
+    openComposerM();
+    flushDraftLocal();      // 文字再存一份本地草稿：这会儿人可能已经切走了，回头进来还在
+    $('#cp-hint').textContent = '没保存成功，内容还在，可以再点一次';
+    toast(errMsg(e), true);
+  }
 };
 
 /* ---- 手机端：底部悬浮条 / 新建面板 / 全屏编辑器 ---- */
@@ -826,9 +877,15 @@ $('#qn-more').onclick = () => { qnClose(); openNotes(); };
 async function qnAddImgs(files) {
   for (const f of [...files]) {
     if (!/^image\//.test(f.type)) continue;
-    const im = { url: URL.createObjectURL(f), fileObj: f, name: f.name || 'img.jpg' };
+    const im = { url: '', fileObj: f, name: f.name || 'img.jpg' };
     qnImgs.push(im);
-    im.ready = compressImage(f).then(b => { im.fileObj = b; });   // 和小记一样：选图就压
+    // 和小记同一条路：先串行读进内存（并发读会串图，见 readFileSerial），再后台压
+    im.ready = readFileSerial(f, f.type).then(async raw => {
+      im.fileObj = raw;
+      try { im.url = URL.createObjectURL(raw); } catch (_) { im.url = ''; }
+      qnRenderImgs();
+      im.fileObj = await compressImage(raw);
+    }).catch(() => { /* 这张读不出来就先留着原 File，发的时候照传 */ });
   }
   qnRenderImgs();
 }
@@ -839,7 +896,7 @@ $('#qn-file').addEventListener('change', async e => {
 // 附件：图片以外的任何格式（PDF / Word / 表格 / 压缩包…）。图片仍走上面的图片区。
 async function qnAddFiles(files) {
   for (const f of [...files]) {
-    const blob = await _materialize(f);
+    const blob = await readFileSerial(f);
     qnFiles.push({ fileObj: blob, name: f.name || 'file', size: f.size || 0 });
   }
   qnRenderFiles();
@@ -866,7 +923,9 @@ $('#qn-attfile').addEventListener('change', async e => {
 bindImgPaste($('#qn-text'), qnAddImgs);       // Ctrl+V 粘图片
 function qnRenderImgs() {
   $('#qn-imgs').innerHTML = qnImgs.map((im, i) =>
-    `<div class="cp-thumb"><img src="${im.url}" data-qnbig="${i}"><button class="cp-x" data-qnr="${i}">×</button></div>`).join('');
+    `<div class="cp-thumb${im.url ? '' : ' busy'}">` +
+    (im.url ? `<img src="${im.url}" data-qnbig="${i}">` : '') +
+    `<button class="cp-x" data-qnr="${i}">×</button></div>`).join('');
 }
 function qnRenderFiles() {
   $('#qn-files').innerHTML = qnFiles.map((f, i) =>

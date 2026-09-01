@@ -30,7 +30,7 @@ from mods.ai import ai_chat
 from mods.files import (IMAGE_EXT, INLINE_EXT, OFFICE_EXT, _cacheable,
                         _extract_text, _no_script, _office_to_pdf, _remove_blob)
 from mods import tomd
-from mods.aiout import BODY_MAX, create_output
+from mods.aiout import BODY_MAX, create_output, mark_sent, output_bytes
 
 bp = Blueprint("social", __name__)
 
@@ -1679,6 +1679,53 @@ def material_send(mid):
     db.commit()
     for u, payload in pushes:
         _notify_chat(u, payload)
+    return _sent_reply(n, users, groups)
+
+
+@bp.post("/api/aiout/<int:oid>/chat")
+def aiout_send_chat(oid):
+    """把一份 AI 产出发进聊天：可以同时发给多个好友和多个小组。
+
+    路由挂在 /api/aiout 下、代码在这个文件里，和隔壁 material_send 一个道理：
+    这九成九是聊天的活儿（建会话、落消息、写通知、推送）。
+
+    产出只活在数据库里，磁盘上没有对应的文件，所以先按「下载」那套渲染成字节
+    （md/txt 直出，pdf 现渲染），再 _register_blob 登记进自己云盘的「聊天文件」。
+    发进小组本来就必须有这一步（群消息只存发送方那一行）；发给好友也需要一份实体 ——
+    产出 30 天就被清掉，而对方点开消息时得还下得到东西。
+    """
+    data = request.get_json(silent=True) or {}
+    db, me = get_db(), uid()
+    r = db.execute("SELECT * FROM ai_outputs WHERE id=? AND user_id=?", (oid, me)).fetchone()
+    if not r:
+        return jsonify({"error": "找不到这份产出"}), 404
+    users, groups = _pick_targets(db, me, data)
+    if not users and not groups:
+        return jsonify({"error": "选一个好友或小组再发"}), 400
+    try:
+        payload, name, mime = output_bytes(r)
+    except Exception as e:
+        log.warning("AI 产出出文件失败：%r", e)
+        return jsonify({"error": "生成文件失败：%s" % e}), 400
+    # 临时文件落在云盘目录里：_register_blob 命中不了去重时要把它拷进同一个文件系统
+    tmp = os.path.join(_drive_dir(me), ".tmp_aiout_" + uuid.uuid4().hex)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(payload)
+        drive_fid, stored = _register_blob(db, me, name, tmp, mime)
+        size = os.path.getsize(tmp)
+    except QuotaFull:
+        return jsonify({"error": "云盘空间不足（配额 %d MB）—— 发出去要先在自己云盘留一份"
+                        % (DRIVE_QUOTA // (1024 * 1024))}), 400
+    finally:
+        _remove_blob(tmp)
+    n, pushes = _fanout_file(db, me, users, groups, name, stored, size, mime,
+                             _drive_dir(me), drive_fid=drive_fid)
+    if n:
+        mark_sent(db, oid, "聊天")     # 都发出去了，显然还想留着：顺手归档，免得 30 天后没了
+    db.commit()
+    for u, payload_push in pushes:
+        _notify_chat(u, payload_push)
     return _sent_reply(n, users, groups)
 
 

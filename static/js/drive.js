@@ -670,6 +670,17 @@ async function dvRetry(fn) {
   }
 }
 
+/* 取文件的第 [start, start+len) 段。
+
+   普通 File 直接 slice 就有。桌面壳送来的大文件是个例外：它的**真身在壳那边的磁盘上**，
+   浏览器里只有一份「名字 + 大小」的壳子（见 desktop.js 的大文件通道）—— 2GB 的文件
+   base64 之后是 2.7GB 的 JS 源码，整个塞进网页 run_javascript 当场就死。
+   那种文件自带一个 __part(异步)，要哪一片才现问壳要哪一片，内存里同时只有 4MB。 */
+function dvPartOf(file, start, len) {
+  if (typeof file.__part === 'function') return file.__part(start, start + len);
+  return Promise.resolve(file.slice(start, start + len));
+}
+
 /* 分片上传通道。opts.target 决定这份文件最后落到哪：
      'drive'     → 云盘的 opts.folder 目录（默认）
      'materials' → 资料库的 opts.board 分类
@@ -712,8 +723,10 @@ async function chunkUpload(file, opts, onProg) {
     while (next < n) {
       const i = next++;
       if (had.has(i)) continue;
-      await dvRetry(() => api('/api/drive/chunk/' + id + '/' + i,
-                              { method: 'POST', body: file.slice(i * DV_CHUNK, i * DV_CHUNK + partSize(i)) }));
+      /* 取这一片的字节。**先取好再进 dvRetry**：重试是给网络失败准备的，
+         同一片重读一遍盘既慢也没意义。 */
+      const part = await dvPartOf(file, i * DV_CHUNK, partSize(i));
+      await dvRetry(() => api('/api/drive/chunk/' + id + '/' + i, { method: 'POST', body: part }));
       // 进度按「传成了多少字节」累加，不能再用 end：并发下片是乱序完成的，
       // 拿末尾位置当进度会让进度条跳来跳去
       acked += partSize(i); onProg(acked);
@@ -746,13 +759,28 @@ $('#dv-slim').onclick = () => {
     : '关了：图片一律按原图上传');
 };
 
+// 解码排一条队，一次只解一张（为什么见 dvShrink 里那段注释）
+let _dvDecodeChain = Promise.resolve();
+function dvDecodeSerial(file) {
+  const job = () => createImageBitmap(file);
+  const p = _dvDecodeChain.then(job, job);
+  _dvDecodeChain = p.then(bm => { void bm; }, () => {});   // 一张解不开不能堵住后面的
+  return p;
+}
+
 /* 缩图。任何一步不成就返回原文件 —— 省流是锦上添花，不能因为它把「传得上去」搞没了。
    （HEIC 在多数浏览器里解不出来，就是靠这条兜底原样上传。） */
 async function dvShrink(file) {
   const ext = (file.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
   if (!dvSlimOn() || file.size < DV_SLIM_MIN || !DV_SLIM_EXT.includes(ext)) return file;
+  // 桌面壳送来的大文件在浏览器里没有真身（只有 __part 能按片取），解不了码也没必要缩
+  if (typeof file.__part === 'function') return file;
   try {
-    const bm = await createImageBitmap(file);
+    /* 解码原图这一步排队做（DV_PARALLEL 个文件是同时在传的）。
+       安卓 WebView 上同时读多个 content:// URI 会互相串成同一份数据 —— 小记那边
+       就是这么把三张不同的图传成同一张的（见 notes.js 的 readFileSerial）。
+       缩图本来就是 CPU 活，排着队做几乎不影响总时长；网络那一段照旧并发。 */
+    const bm = await dvDecodeSerial(file);
     const k = DV_SLIM_PX / Math.max(bm.width, bm.height);
     if (k >= 1) { bm.close(); return file; }        // 本来就不大，缩了只会更糊
     const cv = document.createElement('canvas');
@@ -870,6 +898,9 @@ async function dvUpload(items) {
      测试里的表现更直接：await dvUpload(...) 一返回就拆掉 DOM，
      loadDrive 的异步续体随后撞上已经销毁的 document（querySelector of undefined）。 */
   await loadDrive();
+  /* 报一句战果。这里**不抛**：一批里坏了一个不该把整批算作失败（那正是上面 catch 的用意），
+     但调用方得有办法知道到底成没成 —— 桌面壳的大文件通道就靠它决定回执里的 ok。 */
+  return { ok, fail };
 }
 
 $('#dv-upfile').addEventListener('change', e => {

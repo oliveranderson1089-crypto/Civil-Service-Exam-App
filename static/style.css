@@ -3891,6 +3891,9 @@ body.dark .cr-attbtn{background:#1b2231;}
   padding:11px 13px;margin-bottom:7px;font-size:14.5px;cursor:pointer;color:#1f2733;}
 .ms-frow:hover{background:#e9eff7;}
 body.dark .ms-frow{background:#1a2233;color:#cfd5e0;}
+/* 目的地行的第二行小字：选之前就该知道选完会发生什么。
+   .ms-row .ms-sub 那支是「靠右的一小截」（几人、已共享），这里要的是**独占一行**的说明。 */
+.ms-frow .ms-sub{display:block;margin-top:2px;font-size:var(--fs-sm);color:var(--muted);}
 
 /* AI 解读折叠（#8）：点标题收起，方便读正文 */
 .cd-ai > .cd-sec-t{cursor:pointer;user-select:none;}
@@ -4430,13 +4433,17 @@ body.dark .plr-rv,
 body.dark .ck-ex-src.ai,
 body.dark .wql-btn:hover,
 body.dark .bk-side.bk-s .bk-side-h{color:#f0c674;}
-body.dark body.mobile-ui #view-notes .composer.cp-open,
-body.dark body.mobile-ui .composer.cp-open .cp-mhead,
-body.dark body.mobile-ui .composer.cp-open .cp-bar,
-body.dark body.mobile-ui .input-tools,
 body.dark .wql-btn,
 body.dark .wql-in,
 body.dark .wql-star{background:#1a2233;}
+/* 手机端全屏小记编辑器的夜间色。
+   原来这几条写的是 `body.dark body.mobile-ui …` —— 一个 body 套另一个 body，
+   选择器永远匹配不上，于是晚上点开编辑器还是一整片白底（正文框是暗的，
+   外面一圈是白的，就是「背景不统一」）。类都在同一个 body 上，得连写。
+   `.input-tools` 那条不用补：上面 1300 行一带已经有正确的 body.dark.mobile-ui 规则。 */
+body.dark.mobile-ui #view-notes .composer.cp-open{background:#1a2233;}
+body.dark.mobile-ui .composer.cp-open .cp-mhead,
+body.dark.mobile-ui .composer.cp-open .cp-bar{background:#1a2233;border-bottom-color:#2a3345;}
 body.dark .pv-tag,
 body.dark .cp-tag,
 body.dark .cp-board,
@@ -5884,6 +5891,32 @@ body.art-on .ai-folder circle[fill="#ffd66b"]{fill:var(--blue);}
   border:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer;}
 .ao-acts button:hover{border-color:var(--blue);color:var(--blue);}
 .ao-acts .ao-danger:hover{border-color:#c0392b;color:#c0392b;}
+/* ---- 两段：待处理 / 已归档 ----
+   一条流的时候，「刚生成、还没决定去处」的和「留着以后用」的混在一起按时间倒序排，
+   越攒越难挑，「归档」点完卡片还杵在原地，像是没生效。
+   分段而不是加筛选器：这一页统共十来条，多点一下不如一屏看全。
+   已归档那段默认收起 —— 它们已经处理完了，不该和待办抢注意力。 */
+.ao-list.grouped{gap:0;}
+.ao-grp{display:flex;flex-direction:column;gap:10px;}
+.ao-grp[hidden]{display:none;}   /* .ao-grp 的 display 会盖掉 [hidden] 的浏览器默认值 */
+.ao-sum{font-size:var(--fs-sm);color:var(--muted);background:var(--bg2);border:1px solid var(--line);
+  border-radius:var(--r-sm);padding:8px 11px;margin:2px 0 4px;}
+.ao-sum b{color:var(--text);font-weight:650;}
+.ao-sec{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:0;
+  margin:16px 0 9px;font:inherit;font-size:var(--fs-sm);color:var(--muted);
+  background:none;border:none;-webkit-tap-highlight-color:transparent;}
+.ao-sec::after{content:"";flex:1;height:1px;background:var(--line);}
+button.ao-sec{cursor:pointer;}
+.ao-sec .n{flex:none;font-size:var(--fs-xs);font-variant-numeric:tabular-nums;
+  background:var(--bg2);border:1px solid var(--line);border-radius:var(--r-pill);padding:0 7px;}
+.ao-sec .caret{flex:none;font-size:10px;display:inline-block;transition:transform .18s;}
+.ao-sec.closed .caret{transform:rotate(-90deg);}
+/* 还剩几天：保留期以前只写在页顶那句总说明里，而那句话保不住任何一条具体的产出。
+   进了 AO_SOON 那一档转琥珀 —— 色值取站内 .tr-stat.warn 那支，别再调一个近似的。 */
+.ao-left{font-variant-numeric:tabular-nums;}
+.ao-left.soon{font-size:var(--fs-xs);padding:1px 7px;border-radius:var(--r-pill);
+  background:#fdf1dc;color:#8a5a00;}
+body.dark .ao-left.soon{background:#382c12;color:#e0b872;}
 .ao-read{padding:6px 0 24px;}
 .ao-rt{font-size:19px;margin:10px 0 12px;}
 .ao-rb{line-height:1.85;overflow-wrap:anywhere;}
@@ -6089,6 +6122,26 @@ body.mobile-ui .ai-acts{opacity:1;}
   background:var(--blue);transform-origin:left center;animation:aiattbusy 1.1s ease-in-out infinite;}
 @keyframes aiattbusy{0%{transform:scaleX(.1);}50%{transform:scaleX(1);}100%{transform:scaleX(.1);}}
 @media (prefers-reduced-motion:reduce){.ai-att.busy::after{animation:none;transform:scaleX(1);}}
+
+/* 附件是可以点开的（图片看大图、文件看正文），得让人看出来能点。
+   悬停时抬一下、描个蓝边 —— 光加 cursor 在手机上等于什么都没说。 */
+.ai-att[data-attv]{cursor:zoom-in;}
+.ai-att[data-attv]:hover{border-color:var(--blue);}
+.ai-att[data-attv]:focus-visible{outline:2px solid var(--blue);outline-offset:1px;}
+.ai-att[data-attv]:not(:has(img)){cursor:pointer;}
+
+/* 附件正文浮层：复用看大图那层壳（.lbx 的底 + 工具条），中间换成一张可滚动的纸。
+   AI 到底读到了什么，用户得看得见 —— 以前传完一份 PDF，屏幕上只有一个文件名，
+   模型说「材料里没提到」时，没人分得清是文件没读全还是它没看仔细。 */
+.ai-attv .attv-card{flex:1;min-height:0;width:min(760px,92vw);margin:0 auto 16px;
+  display:flex;flex-direction:column;background:var(--card);border-radius:12px;overflow:hidden;}
+.ai-attv .attv-h{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;
+  padding:12px 16px;border-bottom:1px solid var(--line);}
+.ai-attv .attv-h b{font-size:14px;word-break:break-all;}
+.ai-attv .attv-meta{font-size:11.5px;color:var(--muted);}
+.ai-attv .attv-body{flex:1;min-height:0;margin:0;padding:14px 16px;overflow:auto;
+  font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;
+  font-family:inherit;color:var(--text);-webkit-overflow-scrolling:touch;}
 
 /* 云盘/资料库复制之后的提示条：桌面壳右键菜单里的「粘贴」够不着应用内剪贴板，
    这条是那份剪贴板在 AI 输入框里唯一看得见的样子，所以不能藏。 */
@@ -6445,6 +6498,9 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
 .sq-chip{font-size:var(--fs-sm);color:var(--muted);border:1px solid var(--line);
   border-radius:var(--r-pill);padding:2px 10px;}
 .sq-doubt-entry{border:1px solid var(--gold);}
+/* 分组小标题：模拟卷、主观题三档共用。左侧一道竖线把「这一组」和上一组分开，
+   比再加一层卡片嵌套轻，也不会在窄屏上把内容挤成一条缝。 */
+.sq-mock-h,.sq-grp-h{border-left:3px solid var(--blue);margin-top:18px;}
 .sq-recs{display:grid;gap:2px;}
 .sq-rec{display:flex;gap:8px;align-items:baseline;font-size:var(--fs-sm);
   padding:7px 0;border-top:1px solid var(--line);}
@@ -6468,6 +6524,9 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
   font-weight:700;}
 .sq-qt.judge{background:rgba(64,192,87,.12);color:#1e8449;}
 .sq-qt.case,.sq-qt.gongwen{background:rgba(240,165,0,.14);color:#8a5a00;}
+/* 简答论述是资中卷面上没有的题型，配色**故意不跟案例/公文同色** ——
+   同色会让人以为它和那 40 分是一档的。 */
+.sq-qt.short{background:var(--bg);color:var(--muted);font-weight:600;}
 .sq-qs{margin-left:auto;}
 .sq-stem{font-size:var(--fs-lg);line-height:1.85;color:var(--text);
   margin-bottom:14px;white-space:pre-wrap;}

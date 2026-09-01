@@ -10,6 +10,7 @@ import secrets
 import shutil
 import subprocess
 import threading
+import time
 from shlex import quote as shlex_quote
 from urllib.parse import urlparse
 
@@ -62,7 +63,9 @@ except Exception:
         HAVE_TRAY = False
 
 APP_ID = "com.gongkao.app"
-DESKTOP_VER = "6.3"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
+# GONGKAO_CTXDEBUG=1 启动可看右键菜单钩子的动静
+CTX_DEBUG = os.environ.get("GONGKAO_CTXDEBUG") == "1"
+DESKTOP_VER = "6.4"          # 桌面壳版本；改动壳本身时+1，网页据此判断「需重新下载」
                              # ⚠️ 和 Windows 壳（desktop/win/main.js 的 SHELL_VER）共用同一条
                              # 数字线：网页里的特性闸门（canReveal / canOpenFile…）是跨平台比的。
 TUNNEL = "https://gk.gongkaopei2026.click"
@@ -143,6 +146,11 @@ class Gongkao(Gtk.Application):
         self.win = None
         self._share_jobs = {}   # id(download) → (download, 文件名)：这次下载是「为分享而下」
         self._dl_paths = {}     # id(download) → 落盘路径：分享和普通下载可能并行，各记各的
+        # 大文件通道：token → 绝对路径。**只认这里登记过的 token** —— 网页那边永远
+        # 拿不到、也给不了一个任意路径，读盘的范围就锁死在用户自己拖进来的那几个文件上。
+        self._bigs = {}
+        self._big_ack = None
+        self._big_last = 0.0
 
 
     def _merge_titlebar(self):
@@ -390,10 +398,17 @@ class Gongkao(Gtk.Application):
         return True
 
     # ---------------- 送文件进网页：拖放 / 选文件夹 / 粘贴 共用 ----------------
-    # 走 base64 桥的单文件上限。**不是**云盘的 200MB —— 200MB 文件 base64 后是 267MB 的
-    # JS 源码，run_javascript 扛不住。更大的文件走网页那个「⬆ 上传」按钮（分片传，不经这座桥）。
+    # 走 base64 桥「整份推过去」的单文件上限。**不是**云盘的上限 —— 200MB 的文件
+    # base64 后是 267MB 的 JS 源码，run_javascript 扛不住。
     DESK_MAX_FILE = 64 * 1024 * 1024
     DESK_BATCH = 6 * 1024 * 1024             # 一批最多这么多原始字节（base64 还会再涨 1/3）
+    # 比上面还大的，以前是**直接跳过**（提示「用『⬆ 上传』按钮单独传」）—— 于是在桌面版里
+    # 拖进来的大文件一个都上不去。现在改走「网页按需向壳要一片」的分片通道（_send_big），
+    # 一次只经手一片，上限因此跟云盘那条分片通道对齐：2GB。
+    DESK_BIG_MAX = 2 * 1024 * 1024 * 1024
+    DESK_PART = 4 * 1024 * 1024              # 一片多大：和网页的 DV_CHUNK 一致
+    DESK_PART_MAX = 16 * 1024 * 1024         # 网页要得再多也不给：别让一句消息读出个大内存块
+    DESK_BIG_IDLE = 300                      # 这么久没来要下一片就当它死了（传 2GB 本身可以很久）
 
     def _walk(self, path, out, base=None):
         """把一个路径摊成 [(绝对路径, 相对目录)]。目录就整棵走下去。
@@ -454,12 +469,16 @@ class Gongkao(Gtk.Application):
         ② **要有背压**。一口气把 136 批塞进网页，浏览器那边同时开一百多个上传、
            base64 字符串全堆在内存里。所以每批送完等网页回一句 batchdone 再送下一批。
         """
-        batch, size, sent, skipped = [], 0, 0, []
+        batch, size, sent, skipped, bigs = [], 0, 0, [], []
         for p, rel in pairs:
             try:
                 n = os.path.getsize(p)
                 if n > self.DESK_MAX_FILE:
-                    skipped.append(os.path.basename(p))
+                    # 大文件不再跳过：攒起来，等这批小的走完，再一个一个走分片通道
+                    if n <= self.DESK_BIG_MAX:
+                        bigs.append((p, rel, n))
+                    else:
+                        skipped.append(os.path.basename(p))
                     continue
                 with open(p, "rb") as f:
                     raw = f.read()
@@ -476,9 +495,12 @@ class Gongkao(Gtk.Application):
         if batch:
             self._push(batch, intent)
         if skipped:
-            # 单个太大的走网页那个「⬆ 上传」按钮更靠谱：那条是分片传的，不经这座 base64 的桥
-            GLib.idle_add(self._toast, "%d 个文件太大没传（%s…），用「⬆ 上传」单独传"
+            GLib.idle_add(self._toast, "%d 个文件超过 2GB 没传（%s…）"
                           % (len(skipped), skipped[0][:20]))
+        # 大的放在最后：小文件先落地，用户能立刻看见东西，而不是对着一个几百 MB 的
+        # 进度条干等（这批里剩下的都还没开始）。
+        for p, rel, n in bigs:
+            self._send_big(p, rel, n, intent)
 
     def _push(self, batch, intent=""):
         """送一批，然后等网页说「这批传完了」再回来送下一批。"""
@@ -493,6 +515,75 @@ class Gongkao(Gtk.Application):
         self._js("window.__onPickedFiles && window.__onPickedFiles(%s, %s)"
                  % (json.dumps(batch, ensure_ascii=False), json.dumps(intent)))
         return False                          # idle_add 只跑一次
+
+    # ---------------- 大文件：网页按需向壳要一片 ----------------
+    def _send_big(self, path, rel, size, intent=""):
+        """把一个大文件交给网页的分片通道，**等它传完**再返回（在后台线程里跑）。
+
+        为什么不像小文件那样把内容推过去：2GB 文件 base64 之后是 2.7GB 的 JS 源码，
+        run_javascript 拿不下。所以这里只推「名字 + 大小 + 一个 token」，字节留在本地，
+        网页要第几片再回头问（on_msg 的 bigpart）。
+        """
+        token = secrets.token_hex(16)
+        self._bigs[token] = path
+        self._big_ack = threading.Event()
+        self._big_last = time.time()
+        name = os.path.basename(path)
+        try:
+            mtime = int(os.path.getmtime(path) * 1000)
+        except Exception:
+            mtime = 0
+        meta = {"token": token, "name": name, "rel": "" if rel == "." else rel,
+                "size": size, "mtime": mtime}
+        GLib.idle_add(self._flush_big, meta, intent)
+        # 传 2GB 本身就要很久，不能拿一个固定的总时长当超时。看的是「还有没有在要片」：
+        # 网页每要一片就刷新 _big_last，静默超过 DESK_BIG_IDLE 才算它死了。
+        while not self._big_ack.wait(15):
+            if time.time() - self._big_last > self.DESK_BIG_IDLE:
+                GLib.idle_add(self._toast, "「%s」传得没动静了，跳过" % name[:20])
+                break
+        self._bigs.pop(token, None)
+        self._big_ack = None
+
+    def _flush_big(self, meta, intent=""):
+        """推给网页。**老网页没有 __onBigFile**（壳更新了、页面还是缓存里的旧版），
+        那就让它当场回一句 ok=0，别让壳在这儿干等到静默超时。"""
+        self._js("(window.__onBigFile ? window.__onBigFile(%s, %s)"
+                 " : window.webkit.messageHandlers.gk.postMessage(JSON.stringify("
+                 "{a:'bigdone', token:%s, ok:0, old:1})))"
+                 % (json.dumps(meta, ensure_ascii=False), json.dumps(intent),
+                    json.dumps(meta["token"])))
+        return False                          # idle_add 只跑一次
+
+    def _big_read(self, d):
+        """网页要第 [start, start+len) 段 → 后台线程读盘 → base64 送回去。
+
+        读盘放线程里的理由和 _pump 一样：主线程上一个阻塞调用都不能有，
+        4MB 在慢盘/网络盘上足够让界面卡一下。
+        """
+        seq = int(d.get("seq") or 0)
+        start = max(0, int(d.get("start") or 0))
+        n = min(max(0, int(d.get("len") or 0)), self.DESK_PART_MAX)
+        path = self._bigs.get(str(d.get("token") or ""))
+        self._big_last = time.time()
+
+        def fail(msg):
+            self._js("window.__deskBigFail && window.__deskBigFail(%d, %s)"
+                     % (seq, json.dumps(msg, ensure_ascii=False)))
+
+        def work():
+            try:
+                if not path:
+                    raise RuntimeError("这份文件已经不在这次上传里了")
+                with open(path, "rb") as f:
+                    f.seek(start)
+                    raw = f.read(n)
+                b64 = base64.b64encode(raw).decode()
+                GLib.idle_add(self._js, "window.__deskBigPart && window.__deskBigPart(%d, '%s')"
+                              % (seq, b64))
+            except Exception as e:
+                GLib.idle_add(fail, "读文件失败：%s" % e)
+        threading.Thread(target=work, daemon=True).start()
 
     def pick_dir(self):
         """选一个文件夹整个传上去。
@@ -650,6 +741,12 @@ class Gongkao(Gtk.Application):
 
     def on_context_menu(self, web, menu, event, hit):
         """剪贴板里有图时，右键菜单加一项「粘贴图片」——WebKit 自带的「粘贴」只粘文字。"""
+        # 顺带按住「右键菜单一松手就没」的毛病：WebKit 是在按下右键的那一刻就弹菜单的，
+        # 紧跟着的松手被 GTK 当成「拖到某一项上松手＝选中它」来处理 —— 指针并没落在任何
+        # 一项上，于是菜单当场被收掉，非得一直按住不放才看得见。这里在菜单弹出来之后给它
+        # 挂个钩子（见 _pin_ctx_menu）：松手前指针没动过就把这一次松手吃掉，菜单便留在
+        # 原地；真按住拖到某项再松手的老用法照旧有效。
+        GLib.idle_add(self._pin_ctx_menu, 0)
         if not self._clip_image_b64():
             return False
         act = Gio.SimpleAction.new("gk-paste-image", None)
@@ -657,6 +754,53 @@ class Gongkao(Gtk.Application):
         item = WebKit2.ContextMenuItem.new_from_gaction(act, "粘贴图片", None)
         menu.append(item)
         return False
+
+    def _pin_ctx_menu(self, tries):
+        """找到刚弹出来的右键菜单，给它挂上「吃掉原地松手」的钩子（没弹出来就多等几轮）。"""
+        found = False
+        try:
+            for top in Gtk.Window.list_toplevels():
+                if not top.get_mapped():
+                    continue
+                for c in (top.get_children() or []):
+                    if not isinstance(c, Gtk.Menu):
+                        continue
+                    found = True
+                    if not getattr(c, "_gk_pinned", False):
+                        c._gk_pinned = True
+                        self._pin_menu(c)
+        except Exception:
+            return False
+        if not found and tries < 8:                 # 菜单还没映射上来，过 25ms 再找
+            GLib.timeout_add(25, self._pin_ctx_menu, tries + 1)
+        return False
+
+    def _pin_menu(self, m):
+        st = {"eaten": False, "moved": False, "x": None, "y": None}
+
+        def on_motion(w, ev):
+            if st["x"] is None:
+                st["x"], st["y"] = ev.x_root, ev.y_root
+            elif abs(ev.x_root - st["x"]) > 8 or abs(ev.y_root - st["y"]) > 8:
+                st["moved"] = True                  # 是在拖着挑，别拦
+            return False
+
+        def on_release(w, ev):
+            if not st["eaten"] and not st["moved"]:
+                st["eaten"] = True                  # 只吃第一次；之后点菜单项照常有反应
+                if CTX_DEBUG:
+                    print("[ctxmenu] 吃掉了原地松手", flush=True)
+                return True
+            return False
+
+        try:
+            m.add_events(Gdk.EventMask.POINTER_MOTION_MASK)
+            m.connect("motion-notify-event", on_motion)
+            m.connect("button-release-event", on_release)
+            if CTX_DEBUG:
+                print("[ctxmenu] 钩子已挂上", flush=True)
+        except Exception:
+            pass
 
     def _js(self, code):
         try:
@@ -694,6 +838,15 @@ class Gongkao(Gtk.Application):
         elif act == "batchdone":
             # 网页把这一批传完了 → 放行下一批（背压，见 _push）
             ev = getattr(self, "_ack", None)
+            if ev:
+                ev.set()
+        elif act == "bigpart":
+            # 大文件：网页要第几片（见 _send_big）
+            self._big_read(d)
+        elif act == "bigdone":
+            if d.get("old"):
+                self._toast("网页版本太旧，传不了大文件（关掉应用重开一次）")
+            ev = getattr(self, "_big_ack", None)
             if ev:
                 ev.set()
         elif act == "pastefiles":

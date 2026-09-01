@@ -12,6 +12,7 @@
 """
 import io
 import os
+import time
 
 import pytest
 
@@ -34,6 +35,15 @@ def _extract(client, **body):
     return client.post("/api/ai/extract", json=body)
 
 
+def _wait_ocr(image, secs=10):
+    """等后台那条转写落盘。它跑在线程池里，请求早就返回了 —— 不等就是在赌时序。"""
+    for _ in range(int(secs * 20)):
+        if attach.ai_img_text(image):
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def test_云盘文件可以直接当附件(auth_client):
     _up_drive(auth_client, "讲义.txt", data="社区工作者考试要点".encode())
     fid = _drive_row(auth_client, "讲义.txt")["id"]
@@ -51,8 +61,12 @@ def test_读完之后云盘原件还在(auth_client, monkeypatch):
     _up_drive(auth_client, "题目.png", data=b"\x89PNG\r\n\x1a\nfake")
     row = _drive_row(auth_client, "题目.png")
     d = _extract(auth_client, drive_id=row["id"]).get_json()
-    assert d["text"] == "图里的字"
+    # 图片这条路**不等转写**：转写十几到几十秒，用户正盯着附件条转圈
+    assert d["text"] == "", "图片附件该秒回，转写在后台补"
+    assert d.get("ocr") == "pending"
     assert d.get("image"), "原图没留档，这一轮就用不上视觉模型了"
+    _wait_ocr(d["image"])
+    assert attach.ai_img_text(d["image"]) == "图里的字", "后台那份转写没落到 sidecar"
     # 留档的是**副本**，云盘那份必须原地不动
     assert os.path.exists(os.path.join(attach.AI_IMG_DIR, d["image"]))
     assert auth_client.get("/api/drive/%d/download" % row["id"]).status_code == 200, \

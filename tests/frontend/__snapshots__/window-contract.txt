@@ -7,10 +7,13 @@ __chatDlFail
 __chatDlSys
 __chatResume
 __chatResumeMark
+__deskBigFail
+__deskBigPart
 __dvShow
 __hwNative
 __ieHide
 __mkView
+__onBigFile
 __onDownloaded
 __onDragLeave
 __onDragOver

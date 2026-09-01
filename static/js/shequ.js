@@ -42,24 +42,41 @@ function sqExamBar(x) {
     </div>`;
 }
 
+/* 一张卷子的卡片。真题和模拟卷**共用这一份** —— 两处各写一份的下场是
+   改了按钮文案只改到一半。差别只在副标题那一行：模拟卷要如实写出缺口。 */
+function sqPaperCard(p, mock) {
+  const gap = mock && p.n_bad
+    ? `<span class="sq-warn">原卷 ${p.servable + p.n_bad} 题，OCR 认不出的 ${p.n_bad} 道已剔除</span>`
+    : '';
+  return `
+    <div class="card sq-paper">
+      <div class="sq-p-t">${esc(p.name.replace(/\.pdf$/i, ''))}</div>
+      <div class="sq-p-m">${p.year ? p.year + ' 年 · ' : ''}${esc(p.kind)} ·
+        客观 <b>${p.servable}</b>/${p.n_obj} 题可练${p.n_sub ? ` + 主观 ${p.n_sub} 题` : ''}
+        ${p.n_doubt ? `<span class="sq-warn">${p.n_doubt} 道待裁决</span>` : ''}
+        ${gap}
+        ${p.mine ? `<span class="sq-mine">做过 ${p.mine} 次</span>` : ''}</div>
+      <div class="sq-p-b">
+        <button class="btn primary" data-sq-open="${p.id}" data-sq-mode="exam">模考（总倒计时）</button>
+        <button class="btn" data-sq-open="${p.id}" data-sq-mode="study">背题（做一题揭晓一题）</button>
+      </div>
+    </div>`;
+}
+
 function sqRenderList(d) {
   if (!sqPapers.length) {
     $('#sq-list').innerHTML = '<p class="empty">还没有卷子。先跑 ingest_shequ.py 把真题解析进库。</p>';
     return;
   }
   const types = (d.types || []).map(t => `<span class="sq-chip">${esc(t.qtype)} ${t.c}</span>`).join('');
-  $('#sq-list').innerHTML = sqExamBar(d.exam) + sqPapers.map(p => `
-    <div class="card sq-paper">
-      <div class="sq-p-t">${esc(p.name.replace(/\.pdf$/i, ''))}</div>
-      <div class="sq-p-m">${p.year} 年 · ${esc(p.kind)} ·
-        客观 <b>${p.servable}</b>/${p.n_obj} 题可练 + 主观 ${p.n_sub} 题
-        ${p.n_doubt ? `<span class="sq-warn">${p.n_doubt} 道待裁决</span>` : ''}
-        ${p.mine ? `<span class="sq-mine">做过 ${p.mine} 次</span>` : ''}</div>
-      <div class="sq-p-b">
-        <button class="btn primary" data-sq-open="${p.id}" data-sq-mode="exam">模考（总倒计时）</button>
-        <button class="btn" data-sq-open="${p.id}" data-sq-mode="study">背题（做一题揭晓一题）</button>
-      </div>
-    </div>`).join('')
+  const mocks = d.mocks || [];
+  $('#sq-list').innerHTML = sqExamBar(d.exam) + sqPapers.map(p => sqPaperCard(p, false)).join('')
+    /* 模拟卷单开一组，**标题里就写明「不是真题」**：真题一共只有两套，
+       混在一起摆会让人以为资中考过七八回。 */
+    + (mocks.length ? `<div class="card sq-mock-h">
+        <div class="sq-sec-t">模拟卷 · 不是真题（${mocks.length} 套）</div>
+        <div class="sq-note">${esc(d.mock_note || '')}</div></div>`
+      + mocks.map(p => sqPaperCard(p, true)).join('') : '')
     + (types ? `<div class="card"><div class="sq-sec-t">能练的考点分布</div>
         <div class="sq-chips">${types}</div>
         <div class="sq-note">只统计过了校对闸门的题 —— 库存满不等于有题做。</div></div>` : '')
@@ -436,22 +453,40 @@ async function sqDrillStart(kind, val) {
        整治」就是沾边，这是最常见的丢分方式，跟「整块没写」混为一谈就学不到东西。 */
 let sqSub = [], sqCur = null;
 
+/* 一道主观题的卡片。**「N 年真题」那句话不能写死** —— 外省题库里的题没有年份，
+   照原样渲染会显示成「0 年真题」，看着像资中 0 年考过。有年份才写年份，
+   没有就写它出自哪本册子。 */
+function sqSubCard(it) {
+  const from = it.year ? `${it.year} 年资中真题` : esc((it.src || '外省题库').replace(/\.pdf$/i, ''));
+  return `
+      <div class="card sq-subq" data-sq-sub="${it.id}">
+        <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
+          <span class="sq-qk">${from}</span>
+          <span class="sq-qs">${it.score} 分</span></div>
+        <div class="sq-w-q">${esc(it.stem.slice(0, 110))}${it.stem.length > 110 ? '…' : ''}</div>
+        <div class="sq-p-m">${it.skeleton ? esc(it.skeleton.name) + '　·　' : ''}
+          ${it.n_points ? it.n_points + ' 个采分点'
+    : (it.part === 'gongwen' ? '按结构部件给分' : '拆不出采分点，只能对照参考答案')}
+          ${it.mine ? `　·　写过 ${it.mine} 次` : ''}</div>
+      </div>`;
+}
+
 async function openSqSub() {
   push({ view: 'sqsub', title: '主观题 40 分' });
   $('#sq-sub-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/shequ/subjective');
     sqSub = d.items || [];
-    $('#sq-sub-list').innerHTML = sqSub.map(it => `
-      <div class="card sq-subq" data-sq-sub="${it.id}">
-        <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
-          <span class="sq-qk">${it.year} 年真题</span>
-          <span class="sq-qs">${it.score} 分</span></div>
-        <div class="sq-w-q">${esc(it.stem.slice(0, 110))}${it.stem.length > 110 ? '…' : ''}</div>
-        <div class="sq-p-m">${it.skeleton ? esc(it.skeleton.name) + '　·　' : ''}
-          ${it.n_points ? it.n_points + ' 个采分点' : '按结构部件给分'}
-          ${it.mine ? `　·　写过 ${it.mine} 次` : ''}</div>
-      </div>`).join('')
+    /* 分档摆：资中真题 → 外省同型 → 简答论述。**分组和说明都是后端下发的**，
+       JS 里不另判一遍「这题算不算资中考的」—— 两边各判一次迟早说的不是一回事。 */
+    $('#sq-sub-list').innerHTML = (d.groups || []).map(g => {
+      const got = sqSub.filter(x => x.group === g.key);
+      if (!got.length) return '';
+      return `<div class="card sq-grp-h">
+          <div class="sq-sec-t">${esc(g.name)}（${got.length} 道）</div>
+          <div class="sq-note">${esc(g.note)}</div></div>`
+        + got.map(sqSubCard).join('');
+    }).join('')
       + `<div class="card"><div class="sq-sec-t">我的批改记录</div>
           <div id="sq-glist" class="sq-recs"><p class="empty">加载中…</p></div></div>`;
     sqLoadGrades();
@@ -479,7 +514,9 @@ function sqOpenSub(id) {
   $('#sq-write').innerHTML = `
     <div class="card">
       <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
-        <span class="sq-qk">${it.year} 年真题</span><span class="sq-qs">${it.score} 分</span></div>
+        <span class="sq-qk">${it.year ? it.year + ' 年资中真题'
+    : esc((it.src || '外省题库').replace(/\.pdf$/i, ''))}</span>
+        <span class="sq-qs">${it.score} 分</span></div>
       <div class="sq-stem">${esc(it.stem)}</div>
     </div>
     ${sk ? `<div class="card sq-skel">

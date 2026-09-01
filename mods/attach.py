@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Blueprint, jsonify, request, send_file
 
@@ -23,7 +24,11 @@ bp = Blueprint("attach", __name__)
 
 # 发给 AI 看的原图暂存处。**只是暂存**：留 3 天足够一场对话里反复追问，
 # 再久就是白占盘 —— 会话历史里存的是文件名和抽出的文字，不靠这些图。
-AI_IMG_DIR = os.path.join(BASE, "uploads", "_aiimg")
+# 走 UPLOADS 而不是 BASE + "uploads"：两者在生产里是同一个目录，但**测试不是** ——
+# conftest 把 GONGKAO_UPLOADS 指到临时目录，而这一行以前拼的是 BASE，于是每跑一次
+# 测试就往真实的 uploads/_aiimg 里丢一批 12 字节的假 PNG。旁边的 AI_PROJ_DIR
+# （core.py）早就是按 UPLOADS 拼的，这里是漏改。
+AI_IMG_DIR = os.path.join(UPLOADS, "_aiimg")
 AI_IMG_KEEP_DAYS = 3
 
 # 扫描件逐页 OCR 的页数上限。这条路是**用户盯着等**的（300dpi 一页要跑几秒），
@@ -38,6 +43,61 @@ ATT_TEXT_MAX = 60000
 # MAX_CONTENT_LENGTH（64MB）挡着，这条路根本没走 HTTP 上传，得自己挡一道 ——
 # 否则一份 96MB 的讲义会让人对着转圈等到以为坏了。数字跟上传口对齐，别各写各的。
 ATT_SRC_MAX = 64 * 1024 * 1024
+
+
+# 图片 OCR 的后台队列。**上传这条路不再等它** —— 实测一张 0.15MB 的手机截图，
+# 网络传输可以忽略（前端已经压到 2000px），服务端 vision_ocr 却要 12~37 秒，
+# 用户看到的就是「选完图，附件条上转半分钟圈才能发」。而带图问答那一轮本来就把
+# **原图**交给视觉模型，OCR 文字只是「仅供参考」的辅助，压根不该挡在发送前面。
+# 所以改成：原图存好就立刻返回，转写在后台跑，写成 <图名>.txt 放同一个目录，
+# 谁要用谁按需读（ai_img_text）。
+#
+# 只给 2 个工位：这活是烧钱的模型调用，一次选 6 张图也该排队慢慢来，
+# 别让后台线程把上游接口打到 429。
+_OCR_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aiocr")
+
+
+def ai_img_text(name):
+    """读后台补出来的那份转写。还没跑完 / 跑失败就是空串 —— 调用方一律当「没有」处理。"""
+    p = ai_img_path(name)
+    if not p:
+        return ""
+    try:
+        with open(p + ".txt", encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _ocr_later(dst):
+    """把 dst 这张图排进后台队列，转写好了写成 dst + '.txt'。
+
+    写文件走「临时文件 + os.replace」：读的那一头（ai_img_text）不加锁，
+    直接写会让它读到半截转写，而半截的 OCR 比没有 OCR 更糟 —— 模型会拿它当全文。
+    """
+    def run():
+        try:
+            text = ""
+            if vision_configured():
+                try:
+                    text = vision_ocr(dst) or ""
+                except Exception as e:
+                    log.info("后台转写失败（%s）：%r", os.path.basename(dst), e)
+            if not text.strip():
+                text = _ocr_image(dst) or ""      # 兜底：本地 OCR
+            if not text.strip():
+                return
+            tmp = dst + ".txt.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text[:ATT_TEXT_MAX])
+            os.replace(tmp, dst + ".txt")
+        except Exception:
+            log.debug("后台转写异常", exc_info=True)
+    try:
+        return _OCR_POOL.submit(run)   # 返回 future：测试要等它跑完才能断言转写的结果
+    except Exception:
+        log.debug("转写入队失败", exc_info=True)
+        return None
 
 
 def _sweep_ai_imgs():
@@ -172,44 +232,25 @@ def _lib_file():
 def _att_extract(path, name, ext, mime, keep_src=False):
     """把磁盘上的一份文件读成 AI 附件（抽出的文字 + 可能留档的原图）。
 
-    抽文字一律走 extract_file（项目资料那边用的也是它）；这里额外管两件事：
-    原图留不留档，以及**path 那份文件动不动得**。
+    非图片走 extract_file 抽文字（项目资料那边用的也是它）；**图片走 _att_image**：
+    只留原图、转写扔给后台，因为转写要十几到几十秒而用户正盯着屏幕等。
+    这里额外管一件事：**path 那份文件动不动得**。
 
     keep_src=True 表示 path 是用户的原件（云盘/资料库里那一份）：只许读，
     留原图得复制一份走 —— 照着临时文件那套 os.replace 搬走的话，用户的文件
     会当场从云盘里消失。上传上来的临时文件传 False，读完就地清掉。
     """
     is_img = (mime or "").lower().startswith("image/") or ext in IMAGE_EXT
-    text, pages, err = extract_file(path, ext, is_img)
-    keep = ""
+    # 图片走单独一条路：只搬原图、不在这儿等转写（转写十几到几十秒，用户正盯着屏幕）
+    if is_img:
+        return _att_image(path, name, ext, keep_src)
+    text, pages, err = extract_file(path, ext, is_img=False)
     try:
-        # 图片：**原图留下来**，不像以前那样抽完文字就删。抽文字够应付文字题，但图形推理和
-        # 资料分析的图表在抽取那一步就没了 —— 行测两个大板块恰恰全在图里。留着路径，
-        # 对话那边把原图直接交给视觉模型（aisession 的 vision 分支），文字继续当兜底。
-        if is_img:
-            os.makedirs(AI_IMG_DIR, exist_ok=True)
-            keep = uuid.uuid4().hex + ext
-            dst = os.path.join(AI_IMG_DIR, keep)
-            if keep_src:
-                shutil.copyfile(path, dst)
-            else:
-                try:
-                    os.replace(path, dst)
-                except OSError:
-                    # 临时文件在 /tmp，暂存目录在 uploads 底下 —— 两者常常不在同一个文件系统
-                    # （这台机器就是），os.replace 会抛 OSError(18, 'Invalid cross-device link')。
-                    # 原来抛了就把 keep 清空，表现是**图片被静默降级**：视觉模型再也看不到原图，
-                    # 只剩 OCR 出来的文字，而行测的图形推理和资料分析恰恰全在图里。
-                    # 日志里只有一行 INFO，界面上什么都不说。资料库那条路早就这么兜底了。
-                    shutil.copyfile(path, dst)
-                    os.remove(path)
-            _sweep_ai_imgs()
-        elif not keep_src:
+        if not keep_src:
             os.remove(path)
     except Exception as e:
-        keep = ""
         log.info("附件临时文件处理失败：%r", e)
-    if not text and not (is_img and keep):
+    if not text:
         return {"error": err or "没能从附件中提取到文字"}
     out = {"text": text[:ATT_TEXT_MAX], "name": name,
            # total/truncated 是**给人和模型看的交代**，不是内部字段：前端拿它在附件条上
@@ -219,9 +260,42 @@ def _att_extract(path, name, ext, mime, keep_src=False):
     if pages:
         out["pages"] = pages
         out["ocr_pages"] = ATT_OCR_PAGES        # 超过这个页数的扫描件只 OCR 了前这些页
-    if is_img:
-        out["image"] = keep
     return out
+
+
+def _att_image(path, name, ext, keep_src=False):
+    """图片附件：**原图留档就算完事**，转写扔给后台。
+
+    原图必须留：抽出来的文字够应付文字题，但图形推理和资料分析的图表在抽取那一步
+    就没了 —— 行测两个大板块恰恰全在图里。对话那边把原图直接交给视觉模型
+    （aisession 的 vision 分支），转写只当兜底（图 3 天后清掉，历史里还剩文字）。
+
+    返回里 text 是空的、ocr='pending'：调用方要文字得等后台那份（ai_img_text）。
+    """
+    try:
+        os.makedirs(AI_IMG_DIR, exist_ok=True)
+        keep = uuid.uuid4().hex + ext
+        dst = os.path.join(AI_IMG_DIR, keep)
+        if keep_src:
+            # 用户的原件（云盘/资料库里那一份）只许读：照着临时文件那套 os.replace 搬走，
+            # 用户的文件会当场从云盘里消失。
+            shutil.copyfile(path, dst)
+        else:
+            try:
+                os.replace(path, dst)
+            except OSError:
+                # 临时文件在 /tmp，暂存目录在 uploads 底下 —— 两者常常不在同一个文件系统
+                # （这台机器就是），os.replace 会抛 OSError(18, 'Invalid cross-device link')。
+                # 抛了就把图丢掉的话，表现是**图片被静默降级**：视觉模型再也看不到原图。
+                shutil.copyfile(path, dst)
+                os.remove(path)
+    except Exception as e:
+        log.info("附件图片留档失败：%r", e)
+        return {"error": "图片没能存下来：%s" % e}
+    _sweep_ai_imgs()
+    _ocr_later(dst)
+    return {"text": "", "name": name, "total": 0, "truncated": False,
+            "image": keep, "ocr": "pending"}
 
 
 @bp.post("/api/ai/extract")
@@ -255,7 +329,9 @@ def ai_extract_attachment():
     out = _att_extract(tmp, f.filename, ext, f.mimetype)
     # 只记得到「服务端这一段」：body 在进视图之前就被读完了，网络上传那几十秒不在这个数里。
     # 所以真正该看的是 MB 数 —— 手机传上来的还是好几 MB，说明前端没压，卡的是路上。
-    log.info("AI 附件（上传）：%s %.2fMB 识别 %.1fs%s",
+    # 图片这一段现在只剩「存盘」（转写在后台，见 _ocr_later），秒回才是正常的；
+    # 要是它又变慢了，说明有人把同步转写加回来了。
+    log.info("AI 附件（上传）：%s %.2fMB 服务端 %.1fs%s",
              f.filename, size / 1048576.0, time.time() - t1,
              "" if out.get("text") or out.get("image") else " 【没提取到内容】")
     return jsonify(out)

@@ -45,6 +45,21 @@ UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
 
 PAPER_KIND = "题库"
 
+# 哪些册子是**整卷**、哪些只是题册。分开是因为两者的用法根本不同：
+# 整卷要能从头做到尾、有总倒计时、出一张成绩单；题册只喂「专项练」抽题。
+# 判据是文件名里的原话，不是我们的猜测 —— 云盘那个文件夹就叫
+# 「7.2026社区工作者模拟试题（共6套）」，卷名里写着「模拟试题」「押题试卷」。
+MOCK_KIND = (("模拟试题", "模拟"), ("押题试卷", "押题"))
+
+
+def kind_of(name):
+    """这份资料按哪种 kind 入库。认不出来一律当题册 —— 宁可少认一份整卷，
+       也不要把一本时政题库摆成「一套模拟卷」骗人去当整卷做。"""
+    for key, kind in MOCK_KIND:
+        if key in (name or ""):
+            return kind
+    return PAPER_KIND
+
 # 不收的科目：公告里没有它们。**按文件夹和文件名双重排除** —— 只看其一会漏，
 # 「材料分析练习」躺在公基/法律知识下面，而「常识判断练习」在行测文件夹里。
 SKIP_DIR = ("行测职测",)
@@ -111,7 +126,16 @@ _ANS_ROW = re.compile(r"(\d{1,3})[、.．][\s　]*([A-EＡ-Ｅ]{1,5})(?![A-Za-z\
 # 少了它，_OCR_TF 里的 X→F 那条映射永远轮不到执行 —— 87 道判断题就是这么丢的。
 _ANS_EXP = re.compile(r"^[\s　]*(\d{1,4})[\s　]*[.、．][\s　]*([A-EＡ-ＥXYV√×]{1,4})[\s　]*[。．,，:：]")
 _OCR_TF = {"Y": "T", "V": "T", "√": "T", "×": "F", "X": "F"}
+# 「模拟试题」「押题试卷」那一批的写法：`1.【答案】A` / `94【答案】C。解析:`。
+# 题号后面**可以没有点**（`94【答案】`），所以点是可选的；答案字母后面不许紧跟汉字，
+# 挡住解析正文里的「【答案】B 项正确」那种引用。
+_ANS_MARK = re.compile(r"^[\s　]*(\d{1,4})[\s　]*[、.．]?[\s　]*[【\[][\s　]*答案[\s　]*[】\]]"
+                       r"[\s　]*[:：]?[\s　]*([A-EＡ-ＥXYV√×对错]{1,5})(?![A-Za-z\u4e00-\u9fa5])")
 _ANS_HEAD = re.compile(r"参考答案|答案及解析|答案与解析|^[\s　]*答案[\s　]*$", re.M)
+# 卷末没有「参考答案」大标题、答案却是逐题标着【答案】的（模拟试题第 3 套就是）：
+# 拿**第一条 `N【答案】X`** 当答案区的起点。少了这条退路，整册答案一条都扫不到，
+# 而且报出来是「答案 0 条」，看着像题册本身没答案 —— 实际上是我们没找到门。
+_ANS_MARK_HEAD = re.compile(r"(?m)^[\s　]*\d{1,4}[\s　]*[、.．]?[\s　]*[【\[][\s　]*答案[\s　]*[】\]]")
 # 章标题：`第二章 社会工作价值观与专业伦理`。千题斩那种「刷题册 + 解析册」两本的，
 # 题号在**每章的每个题型里**各自从 1 编，所以键必须是三段：章 + 题型 + 题号。
 _CHAP = re.compile(r"^[\s　]*第\s*([一二三四五六七八九十百]+|\d{1,2})\s*章")
@@ -124,19 +148,51 @@ def _half(s):
     return "".join(chr(ord(c) - 0xFEE0) if "Ａ" <= c <= "Ｚ" else c for c in s or "")
 
 
+def _kind_by_shape(answers):
+    """一段答案是什么题型 —— 按**答案本身长什么样**判，不看标题。
+
+    只在标题缺失时才用得上（见 _scan_answers 里「题号回到 1」那条）。
+    判据：过半是 T/F 就是判断题，过半有两个以上字母就是多选，否则单选。
+    """
+    if not answers:
+        return "single"
+    tf = sum(1 for a in answers if a in ("T", "F"))
+    many = sum(1 for a in answers if len(a) > 1 and a not in ("T", "F"))
+    if tf * 2 > len(answers):
+        return "judge"
+    return "multi" if many * 2 > len(answers) else "single"
+
+
 def _scan_answers(tail):
-    """答案区 → {(章, 题型, 题号): 答案}。"""
+    """答案区 → {(章, 题型, 题号): 答案}。
+
+    题型分段有两个来源，**标题优先、题号回落**：
+
+      · 正常情况看「二、多项选择题」这种小标题；
+      · 标题被页脚吃掉时（扫描件很常见），看**题号有没有回到 1** ——
+        单选答到 60 之后又冒出一个「1.」，那就是换段了。不加这条退路的话，
+        多选的 1~40 会去撞单选已经占了的 1~40 号，setdefault 让先来的赢，
+        于是**整段多选题一条答案都取不到**、还报成「答案区里没有这道题」。
+        实测「模拟试题第 1 套」就丢了 32 道多选。
+
+    回落判据卡得很死：**新号 ≤ 2 且上一个号 ≥ 10** 才算换段。松一点就会被
+    OCR 认错的题号骗到 —— 同一册里「28. D」被认成「98. D」，下一条 29 比 98 小，
+    按「只要变小就换段」的写法会在这儿凭空劈出一段来。
+    """
     answers, akind, achap = {}, "single", ""
+    seg, last_no = [], 0          # 当前段收了哪些答案 / 上一个题号
     for ln in tail.splitlines():
         if _JUNK.search(ln):
             continue
         mc = _CHAP.match(ln)
         if mc:
             achap, akind = mc.group(1), "single"
+            seg, last_no = [], 0
             continue
         ms = _SEC.match(ln)
         if ms:
             akind = next((v for k, v in _SEC_KIND.items() if ms.group(1).startswith(k)), "single")
+            seg, last_no = [], 0
             continue
         # **先试「一行多对」，再退回单对**。顺序反过来会出事：为解析册加的
         # _ANS_LEAD（`10.D  考查社会工作专业知识…`）也能匹配 `1.E    2.D   3.A`
@@ -146,15 +202,35 @@ def _scan_answers(tail):
         if len(row) >= 2:
             pairs = row
         else:
-            mm = (_ANS.match(ln) or _ANS_BARE.match(ln) or _ANS_LEAD.match(ln)
-                  or _ANS_EXP.match(ln))
+            mm = (_ANS.match(ln) or _ANS_MARK.match(ln) or _ANS_BARE.match(ln)
+                  or _ANS_LEAD.match(ln) or _ANS_EXP.match(ln))
             pairs = [(mm.group(1), mm.group(2))] if mm else []
         for no, raw in pairs:
             a = _half(raw).upper()
             # OCR 把判断题的 √ 认成 Y / V，先折回来再判
             a = _OCR_TF.get(a, a) if len(a) == 1 else a
             a = "T" if a in ("√", "对") else ("F" if a in ("×", "错") else a)
-            answers.setdefault((achap, akind, int(no)), a)
+            no = int(no)
+            if no <= 2 and last_no >= 10:
+                # 题号回到 1 = 换了一个题型段，而标题没印出来（或被页脚吃了）。
+                # 新段的题型按**这一段答案的形状**判，而且要**攒够几条再判** ——
+                # 只看第一条会被 OCR 的单条错认带偏（第一条恰好认成一个字母，
+                # 整段多选就会被判成单选，然后整段答案对不上）。
+                akind, seg = "?", []
+            last_no = no
+            if akind == "?":
+                seg.append((no, a))
+                if len(seg) >= 3:
+                    akind = _kind_by_shape([x[1] for x in seg])
+                    for n2, a2 in seg:
+                        answers.setdefault((achap, akind, n2), a2)
+                    seg = []
+                continue
+            answers.setdefault((achap, akind, no), a)
+    if seg:                                # 整段不足 3 条就到头了，按形状收尾
+        akind = _kind_by_shape([x[1] for x in seg])
+        for n2, a2 in seg:
+            answers.setdefault((achap, akind, n2), a2)
     return answers
 
 
@@ -168,6 +244,43 @@ _ANS_INLINE = re.compile(r"^[\s　]*(?:正确)?答案[：:\s]*([A-EＡ-Ｅ√×�
 # 是句号/顿号/空白**，否则「【答案】B」和正文里的「B 项正确」分不开。
 _ANS_BRACKET = re.compile(r"^[\s　]*[【\[]答案[】\]][\s　]*([A-EＡ-Ｅ√×对错]{1,5})"
                           r"(?=[。．，,、\s　]|$)", re.M)
+
+
+_LEAD_PUNCT = re.compile(r"^[\s　]*[，,。、．.：:；;）)]+[\s　]*")
+
+
+def repair_options(items):
+    """把**混排**的选项切开。原地改 items。
+
+    两种混排，来源不同、处理位置也不同：
+      · 四个选项挤在同一行（`A.晋文公 B.楚庄王 C.齐桓公 D.秦穆公`）——
+        上面的逐行扫只会抠出一个选项 A，剩下三个粘在 A 的正文里；
+      · 选项混在题干那一行里（`2、社会工作是一种（）。 A 自发助人活动`）。
+    两种都交给现成的 realbank._split_options 再切一次 —— 那个函数就是为「挤一行」写的。
+
+    **两个解析器都要用这一份。** 原先只有 parse_inline 有这段，parse_bank 没有，
+    于是「模拟试题第 3 套」那种单空格分隔的一行四选项整册都被判成「选项少于 2 个」——
+    83 道题只活下来 20 道，而报出来的理由看着像题册本身残缺。
+    """
+    for it in items:
+        # 选项开头的**残标点**：原卷印的是「A、澄清」，OCR 认成「A，澄清」——
+        # `、．.` 在分隔符里、`，：)` 不在，于是逗号被当成正文留了下来，
+        # 界面上就是「，澄清」。实测模拟卷里 16% 的选项带着这个尾巴。
+        # 削在这儿而不是放宽 _OPT 的分隔符：那条正则同时管着「选项行认不认」，
+        # 放宽它等于让更多正文行有机会被误认成选项。
+        it["options"] = [_LEAD_PUNCT.sub("", o) for o in it["options"]]
+        if not it["options"] and re.search(r"[\s　][A-EＡ-Ｅ][\s　]*[.、．]?[\s　]*\S", it["stem"]):
+            st2, opts = R._split_options(it["stem"])
+            if len(opts) >= 2 and len(st2) >= 6:
+                it["stem"], it["options"] = st2, opts
+        if len(it["options"]) == 1 and re.search(r"[B-EＢ-Ｅ][\s　]*[.、．]", it["options"][0]):
+            # 前面垫一句占位题干：_split_options 的合理性检查要求题干至少 6 个字
+            # （那条检查是防「题干里的 A 股被当成选项 A」的，对我们这儿不适用），
+            # 直接传 "A.…" 会因为题干为空被判不合理而拒绝切分。
+            _stem, opts = R._split_options("本题选项如下：A." + it["options"][0])
+            if len(opts) >= 2:
+                it["options"] = opts
+    return items
 
 
 def parse_inline(text):
@@ -209,23 +322,7 @@ def parse_inline(text):
             else:
                 cur["stem"] += R.norm(ln)
 
-    # 这几份押题是**混排**的：有的题四个选项一行一个，有的题四个挤在同一行
-    # （`A.2 项 B. 3 项 C. 4 项 D. 5 项`）。挤成一行的那种，上面只会抠出一个选项 A，
-    # 交给现成的 realbank._split_options 再切一次 —— 那个函数就是为「四个挤一行」写的。
-    for it in items:
-        # 选项**混在题干那一行**里的（`2、社会工作是一种（）。 A 自发助人活动`）：
-        # 从题干里把它们切出来。和下面「四个挤一行」是同一类混排，只是位置不同。
-        if not it["options"] and re.search(r"[\s　][A-EＡ-Ｅ][\s　]*[.、．]?[\s　]*\S", it["stem"]):
-            st2, opts = R._split_options(it["stem"])
-            if len(opts) >= 2 and len(st2) >= 6:
-                it["stem"], it["options"] = st2, opts
-        if len(it["options"]) == 1 and re.search(r"[B-EＢ-Ｅ][\s　]*[.、．]", it["options"][0]):
-            # 前面垫一句占位题干：_split_options 的合理性检查要求题干至少 6 个字
-            # （那条检查是防「题干里的 A 股被当成选项 A」的，对我们这儿不适用），
-            # 直接传 "A.…" 会因为题干为空被判不合理而拒绝切分。
-            _stem, opts = R._split_options("本题选项如下：A." + it["options"][0])
-            if len(opts) >= 2:
-                it["options"] = opts
+    repair_options(items)
 
     ok, bad = [], []
     for it in items:
@@ -304,7 +401,7 @@ def parse_bank(text, answer_text=None):
     if answer_text is not None:
         body, tail = text, answer_text
     else:
-        m = _ANS_HEAD.search(text)
+        m = _ANS_HEAD.search(text) or _ANS_MARK_HEAD.search(text)
         body, tail = (text[:m.start()], text[m.start():]) if m else (text, "")
 
     # ---- 答案区：(章, 题型, 题号) → 答案 ----
@@ -358,6 +455,7 @@ def parse_bank(text, answer_text=None):
             else:
                 cur["stem"] += R.norm(ln)
     close()
+    repair_options(items)
 
     # ---- 对齐 ----
     ok, bad = [], []
@@ -462,9 +560,14 @@ def find_banks(con, from_ocr=False):
     return out
 
 
-def save(con, bank, items, from_ocr=False):
+def save(con, bank, items, from_ocr=False, n_bad=0):
     """入库。**标明这批题是不是 OCR 来的** —— OCR 那条链路比文字层长
-       （识别 + 双栏切分 + 字符还原），做错时得看得出是题的问题还是自己的问题。"""
+       （识别 + 双栏切分 + 字符还原），做错时得看得出是题的问题还是自己的问题。
+
+    n_bad 是**这册解析出来、但没能收下的题数**（OCR 把选项吃了之类）。存下来是为了
+    界面上能说「这卷 96 题里只收下 37 道」—— 只存收下的那 37，卷子看着就是满的，
+    人会以为自己做完了一整套。缺口要如实摆出来。
+    """
     row = con.execute("SELECT id FROM sq_papers WHERE file_id=?", (bank["file_id"],)).fetchone()
     name = bank["name"].rsplit(".", 1)[0]
     if row:
@@ -474,7 +577,7 @@ def save(con, bank, items, from_ocr=False):
         cur = con.execute(
             "INSERT INTO sq_papers(file_id,name,folder,ext,region,year,kind,total,status) "
             "VALUES(?,?,?,?,?,?,?,?,?)",
-            (bank["file_id"], name, bank["folder"], ".pdf", "通用", 0, PAPER_KIND, 0, "ok"))
+            (bank["file_id"], name, bank["folder"], ".pdf", "通用", 0, kind_of(name), 0, "ok"))
         pid = cur.lastrowid
     fixed = qtype_by_folder(bank["folder"], bank["name"])
     for i, it in enumerate(items, 1):
@@ -490,8 +593,26 @@ def save(con, bank, items, from_ocr=False):
              "ok", json.dumps({"why": "练习册原册答案，按题号对齐入库",
                                "src": "ocr" if from_ocr else "pdf"}, ensure_ascii=False),
              hashlib.sha1(R.qhash_text(stem).encode("utf-8")).hexdigest()[:16]))
-    con.execute("UPDATE sq_papers SET n_obj=?, n_sub=0, n_doubt=0 WHERE id=?", (len(items), pid))
+    con.execute("UPDATE sq_papers SET n_obj=?, n_sub=0, n_doubt=0, n_bad=?, kind=? WHERE id=?",
+                (len(items), n_bad, kind_of(name), pid))
     return pid
+
+
+def _misalign(rep):
+    """这册里有多少道题**闻着像答案错位**（占全册的比例）。
+
+    整册跳过的闸原本只看一个「对齐率」，可是掉下来的原因有两类，性质完全不同：
+
+      OCR 把选项吃了 / 认错了字   → 这道题**收不进来**（丢题）
+      答案区和题干区对错了位      → 这道题**收进来是错的**（发错题给人做）
+
+    扫描件的对齐率天生就低，低的那部分几乎全是第一类；拿一个 85% 的总闸一刀切，
+    等于因为「有些题 OCR 糊了」而把整卷扔掉。所以扫描件走 --loose 这条路时改看
+    **第二类的占比** ——「答案 D 超出本题 3 个选项的范围」这种，是答案区串行的招牌症状。
+    丢题可以忍（界面上如实写「96 题只收下 37 道」），发错题一道都不能忍。
+    """
+    n = sum(1 for _, why in rep["bad"] if "超出本题" in why)
+    return n / rep["n_all"] if rep["n_all"] else 1.0
 
 
 def main():
@@ -499,6 +620,12 @@ def main():
     ap.add_argument("--scan", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--min", type=float, default=0.85, help="对齐率低于它就整册跳过")
+    # 扫描件专用的第二条路。**不是把闸门调松，是换了一条判据** —— 见 _misalign 的注释。
+    ap.add_argument("--loose", type=float, default=0.0,
+                    help="对齐率没到 --min，但可用率到了这个数、且错位嫌疑低于 "
+                         "--max-misalign 时也收（扫描件用；默认 0 = 关闭）")
+    ap.add_argument("--max-misalign", type=float, default=0.05,
+                    help="「答案超出本题选项范围」的占比上限，--loose 那条路才看它")
     ap.add_argument("--from-ocr", action="store_true",
                     help="文字从 sq_ocr 读（扫描件走这条），不再碰 PDF")
     ap.add_argument("--only", default="", help="只处理文件名含这个词的册子")
@@ -547,7 +674,9 @@ def main():
             rep["n_ok"] = len(items)
             rep["kinds"] = {k: sum(1 for i in items if i["part"] == k)
                             for k in ("single", "multi", "judge")}
-        ok_gate = bool(items) if want_parts else (rep["rate"] >= a.min)
+        mis = _misalign(rep)
+        loose_ok = (a.loose > 0 and rep["rate"] >= a.loose and mis <= a.max_misalign)
+        ok_gate = bool(items) if want_parts else (rep["rate"] >= a.min or loose_ok)
         flag = "✓" if ok_gate else "✗"
         if ok_gate:
             took += 1
@@ -555,12 +684,19 @@ def main():
             for k in kinds:
                 kinds[k] += rep["kinds"][k]
             if not a.scan:
-                save(con, b, items, a.from_ocr)
+                save(con, b, items, a.from_ocr, n_bad=rep["n_all"] - len(items))
         else:
             skipped += 1
+        why = ""
+        if not ok_gate:
+            why = "← 整册跳过" + ("（错位嫌疑 %.0f%%）" % (mis * 100)
+                                 if a.loose > 0 and mis > a.max_misalign else "")
+        elif loose_ok and rep["rate"] < a.min:
+            why = "← 只收下 %d/%d（OCR 掉字），错位嫌疑 %.0f%%" % (
+                len(items), rep["n_all"], mis * 100)
         print("%s %-44s 题 %3d 答案 %3d 可用 %3d 对齐 %3.0f%% %s"
               % (flag, b["name"][:44], rep["n_all"], rep["n_ans"], rep["n_ok"],
-                 rep["rate"] * 100, "" if rep["rate"] >= a.min else "← 整册跳过"))
+                 rep["rate"] * 100, why))
         if a.verbose and rep["bad"]:
             for it, why in rep["bad"][:3]:
                 print("      ! 第%d题 %s ← %s" % (it["no"], why, it["stem"][:32]))

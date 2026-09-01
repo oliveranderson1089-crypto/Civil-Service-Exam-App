@@ -15,9 +15,9 @@ import aiclient
 from core import AI_PROJ_DIR, CFG, get_db, log, open_db, uid
 from mods.agent import _ai_agentic_or_error, ai_chat_agentic_stream
 from mods.agent_tools import TOOL_REGISTRY, exec_tool, tool_label
-from mods.ai import vision_chat, vision_configured, vision_exact_configured
+from mods.ai import vision_chat, vision_configured, vision_exact_configured, vision_stream
 from mods.aichat import _user_stats
-from mods.attach import ATT_OCR_PAGES, ai_img_path, extract_file, guess_ext
+from mods.attach import ATT_OCR_PAGES, ai_img_path, ai_img_text, extract_file, guess_ext
 from mods.files import _extract_text
 
 bp = Blueprint("aisession", __name__)
@@ -107,16 +107,67 @@ def aichat_get(cid):
                 m["trace"] = json.loads(r["meta"] or "[]")
             except Exception:
                 m["trace"] = []
-        # 附件回传：前端要拿它画缩略图（原文 text 不回，白占带宽——那是给模型看的）
+        # 附件回传：前端要拿它画缩略图。**正文仍然不回**（一份 PDF 六万字，白占带宽，
+        # 那是给模型看的）—— 但要带上「有多少字、共几页」，前端才知道该不该给出
+        # 「看内容」这个入口，点了再按需去取（见 aichat_att）。
         if r["attach"]:
             try:
-                m["atts"] = [{"name": a.get("name") or "", "image": a.get("image") or ""}
+                m["atts"] = [{"name": a.get("name") or "", "image": a.get("image") or "",
+                              "got": len(a.get("text") or ""),
+                              "total": int(a.get("total") or 0),
+                              "pages": int(a.get("pages") or 0),
+                              "ocr_pages": int(a.get("ocr_pages") or 0)}
                              for a in (json.loads(r["attach"]) or [])]
             except Exception:
                 m["atts"] = []
         msgs.append(m)
     return jsonify({"id": c["id"], "title": c["title"], "project_id": c["project_id"],
                     "tier": _tier(c), "msgs": msgs})
+
+
+@bp.get("/api/aichat/chats/<int:cid>/att")
+def aichat_att(cid):
+    """取某条消息里第 i 个附件的正文。前端点「看内容」时才来拿。
+
+    为什么单开一条路而不是跟着历史一起回：一次对话里挂三份讲义就是十几万字，
+    每次打开会话都要重下一遍 —— 而绝大多数时候用户只想看缩略图，根本不点开。
+
+    图片的正文是后台转写补的（attach.py 的 _ocr_later）。刚发完就点开可能还没补上，
+    这时候返回 ocr='pending' 让界面说清楚「还在转写」，而不是干巴巴一句「没有内容」。
+    """
+    db = get_db()
+    c = db.execute("SELECT id FROM ai_chats WHERE id=? AND user_id=?", (cid, uid())).fetchone()
+    if not c:
+        return jsonify({"error": "未找到"}), 404
+    try:
+        mid = int(request.args.get("mid") or 0)
+        idx = int(request.args.get("i") or 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "参数无效"}), 400
+    # chat_id 一起进 WHERE：光凭 mid 取的话，换个 cid 就能读到别人会话里的附件
+    r = db.execute("SELECT attach FROM ai_msgs WHERE id=? AND chat_id=?", (mid, cid)).fetchone()
+    if not r or not r["attach"]:
+        return jsonify({"error": "这条消息没有附件"}), 404
+    try:
+        atts = json.loads(r["attach"]) or []
+    except Exception:
+        atts = []
+    if not 0 <= idx < len(atts):
+        return jsonify({"error": "附件不在了"}), 404
+    a = atts[idx]
+    text = a.get("text") or ""
+    img = a.get("image") or ""
+    ocr = ""
+    if not text.strip() and img:
+        # 落库时后台转写还没跑完（_fill_img_text 补的是那一刻的结果）—— 现在再看一眼
+        text = ai_img_text(img)
+        if not text.strip():
+            ocr = "pending" if ai_img_path(img) else "gone"
+    return jsonify({"name": a.get("name") or "附件", "text": text,
+                    "total": int(a.get("total") or 0) or len(text),
+                    "pages": int(a.get("pages") or 0),
+                    "ocr_pages": int(a.get("ocr_pages") or 0),
+                    "image": img, "ocr": ocr})
 
 
 @bp.put("/api/aichat/chats/<int:cid>")
@@ -272,6 +323,11 @@ def aichat_del(cid):
 # ATT_HIST 管**历史里回放的**那一份（只回放最近一条，再多就是每轮重发一篇 PDF）。
 # 还有第三道在 mods/attach.py（抽取时的 ATT_TEXT_MAX）—— 三道闸任何一道单独改都白改。
 ATT_LIMIT = 24000       # 本轮附件注入上限（字符）
+# 这一轮最多带几份附件。原来写死在 _req_atts 里是 6：用户一口气传了 11 张题目截图，
+# 后 5 张连进都没进请求，界面上也没有任何地方说过被丢掉了 —— 看到的就是
+# 「AI 只解释了前六张」。放宽到 12（正文总量仍由 ATT_LIMIT 兜着），
+# 再多的会明说「这一轮只带了前 N 份」。
+ATT_MAX = 12
 ATT_HIST = 8000         # 历史附件回放上限（字符）
 CTX_BUDGET = 24000      # 上下文预算（字符口径，见 _fits）。DeepSeek 上下文远大于此，
                         # 这个数是「给历史留多少」的自律线：留太多既慢又贵，还容易
@@ -543,6 +599,24 @@ def _build(cid, content, atts=None):
     return db, c, [{"role": "system", "content": sys_prompt}] + msgs
 
 
+def _fill_img_text(atts):
+    """落库前给图片附件补上后台转写。
+
+    时机是**答完之后**：那会儿视觉模型已经跑了十几二十秒，后台那份转写基本都好了。
+    补它是为了图过期之后 —— 暂存的原图只留 3 天，之后这条历史消息里若一个字都没有，
+    「这张图当时问的什么」就永远查不回来了，界面上点开也是一片空白。
+    """
+    if not atts:
+        return atts
+    for a in atts:
+        if not (a.get("text") or "").strip() and a.get("image"):
+            t = ai_img_text(a["image"])
+            if t:
+                a["text"] = t[:ATT_LIMIT]
+                a["total"] = len(t)
+    return atts
+
+
 def _persist(db, cid, c, content, reply, atts=None, kind="", trace=None):
     """落库：用户这句 +（工具轨迹）+ AI 那句，顺带给还没标题的会话起个名。
 
@@ -555,6 +629,7 @@ def _persist(db, cid, c, content, reply, atts=None, kind="", trace=None):
     kind='error' 标记「这句是失败占位」，重建上下文时会跳过它。
     trace 是这一轮的工具调用轨迹，单独存一行 kind='tool'：既给界面回放，也回喂给模型。
     """
+    atts = _fill_img_text(atts)
     cur = db.execute("INSERT INTO ai_msgs(chat_id,role,content,attach) VALUES(?,?,?,?)",
                      (cid, "user", content, json.dumps(atts, ensure_ascii=False) if atts else None))
     user_mid = cur.lastrowid
@@ -597,12 +672,16 @@ def _req_atts(data):
     if not isinstance(raw, list):
         return []
     out = []
-    for a in raw[:6]:
+    for a in raw[:ATT_MAX]:
         if not isinstance(a, dict):
             continue
         img = str(a.get("image") or "")[:120]
         if (a.get("text") or "").strip() or img:
             txt = (a.get("text") or "")[:ATT_LIMIT]
+            # 图片的转写是后台补的（attach.py 的 _ocr_later），前端手里那份多半是空的。
+            # 补上就当辅助，没补上也照发 —— 视觉模型本来就直接看得见原图。
+            if not txt.strip() and img:
+                txt = (ai_img_text(img) or "")[:ATT_LIMIT]
             item = {"name": str(a.get("name") or "文件")[:80], "text": txt, "image": img}
             # total/pages 只拿来向模型交代「这份文件有多大、你看到了多少」，
             # 不参与任何取数或鉴权，所以夹一道范围就够了。
@@ -624,6 +703,49 @@ def _exact(data):
     return bool((data or {}).get("exact"))
 
 
+# 一次请求最多塞几张原图给视觉模型。图片 token 很贵，塞满十来张不是超时就是被截断，
+# 所以图多的时候**分几组多问几次**，而不是像原来那样 `paths[:3]` 悄悄把后面的丢掉。
+VISION_BATCH = 4
+
+
+def _vision_jobs(atts, content):
+    """带图这一轮要问视觉模型的若干组 [(原图路径, 提示词, 这一组是第几~几张)]。
+    图没了 / 没配视觉就返回 []。
+
+    非流式（/send）和流式（/stream）两条路共用这一份 —— 提示词各写一份的话，
+    改了其中一处，用户看到的就是「网页版会先看图形再答，安卓壳还是老样子」。
+
+    ★ 分组问，而不是只问前几张：用户按顺序传了 11 张题目截图、说「按顺序解释这些题」，
+      原来只有前 3 张真进了视觉模型，剩下的靠 OCR 文字碰运气。每组都告诉模型
+      「这是第几组、一共几张、从第几张起」，答案接起来才是连着的一份。
+    """
+    pairs = [(a, p) for a, p in ((a, ai_img_path(a.get("image"))) for a in atts if a.get("image")) if p]
+    if not pairs or not vision_configured():
+        return []
+    groups = [pairs[i:i + VISION_BATCH] for i in range(0, len(pairs), VISION_BATCH)]
+    total, jobs = len(pairs), []
+    for gi, g in enumerate(groups):
+        first = gi * VISION_BATCH + 1
+        last = first + len(g) - 1
+        # 抽出来的文字一并给过去：模型看图 + 看 OCR，比只给其中一样准。**只给这一组的**，
+        # 别把 11 张的转写重复塞进每一组。图片附件的 OCR 是后台补的（见 attach.py），
+        # 这一轮可能还没补上 —— 没有就不给，视觉模型本来就直接看得见原图。
+        ocr = "\n\n".join("【%s 的文字识别结果，仅供参考】\n%s" % (a.get("name") or "图片", a["text"])
+                          for a, _ in g if a.get("text"))
+        q = (content or "看看这道题，讲讲怎么做。")
+        scope = ""
+        if len(groups) > 1:
+            scope = ("\n\n用户这一轮一共发了 %d 张图，**现在给你看的是第 %d~%d 张**"
+                     "（按用户发送的顺序）。只讲这几张，按顺序一张一张讲，"
+                     "每张前面标上「第 N 张」；别去猜没给你看的那些。" % (total, first, last))
+        prompt = ("你是「公考助手」里的 AI 学习助理，服务备考公务员的用户。用简体中文、Markdown 作答，"
+                  "把**关键结论和易错点加粗**。这是用户发来的题目图片（可能是图形推理、资料分析图表或"
+                  "试卷截图）：请先看清图本身（图形的形状、数量、位置、对称性；图表的坐标和数值），"
+                  "再作答。" + scope + "\n\n用户的问题：" + q + ("\n\n" + ocr if ocr else ""))
+        jobs.append(([p for _, p in g], prompt, (first, last)))
+    return jobs
+
+
 def _vision_answer(atts, content, exact=False):
     """本轮带了图片 → 把**原图**交给视觉模型，而不是只拿抽出来的文字问。
 
@@ -634,26 +756,26 @@ def _vision_answer(atts, content, exact=False):
     返回 (reply, None) 或 (None, 错误响应)。视觉没配 / 图没了就返回 (None, None)
     让调用方退回普通文本路径。
     """
-    paths = [p for p in (ai_img_path(a.get("image")) for a in atts if a.get("image")) if p]
-    if not paths or not vision_configured():
+    jobs = _vision_jobs(atts, content)
+    if not jobs:
         return None, None
-    # 抽出来的文字一并给过去：模型看图 + 看 OCR，比只给其中一样准
-    ocr = "\n\n".join("【%s 的文字识别结果，仅供参考】\n%s" % (a.get("name") or "图片", a["text"])
-                      for a in atts if a.get("text"))
-    q = (content or "看看这道题，讲讲怎么做。")
-    prompt = ("你是「公考助手」里的 AI 学习助理，服务备考公务员的用户。用简体中文、Markdown 作答，"
-              "把**关键结论和易错点加粗**。这是用户发来的题目图片（可能是图形推理、资料分析图表或"
-              "试卷截图）：请先看清图本身（图形的形状、数量、位置、对称性；图表的坐标和数值），"
-              "再作答。\n\n用户的问题：" + q + ("\n\n" + ocr if ocr else ""))
-    try:
-        # exact=精准档（DeepSeek 视觉）：整页转写又快又准。默认仍是 pro——
-        # 认图形、认三色笔记的颜色是智谱旗舰更强，别为了快把默认换掉。
-        reply = vision_chat(prompt, paths[:3], prefer="exact" if exact else "pro",
-                            temperature=0.3, max_tokens=2000)
-    except Exception as e:
-        log.warning("视觉问答失败：%r", e)
-        return None, (jsonify({"error": aiclient.error_message(e)}), 502)
-    return (reply or "").strip(), None
+    outs = []
+    for paths, prompt, (first, last) in jobs:
+        try:
+            # exact=精准档（DeepSeek 视觉）：整页转写又快又准。默认仍是 pro——
+            # 认图形、认三色笔记的颜色是智谱旗舰更强，别为了快把默认换掉。
+            reply = vision_chat(prompt, paths, prefer="exact" if exact else "pro",
+                                temperature=0.3, max_tokens=2000)
+        except Exception as e:
+            log.warning("视觉问答失败（第 %d~%d 张）：%r", first, last, e)
+            if not outs:      # 第一组就挂了，这一轮什么都没有 → 照旧报错
+                return None, (jsonify({"error": aiclient.error_message(e)}), 502)
+            # 前面几组已经答出来了，别整轮丢掉：留下已有的，把断在哪儿说清楚
+            outs.append("（第 %d~%d 张没看成：%s）" % (first, last, aiclient.error_message(e)))
+            break
+        one = (reply or "").strip()
+        outs.append(("### 第 %d~%d 张\n\n%s" % (first, last, one)) if len(jobs) > 1 else one)
+    return "\n\n".join(x for x in outs if x), None
 
 
 @bp.post("/api/aichat/chats/<int:cid>/send")
@@ -722,13 +844,48 @@ def aichat_stream(cid):
             # 而我们这条路要先开库、可能还要跑视觉模型，第一帧本来能拖到几十秒后。
             # 一个注释帧就够 —— 前端解帧时没有 data: 行会直接跳过，不影响任何逻辑。
             yield ": open\n\n"
-            # 带图：走视觉模型。它不是流式的，所以一次性把整段推出去（前端照常收 done）
-            vreply, verr = _vision_answer(atts, content, exact=exact)
-            if verr or vreply:
-                if verr:
-                    yield sse("error", {"error": verr[0].get_json().get("error", "看图失败")})
+            # 带图：走视觉模型，**也是逐字推的**。以前这条分支拿 vision_chat 整段算完再
+            # 一次性 yield，用户按下发送后要对着骨架屏干等十几到几十秒 —— 同一个界面里，
+            # 不带图的问答逐字出、带图的反而像卡死了。
+            vjobs = _vision_jobs(atts, content)
+            if vjobs:
+                vbuf = []
+                try:
+                    # 图多的时候分成几组问（见 _vision_jobs）：一次塞十来张要么超时、
+                    # 要么被截断。组与组之间先推一个小标题出去，屏幕上看得出讲到哪儿了。
+                    for vpaths, vprompt, (vfirst, vlast) in vjobs:
+                        if len(vjobs) > 1:
+                            hdr = ("\n\n---\n\n### 第 %d~%d 张\n\n" % (vfirst, vlast)) if vbuf \
+                                else ("### 第 %d~%d 张\n\n" % (vfirst, vlast))
+                            vbuf.append(hdr)
+                            yield sse("delta", hdr)
+                        for vk, vp in vision_stream(vprompt, vpaths,
+                                                    prefer="exact" if exact else "pro",
+                                                    temperature=0.3, max_tokens=2000):
+                            if vk == "ping":
+                                yield ": ping\n\n"
+                            elif vk == "reasoning":
+                                # 精准档是推理模型：正文之前先想很久（实测一张小图就推 106 片）。
+                                # 转出去有两个用处 —— 屏幕上那张「正在推理」的卡有东西可写，
+                                # 而且连接一直有字节流动，不会被隧道当成静默掐掉。
+                                yield sse("reasoning", vp)
+                            elif vk == "content":
+                                vbuf.append(vp)
+                                yield sse("delta", vp)
+                except Exception as e:
+                    log.warning("视觉问答失败：%r", e)
+                    # 已经吐出去的半截是真的，别丢：跟文本那条一样，落库 + 让前端收 done，
+                    # 只是末尾说明它断了。一个字都没出才当作彻底失败。
+                    half = "".join(vbuf).strip()
+                    if not half:
+                        yield sse("error", {"error": aiclient.error_message(e)})
+                        return
+                    half += "\n\n（看图中断，回答可能不完整）"
+                    yield sse("done", {"reply": half, "actions": [], "trace": [], "truncated": False,
+                                       **_persist(db, cid, c, content, half, atts)})
+                    saved = True
                     return
-                yield sse("delta", vreply)
+                vreply = "".join(vbuf).strip()
                 yield sse("done", {"reply": vreply, "actions": [], "trace": [], "truncated": False,
                                    **_persist(db, cid, c, content, vreply, atts)})
                 saved = True

@@ -82,7 +82,7 @@ test('传文件走项目资料接口，不是对话附件接口', async (t) => {
   await h.run('loadAiHome()');
   await h.run('openAiProjSet(3)');
   const f = new h.window.File(['讲义正文'], '社区讲义.pdf', { type: 'application/pdf' });
-  await h.run('aiProjUpload(3, arguments[0])', f);
+  await h.run('aiProjUpload(3, args[0])', f);
 
   const post = h.calls.filter(c => c.method === 'POST');
   assert.strictEqual(post.length, 1);
@@ -98,7 +98,7 @@ test('传完刷新列表，用户当场看得见挂上了什么', async (t) => {
   await h.run('openAiProjSet(3)');
   h.calls.length = 0;
   const f = new h.window.File(['x'], 'a.txt', { type: 'text/plain' });
-  await h.run('aiProjUpload(3, arguments[0])', f);
+  await h.run('aiProjUpload(3, args[0])', f);
   assert.ok(h.calls.some(c => c.url === '/api/aichat/projects/3/files' && c.method === 'GET'),
     '传完不重拉列表，界面上还是「还没挂资料」');
 });
