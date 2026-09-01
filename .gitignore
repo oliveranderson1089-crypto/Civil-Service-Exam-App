@@ -16,6 +16,10 @@ config.json
 # 填好的 backup.env 里是 R2/B2 的 access key，绝不能进公开仓库。
 backup.env
 
+# 招聘公告抽出来的本地事实（地名、岗位、报名点 —— 能定位到人）。
+# local_meta.example.json 是模板、可以上传；填好的 local_meta.json 绝不能进公开仓库。
+local_meta.json
+
 # 导出/临时文件
 *.pdf
 *.log

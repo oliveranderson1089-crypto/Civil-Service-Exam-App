@@ -1,4 +1,4 @@
-"""社区专职工作者（资中县）：判分口径与整卷接口。
+"""社区专职工作者（本县）：判分口径与整卷接口。
 
 这份测试盯的是**最容易静默出错的那两件事**：
 
@@ -9,6 +9,7 @@
      既不能出现在卷子里，也不能在交卷时被判分。
 """
 import json
+import os
 
 import pytest
 
@@ -137,7 +138,7 @@ def paper(auth_client):
     con.execute("DELETE FROM sq_questions")
     con.execute("DELETE FROM sq_papers")
     con.execute("INSERT INTO sq_papers(id,file_id,name,year,kind,region) "
-                "VALUES(1,9001,'测试卷.pdf',2025,'招聘','资中县')")
+                "VALUES(1,9001,'测试卷.pdf',2025,'招聘','本县')")
     # **id 要显式写死**：sq_questions.id 是 AUTOINCREMENT，删了重插不会从 1 开始，
     # 下一个用例里 id 就漂成 6..10 了 —— 单跑过、连跑挂，最难查的那种。
     rows = [
@@ -227,7 +228,7 @@ class Test整卷接口:
         assert n >= 2, "第二次作答把第一次覆盖了，看不出有没有进步"
 
 
-class Test资中专项:
+class Test本地专项:
     @pytest.fixture
     def facts(self, auth_client):
         from core import DB
@@ -273,36 +274,45 @@ class Test资中专项:
         import sqlite3
         con = sqlite3.connect(DB)
         con.execute("INSERT INTO sq_papers(id,file_id,name,year,kind,region) "
-                    "VALUES(9,9009,'资中专项 · 地方必得分',2026,'专项','资中县')")
+                    "VALUES(9,9009,'本地专项 · 地方必得分',2026,'专项','本县')")
         con.commit()
         con.close()
         d = auth_client.get("/api/shequ/overview").get_json()
         names = [p["name"] for p in d["papers"]]
-        assert "资中专项 · 地方必得分" not in names, "专项是生成的练习集，混进去像考过三套卷"
+        assert "本地专项 · 地方必得分" not in names, "专项是生成的练习集，混进去像考过三套卷"
+
+
+def _local_meta():
+    """出题的那几条断言全是**结构性**的（答案字母分布、选项互不相同），
+       真数据和模板都该过。所以有 local_meta.json 就用它，没有就退回
+       local_meta.example.json —— 后者才是仓库里有的那份（真数据带地名，
+       在 .gitignore 里），不这么写的话新克隆下来这三条直接报文件不存在。"""
+    import json as _j
+    import localprofile
+    p = (localprofile.META if os.path.exists(localprofile.META)
+         else os.path.join(localprofile.BASE, "local_meta.example.json"))
+    return _j.load(open(p, encoding="utf-8"))
 
 
 class Test出题构造:
     def test_答案字母是轮流发的(self):
         # 单纯 shuffle 实测偏成 D8/C5/A3/B2，「蒙 D」就能多对几道
-        import json as _j
-        import build_zizhong as B
-        m = _j.load(open("zizhong_meta.json", encoding="utf-8"))
+        import build_local as B
+        m = _local_meta()
         qs = B.gen_questions(B.facts_of(m), m)
         from collections import Counter
         c = Counter(q["answer"] for q in qs)
         assert max(c.values()) - min(c.values()) <= 1, "答案字母分布不均：%r" % dict(c)
 
     def test_每道题四个选项互不相同(self):
-        import json as _j
-        import build_zizhong as B
-        m = _j.load(open("zizhong_meta.json", encoding="utf-8"))
+        import build_local as B
+        m = _local_meta()
         for q in B.gen_questions(B.facts_of(m), m):
             assert len(set(q["options"])) == 4, q["stem"]
 
     def test_正确答案确实在选项里那一格(self):
-        import json as _j
-        import build_zizhong as B
-        m = _j.load(open("zizhong_meta.json", encoding="utf-8"))
+        import build_local as B
+        m = _local_meta()
         for q in B.gen_questions(B.facts_of(m), m):
             assert q["options"]["ABCD".index(q["answer"])] is not None
 
@@ -757,12 +767,12 @@ class Test模拟卷:
 
 # ---------------------------------------------------------------- 主观题扩容
 class Test主观题分档:
-    """外省题库带来了一百多道主观题。它们能用，但**不能冒充资中考情** ——
-       简答论述这个题型资中两套原卷上根本没有。"""
+    """外省题库带来了一百多道主观题。它们能用，但**不能冒充本地考情** ——
+       简答论述这个题型本地两套原卷上根本没有。"""
 
     def test_简答论述不算在四十分里(self):
         assert "short" not in sqscore.PAPER_PARTS, \
-            "简答论述混进了卷面题型，会让人以为资中考简答"
+            "简答论述混进了卷面题型，会让人以为本地考简答"
         assert "short" in sqscore.SUB_PARTS, "但它得能当主观题批改"
 
     def test_题型清单只有一份(self):
@@ -791,7 +801,7 @@ class Test主观题分档:
         assert [g["key"] for g in d["groups"]] == ["real", "offsite", "short"]
 
     def test_没年份的题不许显示成N年真题(self, auth_client, paper):
-        # year=0 照原样渲染会变成「0 年真题」，看着像资中 0 年考过
+        # year=0 照原样渲染会变成「0 年真题」，看着像本地 0 年考过
         from core import DB
         import sqlite3
         con = sqlite3.connect(DB)
@@ -844,7 +854,7 @@ class Test主观题入库:
         assert "·家庭矛盾" in got and "(1)" not in got
 
     def test_顶层括号编号要提成采分点(self):
-        """sqgrade 把「（N）」当子要素，那条规则是为资中真题写的、没错；
+        """sqgrade 把「（N）」当子要素，那条规则是为本地真题写的、没错；
            外省这批答案顶层就是用 (1)(2)(3) 编的，不提的话一个点都拆不出来。"""
         import ingest_sqsub as S
         from mods import sqgrade

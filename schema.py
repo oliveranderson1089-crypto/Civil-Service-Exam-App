@@ -951,7 +951,7 @@ def init_db():
             UNIQUE(paper_id, seq)
         );
         CREATE INDEX IF NOT EXISTS idx_slreal_q ON slreal_questions(qkind, doctype);
-        -- 社区专职工作者真题（资中县，见 ingest_shequ.py）。
+        -- 社区专职工作者真题（本县，见 ingest_shequ.py）。
         -- 又是单起一族，理由和 slreal_* 那对一样、但多两条：
         --   · 这张卷子有**多选和判断**，answer 不再是单个字母（多选是 "ABD"、判断是
         --     "T"/"F"）。塞进 real_questions 的话，凡是按「answer 是一个字母」写的
@@ -962,7 +962,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_id INTEGER UNIQUE,     -- drive_files.id，重跑靠它认出「这份处理过了」
             name TEXT, folder TEXT, ext TEXT,
-            region TEXT,                -- 资中县 / 内江市 / 通用
+            region TEXT,                -- 本县 / 本市 / 通用（真值来自 local_meta.json）
             year INTEGER, kind TEXT,    -- 招聘 / 公开选聘 / 模拟 / 押题
             total REAL DEFAULT 100,     -- 卷面总分
             n_obj INTEGER DEFAULT 0, n_sub INTEGER DEFAULT 0,
@@ -977,7 +977,7 @@ def init_db():
             seq INTEGER,                -- 卷内连号，跨题型不重排；答题卡按它排
             part TEXT,                  -- single/multi/judge/case/gongwen
             part_seq INTEGER,           -- 本题型内序号（「多选第 3 题」）
-            qtype TEXT,                 -- 考点大类：社区知识/社会工作/法律法规/党建党务/公文写作/应急安全/资中县情/时政
+            qtype TEXT,                 -- 考点大类：社区知识/社会工作/法律法规/党建党务/公文写作/应急安全/本地县情/时政
             stem TEXT,
             options TEXT,               -- JSON 数组；judge/case/gongwen 恒为 ''
             answer TEXT,                -- single:"A" multi:"ABD" judge:"T"/"F" 主观题:参考答案全文
@@ -1015,7 +1015,7 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
         CREATE INDEX IF NOT EXISTS idx_sqr_user ON sq_records(user_id, id DESC);
-        -- 资中专项：地方必得分的**事实表**（见 build_zizhong.py）。
+        -- 本地专项：地方必得分的**事实表**（见 build_local.py）。
         -- 为什么单开一张而不是直接写死在代码里：这些数字**每年都会变**
         -- （2026 招 72 名、2025 是四渠道 143/35/71/9），而且必须能指出
         -- 「这条是哪份文件哪一年说的」—— 界面上要如实标出来源与年份，
@@ -1489,8 +1489,8 @@ def init_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_drive_del ON drive_files(owner_id, deleted_at)")
     # 同一个目录下不许有两个同名文件夹。
     #   上传整个文件夹是很多个并发请求，每个请求各自 _ensure_folder_path 补中间目录：
-    #   彼此看不见对方**还没提交**的那一行，于是同一个目录被建了好几遍（实测「内江资中县
-    #   社区备考资料」建出 3 行）。表现很唬人 —— 删掉「那个」文件夹，列表里还剩两个同名的
+    #   彼此看不见对方**还没提交**的那一行，于是同一个目录被建了好几遍（实测某个
+    #   备考资料目录建出 3 行）。表现很唬人 —— 删掉「那个」文件夹，列表里还剩两个同名的
     #   空壳，看着像「删了没删干净」或「恢复只恢复了个空壳」。
     #   靠库来兜底：部分唯一索引 + 插入时吞掉 IntegrityError（见 _ensure_folder_path）。
     #   建索引前先合并历史重复行：文件挂在**路径字符串**上，跟具体是哪一行无关，

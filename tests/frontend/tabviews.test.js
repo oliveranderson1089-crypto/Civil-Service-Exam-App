@@ -106,19 +106,19 @@ test('库：最近打开的标题走转义（内容是用户自己写的）', as
 test('库：最近打开的云盘文件点回去，落到它所在的那一层', async (t) => {
   const h = bootTab({ '/api/lib/home': { counts: {}, recent: [{
     kind: 'drive', label: '云盘', id: 9001, title: '四色笔记.pdf',
-    extra: '内江资中县社区备考资料/5.社会实务（初级）', at: '2026-08-18 17:38:15', opened: true }] } });
+    extra: '社区备考资料/5.社会实务（初级）', at: '2026-08-18 17:38:15', opened: true }] } });
   t.after(() => h.close());
   tap(h, 'lib');
   await settle();
   $(h, '#tab-groups .tv-row').click();
   await settle();
-  assert.strictEqual(h.run('dvFolder'), '内江资中县社区备考资料/5.社会实务（初级）',
+  assert.strictEqual(h.run('dvFolder'), '社区备考资料/5.社会实务（初级）',
     '点回一份深处的文件，人却站在云盘根目录');
 });
 
 test('库：最近打开里的云盘文件夹点得进去', async (t) => {
   const h = bootTab({ '/api/lib/home': { counts: {}, recent: [{
-    kind: 'drivedir', label: '云盘', id: '内江资中县社区备考资料', title: '内江资中县社区备考资料',
+    kind: 'drivedir', label: '云盘', id: '社区备考资料', title: '社区备考资料',
     extra: '', at: '2026-08-18 17:00:00', opened: true }] } });
   t.after(() => h.close());
   tap(h, 'lib');
@@ -126,7 +126,7 @@ test('库：最近打开里的云盘文件夹点得进去', async (t) => {
   $(h, '#tab-groups .tv-row').click();
   await settle();
   assert.strictEqual(h.window.document.body.dataset.view, 'drive');
-  assert.strictEqual(h.run('dvFolder'), '内江资中县社区备考资料');
+  assert.strictEqual(h.run('dvFolder'), '社区备考资料');
 });
 
 test('我的：九个入口一个不少（管理后台按身份出现）', async (t) => {

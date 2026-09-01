@@ -34,7 +34,7 @@ def stub_ai(monkeypatch):
 
 def _open_roadmap(c, ln, days=None):
     assert c.post("/api/me/line", json={"line": ln}).status_code == 200
-    r = c.post("/api/plan/profile", json={"exam": "资中社区专职工作者",
+    r = c.post("/api/plan/profile", json={"exam": "社区专职工作者",
                                           "exam_date": "2026-09-12", "minutes": 300})
     assert r.status_code == 200, r.get_data(as_text=True)[:200]
     body = {"start_date": "2026-08-19"}
