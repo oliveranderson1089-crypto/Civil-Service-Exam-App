@@ -199,14 +199,14 @@ def test_云盘文件夹进得来(auth_client):
     """老口径写死 is_dir=0，文件夹**永远**不可能出现在列表里 —— 而人天天点的就是文件夹。"""
     u = _uid()
     _sql(("INSERT INTO drive_files(owner_id,folder,name,is_dir) "
-          "VALUES(?,'','内江资中县社区备考资料',1)", (u,)),
+          "VALUES(?,'','社区备考资料',1)", (u,)),
          ("INSERT INTO drive_files(owner_id,folder,name,is_dir) "
-          "VALUES(?,'内江资中县社区备考资料','5.社会实务（初级）',1)", (u,)))
-    _touch(auth_client, "drivedir", "内江资中县社区备考资料/5.社会实务（初级）")
+          "VALUES(?,'社区备考资料','5.社会实务（初级）',1)", (u,)))
+    _touch(auth_client, "drivedir", "社区备考资料/5.社会实务（初级）")
     its = auth_client.get("/api/lib/home").get_json()["recent"]
     assert its[0]["kind"] == "drivedir"
     assert its[0]["title"] == "5.社会实务（初级）", "标题该是文件夹名，不是整条路径"
-    assert its[0]["id"] == "内江资中县社区备考资料/5.社会实务（初级）"
+    assert its[0]["id"] == "社区备考资料/5.社会实务（初级）"
 
 
 def test_根目录下的文件夹路径不带前导斜杠(auth_client):
@@ -246,10 +246,10 @@ def test_云盘文件记着它在哪一层(auth_client):
     """extra 是给「点回去」用的：没有它，从最近打开点一份三层深的文件会落到云盘根目录。"""
     u = _uid()
     _sql(("INSERT INTO drive_files(id,owner_id,folder,name,is_dir) "
-          "VALUES(9006,?,'内江资中县社区备考资料/5.社会实务（初级）','四色笔记.pdf',0)", (u,)))
-    _touch(auth_client, "drive", 9006, "内江资中县社区备考资料/5.社会实务（初级）")
+          "VALUES(9006,?,'社区备考资料/5.社会实务（初级）','四色笔记.pdf',0)", (u,)))
+    _touch(auth_client, "drive", 9006, "社区备考资料/5.社会实务（初级）")
     assert auth_client.get("/api/lib/home").get_json()["recent"][0]["extra"] \
-        == "内江资中县社区备考资料/5.社会实务（初级）"
+        == "社区备考资料/5.社会实务（初级）"
 
 
 def test_空的extra不许覆盖已有的(auth_client):

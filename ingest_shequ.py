@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""社区专职工作者真题入库：把云盘「内江资中县社区备考资料」下的整卷解析进 sq_* 表。
+"""社区专职工作者真题入库：把云盘里社区备考资料目录下的整卷解析进 sq_* 表。
+
+目录名、县名、本地题的判定词都从 `local_meta.json` 取（见 localprofile.py）——
+仓库是公开的，这几个值合起来能定位到人，所以源码里不写死。
 
 和 ingest_real.py 的分工：那份处理**行测**卷（只有单选、要跨卷去重），这份处理
 **社区**卷（一张卷子五种题型、单选/多选/判断/案例/公文，只有两套、不需要去重）。
@@ -32,11 +35,13 @@ import sys
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
+import localprofile                                        # noqa: E402
 import realbank as R                                       # noqa: E402
 
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
-ROOT = "内江资中县社区备考资料"
+ROOT = localprofile.drive_root()
+_LOCAL_KEYS = localprofile.local_keywords()
 
 # 卷面结构。分值和题数写死在这儿是**故意的**：它是一把尺子，解析出来对不上就报警。
 # 两套真题（2023 公开选聘、2025 招聘）卷面完全一致，不是巧合——这是该考试的固定格式。
@@ -69,8 +74,8 @@ _ANS = re.compile(r"答案[：:][\s　]*([A-DＡ-Ｄ]{1,4})")
 # 判断题的答案是内嵌的：`1. 居民委员会是基层国家行政机关。（×） 解析：…`
 _TF = re.compile(r"[（(][\s　]*([√×✓✗对错])[\s　]*[）)]")
 # 题号。**按序号剥，不按长相剥**——「长得像题号就剥」这条路两头都出错：
-#   · 分隔符写成可选，`2025 年资中社区招聘…` 会被当成题号 20 剥成 `25 年…`
-#   · 加了「后面不许跟数字」的保护，`30.2023 年资中社区招聘…` 又剥不掉
+#   · 分隔符写成可选，`2025 年本地社区招聘…` 会被当成题号 20 剥成 `25 年…`
+#   · 加了「后面不许跟数字」的保护，`30.2023 年本地社区招聘…` 又剥不掉
 # 而这一题应该是第几题，是我们自己数出来的，拿它当锚才准。
 _LEAD_NO = re.compile(r"^[\s　]*(\d{1,2})[\s　]*[.、．)）][\s　]*")
 # 立成检查项：正常题干不会以「两位数+年」开头，出现了就是上面这个坑又犯了。
@@ -79,10 +84,11 @@ _CASE_HEAD = re.compile(r"^[\s　]*案例[\s　]*([一二三四1-4])[\s　]*[（
 _REF = re.compile(r"^[\s　]*参考(?:答案|范文)[：:]?[\s　]*$", re.M)
 
 # 考点大类。**顺序即优先级**：一道题命中多类时取先命中的，
-# 所以「资中县情」必须排最前 —— 「2025 年资中面向社会招聘…年龄上限」既像县情也像社区知识，
-# 但它的价值在于「这是本地题」，归错类就进不了资中专项。
+# 所以「本地县情」必须排最前 —— 「2025 年本县面向社会招聘…年龄上限」既像县情也像社区知识，
+# 但它的价值在于「这是本地题」，归错类就进不了本地专项。
+# 判定词来自 local_meta.json（县名 / 市名 / 各镇名），不写死在源码里。
 QTYPE_RULES = [
-    ("资中县情", ("资中", "内江", "重龙", "水南镇", "罗泉", "县情")),
+    ("本地县情", localprofile.local_keywords()),
     ("党建党务", ("党组织", "党支部", "党员", "党章", "三会一课", "主题党日", "党建", "党委",
                   "党工委", "党课", "党内")),
     ("公文写作", ("公文", "请示", "报告", "通知", "通告", "批复", "纪要", "上行文", "下行文",
@@ -284,7 +290,7 @@ def parse_paper(text):
 
 # ---------------------------------------------------------------- 找卷子
 def find_papers(con):
-    """云盘里哪些是「整卷真题」。P0 只认资中那两套 —— 模拟卷和押题卷等 P1 再说，
+    """云盘里哪些是「整卷真题」。P0 只认本地那两套 —— 模拟卷和押题卷等 P1 再说，
        它们大多是扫描件，得先过 OCR。"""
     rows = con.execute(
         "SELECT id, name, folder, ext, stored_name FROM drive_files "
@@ -307,7 +313,9 @@ def find_papers(con):
                     "ext": r["ext"], "path": path,
                     "year": int(ym.group(1)) if ym else 0,
                     "kind": "公开选聘" if "选聘" in r["name"] else "招聘",
-                    "region": "资中县" if "资中" in r["name"] else "通用"})
+                    "region": (localprofile.region()
+                               if any(k in r["name"] for k in _LOCAL_KEYS)
+                               else "通用")})
     return out
 
 

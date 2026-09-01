@@ -31,7 +31,7 @@ const PARTS = `[
 ]`;
 
 function setup(h, mode) {
-  h.run(`sqRules = { multi: '多选、少选、错选均不得分 —— 与资中真题判分口径一致。' };
+  h.run(`sqRules = { multi: '多选、少选、错选均不得分 —— 与本地真题判分口径一致。' };
     sqRun = { pid: 1, mode: '${mode}', items: ${ITEMS}, parts: ${PARTS}, idx: 0,
               answers: {}, locked: {}, held: 2, objFull: 3, t0: Date.now(), left: 7200, timer: null };
     sqRender();`);

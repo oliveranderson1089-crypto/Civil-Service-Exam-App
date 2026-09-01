@@ -6482,7 +6482,7 @@ body.dark .feed-exp{background:#1a2233;border-color:#2a3345;}
 body.dark .nx-fmt{background:#1a2130;border-color:#2a3345;color:#e2e7ef;}
 body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blue);}
 
-/* ================= 社区专职工作者（资中县） =================
+/* ================= 社区专职工作者（本县） =================
    新元素一律走 --blue / --line / --muted / --card / --text 这几个变量，
    一个写死的灰都没有 —— 夜间和十八套美术主题会自动跟上（见文件开头那条规矩）。
    选项、卡片的圆角与内边距沿用 .rq-opt 那一套，两处做题页看起来才是同一个应用。 */
@@ -6524,7 +6524,7 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
   font-weight:700;}
 .sq-qt.judge{background:rgba(64,192,87,.12);color:#1e8449;}
 .sq-qt.case,.sq-qt.gongwen{background:rgba(240,165,0,.14);color:#8a5a00;}
-/* 简答论述是资中卷面上没有的题型，配色**故意不跟案例/公文同色** ——
+/* 简答论述是本地卷面上没有的题型，配色**故意不跟案例/公文同色** ——
    同色会让人以为它和那 40 分是一档的。 */
 .sq-qt.short{background:var(--bg);color:var(--muted);font-weight:600;}
 .sq-qs{margin-left:auto;}
@@ -6634,7 +6634,7 @@ body.dark .nx-fmt.on{background:#1a2233;border-color:var(--blue);color:var(--blu
   font-size:var(--fs-sm);line-height:1.7;color:var(--muted);margin-bottom:10px;}
 .sq-local-tip b{color:var(--text);}
 .sq-p-m b{color:var(--text);}
-/* 资中专项：速记卡 */
+/* 本地专项：速记卡 */
 .sq-quiz-entry{border:1px solid var(--blue);}
 .sq-badge.proven{background:rgba(64,192,87,.14);color:#1e8449;margin-left:8px;}
 .sq-badge.plain{background:var(--bg2);color:var(--muted);margin-left:8px;}

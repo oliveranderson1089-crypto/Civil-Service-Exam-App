@@ -138,7 +138,7 @@ const TAB_DEFS = [
         { name: '模拟卷', desc: '整卷计时 · 卷面还原', go: () => openQuizSets() },
         { name: '申论真题批改', desc: 'AI 逐点批改', go: () => openShenlun() },
         // shequ.js 在 rest 包，首屏包里不写裸名（同 shell.js 里那五个）
-        { name: '资中社区真题', desc: '2023 / 2025 原卷 · 100 分整卷',
+        { name: '社区真题', desc: '2023 / 2025 原卷 · 100 分整卷',
           go: () => window.openSqReal && window.openSqReal() },
       ] },
       { name: '专项突破', icon: 'layers', items: tbDrillBoards() },

@@ -1,4 +1,4 @@
-/* 社区专职工作者（资中县）：整卷背题 / 模考 + 入库校对裁决台
+/* 社区专职工作者（本县）：整卷背题 / 模考 + 入库校对裁决台
  *
  * 这卷子和行测卷不是一个形状，所以没有复用 realq.js 的做题页：
  *   · 五种题型（单选/多选/判断/案例/公文），**按 part 分派渲染**，不按题型名猜；
@@ -18,7 +18,7 @@ const SQ_L = ['A', 'B', 'C', 'D'];
 
 /* ---------------------------------------------------------------- 卷子列表 */
 async function openSqReal() {
-  push({ view: 'sqreal', title: '资中真题' });
+  push({ view: 'sqreal', title: '本地真题' });
   $('#sq-list').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/shequ/overview');
@@ -72,7 +72,7 @@ function sqRenderList(d) {
   const mocks = d.mocks || [];
   $('#sq-list').innerHTML = sqExamBar(d.exam) + sqPapers.map(p => sqPaperCard(p, false)).join('')
     /* 模拟卷单开一组，**标题里就写明「不是真题」**：真题一共只有两套，
-       混在一起摆会让人以为资中考过七八回。 */
+       混在一起摆会让人以为本地考过七八回。 */
     + (mocks.length ? `<div class="card sq-mock-h">
         <div class="sq-sec-t">模拟卷 · 不是真题（${mocks.length} 套）</div>
         <div class="sq-note">${esc(d.mock_note || '')}</div></div>`
@@ -337,12 +337,12 @@ function sqResult(d) {
     <div class="card"><button class="btn primary sq-wide" id="sq-back-list">回卷子列表</button></div>`;
 }
 
-/* ---------------------------------------------------------------- 资中专项
+/* ---------------------------------------------------------------- 本地专项
    两套原卷里 8 道本地题**全部出自招聘公告参数**，没有一道考县情地理或 GDP。
    所以速记卡按「真题考过 / 未经真题验证」分档摆，不装作同等重要 ——
    只剩三周多，得先背确定考的那些。 */
 async function openSqLocal() {
-  push({ view: 'sqlocal', title: '资中专项' });
+  push({ view: 'sqlocal', title: '本地专项' });
   $('#sq-local').innerHTML = '<p class="empty">加载中…</p>';
   try {
     const d = await api('/api/shequ/facts');
@@ -352,7 +352,7 @@ async function openSqLocal() {
 
 function sqRenderFacts(d) {
   if (!(d.groups || []).length) {
-    $('#sq-local').innerHTML = '<p class="empty">还没有数据。先跑 build_zizhong.py。</p>';
+    $('#sq-local').innerHTML = '<p class="empty">还没有数据。先跑 build_local.py。</p>';
     return;
   }
   $('#sq-local').innerHTML = sqExamBar(d.exam) + (d.quiz_n ? `<div class="card sq-quiz-entry">
@@ -454,10 +454,10 @@ async function sqDrillStart(kind, val) {
 let sqSub = [], sqCur = null;
 
 /* 一道主观题的卡片。**「N 年真题」那句话不能写死** —— 外省题库里的题没有年份，
-   照原样渲染会显示成「0 年真题」，看着像资中 0 年考过。有年份才写年份，
+   照原样渲染会显示成「0 年真题」，看着像本地 0 年考过。有年份才写年份，
    没有就写它出自哪本册子。 */
 function sqSubCard(it) {
-  const from = it.year ? `${it.year} 年资中真题` : esc((it.src || '外省题库').replace(/\.pdf$/i, ''));
+  const from = it.year ? `${it.year} 年本地真题` : esc((it.src || '外省题库').replace(/\.pdf$/i, ''));
   return `
       <div class="card sq-subq" data-sq-sub="${it.id}">
         <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
@@ -477,8 +477,8 @@ async function openSqSub() {
   try {
     const d = await api('/api/shequ/subjective');
     sqSub = d.items || [];
-    /* 分档摆：资中真题 → 外省同型 → 简答论述。**分组和说明都是后端下发的**，
-       JS 里不另判一遍「这题算不算资中考的」—— 两边各判一次迟早说的不是一回事。 */
+    /* 分档摆：本地真题 → 外省同型 → 简答论述。**分组和说明都是后端下发的**，
+       JS 里不另判一遍「这题算不算本地考的」—— 两边各判一次迟早说的不是一回事。 */
     $('#sq-sub-list').innerHTML = (d.groups || []).map(g => {
       const got = sqSub.filter(x => x.group === g.key);
       if (!got.length) return '';
@@ -514,7 +514,7 @@ function sqOpenSub(id) {
   $('#sq-write').innerHTML = `
     <div class="card">
       <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>
-        <span class="sq-qk">${it.year ? it.year + ' 年资中真题'
+        <span class="sq-qk">${it.year ? it.year + ' 年本地真题'
     : esc((it.src || '外省题库').replace(/\.pdf$/i, ''))}</span>
         <span class="sq-qs">${it.score} 分</span></div>
       <div class="sq-stem">${esc(it.stem)}</div>
@@ -615,7 +615,7 @@ function sqRenderCheck(d) {
        模型没有依据、给出的答案还互相矛盾。这时**源卷比模型可信**，
        不提醒的话很容易顺手点「采信建议」，把对的答案改坏。 */
     const localTip = note.local ? `<div class="sq-local-tip">${artEm('📍')}
-        这是<b>本地事实题</b> —— 招录人数、年龄上限、合同期限这类只写在资中当地公告里的数字，
+        这是<b>本地事实题</b> —— 招录人数、年龄上限、合同期限这类只写在本地当地公告里的数字，
         模型答不了、也查不到，它们的答案是猜的。除非你手上有公告原文，否则<b>维持源卷</b>。</div>` : '';
     return `<div class="card sq-doubt${note.local ? ' local' : ''}" data-sq-q="${it.id}">
         <div class="sq-q-h"><span class="sq-qt ${it.part}">${esc(it.part_name)}</span>

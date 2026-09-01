@@ -68,7 +68,7 @@ def test_扣住的尾巴最后要补发(monkeypatch):
 def test_攒命中要趁结果还完整():
     bag = []
     agent._collect_hits(bag, json.dumps(
-        [{"title": "资中公告", "url": "https://x/y", "snippet": "8月11日"}], ensure_ascii=False))
+        [{"title": "某县公告", "url": "https://x/y", "snippet": "8月11日"}], ensure_ascii=False))
     assert bag and bag[0]["url"] == "https://x/y"
 
 
@@ -80,7 +80,7 @@ def test_没搜着那类人话不会被当成命中():
 
 def test_兜底把来源列出来():
     md = agent._fallback_from_hits([
-        {"title": "资中公告", "url": "https://x/y", "snippet": "8月11日发布"},
+        {"title": "某县公告", "url": "https://x/y", "snippet": "8月11日发布"},
         {"title": "重复的", "url": "https://x/y"},
     ])
     assert "https://x/y" in md and md.count("https://x/y") == 1, "同一个链接别列两遍"
@@ -96,18 +96,18 @@ def test_收尾一个字没说就把来源交代出去(monkeypatch):
         if tools:
             return iter([("content", "我先查一下。"),
                          ("done", {"tool_calls": [{"id": "1", "function": {
-                             "name": "web_search", "arguments": '{"query":"资中 公告"}'}}]})])
+                             "name": "web_search", "arguments": '{"query":"某县 公告"}'}}]})])
         # 收尾轮：它还想调工具，于是整段都是标记 —— 可见正文为空
         return iter([("content", "<｜｜DSML｜｜tool_calls>"), ("done", {"content": ""})])
 
     monkeypatch.setattr(agent, "_ai_stream", stream)
     monkeypatch.setattr(agent, "exec_tool", lambda n, a, db: (json.dumps(
-        [{"title": "资中县2026选聘公告", "url": "https://njpta/1", "snippet": "8-11"}],
+        [{"title": "某县选聘公告", "url": "https://example/1", "snippet": "8-11"}],
         ensure_ascii=False), None))
     monkeypatch.setattr(agent, "tool_specs_for", lambda t, **k: [{"x": 1}])
     done = [p for k, p in agent.ai_chat_agentic_stream([], None, max_rounds=1) if k == "done"][-1]
     assert "DSML" not in done["reply"], "标记不许进落库的正文"
-    assert "https://njpta/1" in done["reply"], "查到的来源必须交代给用户"
+    assert "https://example/1" in done["reply"], "查到的来源必须交代给用户"
 
 
 def test_收尾说清楚了就不画蛇添足(monkeypatch):
@@ -115,12 +115,12 @@ def test_收尾说清楚了就不画蛇添足(monkeypatch):
         if tools:
             return iter([("done", {"tool_calls": [{"id": "1", "function": {
                 "name": "web_search", "arguments": '{"query":"x"}'}}]})])
-        return iter([("content", "公告 8 月 11 日发布，见 https://njpta/1，报名 8-24 起。"),
+        return iter([("content", "公告 8 月 11 日发布，见 https://example/1，报名 8-24 起。"),
                      ("done", {"content": "…"})])
 
     monkeypatch.setattr(agent, "_ai_stream", stream)
     monkeypatch.setattr(agent, "exec_tool", lambda n, a, db: (json.dumps(
-        [{"title": "公告", "url": "https://njpta/1"}], ensure_ascii=False), None))
+        [{"title": "公告", "url": "https://example/1"}], ensure_ascii=False), None))
     monkeypatch.setattr(agent, "tool_specs_for", lambda t, **k: [{"x": 1}])
     done = [p for k, p in agent.ai_chat_agentic_stream([], None, max_rounds=1) if k == "done"][-1]
     assert "先把出处给你" not in done["reply"], "话说全了还贴一份原始清单是噪音"

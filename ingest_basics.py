@@ -34,6 +34,8 @@ import sys
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
+import localprofile                                        # noqa: E402
+
 DB = os.environ.get("GONGKAO_DB", os.path.join(BASE, "app.db"))
 UPLOADS = os.environ.get("GONGKAO_UPLOADS", os.path.join(BASE, "uploads"))
 CONFIG = os.environ.get("GONGKAO_CONFIG", os.path.join(BASE, "config.json"))
@@ -149,7 +151,7 @@ SHEQU_NUMBERED = {
     "公文知识点总结_.pdf",
     "3.公文写作与处理知识.pdf",
 }
-SHEQU_ROOT = "内江资中县社区备考资料"
+SHEQU_ROOT = localprofile.drive_root()
 
 # 章/部分：`第一章 社会工作实务的通用过程` / `第一部分 社会工作综合能力` /
 # `一、总则亮点`（民法典考点整理用的是这种）

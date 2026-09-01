@@ -310,16 +310,16 @@ const IC = {
 };
 // 板块下的功能模块（可扩展：以后给某板块加更多功能图标）
 const BOARD_FEATURES = {
-  /* 社区专职工作者（资中县）。它不是行测的一个板块，是**第三条备考线**——
+  /* 社区专职工作者（本县）。它不是行测的一个板块，是**第三条备考线**——
      放进同一张表是因为「练」标签的 chip、板块页、功能分派全走这一份数据，
      单开一套等于把同一件事写两遍。没有 drill 键，所以不会混进「专项突破」那一组
      （社区的专项练是 P1 的事，等题库灌进来再加）。 */
   '社区': [
     // practice:true = 归到板块页的「练」那一组。用标记而不是按 key 名特判：
     // 分组原来只认 key==='drill'，社区没有专项练（P1 才有），
-    // 不加这个标记的话「资中真题」会被归进「这个板块的积累」—— 它是练，不是积累。
-    { key: 'sqreal', name: '资中真题', desc: '2023 / 2025 原卷 · 整卷模考或背题 · 100 分卷面', icon: 'target', practice: true },
-    { key: 'sqlocal', name: '资中专项', desc: '公告数据直出的必得分 · 速记卡 + 程序化出题', icon: 'compass', practice: true },
+    // 不加这个标记的话「本地真题」会被归进「这个板块的积累」—— 它是练，不是积累。
+    { key: 'sqreal', name: '本地真题', desc: '2023 / 2025 原卷 · 整卷模考或背题 · 100 分卷面', icon: 'target', practice: true },
+    { key: 'sqlocal', name: '本地专项', desc: '公告数据直出的必得分 · 速记卡 + 程序化出题', icon: 'compass', practice: true },
     { key: 'sqdrill', name: '专项练', desc: '6531 道 · 按题型或考点刷 · 错过的排最前', icon: 'target', practice: true },
     { key: 'sqsub', name: '主观题 40 分', desc: '案例分析 + 公文写作 · 按采分点逐条批改', icon: 'pen', practice: true },
     { key: 'sqcheck', name: '入库校对', desc: '源卷是回忆版 · 三方核验对不上的题在这儿定案', icon: 'check', practice: true },
@@ -377,8 +377,8 @@ const SECTION_EXTRA = {
   /* 社区那八个 boards 是**资料分类**（考点大类），不是功能入口；
      真正要点的两样挂在这儿，否则「按学科浏览 → 社区」只剩八个待填的分类。 */
   shequ: [
-    { name: '资中真题', badge: '2023 / 2025 整卷', go: 'sqreal' },
-    { name: '资中专项', badge: '地方必得分', go: 'sqlocal' },
+    { name: '本地真题', badge: '2023 / 2025 整卷', go: 'sqreal' },
+    { name: '本地专项', badge: '地方必得分', go: 'sqlocal' },
     { name: '专项练', badge: '6531 道 · 按题型/考点', go: 'sqdrill' },
     { name: '主观题 40 分', badge: '案例 + 公文逐点批改', go: 'sqsub' },
     { name: '入库校对', badge: '存疑答案定案', go: 'sqcheck' },
