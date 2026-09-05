@@ -7,7 +7,7 @@
  * 下面那行 global 是本模块的依赖清单：用到、但定义在别处的符号。
  * eslint 靠它继续抓 no-undef；将来若转 ES modules，它就是现成的 import 表。
  */
-/* global $, doSave, draft, loadDrafts, lsGet, lsSet,
+/* global $, doSave, draft, loadDrafts, lsGet, lsSet, srRoomSync,
    padDraftId, padDraftSave, padInit, padInited, padLoad, padMode,
    padSave, padSaveT, push, toast */
 
@@ -170,6 +170,10 @@ function applyPush() {
   s.setProperty('--push-r', p.right + 'px');
   s.setProperty('--push-t', p.top + 'px');
   s.setProperty('--push-b', p.bottom + 'px');
+  /* 横向让位一变，右边还剩多少地方就变了：随手栏那 250px 该不该继续占着，
+     得跟着重判一次 —— 否则面板停成半屏时，正文右边会空出一条谁也用不上的死区
+     （正文以为右边有随手栏所以让位，实际那块已经被面板盖住了）。 */
+  if (window.srRoomSync) srRoomSync();
 }
 
 /* 悬浮球别被面板压住：挡住就挪到面板外；面板全屏时藏起来 */

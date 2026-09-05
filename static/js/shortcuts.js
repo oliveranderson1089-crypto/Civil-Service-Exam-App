@@ -5,7 +5,7 @@
  *
  * 原生的 Ctrl+C / Ctrl+V（复制 / 粘贴）在输入框里照常生效，这里**不拦**——拦了反而坏事。
  */
-/* global $, aiSend, openSearch, toast */
+/* global $, aiSend, openSearch, railToggle, toast */
 (function () {
   const vis = (el) => el && !el.classList.contains('hidden') && el.offsetParent !== null;
 
@@ -88,6 +88,20 @@
       }
       const m = [...document.querySelectorAll('.modal:not(.hidden)')].pop();  // 其它弹层：点它的主按钮
       if (m) { const b = m.querySelector('.btn.primary:not([disabled])'); if (b && b.offsetParent !== null) { e.preventDefault(); b.click(); } }
+      return;
+    }
+
+    // ── Ctrl/Cmd+B：收起 / 展开左侧导航（跟编辑器、Claude 是同一个键）──
+    if (k === 'b') {
+      const ae = document.activeElement;
+      // 文档编辑器里 Ctrl+B 是「加粗」，那是它的地盘，别抢
+      if (ae && ae.closest && ae.closest('[contenteditable]')) return;
+      // 左栏此刻根本不在（手机端出的是底栏；阅读器/文档是全屏页）：这个键没有意义
+      if (!document.body.classList.contains('has-rail')) return;
+      if (!matchMedia('(min-width:761px)').matches) return;
+      if (typeof railToggle !== 'function') return;    // core 包还没到（本文件在 rest 包）
+      e.preventDefault();
+      railToggle();
       return;
     }
 

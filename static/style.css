@@ -335,6 +335,19 @@ body.dark .ui-err{border-left-color:#e8776a;}
 .navbtn{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);color:#fff;
   font-size:13px;padding:6px 11px;border-radius:18px;cursor:pointer;flex:0 0 auto;}
 .navbtn:hover{background:rgba(255,255,255,.3);}
+/* 左栏开关。默认不占位：≤760 的手机端导航是底栏，收起来没有意义；
+   RAIL_OFF 那两页（阅读器/文档全屏）左栏本来就不在，开关也跟着让开 —— 挂 body.has-rail。 */
+.rail-toggle{display:none;}
+@media (min-width:761px){
+  body.has-rail .rail-toggle{display:grid;place-items:center;width:32px;height:32px;flex:0 0 auto;
+    padding:0;border:1px solid rgba(255,255,255,.35);border-radius:9px;
+    background:rgba(255,255,255,.18);color:#fff;cursor:pointer;transition:.15s;}
+  body.has-rail .rail-toggle:hover{background:rgba(255,255,255,.3);}
+  body.has-rail .rail-toggle:active{transform:scale(.94);}
+  .rail-toggle svg{width:18px;height:18px;}
+  /* 收起之后那条竖线填实：一眼能看出「左边那栏现在是收着的」，不用去数按钮亮不亮 */
+  body.rail-off .rail-toggle svg path{stroke-width:5;}
+}
 
 .view-title{font-size:18px;margin:4px 2px 14px;}
 .welcome{color:#555;font-size:14px;margin:4px 2px 16px;}
@@ -4778,6 +4791,12 @@ body.dark .lb-gold{background:#332a12;color:#d9bb6a;}
   /* 正文让位跟着**左栏**走，不是跟着 has-tabs：做题页没有底栏（has-tabs=false）
      但左栏是留着的，跟错了正文会整个压在左栏下面。 */
   body.has-rail main{padding-left:206px;}
+  /* 收起态（顶栏那个开关，见 js/tabs.js 的 railOff）。
+     左栏是常驻导航，但看长文档、或者右半屏停着 AI 助手在写东西的时候，
+     那 206px 比导航更值钱 —— 所以是**收起**不是删掉：一键回来，位置和展开的组都还在。
+     让位和栏本身要一起撤，只撤一样就会露出一条 206px 的空带。 */
+  body.rail-off .siderail{display:none;}
+  body.has-rail.rail-off main{padding-left:0;}
   body.has-tabs main{padding-bottom:0;}
   /* 导航页在宽屏上限个宽：一行 900 多字符没法读。做题/小记/聊天那些自己有布局的不动 */
   body.has-rail #view-home,body.has-rail #view-tab,body.has-rail #view-allfeats{

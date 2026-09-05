@@ -1365,6 +1365,8 @@ qtTotalResume
 qtTotalStart
 qtTotalStop
 qz
+railOff
+railToggle
 readFileSerial
 readerFont
 readerSepia
@@ -1539,9 +1541,11 @@ sqSub
 sqSubCard
 sqSubmit
 sqTick
+srLastView
 srRightFill
 srRightOn
 srRightSync
+srRoom
 srRow
 srWasOn
 srWasWide

@@ -262,3 +262,48 @@ test('材料分栏只给「有给定资料」的题，没材料不能空出一�
   assert.ok(!view().classList.contains('rq-3col'),
     '这道题没材料还开着三栏，左边会空出一根 420px 的白柱子');
 });
+
+test('左栏能收起：栏和它的让位一起撤，选择记在 localStorage 里', (t) => {
+  /* 左栏值那 206px —— 但不是每时每刻都值：读一份长文档、或者右半屏停着 AI 助手
+     来回改稿的时候，正文多 206px 比「随时能跳去查个成语」要紧。
+     所以给一个开关，由人按需要拨。两条都要盯住：
+       · 栏和让位必须一起撤 —— 只撤一样，左边就空出一条 206px 的白带；
+       · 记住 —— 这是「我现在要多少地方」的姿势，不是一次性动作。 */
+  const h = boot(); t.after(() => h.close());
+  const body = h.window.document.body, btn = $(h, '#rail-toggle');
+  assert.ok(btn, '顶栏没有左栏开关 —— 左栏就成了收不起来的死物');
+  assert.ok(!body.classList.contains('rail-off'), '默认该是展开的');
+  btn.click();
+  assert.ok(body.classList.contains('rail-off'), '按了开关左栏没收起来');
+  assert.strictEqual(btn.getAttribute('aria-expanded'), 'false');
+  assert.strictEqual(h.window.localStorage.getItem('rail:off'), '1',
+    '收起的选择没记下来 —— 下次进来又得再按一次');
+  btn.click();
+  assert.ok(!body.classList.contains('rail-off'), '再按一下没展开回来');
+  assert.strictEqual(h.window.localStorage.getItem('rail:off'), '0');
+  assert.ok(/body\.rail-off \.siderail\{display:none/.test(CSS), '收起态没把栏本身藏掉');
+  assert.ok(/body\.has-rail\.rail-off main\{padding-left:0/.test(CSS),
+    '栏藏了、让位还留着 —— 左边会空出一条 206px 的白带');
+  assert.ok(/@media ?\(min-width:761px\)\{[\s\S]{0,900}?body\.has-rail \.rail-toggle\{/.test(CSS),
+    '开关在窄屏也出现了 —— 手机端的导航是底栏，没有可收的东西');
+});
+
+test('面板停成半屏时随手栏要让开：按**还剩多少地方**判断，不是按窗口多宽', (t) => {
+  /* 这条护的是「可用宽度」这个口径。AI 助手停成右半屏之后窗口还是那么宽，
+     能摆东西的却只剩另外半屏 —— 随手栏照 innerWidth 判断就会继续占着右边 250px，
+     而它自己早被面板整个盖住：正文以为右边有栏所以让位，那块其实是面板，
+     中间白空一条谁也用不上（用户报的就是这个）。 */
+  const h = boot({ fetch: () => ({ json: {} }) }); t.after(() => h.close());
+  const w = h.window, body = w.document.body;
+  Object.defineProperty(w, 'innerWidth', { value: 1730, configurable: true });
+  h.run("__tabView('home')");
+  assert.ok(body.classList.contains('has-rrail'), '1730 宽又没有面板，随手栏本该在');
+  // dock.js 的 applyPush 把让位写进 --push-r，再回调 srRoomSync
+  body.style.setProperty('--push-r', '865px');
+  h.run('srRoomSync()');
+  assert.ok(!body.classList.contains('has-rrail'),
+    '面板占了半屏，随手栏还占着右边 250px —— 正文白让出去一条死区');
+  body.style.setProperty('--push-r', '0px');
+  h.run('srRoomSync()');
+  assert.ok(body.classList.contains('has-rrail'), '面板收起来了，随手栏没回来');
+});

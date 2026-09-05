@@ -606,6 +606,7 @@ document @keydown
 #tab-chips @click
 #tab-groups @click
 ? @resize
+#rail-toggle @click
 #tabbar @click
 #siderail @click
 ? @resize

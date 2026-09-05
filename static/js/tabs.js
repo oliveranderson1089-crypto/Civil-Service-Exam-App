@@ -20,7 +20,7 @@
    openMaterials, openNews, openNotes, openPartyDict, openPlanLog, openPolicyDocs,
    openQuiz, openQuizSets, openRealq, openReview, openSection, openShenlun, openStars,
    openSucai, openTasks, openTheory, openVideos, openWorks, openWrite, openWrongq,
-   openYyErr, openYyLib, pgSync, push, SECTIONS, stack, tdGet, tdRepaint */
+   openYyErr, openYyLib, lsGet, lsSet, pgSync, push, SECTIONS, stack, tdGet, tdRepaint */
 
 const TB_SVG = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 
@@ -460,6 +460,33 @@ function tbTopbar() {
 addEventListener('resize', tbTopbar);
 tbTopbar();
 
+/* ================= 左栏收起（顶栏那个开关 / Ctrl+B） =================
+   左栏是常驻导航，值那 206px —— 但不是每时每刻都值：读一份长文档、或者右半屏
+   停着 AI 助手来回改稿的时候，正文能多 206px 比「随时能跳去查成语」要紧得多。
+
+   所以做成**收起**而不是自适应隐藏：由人按需要拨，机器不替他猜。
+   记进 localStorage —— 这是「我现在要多少地方」的姿势，不是一次性动作，
+   下次进来还该是这个样子。 */
+function railOff(off) {
+  document.body.classList.toggle('rail-off', !!off);
+  const b = $('#rail-toggle');
+  if (b) {
+    b.setAttribute('aria-expanded', String(!off));
+    b.setAttribute('aria-label', off ? '展开左侧导航' : '收起左侧导航');
+  }
+  lsSet('rail:off', off ? '1' : '0');
+  /* 翻页条挂在正文右下角、按正文的边界算位置：正文一变宽它就得重算，
+     而这次变宽既没有 scroll 也没有 resize，不叫它就会停在原来那个位置。
+     写成 window.pgSync 而不是裸 pgSync：这个函数在**首屏包的顶层**被调过一次
+     （下面那行按记住的姿势摆位），而 pgSync 住在 defer 的 rest 包里 ——
+     首屏包里出现它的裸名字，线上会停在启动屏（见 assets.py 的闸二）。 */
+  if (window.pgSync) requestAnimationFrame(() => window.pgSync());
+}
+function railToggle() { railOff(!document.body.classList.contains('rail-off')); }
+window.railToggle = railToggle;
+railOff(lsGet('rail:off') === '1');
+$('#rail-toggle').addEventListener('click', railToggle);
+
 function tbNav(e) {
   const b = e.target.closest('[data-tb]'); if (!b) return;
   const key = b.dataset.tb;
@@ -591,7 +618,7 @@ const SR_R_GO = {
    两栏并排显示同样三行，看着像出了 bug。 */
 const SR_R_MIN = 1360;
 function srRightOn() {
-  return document.body.classList.contains('has-rrail') && window.innerWidth >= SR_R_MIN;
+  return document.body.classList.contains('has-rrail') && srRoom() >= SR_R_MIN;
 }
 window.srRightOn = srRightOn;
 
@@ -599,11 +626,26 @@ window.srRightOn = srRightOn;
    而首页是**自己起跑的**（today.js 末尾直接 tdLoad()），它渲染的时候
    has-rrail 还没挂上 —— 于是第一屏两边都画了一份。
    所以这里每次改变随手栏的在/不在，都要回头让首页重画一次。 */
-let srWasOn = null;
+let srWasOn = null, srLastView = '';
+
+/* 横向还剩多少地方**能摆东西**。不能用 innerWidth：AI 助手 / 草稿纸停靠成半屏之后
+   窗口还是那么宽，可用的却只剩另外半屏 —— 随手栏照 innerWidth 判断，就会继续
+   占着右边那 250px，而它自己被面板整个盖住：中间白空一条谁也用不上（正文以为
+   右边有栏所以让位，实际那儿是面板）。
+   读 --push-l/--push-r 而不是 body 的 padding：那两个是 dock.js 写死的最终值，
+   不吃 padding 上的 .18s 过渡 —— 过渡途中量 padding 会量到一个中间数。 */
+function srRoom() {
+  const st = document.body.style;
+  const n = v => parseFloat(st.getPropertyValue(v)) || 0;
+  return (window.innerWidth || 0) - n('--push-l') - n('--push-r');
+}
+
+/* view 省略 = 「视图没变，只是地方变了」（面板停靠/收起、窗口缩放）。 */
 function srRightSync(view) {
   const box = $('#siderail-r');
   if (!box) return;
-  const on = !SR_R_OFF.has(view);
+  if (view !== undefined) srLastView = view;
+  const on = !SR_R_OFF.has(srLastView) && srRoom() >= SR_R_MIN;
   box.classList.toggle('hidden', !on);
   document.body.classList.toggle('has-rrail', on);
   if (on) srRightFill();
@@ -613,16 +655,23 @@ function srRightSync(view) {
     if (window.tdRepaint) tdRepaint();
   }
 }
-/* 拖窗口跨过 1360 时，首页得重画一次：那两段要在中间和随手栏之间搬家。
-   只在**真的跨过**断点时重画，不然拖动过程中每一帧都在重排。 */
-let srWasWide = window.innerWidth >= SR_R_MIN;
+/* 拖窗口跨过 1360 时，随手栏要出现/撤走，首页那两段也得在中间和它之间搬家。
+   只在**真的跨过**断点时动，不然拖动过程中每一帧都在重排。
+   （重画首页交给 srRightSync 内部那次差异判断，别在这儿再来一遍。） */
+let srWasWide = srRoom() >= SR_R_MIN;
 addEventListener('resize', () => {
-  const now = window.innerWidth >= SR_R_MIN;
+  const now = srRoom() >= SR_R_MIN;
   if (now === srWasWide) return;
   srWasWide = now;
-  srRightFill();
-  if (window.tdRepaint) tdRepaint();
+  srRightSync();
 });
+/* 面板停靠 / 收起 / 拖宽窄，可用宽度就变了 —— 由 dock.js 的 applyPush 末尾回调。 */
+window.srRoomSync = function () {
+  if (!srLastView) return;      // 还没进过任何视图（启动途中）：这时的 on/off 由 __tabView 说了算
+  const now = srRoom() >= SR_R_MIN;
+  srWasWide = now;
+  srRightSync();
+};
 $('#siderail-r').addEventListener('click', e => {
   const r = e.target.closest('[data-tbi]'); if (!r) return;
   const it = tbItems[+r.dataset.tbi];
