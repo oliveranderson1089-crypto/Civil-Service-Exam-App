@@ -336,17 +336,26 @@ body.dark .ui-err{border-left-color:#e8776a;}
   font-size:13px;padding:6px 11px;border-radius:18px;cursor:pointer;flex:0 0 auto;}
 .navbtn:hover{background:rgba(255,255,255,.3);}
 /* 左栏开关。默认不占位：≤760 的手机端导航是底栏，收起来没有意义；
-   RAIL_OFF 那两页（阅读器/文档全屏）左栏本来就不在，开关也跟着让开 —— 挂 body.has-rail。 */
+   RAIL_OFF 那两页（阅读器/文档全屏）左栏本来就不在，开关也跟着让开 —— 挂 body.has-rail。
+
+   **颜色一律不自己写**：它在 HTML 上带着 .navbtn，配色跟「‹ 返回」一模一样，
+   于是顶栏那三套皮（电脑端浅色工具栏、夜间、art-* 里自带深色顶栏的那几个主题）
+   都已经替它适配好了。第一版栽在这儿 —— 照抄了手机端顶栏那套白色半透明
+   （白字白边），可电脑端顶栏是 var(--card) 的浅底：按钮在上面等于隐形，
+   不点根本不知道有这么个东西。这里只写「它比返回键方一点」这类形状。 */
 .rail-toggle{display:none;}
 @media (min-width:761px){
   body.has-rail .rail-toggle{display:grid;place-items:center;width:32px;height:32px;flex:0 0 auto;
-    padding:0;border:1px solid rgba(255,255,255,.35);border-radius:9px;
-    background:rgba(255,255,255,.18);color:#fff;cursor:pointer;transition:.15s;}
-  body.has-rail .rail-toggle:hover{background:rgba(255,255,255,.3);}
+    padding:0;border-radius:9px;cursor:pointer;transition:.15s;}
   body.has-rail .rail-toggle:active{transform:scale(.94);}
   .rail-toggle svg{width:18px;height:18px;}
-  /* 收起之后那条竖线填实：一眼能看出「左边那栏现在是收着的」，不用去数按钮亮不亮 */
-  body.rail-off .rail-toggle svg path{stroke-width:5;}
+  /* 收起态换成主题色实心：这是个**有状态**的开关，光靠图标里那条竖线粗一点
+     分不清「收着」还是「没收」。选择器写足四个类，是为了压过 art-* 主题里
+     那几条 `body.art-x .topbar .navbtn{…}` —— 否则一开那些主题，收起态就没了。 */
+  body.rail-off .topbar .rail-toggle.navbtn{background:var(--blue-fill);color:#fff;
+    border-color:transparent;}
+  body.rail-off .topbar .rail-toggle.navbtn:hover{background:var(--blue);color:#fff;}
+  body.rail-off .rail-toggle svg path{stroke-width:4;}
 }
 
 .view-title{font-size:18px;margin:4px 2px 14px;}

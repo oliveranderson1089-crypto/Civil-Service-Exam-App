@@ -286,6 +286,13 @@ test('左栏能收起：栏和它的让位一起撤，选择记在 localStorage 
     '栏藏了、让位还留着 —— 左边会空出一条 206px 的白带');
   assert.ok(/@media ?\(min-width:761px\)\{[\s\S]{0,900}?body\.has-rail \.rail-toggle\{/.test(CSS),
     '开关在窄屏也出现了 —— 手机端的导航是底栏，没有可收的东西');
+  /* 配色不许自己写：顶栏有三套皮（电脑端浅色工具栏 / 夜间 / art-* 里自带深色顶栏的
+     那几个主题），自己写一套就得跟着适配三遍。第一版照抄了手机端顶栏那套白色半透明，
+     而电脑端顶栏是 var(--card) 的浅底 —— 按钮在上面等于隐形，不点根本看不见它。 */
+  assert.ok(btn.classList.contains('navbtn'),
+    '开关没跟着 .navbtn 走 —— 顶栏那三套皮就得各适配一遍，漏一套它就隐形');
+  assert.ok(/body\.rail-off \.topbar \.rail-toggle\.navbtn\{[^}]*var\(--blue-fill\)/.test(CSS),
+    '收起态不是主题色实心 —— 这是个有状态的开关，光靠图标里那条竖线粗一点分不清收没收');
 });
 
 test('面板停成半屏时随手栏要让开：按**还剩多少地方**判断，不是按窗口多宽', (t) => {
